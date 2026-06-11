@@ -383,6 +383,44 @@ class MultiTargetLoss(nn.Module):
                 combined = combined + self.gate_weight * gate_loss
         return combined
 
+    def _compute_loss_components_capturable(self, preds: dict, targets: dict) -> tuple:
+        """``_compute_loss_components`` with branch-free hurdle dispatch.
+
+        Same (combined, tensor-components) contract as the branchy original —
+        the graphed VAL pass needs the per-component tensors for the epoch
+        accumulators, unlike the train graph which only needs ``combined``
+        (``compute_combined_capturable``, untouched so the train capture
+        stays bitwise-identical). Per-head dispatch is config-static; the
+        hurdle masked-sum forms are the same algebraic identities used by
+        the train-side capturable loss.
+        """
+        per_target_losses = {}
+        combined = torch.zeros((), device=next(iter(preds.values())).device, dtype=torch.float32)
+        for name in self.target_names:
+            lt = self.head_losses[name]
+            if lt == "hurdle_negbin":
+                loss = hurdle_negbin_value_loss_capturable(preds, targets, name)
+            elif lt == "hurdle_poisson":
+                loss = hurdle_poisson_value_loss_capturable(preds, targets, name)
+            else:
+                loss = self.loss_fns[name](preds[name], targets[name])
+            per_target_losses[name] = loss
+            combined = combined + self.loss_weights[name] * loss
+
+        components = {f"loss_{name}": loss for name, loss in per_target_losses.items()}
+
+        for gated_name in self.gated_targets:
+            gate_key = f"{gated_name}_gate_logit"
+            if gate_key in preds:
+                gate_loss = F.binary_cross_entropy_with_logits(
+                    preds[gate_key], (targets[gated_name] > 0).float()
+                )
+                combined = combined + self.gate_weight * gate_loss
+                components[f"loss_gate_{gated_name}"] = gate_loss
+
+        components["loss_combined"] = combined
+        return combined, components
+
 
 class _GPUResidentBatcher:
     """Iterates pre-loaded GPU tensors in shuffled mini-batches without DataLoader.
@@ -535,6 +573,104 @@ class _GraphedTrainStep(nn.Module):
         y = {k: v.index_select(0, idx) for k, v in self._y_dict.items()}
         preds = self.model(*feats)
         return self.criterion.compute_combined_capturable(preds, y)
+
+
+class _GraphedValPass:
+    """One CUDA graph over ALL K full-size validation batches, replayed once
+    per epoch.
+
+    The val batcher is ``shuffle=False, drop_last=False``, so batch i is
+    always rows ``[i*bs, (i+1)*bs)`` of the resident tensors — the gather is
+    baked as ``narrow`` views (zero gather kernels, no per-replay inputs).
+    Inside the capture: zero the FP32 accumulators, then per batch
+    eval-forward + capturable loss components + accumulate + write preds into
+    preallocated FP32 buffers (``narrow().copy_()``, D2D). The 0–1 ragged
+    tail batch stays on the eager body via :meth:`tail_batches`.
+
+    Pointer semantics: the graph bakes buffer/param ADDRESSES, so replays read
+    each epoch's updated weights and BatchNorm running stats in place (nothing
+    reallocates those storages mid-training; the early-stop best-state restore
+    is an in-place ``load_state_dict`` after the loop). Eval-mode kernels are
+    baked at capture: dropout is identity and BN reads (never updates) its
+    running stats, so warmup mutates nothing and no BN snapshot is needed.
+    """
+
+    def __init__(self, model, criterion, val_loader, target_names, device):
+        self._model = model
+        self._criterion = criterion
+        self._feats = val_loader.features
+        self._y = val_loader.y_dict
+        self._target_names = list(target_names)
+        self._device = device
+        self._bs = val_loader._batch_size
+        n = self._feats[0].shape[0]
+        self.k = n // self._bs
+        self._n_fixed = self.k * self._bs
+        self._rem = n - self._n_fixed
+        self.loss_sum = torch.zeros((), device=device, dtype=torch.float32)
+        self.comp_sums: dict[str, torch.Tensor] = {}
+        self.pred_bufs = {
+            t: torch.zeros(self._n_fixed, device=device, dtype=torch.float32)
+            for t in self._target_names
+        }
+        # Static read-only views; row order matches pred_bufs so the epoch-end
+        # MAE cat sees aligned (pred, target) pairs.
+        self.target_prefix = {t: self._y[t].narrow(0, 0, self._n_fixed) for t in self._target_names}
+        self._graph: torch.cuda.CUDAGraph | None = None
+
+    def _run_body(self) -> None:
+        self.loss_sum.zero_()
+        for acc in self.comp_sums.values():
+            acc.zero_()
+        for i in range(self.k):
+            offs = i * self._bs
+            feats = tuple(t.narrow(0, offs, self._bs) for t in self._feats)
+            y_batch = {k: v.narrow(0, offs, self._bs) for k, v in self._y.items()}
+            preds = self._model(*feats)
+            combined, comps = self._criterion._compute_loss_components_capturable(preds, y_batch)
+            self.loss_sum += combined.float()
+            for key, val in comps.items():
+                self.comp_sums[key] += val.float()
+            for t in self._target_names:
+                self.pred_bufs[t].narrow(0, offs, self._bs).copy_(preds[t].float())
+
+    def build(self, autocast_factory) -> None:
+        """Discover component keys eagerly, warm up on a side stream, capture.
+
+        ``autocast_factory`` is a zero-arg callable returning the capture
+        autocast context (``cache_enabled=False`` — weight casts must happen
+        inside the graph so replays re-read the live FP32 params).
+        """
+        with torch.no_grad(), autocast_factory():
+            f0 = tuple(t.narrow(0, 0, self._bs) for t in self._feats)
+            y0 = {k: v.narrow(0, 0, self._bs) for k, v in self._y.items()}
+            _, comps = self._criterion._compute_loss_components_capturable(self._model(*f0), y0)
+        self.comp_sums = {
+            key: torch.zeros((), device=self._device, dtype=torch.float32) for key in comps
+        }
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(3):
+                with torch.no_grad(), autocast_factory():
+                    self._run_body()
+        torch.cuda.current_stream().wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.no_grad(), autocast_factory(), torch.cuda.graph(graph):
+            self._run_body()
+        self._graph = graph
+
+    def replay(self) -> None:
+        self._graph.replay()
+
+    def tail_batches(self):
+        """Yield the 0-1 leftover ragged batch in the eager body's tuple shape."""
+        if self._rem == 0:
+            return
+        offs = self._n_fixed
+        feats = tuple(t.narrow(0, offs, self._rem) for t in self._feats)
+        y_batch = {k: v.narrow(0, offs, self._rem) for k, v in self._y.items()}
+        yield (*feats, y_batch)
 
 
 def _gpu_resident_device(device=None) -> torch.device | None:
@@ -824,6 +960,11 @@ class MultiHeadTrainer:
         # (FF_CUDA_GRAPH_FULL path); the train loop then iterates index
         # batches and the model-only capture is skipped.
         self._graphed_step = None
+        # Graphed VAL pass (same FF_CUDA_GRAPH_FULL regime): built lazily at
+        # the first val epoch when the train-side full-step capture engaged;
+        # a build failure flips the _failed latch -> permanent eager val.
+        self._graphed_val = None
+        self._graphed_val_failed = False
 
     def _autocast(self):
         """Return the autocast context when AMP is active, else nullcontext.
@@ -898,6 +1039,51 @@ class MultiHeadTrainer:
         """
         X_batch, _ = batch
         return (X_batch.to(self.device, non_blocking=True),)
+
+    def _maybe_graph_val(self, val_loader) -> None:
+        """Lazily capture the val pass (same FF_CUDA_GRAPH_FULL regime).
+
+        Engages only when the train-side full-step capture engaged (which
+        already implies the knob, CUDA, sm_80+, and a resident train loader —
+        and the nested-K trainer never reaches here since its
+        ``_maybe_graph_full_step`` no-ops), the val loader is a resident
+        in-order batcher with at least one full-size batch, and no prior
+        build failed. Called from the val section AFTER ``model.eval()`` so
+        eval-mode kernels are what gets captured. Failure logs and latches
+        permanent eager fallback — never fails the trial.
+        """
+        if (
+            self._graphed_val is not None
+            or self._graphed_val_failed
+            or self._graphed_step is None
+            or not isinstance(val_loader, _GPUResidentBatcher)
+            or val_loader._shuffle
+            or val_loader._drop_last
+            or val_loader._n < val_loader._batch_size
+        ):
+            return
+        try:
+            gv = _GraphedValPass(
+                self.model, self.criterion, val_loader, self.target_names, self.device
+            )
+            gv.build(
+                lambda: (
+                    torch.amp.autocast(
+                        device_type="cuda", dtype=self._amp_dtype, cache_enabled=False
+                    )
+                    if self._use_amp
+                    else contextlib.nullcontext()
+                )
+            )
+        except Exception as e:
+            print(
+                f"[cuda-graph] val capture failed ({e!r}); keeping the eager val pass",
+                flush=True,
+            )
+            torch.cuda.synchronize()
+            self._graphed_val_failed = True
+            return
+        self._graphed_val = gv
 
     def _maybe_graph_full_step(self, train_loader) -> bool:
         """Opt-in FULL-STEP capture (``FF_CUDA_GRAPH_FULL`` + the base
@@ -1204,6 +1390,7 @@ class MultiHeadTrainer:
 
             # --- Validation pass ---
             self.model.eval()
+            self._maybe_graph_val(val_loader)
             all_preds = {k: [] for k in self.target_names}
             all_targets = {k: [] for k in self.target_names}
             # FP32 GPU-resident accumulator: see train-pass comment above.
@@ -1218,7 +1405,29 @@ class MultiHeadTrainer:
             n_val_batches = 0
 
             with torch.no_grad():
-                for batch in val_loader:
+                if self._graphed_val is not None:
+                    # One replay covers the K full-size batches; only the
+                    # ragged tail (if any) runs the eager body below. The
+                    # accumulator/pred-buffer values are consumed before the
+                    # next epoch's replay overwrites them (the epoch-end cat/
+                    # .item() syncs below).
+                    gval = self._graphed_val
+                    gval.replay()
+                    epoch_val_loss = epoch_val_loss + gval.loss_sum
+                    for k, acc in gval.comp_sums.items():
+                        if k not in val_components_accum:
+                            val_components_accum[k] = torch.zeros(
+                                (), device=self.device, dtype=torch.float32
+                            )
+                        val_components_accum[k] = val_components_accum[k] + acc
+                    n_val_batches += gval.k
+                    for k in self.target_names:
+                        all_preds[k].append(gval.pred_bufs[k])
+                        all_targets[k].append(gval.target_prefix[k])
+                    val_batch_iter = gval.tail_batches()
+                else:
+                    val_batch_iter = val_loader
+                for batch in val_batch_iter:
                     with self._autocast():
                         preds, y_batch = self._forward_batch(batch)
                         loss, components = self.criterion._compute_loss_components(preds, y_batch)

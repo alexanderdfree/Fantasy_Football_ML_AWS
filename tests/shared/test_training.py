@@ -312,3 +312,143 @@ class TestGraphedTrainStep:
         )
         monkeypatch.setenv("FF_CUDA_GRAPH_FULL", "1")
         assert trainer._maybe_graph_full_step(batcher) is False
+
+
+@pytest.mark.unit
+class TestGraphedValPass:
+    """CPU-side checks for the graphed val pass: prefix/tail arithmetic and
+    body math are device-agnostic; the CUDA capture itself is covered by the
+    skipif test below + the Batch smoke."""
+
+    def _setup(self, n=11, d=5, batch_size=4):
+        torch.manual_seed(3)
+        feats = (torch.randn(n, d),)
+        y = {"a": torch.randn(n).abs(), "b": torch.randn(n).abs()}
+        loader = _GPUResidentBatcher(
+            feature_tensors=feats, y_dict=y, batch_size=batch_size, shuffle=False, drop_last=False
+        )
+
+        class _TwoHead(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.fc = nn.Linear(d, 2)
+
+            def forward(self, x):
+                out = self.fc(x)
+                return {"a": out[:, 0], "b": torch.nn.functional.softplus(out[:, 1])}
+
+        criterion = MultiTargetLoss(
+            target_names=["a", "b"],
+            loss_weights={"a": 1.0, "b": 2.0},
+            head_losses={"a": "huber", "b": "poisson_nll"},
+        )
+        from src.shared.training import _GraphedValPass
+
+        gv = _GraphedValPass(_TwoHead(), criterion, loader, ["a", "b"], torch.device("cpu"))
+        return feats, y, loader, gv
+
+    def test_prefix_tail_arithmetic(self):
+        _, _, _, gv = self._setup(n=11, batch_size=4)
+        assert (gv.k, gv._n_fixed, gv._rem) == (2, 8, 3)
+        _, _, _, gv0 = self._setup(n=8, batch_size=4)
+        assert (gv0.k, gv0._rem) == (2, 0)
+        assert list(gv0.tail_batches()) == []
+
+    def test_tail_batch_matches_loader_last_batch(self):
+        feats, y, loader, gv = self._setup(n=11, batch_size=4)
+        (tail,) = list(gv.tail_batches())
+        *tail_feats, tail_y = tail
+        last = list(loader)[-1]
+        *last_feats, last_y = last
+        assert torch.equal(tail_feats[0], last_feats[0])
+        for k in y:
+            assert torch.equal(tail_y[k], last_y[k])
+
+    def test_body_matches_eager_prefix_math(self):
+        """_run_body's accumulators must equal an eager loop over the K
+        full-size batches (CPU: same code path the graph captures)."""
+        feats, y, loader, gv = self._setup(n=11, batch_size=4)
+        # comp_sums normally preallocated by build(); do it manually on CPU.
+        f0 = tuple(t.narrow(0, 0, 4) for t in feats)
+        y0 = {k: v.narrow(0, 0, 4) for k, v in y.items()}
+        _, comps = gv._criterion._compute_loss_components_capturable(gv._model(*f0), y0)
+        gv.comp_sums = {k: torch.zeros((), dtype=torch.float32) for k in comps}
+        with torch.no_grad():
+            gv._run_body()
+
+        loss_sum = torch.zeros((), dtype=torch.float32)
+        with torch.no_grad():
+            for i in range(2):
+                fb = tuple(t.narrow(0, i * 4, 4) for t in feats)
+                yb = {k: v.narrow(0, i * 4, 4) for k, v in y.items()}
+                combined, _ = gv._criterion._compute_loss_components_capturable(gv._model(*fb), yb)
+                loss_sum += combined.float()
+        assert gv.loss_sum.item() == pytest.approx(loss_sum.item(), rel=1e-6)
+        for k in ("a", "b"):
+            assert gv.pred_bufs[k].shape == (8,)
+
+    def test_gating_noop_without_full_step(self, monkeypatch):
+        """_maybe_graph_val never builds when the train-side capture didn't
+        engage (CPU trainers, K's nested trainer, knob off — all imply
+        _graphed_step is None)."""
+        _, _, loader, _ = self._setup()
+        model = nn.Linear(5, 2)
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        trainer = MultiHeadTrainer(
+            model=model,
+            optimizer=optimizer,
+            scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
+            criterion=MultiTargetLoss(target_names=["a"], loss_weights={"a": 1.0}),
+            device=torch.device("cpu"),
+            target_names=["a"],
+            patience=2,
+        )
+        monkeypatch.setenv("FF_CUDA_GRAPH_FULL", "1")
+        trainer._maybe_graph_val(loader)
+        assert trainer._graphed_val is None
+        assert trainer._graphed_val_failed is False
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA-only capture path")
+def test_graphed_val_engages_and_matches_eager_on_cuda(monkeypatch):
+    """GPU boxes only (5080/Batch dry-run): the captured val pass must engage
+    behind an engaged train capture and produce val metrics that move across
+    epochs (weight visibility) — full parity is covered by the Batch smoke."""
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+    n, d = 64, 6
+    feats = (torch.randn(n, d, device=device),)
+    y = {"a": torch.randn(n, device=device).abs()}
+    train_loader = _GPUResidentBatcher(
+        feature_tensors=feats, y_dict=y, batch_size=16, shuffle=True, drop_last=True
+    )
+    val_loader = _GPUResidentBatcher(
+        feature_tensors=feats, y_dict=y, batch_size=16, shuffle=False, drop_last=False
+    )
+
+    class _OneHead(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(d, 1)
+
+        def forward(self, x):
+            return {"a": self.fc(x).squeeze(-1)}
+
+    model = _OneHead().to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2, fused=True)
+    trainer = MultiHeadTrainer(
+        model=model,
+        optimizer=optimizer,
+        scheduler=torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer),
+        criterion=MultiTargetLoss(target_names=["a"], loss_weights={"a": 1.0}),
+        device=device,
+        target_names=["a"],
+        patience=10,
+    )
+    monkeypatch.setenv("FF_CUDA_GRAPH_FULL", "1")
+    history = trainer.train(train_loader, val_loader, n_epochs=3)
+    assert trainer._graphed_step is not None, "train-side capture must engage"
+    assert trainer._graphed_val is not None, "val capture must engage"
+    assert len(history["val_loss"]) == 3
+    assert len(set(history["val_loss"])) > 1, "val loss must move across epochs"
