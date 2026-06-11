@@ -3,7 +3,8 @@
 Mirrors ``src/tuning/launch_tune.py`` but submits
 ``--ablation scheduler-type`` jobs instead of ``--mode tune`` jobs. Each
 position runs in its own Spot g6.xlarge/g5.xlarge container so the six positions
-ablate in parallel (24-vCPU Spot G+VT quota). Each container runs the 3-way
+ablate in parallel (six 4-vCPU hosts; Spot G+VT quota is 64 vCPU since
+2026-06-11). Each container runs the 3-way
 (onecycle / cosine / plateau) A/B across ``--seeds`` and uploads its result JSON
 to ``s3://$S3_BUCKET/ablate_scheduler/{pos}/result.json``; merge them afterwards
 with ``src.tuning.aggregate_scheduler``.

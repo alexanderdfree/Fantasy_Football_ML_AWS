@@ -150,8 +150,9 @@ default-on via `launch_tune --cuda-graph-full` with studies isolated in `*_graph
 namespaces; capture failure falls back to the model-only graph; K no-ops. Ship gates (run
 on Batch): step-ms ≥2× vs model-only graph, graph-vs-graph same-seed Δ=0, tune smoke
 ≥1.7× trials/min with pruning live, flat `memory_reserved` across ≥30 sequential trials
-per worker. Context: under the 24-vCPU Spot quota (~1 launch-bound trial per vCPU), host-CPU
-per trial is the only lever that raises fleet tune throughput.
+per worker. Context: under the Spot G+VT quota (~1 launch-bound trial per vCPU; 24 vCPU
+when written, raised to 64 on 2026-06-11), host-CPU per trial is the only lever that
+raises per-host tune throughput — the quota raise multiplies hosts, not trials-per-host.
 
 **Gate results (2026-06-11, RB on g6.xlarge, mps n_jobs=4, 20-complete-trial smokes):**
 - **First smoke caught a capture-aborting bug** (job `97a8cf3c`): every trial logged
