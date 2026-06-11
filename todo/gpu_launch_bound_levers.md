@@ -214,6 +214,14 @@ trials per GPU-hour** on identical hardware. Remaining levers are the rejected
 whole-iteration capture — this closes the planned throughput rounds; next bottleneck is
 per-trial capture build (~1–2 s) + Optuna/study churn, not worth chasing.
 
+**Oversubscription re-probed post-D2 (2026-06-11, n_jobs=5 on 4 vCPUs, fresh study): still
+~1 useful trial per vCPU.** 69 trials (22C/47P) in 218.4 s = 19.0 trials/min vs 18.7 at
+n_jobs=4 (+1.6%, trial-mix noise) while completes/min DROPPED 7.18 → 6.04 (−16%) and
+bs512-class epochs slowed 0.14–0.16 → 0.24–0.27 s — a super-proportional ~1.7× per-trial
+penalty at 1.25× oversubscription (5 workers on 2 physical cores). The graphed loop is
+still host-paced; `--n-jobs auto` = vCPU count stays correct, and the concurrency
+question is closed on measurement (the pre-D2 8-on-4 result was not stale after all).
+
 ---
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
