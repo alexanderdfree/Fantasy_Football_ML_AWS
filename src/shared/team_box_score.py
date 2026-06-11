@@ -20,7 +20,12 @@ import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
 from src.data.loader import load_team_week_stats
-from src.shared.weather_features import TEAM_CODE_NORMALIZATION, _load_schedules
+
+# ``_load_schedules`` is deliberately NOT from-imported: test patches rebind
+# the weather_features MODULE attribute, which a from-import copy bypasses
+# (see the matching note in src/features/engineer.py).
+from src.shared import weather_features
+from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
 # Columns produced per (season, week, team) before the per-row merge.
 TEAM_BOX_SCORE_FEATURES: list[str] = [
@@ -41,10 +46,12 @@ TEAM_BOX_SCORE_FEATURES: list[str] = [
 # learns.
 OPP_BOX_SCORE_FEATURES: list[str] = ["opp_team_points_scored"]
 
-# Intentionally NOT module-level-cached: tests monkeypatch ``_load_schedules``
-# per-suite (DST, RB E2E, etc.), and a cached lookup derived from one test's
-# synthetic schedule would leak into the next test's run. Per-call rebuild is
-# fast — both upstream loaders (``_load_schedules`` and
+# Intentionally NOT module-level-cached: tests monkeypatch
+# ``weather_features._load_schedules`` per-suite (DST, RB E2E, etc.), and a
+# cached lookup derived from one test's synthetic schedule would leak into the
+# next test's run. (Those patches only reach this module because the call
+# below goes through the module attribute — see the import note.) Per-call
+# rebuild is fast — both upstream loaders (``_load_schedules`` and
 # ``load_team_week_stats``) hit their own caches, and the lookup build itself
 # is millisecond-scale on the full 14-season frame.
 
@@ -63,7 +70,7 @@ def _build_team_box_score_lookup() -> pd.DataFrame:
         opponent's side).
     """
     try:
-        schedules_reg = _load_schedules()
+        schedules_reg = weather_features._load_schedules()
     except FileNotFoundError:
         # Synthetic test fixtures pre-stamp ``_schedule_merged=True`` and
         # short-circuit the schedule load entirely; the parquet is absent

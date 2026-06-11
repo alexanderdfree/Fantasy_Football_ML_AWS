@@ -351,6 +351,14 @@ def tiny_cwd_with_offense_cache(tmp_path_factory, tiny_dataset):
     weekly_df.to_parquet(raw_dir / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
     full_schedules_df.to_parquet(raw_dir / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet")
 
+    # CACHE_DIR is absolute under the test session's FF_CACHE_DIR redirect
+    # (root conftest.py), so the chdir above no longer routes raw-cache reads
+    # into this fixture's synthetic dir — point the readers at it explicitly.
+    # pipeline.py holds an import-time copy (the opp-offense weekly read);
+    # src.config covers lazy readers like dst/data.py.
+    mp.setattr("src.shared.pipeline.CACHE_DIR", str(raw_dir))
+    mp.setattr("src.config.CACHE_DIR", str(raw_dir))
+
     # Same in-memory schedule stub as the standard fixture — keeps the
     # weather/Vegas merge fast and bypasses the parquet path for callers
     # that already cache it.

@@ -284,6 +284,34 @@ def test_air_yards_share_lag_is_stint_aware():
 
 
 @pytest.mark.unit
+def test_build_features_routes_schedule_reads_through_module_attr(monkeypatch):
+    """build_features must reach schedules via the ``weather_features`` MODULE
+    attribute, not a from-import copy of ``_load_schedules``: the
+    tests/conftest.py session stub (and any per-test patch) only rebinds the
+    module attr. The old copy bypassed patches and — once another test cleared
+    ``_schedule_cache`` (e.g. test_weather_features' raw-``None`` reset) — read
+    the real ``data/raw`` parquet: ``FileNotFoundError`` on boxes without raw
+    data, surfacing as the sporadic per-worker "xdist race" flake."""
+    import src.shared.weather_features as wf
+
+    calls = []
+    orig = wf._load_schedules
+
+    def _spy():
+        calls.append(1)
+        return orig()
+
+    monkeypatch.setattr(wf, "_load_schedules", _spy)
+    # Force the function path (a populated module cache would mask a bypassing
+    # from-import copy on boxes where the real parquet exists).
+    monkeypatch.setattr(wf, "_schedule_cache", None)
+
+    build_features(_traded_player_frame())
+
+    assert calls, "build_features bypassed the patched weather_features._load_schedules"
+
+
+@pytest.mark.unit
 def test_snap_pct_history_uses_raw_not_prelagged():
     """#788: the attention game-history default uses ``snap_pct_raw`` (un-lagged)
     rather than the pre-lagged static ``snap_pct``. ``build_game_history_arrays``

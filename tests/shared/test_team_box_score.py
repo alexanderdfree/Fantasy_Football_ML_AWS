@@ -44,7 +44,10 @@ def test_legacy_schedule_team_codes_normalized_before_points_merge(monkeypatch):
             "sack_fumbles_lost": [0, 0],
         }
     )
-    monkeypatch.setattr(tbs, "_load_schedules", lambda: schedules)
+    # Patch the weather_features MODULE attr — team_box_score deliberately
+    # holds no from-import copy of _load_schedules (a copy bypasses patches;
+    # see the import note there).
+    monkeypatch.setattr("src.shared.weather_features._load_schedules", lambda: schedules)
     monkeypatch.setattr(tbs, "load_team_week_stats", lambda seasons, cache_dir=None: team_stats)
 
     out = tbs._build_team_box_score_lookup()
@@ -56,3 +59,52 @@ def test_legacy_schedule_team_codes_normalized_before_points_merge(monkeypatch):
     assert lv["opp_team_points_scored"] == 14.0
     # No stray legacy 'OAK' row leaks through.
     assert "OAK" not in set(out["team"])
+
+
+def test_lookup_routes_schedule_read_through_module_attr(monkeypatch):
+    """The lookup must reach schedules via the ``weather_features`` MODULE
+    attribute, not a from-import copy of ``_load_schedules`` — a copy bypasses
+    test patches and (once another test cleared ``_schedule_cache``) read the
+    real ``data/raw`` parquet: ``FileNotFoundError`` on boxes without raw data
+    (the sporadic "xdist race" flake)."""
+    import src.shared.weather_features as wf
+
+    calls = []
+
+    def _spy():
+        calls.append(1)
+        return pd.DataFrame(
+            {
+                "season": [2015],
+                "week": [1],
+                "home_team": ["KC"],
+                "away_team": ["LV"],
+                "home_score": [20.0],
+                "away_score": [14.0],
+            }
+        )
+
+    team_stats = pd.DataFrame(
+        {
+            "team": ["KC"],
+            "season": [2015],
+            "week": [1],
+            "attempts": [30],
+            "completions": [20],
+            "passing_yards": [250.0],
+            "carries": [25],
+            "rushing_yards": [120.0],
+            "passing_interceptions": [1],
+            "rushing_fumbles_lost": [0],
+            "receiving_fumbles_lost": [0],
+            "sack_fumbles_lost": [0],
+        }
+    )
+    monkeypatch.setattr(wf, "_load_schedules", _spy)
+    monkeypatch.setattr(tbs, "load_team_week_stats", lambda seasons, cache_dir=None: team_stats)
+
+    out = tbs._build_team_box_score_lookup()
+
+    assert calls, "lookup bypassed the patched weather_features._load_schedules"
+    kc = out[(out["team"] == "KC") & (out["week"] == 1)].iloc[0]
+    assert kc["team_points_scored"] == 20.0

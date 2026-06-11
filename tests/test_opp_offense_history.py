@@ -118,10 +118,11 @@ class TestBuildOppOffensePerGameDf:
         def _raise():
             raise FileNotFoundError("schedules parquet absent")
 
-        # The helper now routes through _load_schedules (#757); patch it to raise
-        # so the FileNotFoundError zero-fill fallback is exercised. (Patching
-        # CACHE_DIR no longer reaches the read — _load_schedules owns it.)
-        monkeypatch.setattr("src.features.engineer._load_schedules", _raise)
+        # The helper now routes through weather_features._load_schedules — the
+        # MODULE attr, engineer holds no from-import copy (#757); patch it to
+        # raise so the FileNotFoundError zero-fill fallback is exercised.
+        # (Patching CACHE_DIR no longer reaches the read.)
+        monkeypatch.setattr("src.shared.weather_features._load_schedules", _raise)
         df = _synthetic_offense_df()
         out = build_opp_offense_per_game_df(df)
         assert (out["off_pts_scored"] == 0.0).all()
@@ -200,7 +201,7 @@ class TestEndToEndChain:
         def _raise():
             raise FileNotFoundError("schedules parquet absent")
 
-        monkeypatch.setattr("src.features.engineer._load_schedules", _raise)
+        monkeypatch.setattr("src.shared.weather_features._load_schedules", _raise)
         df = _synthetic_offense_df()
         per_game = build_opp_offense_per_game_df(df)
 
