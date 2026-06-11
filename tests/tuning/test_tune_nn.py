@@ -441,6 +441,37 @@ def test_mps_graph_storage_profile_is_separate_from_eager():
     assert tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v2_mps_graph/rb"
 
 
+# ---------------------------------------------------------------------------
+# _worker_sampler_seed — MPS worker startup-phase draws
+# ---------------------------------------------------------------------------
+
+
+def test_worker_sampler_seed_unique_across_workers_and_iterations():
+    seeds = {tune_nn._worker_sampler_seed(w, i) for w in range(8) for i in range(50)}
+    assert len(seeds) == 8 * 50
+
+
+def test_mps_worker_iterations_draw_distinct_startup_params(tmp_path, monkeypatch):
+    """Two _mps_worker_entry loop iterations must not replay the same TPE
+    random-startup draw: the sampler is rebuilt fresh each iteration, so a
+    fixed per-worker seed redraws the identical point (the duplicate-trial
+    bug observed on Batch)."""
+    monkeypatch.chdir(tmp_path)  # study db path is CWD-relative
+    params: list[dict] = []
+    for iteration in range(2):
+        study = tune_nn._create_or_load_study(
+            "RB",
+            storage_version="seedtest",
+            sqlite_timeout=5,
+            base_cfg={"nn_epochs": 10},
+            sampler_seed=tune_nn._worker_sampler_seed(0, iteration),
+        )
+        trial, _ = _ask_overrides(study)
+        study.tell(trial, 60.0)
+        params.append(trial.params)
+    assert params[0] != params[1]
+
+
 def test_auto_parallel_backend_selects_mps_only_on_g6_l4_linux(monkeypatch):
     monkeypatch.setattr(
         tune_nn,
