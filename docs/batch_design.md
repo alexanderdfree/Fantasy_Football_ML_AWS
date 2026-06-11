@@ -157,7 +157,8 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | `FF_JOB_DEFINITION_REVISION` | (unset) | GPU job-definition revision pin written by `batch-image.yml` |
 | `FF_JOB_DEFINITION_CPU_REVISION` | (unset) | CPU job-definition revision pin written by `batch-image.yml` under `job-def-revisions/cpu/{sha}.txt` |
 | `FF_SPLIT_RUN_ID` | (unset) | Optional split artifact namespace; `launch.py --split` auto-generates one when absent |
-| `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs` |
+| `FF_WAIT_TIMEOUT` | `10800` (3h) | Wall-clock cap for `wait_for_jobs`. `train-batch.yml` overrides to `18000` (5h) — Spot queue time dominates the ~1 min/position training, and the 3h default expired minutes before Spot-starved jobs SUCCEEDED on 2026-06-08/06-10, silently skipping the benchmark append (see ADR-0013 changelog) |
+| `FF_BATCH_JOB_IDS_FILE` | (unset) | Path where `launch.py` records submitted job ids + expected positions as JSON. Set by `train-batch.yml` (`batch_job_ids.json`) so its recovery step can re-check the exact jobs after a failed wait; unset writes nothing |
 
 ### Container Dependencies (`src/batch/requirements.txt`)
 

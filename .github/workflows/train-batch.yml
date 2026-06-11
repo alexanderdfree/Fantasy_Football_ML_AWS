@@ -62,6 +62,13 @@ env:
   # with "no version of requests==2.33.0" — same code path that's been
   # working for tests.yml since migration but silently absent here.
   UV_INDEX_STRATEGY: unsafe-best-match
+  # Stream launch.py / benchmark.py output as it happens. Without this, Python
+  # block-buffers stdout on the non-TTY runner and the entire 3h poll log
+  # flushes only at process exit — the 2026-06-08/06-10 Spot-starvation
+  # timeouts (runs 27161472255 / 27299375573) showed 3h of dead air and then
+  # every line stamped with the exit time, which made live triage and
+  # post-hoc forensics needlessly hard.
+  PYTHONUNBUFFERED: "1"
   # Public serving URL for the post-train cache-warm probe. NOT an ECS var —
   # warming goes through the ALB like any user request (a plain HTTPS GET to
   # /warm), not the ECS control plane, so it doesn't reintroduce the post-train
@@ -164,17 +171,31 @@ jobs:
         github.event.workflow_run.conclusion == 'success' &&
         needs.dedup_check.outputs.skip != 'true'))
     runs-on: ubuntu-latest
-    # Worst case: attempts=3 Spot retries × 1800s per attempt = 90 min per
-    # chronically-interrupted position, parallel = 90 min + cold-start + post.
-    # launch.py blocks for up to its WAIT_TIMEOUT_SECONDS=10800 (180 min)
-    # default in "Submit Batch jobs and wait"; the job ceiling MUST sit above
-    # that so the post-train steps (freshness verify, benchmark append, push,
-    # marker write) have headroom rather than being killed mid-wait — a kill
-    # there skips the success-marker write and the next workflow_run.completed
-    # delivery re-triggers a full retrain. 210 = 180 wait + 30 min headroom.
-    timeout-minutes: 210
+    # Budget (GitHub-hosted job hard cap is 360):
+    #   setup + submit            ~2 min
+    #   splits-ready gate         ≤21 min (its 20-min poll + overhead)
+    #   launch.py wait            ≤300 min (FF_WAIT_TIMEOUT=18000 below)
+    #   recovery re-check         ≤10 min (only runs when the wait failed)
+    #   post steps (verify/append/push/marker)  ~5 min
+    #   total ≈ 338, ceiling 350 keeps ~12 min slack.
+    # The wait was raised from the launch.py default of 180 min after the
+    # 2026-06-08/06-10 Spot capacity starvation (runs 27161472255 /
+    # 27299375573): jobs sat RUNNABLE ~3h, the wait expired, and the jobs
+    # SUCCEEDED 3-29 min later — training itself takes ~1 min/position, so
+    # queue time dominates and the wait should consume the job's headroom
+    # rather than give up with 30 idle minutes left. The ceiling MUST stay
+    # above the wait so the post-train steps (freshness verify, benchmark
+    # append, push, marker write) run rather than being killed mid-wait — a
+    # kill there skips the success-marker write and the next
+    # workflow_run.completed delivery re-triggers a full retrain.
+    timeout-minutes: 350
     permissions:
       contents: write
+      # For the loud-failure path: the recovery step files a tracking issue
+      # when training never reaches SUCCEEDED, so a missing benchmark row is
+      # impossible to miss (the failed run itself proved easy to overlook —
+      # both starvation timeouts went unnoticed until the rows were missed).
+      issues: write
     steps:
       - name: Configure AWS credentials
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
@@ -312,8 +333,27 @@ jobs:
 
       - name: Submit Batch jobs and wait
         id: train
+        # Don't fail the job here: the recovery step below re-checks the
+        # submitted jobs when this step exits non-zero (Spot starvation can
+        # outlast any fixed wait — see the timeout-minutes comment), and the
+        # final "Fail when training did not complete" step restores the
+        # failure when recovery doesn't pan out. Downstream steps gate on
+        # steps.train.outcome / steps.recover.outputs.recovered explicitly.
+        continue-on-error: true
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
+          # 300 min (vs the launch.py default of 180): Spot queue time
+          # dominates the ~1 min/position training, so spend the job's
+          # headroom waiting. Keep below the step/job ceilings so launch.py
+          # exits on its own clean TIMED_OUT path (full log, per-position
+          # status) instead of being SIGKILLed mid-poll.
+          FF_WAIT_TIMEOUT: "18000"
+          # Breadcrumb consumed by the recovery step: launch.py records the
+          # submitted job ids + expected positions here so a wait that
+          # expired minutes before the jobs reached SUCCEEDED can still be
+          # turned into a completed run (append + marker) instead of a
+          # silently missing benchmark row.
+          FF_BATCH_JOB_IDS_FILE: batch_job_ids.json
           # Empty when workflow_dispatch (no upstream image build to pin to);
           # launch.py treats empty as "no revision" and falls back to name-only
           # resolution (current behavior).
@@ -378,11 +418,86 @@ jobs:
           fi
           python -m src.batch.launch "${LAUNCH_ARGS[@]}"
 
+      - name: Recover - re-check Batch job status after a failed wait
+        # launch.py exiting non-zero means some job wasn't SUCCEEDED when its
+        # wait expired — NOT that training failed. On 2026-06-08 (run
+        # 27161472255) all six Spot-starved jobs SUCCEEDED 0.5-3.5 min after
+        # the wait gave up; the benchmark append, history push, and dedup
+        # marker were all skipped and the run's MAE record silently vanished.
+        # This step re-checks the exact submitted job ids (launch.py's
+        # FF_BATCH_JOB_IDS_FILE breadcrumb) with a bounded grace poll, and
+        # flips `recovered=true` when every job reached SUCCEEDED and every
+        # expected position was actually submitted — the downstream steps then
+        # proceed as if the wait had seen the completions itself. When the
+        # jobs still aren't done (or genuinely FAILED), it files a tracking
+        # issue so the missing benchmark row is loud, and leaves the final
+        # fail step to redden the job. Fail-open: this step always exits 0 so
+        # an AWS API hiccup here can't mask the real outcome.
+        id: recover
+        if: steps.train.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+        run: |
+          set -u
+          recovered=false
+          states_summary="(no job-ids breadcrumb — launch.py failed before submitting)"
+          if [ -f batch_job_ids.json ]; then
+            mapfile -t ids < <(jq -r '.jobs[]' batch_job_ids.json)
+            covered=$(jq -r '(.jobs | keys) as $k
+              | [.expected_positions[] | . as $p
+                 | ($k | map(. == $p or startswith($p + "/")) | any)] | all' \
+              batch_job_ids.json)
+            if [ "${#ids[@]}" -eq 0 ] || [ "$covered" != "true" ]; then
+              states_summary="(submit was partial: jobs=${#ids[@]}, expected positions not all covered)"
+            else
+              # Grace poll: 20 x 30s = 10 min. Sized for the observed gap
+              # between wait expiry and late Spot completions (3.5 min on
+              # 06-08); anything longer is handled by the bigger
+              # FF_WAIT_TIMEOUT, and anything longer still is a real failure.
+              for i in $(seq 1 20); do
+                states=$(aws batch describe-jobs --jobs "${ids[@]}" \
+                  --region "$AWS_REGION" --output json \
+                  | jq -r '.jobs[].status' || true)
+                n_seen=$(printf '%s\n' "$states" | grep -c . || true)
+                states_summary=$(printf '%s\n' "$states" | sort | uniq -c | tr -s ' ' | tr '\n' ';')
+                if [ "$n_seen" -eq "${#ids[@]}" ] \
+                   && ! printf '%s\n' "$states" | grep -qv '^SUCCEEDED$'; then
+                  recovered=true
+                  break
+                fi
+                # A terminal FAILED can't un-fail; stop polling early.
+                if printf '%s\n' "$states" | grep -q '^FAILED$'; then
+                  break
+                fi
+                sleep 30
+              done
+            fi
+          fi
+          echo "recovered=$recovered" >> "$GITHUB_OUTPUT"
+          if [ "$recovered" = "true" ]; then
+            echo "::warning::launch.py wait expired but all Batch jobs reached SUCCEEDED — proceeding with benchmark append + marker (states: $states_summary)"
+            exit 0
+          fi
+          echo "::error::Batch training for ${HEAD_SHA::7} did not complete: $states_summary — benchmark_history row will be MISSING for this SHA until a retrain or backfill."
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "train-batch: run for ${HEAD_SHA::7} did not complete — benchmark row missing" \
+            --body "$(printf '%s\n' \
+              "Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              "Head SHA: ${HEAD_SHA}" \
+              "Batch job states at last check: ${states_summary}" \
+              "" \
+              "The wait + recovery grace poll expired before every Batch job reached SUCCEEDED, so the benchmark_history append, push, and train-success marker were skipped. If the jobs later SUCCEEDED on their own (Spot starvation outlasting the wait), backfill the row from models/{POS}/history/ metrics or re-dispatch train-batch.yml with image_sha=${HEAD_SHA}. No dedup marker was written, so the next workflow_run delivery for this SHA (if any) retrains from scratch.")" \
+            || echo "::warning::could not file tracking issue (continuing)"
+          exit 0
+
       - name: Verify model artifact freshness
         # Anchor on when training STARTED, not "now" — Spot parallelism makes
         # this less likely to false-trip than the sequential EC2 path, but
         # the same logic protects against e.g. a chronically retrying job
         # whose artifact predates this run.
+        if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
           FF_MODEL_S3_PREFIX: models
@@ -442,6 +557,7 @@ jobs:
         # "Refresh ECS service" step), so there is no ordering dependency on
         # an ECS step here anymore — the History tab simply reflects the
         # S3-mirrored JSON whenever serving tasks next cycle.
+        if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
@@ -520,6 +636,7 @@ jobs:
             "${PR_ARGS[@]}"
 
       - name: Commit and push benchmark_history/
+        if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
         env:
           # Same env-indirection rationale as the previous step.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
@@ -576,7 +693,15 @@ jobs:
         # (S3 marker present ⇒ benchmark already on main) and avoids the
         # orphan-benchmark state where the marker says "trained" but the
         # benchmark never landed.
-        if: github.event_name != 'workflow_dispatch'
+        #
+        # The explicit train/recover clause replaces the implicit
+        # ``if: success()`` that `continue-on-error: true` on the train step
+        # would otherwise defeat: a timed-out wait whose jobs never recovered
+        # must NOT write the marker (the next delivery should retrain), while
+        # a recovered run must (its benchmark just landed).
+        if: >
+          github.event_name != 'workflow_dispatch' &&
+          (steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true')
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
@@ -584,6 +709,20 @@ jobs:
             "s3://${S3_BUCKET}/train-success-markers/${HEAD_SHA}.txt" \
             --region "$AWS_REGION" \
             --no-cli-pager
+
+      - name: Fail when training did not complete
+        # `continue-on-error: true` on the train step keeps the job alive for
+        # the recovery re-check; this step restores the failure signal when
+        # neither the wait nor the recovery saw every job SUCCEEDED. (The
+        # recovery step already annotated ::error:: and filed the tracking
+        # issue — this exists so the run itself goes red and warm_cache
+        # skips, exactly as before the recovery flow existed.)
+        if: steps.train.outcome == 'failure' && steps.recover.outputs.recovered != 'true'
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+        run: |
+          echo "::error::Training for ${HEAD_SHA::7} did not complete within the wait + recovery window — failing the run. See the recovery step's tracking issue."
+          exit 1
 
   # Post-train serving-cache warm — split out of the `train` job (was its
   # next-to-last step) so its up-to-180s fingerprint poll no longer sits on
