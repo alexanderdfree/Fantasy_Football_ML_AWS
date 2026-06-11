@@ -1,8 +1,14 @@
+import os
+
 # === Data ===
 SEASONS = list(range(2012, 2026))  # load 2012 for prior-season/rolling CONTEXT only
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 MIN_GAMES_PER_SEASON = 6
-CACHE_DIR = "data/raw"
+# Raw nflverse cache dir. FF_CACHE_DIR overrides (the usual env-var-override
+# shape, cf. FF_DEVICE): the test suite redirects it to a per-session temp
+# dir (root conftest.py) so loader runs inside tests never write the real
+# cache. Unset in production — the default is unchanged.
+CACHE_DIR = os.environ.get("FF_CACHE_DIR", "data/raw")
 SPLITS_DIR = "data/splits"
 
 # === Scoring ===

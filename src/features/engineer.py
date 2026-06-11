@@ -13,9 +13,16 @@ from src.config import (
     TREND_STATS,
 )
 from src.data.external_sources import EXTERNAL_PRIOR_STATS
+
+# ``_load_schedules`` is deliberately NOT from-imported: the tests/conftest.py
+# autouse schedules stub (and per-test patches) rebind the *module attribute*,
+# which a from-import copy bypasses — the copy silently read the real
+# data/raw parquet once another test cleared ``_schedule_cache``
+# (FileNotFoundError on boxes without raw data; the "xdist race" flake).
+# Call ``weather_features._load_schedules()`` so patches actually apply.
+from src.shared import weather_features
 from src.shared.weather_features import (
     TEAM_CODE_NORMALIZATION,
-    _load_schedules,
     build_implied_team_total_lookup,
 )
 
@@ -748,12 +755,13 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Points allowed — sourced from schedule scores (away_score for the home
-    # team and vice versa). Route via _load_schedules (REG-filtered + cached) so
-    # the tests/conftest.py autouse fixture catches this read too — mirrors
-    # _build_defense_matchup_features. _load_schedules raises FileNotFoundError
-    # when the parquet is absent; keep the zero-fill fallback for that. (#757)
+    # team and vice versa). Route via the weather_features MODULE attr (see the
+    # import note) so the tests/conftest.py autouse fixture catches this read
+    # too — mirrors _build_defense_matchup_features. _load_schedules raises
+    # FileNotFoundError when the parquet is absent; keep the zero-fill
+    # fallback for that. (#757)
     try:
-        schedules_reg = _load_schedules().copy()
+        schedules_reg = weather_features._load_schedules().copy()
     except FileNotFoundError:
         # Degraded callers without the schedules cache still get the five
         # player-derived stats; pts_allowed falls back to 0.
@@ -888,12 +896,13 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Points scored — sourced from schedule scores. Each schedule row
-    # contributes home_team -> home_score and away_team -> away_score. Route via
-    # _load_schedules (REG-filtered + cached) so the tests/conftest.py autouse
-    # fixture catches this read too — mirrors _build_defense_matchup_features.
-    # _load_schedules raises FileNotFoundError when the parquet is absent. (#757)
+    # contributes home_team -> home_score and away_team -> away_score. Route
+    # via the weather_features MODULE attr (see the import note) so the
+    # tests/conftest.py autouse fixture catches this read too — mirrors
+    # _build_defense_matchup_features. _load_schedules raises
+    # FileNotFoundError when the parquet is absent. (#757)
     try:
-        schedules_reg = _load_schedules().copy()
+        schedules_reg = weather_features._load_schedules().copy()
     except FileNotFoundError:
         # Degraded callers without the schedules cache still get the six
         # player-derived stats; off_pts_scored falls back to 0.
@@ -1194,10 +1203,10 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
     # --- 2. Points allowed from schedule scores ---
-    # Route via _load_schedules so the test autouse fixture (which patches
-    # _load_schedules when the parquet is absent) catches this read too.
-    # _load_schedules already filters to game_type == "REG".
-    schedules_reg = _load_schedules().copy()
+    # Route via the weather_features MODULE attr (see the import note) so the
+    # test autouse fixture (which patches _load_schedules when the parquet is
+    # absent) catches this read too. Already filtered to game_type == "REG".
+    schedules_reg = weather_features._load_schedules().copy()
 
     # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) so the join
     # against opponent_team matches for relocated franchises in their

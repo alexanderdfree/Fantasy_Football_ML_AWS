@@ -17,6 +17,7 @@ Project-root sys.path wiring and pytest-marker registration live in the root
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -159,6 +160,35 @@ def _patch_schedules_if_missing():
         yield
     finally:
         mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_to_real_raw_cache(request):
+    """Tripwire: fail any unit test that creates entries in the REAL data/raw.
+
+    The root ``conftest.py`` redirects ``src.config.CACHE_DIR`` to a per-worker
+    temp dir for the whole session, so nothing should land here. A trip means
+    new code writes through a literal ``"data/raw"`` path instead of
+    ``CACHE_DIR`` — fix the write site, don't widen the redirect. Under xdist
+    the failure can smear onto whichever tests ran concurrently on other
+    workers; the named files are the signal, the nodeid is approximate.
+    Unit-marked tests only — integration/e2e suites may legitimately manage
+    real caches.
+    """
+    if request.node.get_closest_marker("unit") is None:
+        yield
+        return
+    raw = Path(__file__).resolve().parents[1] / "data" / "raw"
+    before = set(os.listdir(raw)) if raw.is_dir() else set()
+    yield
+    after = set(os.listdir(raw)) if raw.is_dir() else set()
+    new = sorted(after - before)
+    if new:
+        pytest.fail(
+            f"test wrote into the real data/raw cache: {new} — route the write "
+            "through src.config.CACHE_DIR (redirected to a temp dir for tests "
+            "by the root conftest.py)"
+        )
 
 
 # ---------------------------------------------------------------------------
