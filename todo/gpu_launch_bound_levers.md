@@ -262,10 +262,29 @@ env — `tune_nn.main` dispatches to `ab_ensemble_seeds.run_batch_entry` right a
 argparse (env knobs `FF_ENSEMBLE_SEEDS`/`FF_ENSEMBLE_FIXED_EPOCHS`/`FF_ENSEMBLE_PARITY`;
 parity forces `FF_FORCE_DROPOUT_ZERO=1`, report → stdout +
 `s3://$S3_BUCKET/ensemble_ab/{POS}/report.json`, parity drift exits non-zero).
-**Pending gates (GPU, Batch L4/A10G)**: N=8 speedup ≥3× vs same-regime sequential +
-`parity.worst_diff_over_spread < 0.01` (one job: RB, seeds=8, fixed-epochs=30,
-parity=1), plus one historical-A/B reproduction; ab_harness `--stacked-seeds`
-integration (E2) only after.
+
+**First Batch gate run (L4, 2026-06-11): speedup 4.4× ✅; the original parity gate was
+ill-posed and got redefined.** Capture 33 s (memo: `prepare_data 0.0s` on seeds 2–8),
+stacked 23.1 s vs sequential 101.4 s for 8×30 epochs. The per-seed trajectory gate
+(`worst diff < 1% of pred spread`) reported 1.86e5 — diagnosed on CPU with the real RB
+config: (1) the scalar's spread-clamp explodes on near-constant clamped heads
+(`fumbles_lost` pinned at 0 → seq std ≈ 0 → 1e-6 clamp), and (2) per-seed trajectory
+bit-parity is inherently ill-posed under fp32+Adam — vmapped-vs-eager sub-ULP kernel
+diffs hit Adam's sign-like step-1 (`lr·g/(|g|+eps)`, v̂=g²) on near-zero-grad params and
+deterministically FORK the trajectory. The fork follows the SEED, not the member slot
+(verified by seed-order swap: identical tables, indices flipped; seed 42 stays
+bit-faithful to ~2e-4 over 3 epochs, seeds 43/44 fork to ~1e-2 of spread) — both arms
+are valid fp32 evaluations of the same algorithm, the ADR-0017 accepted-divergence
+physics at trajectory scale. **Redefined gate (decision-level):** per-member fork in
+FANTASY-POINT space (`RMS(fp_stacked_i − fp_seq_i)`) must stay under 0.2× the
+seed-to-seed FP spread (`mean over pairs RMS(fp_seq_i − fp_seq_j)`) — the quantity the
+A/B actually averages over. Measured CPU (RB, 3 seeds × 3 epochs): forks
+[1e-5, 0.015, 0.024] vs seed noise 0.62 → ratio 0.039, ~5× headroom; a systematic bug
+(coupled clip/optimizer, wrong lr) lands at O(1) and still fails. The raw per-key
+worst-over-spread table ships in the report as diagnostics only.
+**Pending (GPU, Batch L4/A10G)**: re-run the gate job (RB, seeds=8, fixed-epochs=30,
+parity=1) on the redefined gate, plus one historical-A/B reproduction; ab_harness
+`--stacked-seeds` integration (E2) only after.
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 

@@ -436,6 +436,55 @@ def test_capture_patch_stashes_and_restores():
 
 
 # ---------------------------------------------------------------------------
+# Parity gate (decision-level: FP fork vs seed noise)
+# ---------------------------------------------------------------------------
+
+
+def test_parity_report_gates_on_fp_fork_not_raw_key_ratio():
+    """The gate is decision-level: member forks must be small vs the
+    seed-to-seed FP spread. A near-constant clamped key (RB fumbles_lost
+    pinned at 0) with a small absolute blip must NOT fail the gate — it
+    exploded the old spread-scaled scalar to 1.86e5 on the first Batch run —
+    but it must surface as the top raw-key diagnostic. A genuinely forked
+    member (FP-scale shift) must fail."""
+    from src.tuning.ab_ensemble_seeds import _parity_report
+
+    rng = np.random.default_rng(0)
+    n = 400
+
+    def member():
+        return {
+            "rushing_yards": rng.normal(60, 20, n),
+            "receiving_yards": rng.normal(20, 10, n),
+            "rushing_tds": rng.gamma(1.0, 0.4, n),
+            "receiving_tds": rng.gamma(1.0, 0.2, n),
+            "receptions": rng.gamma(2.0, 1.0, n),
+            "fumbles_lost": np.zeros(n),
+        }
+
+    seq = [member(), member()]  # two "seeds": O(seed-noise) apart by construction
+    stacked = []
+    for p in seq:
+        q = {k: v + rng.normal(0.0, 0.01, n) for k, v in p.items()}  # tiny fork
+        q["fumbles_lost"] = p["fumbles_lost"] + 0.02  # constant blip, seq std == 0
+        stacked.append(q)
+
+    rep = _parity_report("RB", seq, stacked)
+    assert rep["ok"], rep
+    assert rep["fp_fork_over_seed_noise"] < 0.05
+    # The degenerate-spread key dominates diagnostics without failing the gate.
+    assert rep["raw_key_diagnostics_top"][0]["key"] == "fumbles_lost"
+    assert rep["raw_key_diagnostics_top"][0]["ratio_over_spread"] > 1000
+
+    # A genuine FP-scale fork on one member fails.
+    bad = [stacked[0], {k: v + 10.0 for k, v in stacked[1].items()}]
+    assert not _parity_report("RB", seq, bad)["ok"]
+
+    with pytest.raises(SystemExit):
+        _parity_report("RB", seq[:1], stacked[:1])
+
+
+# ---------------------------------------------------------------------------
 # Batch route (FF_TUNE_ENSEMBLE_AB env dispatch)
 # ---------------------------------------------------------------------------
 
