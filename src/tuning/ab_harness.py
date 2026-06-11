@@ -30,6 +30,11 @@ What it gives you over a bespoke loop:
    false ``Δ=0`` (the cache-confound footgun); each cell computes features once
    anyway, so there is nothing to lose.
 
+0. **Opt-in stacked seeds.** ``--stacked-seeds`` trains each (position,
+   variant)'s seeds as ONE vmap ensemble (~4.5×/host-thread; QB/RB/WR/TE,
+   others fall back to eager cells). Within-mode consistent — compare stacked
+   runs only against stacked runs. See :func:`run_group_stacked`.
+
 3. **Aggregation you can trust.** mean±std across seeds per (position, variant,
    model, metric), Δ-vs-baseline, and the **Ridge-invariance sentinel**: a
    feature/frame variant *must* move Ridge MAE off the baseline (else the feature
@@ -883,6 +888,7 @@ def _collect_unit(info: dict, rc: int, elapsed: float) -> list[dict]:
                 "ridge_mae": None,
                 "error": err,
                 "elapsed_sec": round(elapsed, 1),
+                **({"stacked": True} if kind == "group" else {}),
             }  # fmt: skip
             for s in seeds
         ]
