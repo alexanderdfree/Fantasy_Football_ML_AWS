@@ -1,7 +1,9 @@
-# Scheduled codebase-audit routine
+# Codebase-audit routine (on-demand)
 
-Claude wrapper for the shared code-audit routine. A Claude Code scheduled remote
-agent runs every 2 hours, fans out parallel auditor subagents over the repo, dedupes
+Claude wrapper for the shared code-audit routine. A Claude Code remote agent
+runs on demand (the recurring cron is disabled — see "Firing it manually"),
+works through per-area scopes and standing cross-cutting lenses over the repo
+(parallel workers at the agent's discretion), dedupes
 against open+closed `claude-audit` and `codex-audit` GitHub issues, and files
 **one issue per finding** under `claude-audit` — labeled by severity,
 model regress-risk, and area — plus one closed
@@ -17,8 +19,8 @@ into tier-by-risk PRs.
 |---|---|
 | Trigger ID | `trig_013gKH4q2g2TToBbCr4QDQcJ` |
 | Dashboard | https://claude.ai/code/routines/trig_013gKH4q2g2TToBbCr4QDQcJ |
-| Cron | `0 */2 * * *` UTC (every 2h) |
-| Model | `claude-opus-4-7` |
+| Schedule | disabled (on-demand only — `enabled: false`, empty cron) |
+| Model | `claude-fable-5` |
 
 ## Architecture — the repo is what runs
 
@@ -46,7 +48,8 @@ takes effect the moment it lands on `main` — no dashboard push needed.
 
 1. Edit [`../../../routines/audit/instructions.md`](../../../routines/audit/instructions.md).
 2. Open a PR, merge to `main`.
-3. The next 2-hourly fire reads the new shared instructions automatically.
+3. The next fire (manual — see "Firing it manually") reads the new shared
+   instructions automatically.
 
 > **Invariant:** `routines/audit/instructions.md` must stay at exactly that path on `main`.
 > If it's moved, renamed, or deleted, the wrappers STOP without auditing rather than improvising.
@@ -61,7 +64,8 @@ takes effect the moment it lands on `main` — no dashboard push needed.
    - runs `RemoteTrigger get` to fetch the **current full** `job_config`,
    - sets `job_config.ccr.events[0].data.message.content` to the contents of `shim.md`,
    - applies any `config.json` changes (model → `session_context.model`, cron →
-     `cron_expression`, allowed tools → `session_context.allowed_tools`),
+     top-level `cron_expression`, enabled → top-level `enabled`, allowed tools →
+     `session_context.allowed_tools`),
    - generates a **fresh** lowercase v4 UUID for `events[0].data.uuid`,
    - calls `RemoteTrigger update trigger_id=trig_013gKH4q2g2TToBbCr4QDQcJ body={...}`.
 4. Verify: `RemoteTrigger get` → `next_run_at` is future-dated and `events[0].data.message.content`
@@ -78,3 +82,14 @@ takes effect the moment it lands on `main` — no dashboard push needed.
   that omits it leaves the existing connectors intact. (Re-sending risks clobbering them; use the
   `clear_mcp_connections` flag only if you truly mean to remove them.)
 - **You can't delete the routine via the API** — do that at https://claude.ai/code/routines.
+
+## Firing it manually
+
+The recurring cron is disabled; the routine only runs when fired by hand:
+
+1. Invoke `/schedule` (loads the `RemoteTrigger` tool).
+2. `RemoteTrigger run trigger_id=trig_013gKH4q2g2TToBbCr4QDQcJ` — one immediate
+   run; the result appears on the dashboard. If the API refuses to fire a
+   disabled trigger, instead set a one-shot `run_once_at` a couple of minutes
+   out via `RemoteTrigger update`; the platform auto-disables after it fires
+   (`ended_reason: run_once_fired`).

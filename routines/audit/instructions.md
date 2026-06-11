@@ -204,9 +204,12 @@ guard keeps their base tier.
 
 ## Step 2: Fanout
 
-Use the provider's available parallelism. Spawn all workers in one batch if the
-provider can do so. If not, run Layer A and then Layer B, or run the workers
-sequentially while preserving the same scopes and output contract.
+Use parallel workers where the provider supports them. How many workers to
+spawn, how scopes are grouped into workers, and how batches are sequenced is up
+to the runner — a worker may cover several scopes, and over-spawning is worse
+than fewer, deeper workers. Every scope below must be covered; run sequentially
+where parallelism is unavailable, preserving the same scopes and output
+contract.
 
 Layer A location-auditor scopes:
 
@@ -250,7 +253,9 @@ Layer B standing cross-cutting lenses:
   parity breaks promised by docs; do not report intentional provider differences.
 
 Budget is soft pacing only; the 2-hour run wall-clock is the only hard limit.
-Set each worker's budget from a base leverage tier, adjusted by `/tmp/area_yield.tsv`:
+Set each scope's soft budget from a base leverage tier, adjusted by
+`/tmp/area_yield.tsv` (a worker covering several scopes gets the sum of its
+scopes' budgets):
 
 - HEAVY 30 minutes: shared, serving, data, L1-L5.
 - MEDIUM 20 minutes: qb, rb, wr, te, k, dst, batch/CI.
@@ -260,7 +265,8 @@ Set each worker's budget from a base leverage tier, adjusted by `/tmp/area_yield
 - shared, serving, and L1-L5 never drop below HEAVY.
 - sample < 5 or no data keeps the base tier.
 
-Before spawning, print the chosen worker -> tier, budget, yield, sample table.
+Before spawning, print the scope -> tier, budget, yield, sample table and the
+scope -> worker grouping.
 
 ## Per-worker prompt template
 

@@ -14,9 +14,9 @@ Claude runtime values:
 Claude-only runtime/tool rules:
 
 - Use Claude's configured cloud routine tools and repository checkout.
-- For the fanout step, use Claude Agent subagents when available. Prefer one
-  parallel batch for all location auditors and cross-cutting lenses; if the
-  platform caps concurrency, run Layer A and Layer B in two back-to-back batches.
+- For the fanout step, Claude Agent subagents are available. Worker count,
+  scope grouping, and batching are up to you — a worker may cover several
+  scopes; avoid over-spawning.
 - Keep the run read-only on repo files. The only permitted writes are those
   allowed by `routines/audit/instructions.md`: `/tmp/*`, idempotent label
   creation, per-finding issue creation, comments on issues created in this run,
