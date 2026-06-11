@@ -8,7 +8,9 @@ from scipy.stats import nbinom, poisson
 from src.shared.training import (
     MultiTargetLoss,
     hurdle_negbin_value_loss,
+    hurdle_negbin_value_loss_capturable,
     hurdle_poisson_value_loss,
+    hurdle_poisson_value_loss_capturable,
     negbin2_log_prob,
     ztnb2_log_prob,
     ztp_log_prob,
@@ -334,3 +336,76 @@ class TestTrainBranchLossPath:
         combined.backward()
         assert preds["a"].grad is not None
         assert preds["b"].grad is not None
+
+
+@pytest.mark.unit
+class TestCapturableLossEquivalence:
+    """The full-step CUDA-graph path computes ``combined`` via
+    ``compute_combined_capturable`` (branch-free hurdle dispatch). These pin it
+    to the branchy ``_compute_loss_components`` combined across head families,
+    including the data shapes that exercise the eliminated branch."""
+
+    def _hurdle_preds_targets(self, y_values):
+        y = torch.tensor(y_values)
+        n = y.shape[0]
+        preds = {
+            "t_gate_logit": torch.linspace(-1.0, 1.0, n),
+            "t_value_mu": torch.linspace(0.5, 2.5, n),
+            "t_value_log_alpha": torch.linspace(-0.5, 0.5, n),
+        }
+        return preds, {"t": y}
+
+    @pytest.mark.parametrize(
+        "y_values",
+        [
+            [0.0, 1.0, 2.0, 0.0, 3.0],  # mixed zeros/positives
+            [0.0, 0.0, 0.0],  # no positives -> branchy early-return path
+            [1.0, 2.0, 4.0],  # all positive
+        ],
+    )
+    @pytest.mark.parametrize("family", ["hurdle_negbin", "hurdle_poisson"])
+    def test_branchless_hurdle_matches_branchy(self, y_values, family):
+        branchy = {
+            "hurdle_negbin": hurdle_negbin_value_loss,
+            "hurdle_poisson": hurdle_poisson_value_loss,
+        }[family]
+        branchless = {
+            "hurdle_negbin": hurdle_negbin_value_loss_capturable,
+            "hurdle_poisson": hurdle_poisson_value_loss_capturable,
+        }[family]
+        preds, targets = self._hurdle_preds_targets(y_values)
+        a = branchy(preds, targets, "t")
+        b = branchless(preds, targets, "t")
+        assert b.item() == pytest.approx(a.item(), rel=1e-6, abs=1e-7)
+
+    def test_combined_capturable_matches_components_combined(self):
+        loss_fn = MultiTargetLoss(
+            target_names=["a", "b", "t"],
+            loss_weights={"a": 2.0, "b": 0.5, "t": 1.0},
+            head_losses={"a": "huber", "b": "poisson_nll", "t": "hurdle_poisson"},
+            gated_targets=["t"],
+        )
+        preds = {
+            "a": torch.tensor([1.0, 2.0, 3.0, 4.0]),
+            "b": torch.tensor([0.5, 1.5, 2.5, 0.7]),
+            "t_gate_logit": torch.tensor([-0.5, 0.2, 1.0, -1.2]),
+            "t_value_mu": torch.tensor([0.8, 1.2, 2.0, 0.6]),
+            "t_value_log_alpha": torch.tensor([0.0, 0.1, -0.1, 0.2]),
+        }
+        targets = {
+            "a": torch.tensor([1.5, 0.0, 3.0, 5.0]),
+            "b": torch.tensor([1.0, 1.0, 2.0, 1.0]),
+            "t": torch.tensor([0.0, 1.0, 2.0, 0.0]),
+        }
+        branchy, _ = loss_fn._compute_loss_components(preds, targets)
+        branchless = loss_fn.compute_combined_capturable(preds, targets)
+        assert branchless.item() == pytest.approx(branchy.item(), rel=1e-6)
+
+    def test_combined_capturable_backward_flows(self):
+        loss_fn = MultiTargetLoss(
+            target_names=["a"], loss_weights={"a": 1.0}, head_losses={"a": "huber"}
+        )
+        preds = {"a": torch.tensor([1.0, 2.0], requires_grad=True)}
+        combined = loss_fn.compute_combined_capturable(preds, {"a": torch.tensor([0.5, 2.5])})
+        combined.backward()
+        assert preds["a"].grad is not None

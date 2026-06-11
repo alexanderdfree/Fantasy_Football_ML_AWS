@@ -80,6 +80,11 @@ DEFAULT_N_TRIALS = 30
 DEFAULT_N_JOBS = "auto"
 DEFAULT_PARALLEL_BACKEND = "auto"
 DEFAULT_CUDA_GRAPH = True
+# Full-step capture (gather+fwd+loss in one graph, FF_CUDA_GRAPH_FULL) is
+# default-ON for TUNE jobs only: tuning compares trials within one regime, so
+# the wider capture is pure throughput; production training keeps the
+# model-only capture until a per-position A/B clears the wider scope.
+DEFAULT_CUDA_GRAPH_FULL = True
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
 
 
@@ -113,6 +118,7 @@ def submit_tune_job(
     n_jobs: int | str = DEFAULT_N_JOBS,
     parallel_backend: str = DEFAULT_PARALLEL_BACKEND,
     cuda_graph: bool = DEFAULT_CUDA_GRAPH,
+    cuda_graph_full: bool = DEFAULT_CUDA_GRAPH_FULL,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     batch_client=None,
 ) -> tuple[str, str]:
@@ -147,7 +153,9 @@ def submit_tune_job(
         command += ["--timeout", str(timeout)]
 
     storage_version = resolve_search_space_version(
-        _batch_storage_backend(parallel_backend), cuda_graph=cuda_graph
+        _batch_storage_backend(parallel_backend),
+        cuda_graph=cuda_graph,
+        full_graph=cuda_graph_full,
     )
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
@@ -174,6 +182,7 @@ def submit_tune_job(
                 # so the container lands on the same storage_version predicted
                 # above. Keep the env value and the cuda_graph bool coupled.
                 {"name": "FF_CUDA_GRAPH", "value": "1" if cuda_graph else "0"},
+                {"name": "FF_CUDA_GRAPH_FULL", "value": "1" if cuda_graph_full else "0"},
                 {"name": "FF_AMP_DTYPE", "value": "auto"},
                 {"name": "FF_COMPILE", "value": "0"},
                 {"name": "TUNE_NN_STORAGE_VERSION", "value": storage_version},
@@ -197,10 +206,13 @@ def _print_plan(
     n_jobs: int,
     parallel_backend: str,
     cuda_graph: bool,
+    cuda_graph_full: bool,
     attempt_timeout: int,
 ) -> None:
     storage_version = resolve_search_space_version(
-        _batch_storage_backend(parallel_backend), cuda_graph=cuda_graph
+        _batch_storage_backend(parallel_backend),
+        cuda_graph=cuda_graph,
+        full_graph=cuda_graph_full,
     )
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:       {AWS_REGION}")
@@ -215,6 +227,7 @@ def _print_plan(
     print(f"  n_jobs:       {n_jobs}")
     print(f"  backend:      {parallel_backend}")
     print(f"  cuda graph:   {cuda_graph}")
+    print(f"  graph full:   {cuda_graph_full}")
     print(f"  storage:      {storage_version}")
     print(f"  timeout:      {timeout if timeout is not None else 'no cap'}")
     print(f"  seed:         {seed}")
@@ -273,6 +286,16 @@ def main():
         help="Enable FF_CUDA_GRAPH inside tune jobs (true/false; default true)",
     )
     parser.add_argument(
+        "--cuda-graph-full",
+        default="true" if DEFAULT_CUDA_GRAPH_FULL else "false",
+        help=(
+            "Enable FF_CUDA_GRAPH_FULL (full-step capture: gather+forward+loss "
+            "in one graph) inside tune jobs (true/false; default true). "
+            "Requires --cuda-graph true; studies land in the *_graphfull "
+            "namespaces."
+        ),
+    )
+    parser.add_argument(
         "--attempt-timeout",
         type=int,
         default=DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
@@ -303,6 +326,7 @@ def main():
     wait = args.wait.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
     cuda_graph = args.cuda_graph.strip().lower() in {"1", "true", "yes", "on"}
+    cuda_graph_full = args.cuda_graph_full.strip().lower() in {"1", "true", "yes", "on"}
     n_jobs_text = str(args.n_jobs).strip().lower()
     if n_jobs_text != "auto":
         try:
@@ -323,6 +347,7 @@ def main():
             args.n_jobs,
             args.parallel_backend,
             cuda_graph,
+            cuda_graph_full,
             args.attempt_timeout,
         )
         return
@@ -343,6 +368,7 @@ def main():
                 n_jobs=args.n_jobs,
                 parallel_backend=args.parallel_backend,
                 cuda_graph=cuda_graph,
+                cuda_graph_full=cuda_graph_full,
                 attempt_timeout=args.attempt_timeout,
                 batch_client=batch_client,
             ): pos
@@ -363,7 +389,9 @@ def main():
             print(f"ERROR: {len(submit_failures)} positions failed to submit: {submit_failures}")
             sys.exit(1)
         storage_version = resolve_search_space_version(
-            _batch_storage_backend(args.parallel_backend), cuda_graph=cuda_graph
+            _batch_storage_backend(args.parallel_backend),
+            cuda_graph=cuda_graph,
+            full_graph=cuda_graph_full,
         )
         print(
             f"Results land at s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
@@ -388,7 +416,9 @@ def main():
     if succeeded:
         print(f"\nSucceeded positions: {succeeded}")
         storage_version = resolve_search_space_version(
-            _batch_storage_backend(args.parallel_backend), cuda_graph=cuda_graph
+            _batch_storage_backend(args.parallel_backend),
+            cuda_graph=cuda_graph,
+            full_graph=cuda_graph_full,
         )
         print(
             f"  Per-position results: s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"

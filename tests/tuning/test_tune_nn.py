@@ -453,16 +453,28 @@ def test_thread_graph_storage_profile_is_separate_from_eager():
 
 
 def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
-    """main() keys the study namespace on cuda_graph_enabled() — the trainer's
-    actual capture decision — for both backends, and returns the same bool for
-    the log line + results-dict provenance."""
+    """main() keys the study namespace on cuda_graph_enabled() AND
+    cuda_graph_full_enabled() — the trainer's actual capture decisions — for
+    both backends, and returns the same bools for the log line + results-dict
+    provenance."""
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graph", True)
-    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps_graph", True)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graph", True, False)
+    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps_graph", True, False)
+
+    monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: True)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graphfull", True, True)
+    assert tune_nn._resolve_storage_version("mps") == (
+        "scheduler_v2_mps_graphfull",
+        True,
+        True,
+    )
 
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2", False)
-    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps", False)
+    # full requires the base gate: full-true + graph-false -> eager namespace.
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2", False, True)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
+    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps", False, False)
 
 
 def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch):
@@ -967,3 +979,15 @@ def test_resolve_n_jobs_auto_mps_cpu_bound_when_ram_ample(monkeypatch):
     monkeypatch.setattr(tune_nn, "_current_cpu_ids", lambda: [0, 1, 2, 3])
     monkeypatch.setattr(tune_nn, "_cgroup_memory_limit_bytes", lambda: _BATCH_JOB_LIMIT_BYTES)
     assert tune_nn._resolve_n_jobs("auto", "mps") == 4
+
+
+def test_graphfull_storage_profiles_compose_only_with_graph():
+    """FF_CUDA_GRAPH_FULL appends 'full' to the GRAPH namespaces only —
+    full-step capture requires the base graph gate, so full-without-graph
+    resolves to the plain namespace instead of an unreachable one."""
+    rs = tune_nn._resolve_search_space_version
+    assert rs("mps", cuda_graph=True, full_graph=True) == "scheduler_v2_mps_graphfull"
+    assert rs("thread", cuda_graph=True, full_graph=True) == "scheduler_v2_graphfull"
+    assert rs("mps", cuda_graph=False, full_graph=True) == "scheduler_v2_mps"
+    assert rs("thread", cuda_graph=False, full_graph=True) == "scheduler_v2"
+    assert rs("mps", cuda_graph=True, full_graph=False) == "scheduler_v2_mps_graph"

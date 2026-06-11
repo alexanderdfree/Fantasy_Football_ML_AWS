@@ -27,6 +27,10 @@ _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 # autodetects ON for CUDA sm_80+; set this falsy to force the eager path —
 # see ``cuda_graph_enabled``.
 _CUDA_GRAPH_ENV = "FF_CUDA_GRAPH"
+# Full-step capture is OPT-IN (unlike the autodetect-ON model-only capture):
+# truthy enables it on top of ``cuda_graph_enabled()`` — see
+# ``cuda_graph_full_enabled``.
+_CUDA_GRAPH_FULL_ENV = "FF_CUDA_GRAPH_FULL"
 
 
 def requested_device() -> str:
@@ -180,6 +184,33 @@ def cuda_graph_enabled() -> bool:
         "no",
         "off",
     }
+
+
+def cuda_graph_full_enabled() -> bool:
+    """Whether FULL-STEP CUDA graph capture is active for NN training.
+
+    Extends :func:`cuda_graph_enabled`'s model-only fwd+bwd capture to one
+    graph covering batch gather + model forward + combined loss (see
+    ``_GraphedTrainStep`` in ``src/shared/training.py``), eliminating the
+    eager per-step loss/gather kernel launches on the launch-bound host path.
+
+    **Opt-in** (``FF_CUDA_GRAPH_FULL`` truthy), unlike the autodetect-ON
+    model-only capture: the owner approved ONE graphed rebaseline (ADR-0017);
+    a second silent capture-scope change to the production training path
+    would re-open benchmark comparability, so tune jobs enable this
+    explicitly (``launch_tune --cuda-graph-full``) while training stays on
+    the model-only capture until a per-position A/B clears it. Requires
+    ``cuda_graph_enabled()`` (CUDA sm_80+, not force-disabled) — full-step
+    capture is a superset, never a substitute, of the base gate.
+    """
+    if os.environ.get(_CUDA_GRAPH_FULL_ENV, "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return False
+    return cuda_graph_enabled()
 
 
 def seed_everything(seed: int) -> None:
