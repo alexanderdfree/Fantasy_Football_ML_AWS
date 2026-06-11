@@ -285,6 +285,48 @@ def test_main_wait_timeout_override(monkeypatch, capsys):
 
 
 @pytest.mark.unit
+def test_main_writes_job_ids_breadcrumb_when_env_set(_main_happy_stubs, monkeypatch, tmp_path):
+    """With FF_BATCH_JOB_IDS_FILE set (module global JOB_IDS_FILE), main()
+    records the submitted job ids + expected positions so train-batch.yml's
+    recovery step can re-check the exact jobs after a failed wait."""
+    import json as _json
+
+    from src.batch import launch as lm
+
+    ids_path = tmp_path / "batch_job_ids.json"
+    monkeypatch.setattr(lm, "JOB_IDS_FILE", str(ids_path))
+    monkeypatch.setattr("sys.argv", ["launch.py", "--positions", "QB", "RB"])
+    lm.main()
+
+    payload = _json.loads(ids_path.read_text())
+    assert payload["expected_positions"] == ["QB", "RB"]
+    assert payload["jobs"] == {"QB": "job-QB", "RB": "job-RB"}
+
+
+@pytest.mark.unit
+def test_write_job_ids_file_labels_split_tuple_keys(tmp_path):
+    """Split-mode job_ids use (position, branch) tuple keys; the breadcrumb
+    must serialize them as the same "POS/branch" labels wait_for_jobs prints,
+    and a write failure must not raise (jobs are already submitted)."""
+    import json as _json
+
+    from src.batch.launch import _write_job_ids_file
+
+    ids_path = tmp_path / "ids.json"
+    _write_job_ids_file(
+        str(ids_path),
+        ["WR"],
+        {("WR", "nn"): "j-nn", ("WR", "cpu"): "j-cpu", ("WR", "merge"): "j-merge"},
+    )
+    payload = _json.loads(ids_path.read_text())
+    assert payload["expected_positions"] == ["WR"]
+    assert payload["jobs"] == {"WR/nn": "j-nn", "WR/cpu": "j-cpu", "WR/merge": "j-merge"}
+
+    # Unwritable path: prints a warning, never raises.
+    _write_job_ids_file(str(tmp_path / "no-such-dir" / "ids.json"), ["WR"], {"WR": "j"})
+
+
+@pytest.mark.unit
 def test_main_auto_appends_history_for_succeeded(_main_happy_stubs, monkeypatch):
     """Default wait path rolls the succeeded positions into a benchmark_history
     row via ``_append_benchmark_history`` so a standalone (non-CI) run shows up

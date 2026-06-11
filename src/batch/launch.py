@@ -22,6 +22,7 @@ Config (environment variables, all optional):
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 import tarfile
@@ -60,6 +61,14 @@ JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or No
 # manifest-write race when two train-batch runs land in quick succession,
 # even after Layer A pins the job-def revision). Empty -> not passed.
 TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
+# Optional breadcrumb file recording the submitted Batch job ids. Set by
+# train-batch.yml so its post-timeout recovery step can re-check the SAME jobs
+# via `aws batch describe-jobs` after wait_for_jobs gives up — on 2026-06-08
+# (run 27161472255) Spot capacity starvation held all six jobs RUNNABLE past
+# the 3h wait; they SUCCEEDED 0.5-3.5 min after the workflow stopped looking,
+# and the benchmark-history append was silently skipped. Unset (the default,
+# workstation runs) writes nothing.
+JOB_IDS_FILE = os.environ.get("FF_BATCH_JOB_IDS_FILE", "") or None
 # Optional CUDA-graph OVERRIDE, forwarded to the container only when
 # FF_CUDA_GRAPH is set in this launcher's environment. The container's
 # cuda_graph_enabled() (src/shared/utils.py) AUTODETECTS graphs ON for sm_80+
@@ -555,6 +564,28 @@ def _print_plan(positions, seed, *, split: bool = False, split_run_id: str | Non
             print(f"    - {pos:<4} -> definition {_job_definition_for(pos)}")
 
 
+def _write_job_ids_file(path, expected_positions, job_ids):
+    """Record submitted job ids + the expected position set as JSON.
+
+    Best-effort breadcrumb for train-batch.yml's recovery step (and operator
+    forensics after a crash): the workflow re-checks these exact job ids when
+    wait_for_jobs exits non-zero, so a wait that expired minutes before the
+    jobs reached SUCCEEDED no longer skips the benchmark append. Split-mode
+    tuple keys serialize as "POS/branch" labels. Never raises — losing the
+    breadcrumb must not fail a launch whose jobs are already submitted.
+    """
+    payload = {
+        "expected_positions": list(expected_positions),
+        "jobs": {_job_label(key): job_id for key, job_id in job_ids.items()},
+    }
+    try:
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2)
+        print(f"Wrote submitted job ids to {path}")
+    except OSError as e:
+        print(f"WARNING: could not write job-ids file {path}: {e!r}")
+
+
 def _append_benchmark_history(positions, *, note):
     """Best-effort: roll succeeded positions into a benchmark_history row + S3
     mirror so a standalone (non-CI) Batch run shows up in the serving app's
@@ -697,6 +728,9 @@ def main():
             except Exception as e:
                 print(f"[{pos}] FAILED to submit: {e}")
                 submit_failures.append(pos)
+
+    if JOB_IDS_FILE:
+        _write_job_ids_file(JOB_IDS_FILE, args.positions, job_ids)
 
     if not wait:
         print("\nJobs submitted. Use 'aws batch describe-jobs' to check status.")
