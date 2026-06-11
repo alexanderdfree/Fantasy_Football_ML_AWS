@@ -235,3 +235,27 @@ def test_default_run_id_shape():
     rid = launch_ab._default_run_id("src.tuning.ab_example", "abcdef0123456789")
     assert rid.startswith("ab_example-")
     assert rid.endswith("-abcdef0")
+
+
+def test_submit_ab_job_stacked_env():
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "job-2"}
+    launch_ab.submit_ab_job(
+        "RB",
+        spec_dotted=SPEC,
+        run_id="run-2",
+        s3_prefix="ab_runs",
+        job_definition="ff-ab-job:7",
+        image_sha="abc1234",
+        seeds=[42, 123],
+        only=None,
+        stacked=True,
+        stacked_epochs=12,
+        batch_client=batch,
+    )
+    env = {
+        e["name"]: e["value"]
+        for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert env["FF_AB_STACKED"] == "1"
+    assert env["FF_AB_STACKED_EPOCHS"] == "12"

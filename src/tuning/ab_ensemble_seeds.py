@@ -649,10 +649,13 @@ def run_batch_entry(position: str) -> None:
     if parity:
         os.environ["FF_FORCE_DROPOUT_ZERO"] = "1"
 
+    from src.tuning.resource_probe import ResourceProbe
     from src.tuning.tune_nn import _ensure_data_from_s3
 
     _ensure_data_from_s3()
+    probe = ResourceProbe().start()
     report = run_ensemble_ab(position, n_seeds, fixed_epochs, parity_check=parity)
+    report["resources"] = probe.stop()
     print(json.dumps(report, indent=2))
 
     bucket = os.environ.get("S3_BUCKET")

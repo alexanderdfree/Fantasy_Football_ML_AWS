@@ -1033,3 +1033,67 @@ def test_graphfull_storage_profiles_compose_only_with_graph():
     assert rs("mps", cuda_graph=False, full_graph=True) == "scheduler_v2_mps"
     assert rs("thread", cuda_graph=False, full_graph=True) == "scheduler_v2"
     assert rs("mps", cuda_graph=True, full_graph=False) == "scheduler_v2_mps_graph"
+
+
+# ---------------------------------------------------------------------------
+# Stacked multi-seed objective (FF_TUNE_STACKED_SEEDS / --stacked-seeds)
+# ---------------------------------------------------------------------------
+
+
+def test_stacked_objective_reports_mean_trajectory_and_returns_min(monkeypatch):
+    """stacked_n >= 2 routes _make_objective to the vmap-ensemble body: it
+    captures N consecutive seeds with the worker's trial-data memo, trains
+    for stacked_epochs, reports the per-epoch (already member-averaged) val
+    loss to the trial, and returns the trajectory min."""
+    import optuna
+
+    from src.tuning import tune_nn
+
+    seen: dict = {}
+
+    def fake_capture(position, seeds, base_cfg, *, frames=None, memo=None):
+        seen["position"] = position
+        seen["seeds"] = list(seeds)
+        seen["memo_is_trial_memo"] = memo is tune_nn._TRIAL_DATA_MEMO
+        seen["sampled_override_applied"] = "attn_lr" in base_cfg
+        return ["cap"] * len(seeds), {}
+
+    def fake_train(captures, cfg, device, n_epochs, base_order_seed=0, epoch_callback=None):
+        seen["n_epochs"] = n_epochs
+        for epoch, val in enumerate([0.5, 0.2, 0.3]):
+            epoch_callback(epoch, val)
+        return None, None, None
+
+    monkeypatch.setattr("src.tuning.ab_ensemble_seeds.capture_seeds", fake_capture)
+    monkeypatch.setattr("src.tuning.ab_ensemble_seeds.train_stacked", fake_train)
+
+    objective = tune_nn._make_objective("RB", {}, 42, stacked_n=4, stacked_epochs=3)
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=1)
+
+    assert study.best_value == pytest.approx(0.2)
+    assert seen["seeds"] == [42, 43, 44, 45]
+    assert seen["n_epochs"] == 3
+    assert seen["memo_is_trial_memo"] is True
+    assert seen["sampled_override_applied"] is True  # trial overrides reached the cfg
+    assert study.trials[0].intermediate_values == {0: 0.5, 1: 0.2, 2: 0.3}
+
+
+def test_create_or_load_study_max_resource_override(tmp_path, monkeypatch):
+    """The stacked objective trains a fixed epoch count; the Hyperband rung
+    ladder must top out there instead of the eager path's nn_epochs."""
+    from src.tuning import tune_nn
+
+    monkeypatch.setattr(tune_nn, "_study_db_path", lambda pos, v: str(tmp_path / f"{pos}-{v}.db"))
+    stacked = tune_nn._create_or_load_study(
+        "RB",
+        storage_version="t-stk",
+        sqlite_timeout=5,
+        base_cfg={"nn_epochs": 300},
+        max_resource=30,
+    )
+    eager = tune_nn._create_or_load_study(
+        "RB", storage_version="t-eag", sqlite_timeout=5, base_cfg={"nn_epochs": 300}
+    )
+    assert stacked.pruner._max_resource == 30
+    assert eager.pruner._max_resource == 300

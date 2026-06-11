@@ -72,6 +72,8 @@ from src.tuning.ab_batch import (  # noqa: E402
     ENV_S3_PREFIX,
     ENV_SEEDS,
     ENV_SPEC,
+    ENV_STACKED,
+    ENV_STACKED_EPOCHS,
     cell_result_key,
 )
 from src.tuning.ab_harness import aggregate, build_cells, print_report, resolve_spec  # noqa: E402
@@ -178,10 +180,18 @@ def submit_ab_job(
     only: list[str] | None,
     cuda_graph: str = "auto",
     feature_cache: bool = False,
+    stacked: bool = False,
+    stacked_epochs: int = 30,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     batch_client=None,
 ) -> tuple[str, str]:
-    """Submit one per-position A/B job. Returns (position, job_id)."""
+    """Submit one per-position A/B job. Returns (position, job_id).
+
+    ``stacked=True`` forwards FF_AB_STACKED so the in-container runner trains
+    each variant's seeds as ONE vmap ensemble (owner-sanctioned opt-in; see
+    ab_harness --stacked-seeds). Per-seed result keys are unchanged, so the
+    collector works as-is; compare stacked runs only against stacked runs.
+    """
     import boto3
 
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
@@ -210,6 +220,9 @@ def submit_ab_job(
         environment.append({"name": "FF_CUDA_GRAPH", "value": "1" if cuda_graph == "true" else "0"})
     if feature_cache:
         environment.append({"name": "FF_FEATURE_CACHE_DISABLE", "value": "0"})
+    if stacked:
+        environment.append({"name": ENV_STACKED, "value": "1"})
+        environment.append({"name": ENV_STACKED_EPOCHS, "value": str(int(stacked_epochs))})
 
     response = batch.submit_job(
         jobName=f"ff-ab-{position.lower()}-{int(time.time())}-{uuid.uuid4().hex[:6]}",
@@ -329,6 +342,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="auto (default) leaves the container's sm_80+ autodetect ON — the "
         "production graphed metric path; false forces the eager path for a "
         "bit-comparable A/B.",
+    )
+    p.add_argument(
+        "--stacked-seeds",
+        action="store_true",
+        help=(
+            "Train each (position, variant)'s seeds as ONE vmap ensemble in-container "
+            "(QB/RB/WR/TE stack; others run eager cells). Compare stacked runs only "
+            "against stacked runs."
+        ),
+    )
+    p.add_argument(
+        "--stacked-epochs",
+        type=int,
+        default=30,
+        help="Fixed epochs for stacked attention training (default 30)",
     )
     p.add_argument(
         "--feature-cache",
@@ -476,6 +504,8 @@ def main() -> None:
                 only=args.only,
                 cuda_graph=args.cuda_graph,
                 feature_cache=args.feature_cache,
+                stacked=args.stacked_seeds,
+                stacked_epochs=args.stacked_epochs,
                 attempt_timeout=args.attempt_timeout,
                 batch_client=batch,
             ): pos
