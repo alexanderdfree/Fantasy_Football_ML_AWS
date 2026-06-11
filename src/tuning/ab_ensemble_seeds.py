@@ -176,11 +176,15 @@ def capture_seeds(position: str, seeds: list[int], base_cfg: dict) -> tuple[list
             "is train_attention_nn enabled for this position?"
         )
     # Data prep is seed-invariant; the loaders must therefore be identical.
-    f0 = captures[0]["train_loader"].features
-    for c in captures[1:]:
-        for a, b in zip(f0, c["train_loader"].features, strict=True):
-            if not torch.equal(a, b):
-                raise RuntimeError("seed captures disagree on training data — aborting")
+    # The resident-tensor identity check needs the CUDA _GPUResidentBatcher
+    # (`.features`); the CPU DataLoader path (tests/debug runs) skips it —
+    # the loop itself still works there via _batch_to_device.
+    if hasattr(captures[0]["train_loader"], "features"):
+        f0 = captures[0]["train_loader"].features
+        for c in captures[1:]:
+            for a, b in zip(f0, c["train_loader"].features, strict=True):
+                if not torch.equal(a, b):
+                    raise RuntimeError("seed captures disagree on training data — aborting")
     return captures, test_capture
 
 
