@@ -224,6 +224,28 @@ question is closed on measurement (the pre-D2 8-on-4 result was not stale after 
 
 ---
 
+## Lever C — vmap seed-ensembles for multi-seed A/Bs — E1 BUILT 2026-06-11, GPU gates pending
+
+The oversubscription probes (8-on-4 eager, 5-on-4 post-D2) proved ~1 trial per vCPU for
+HETEROGENEOUS jobs — but the multi-seed A/B workload (≥8 seeds × same config) is
+homogeneous, which is the one case where true CPU multiplexing works:
+[src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py) stacks N seeds'
+models (`torch.func.stack_module_state` + `functional_call` + `vmap`) so ONE host thread
+trains all N with ~1× launch cost. A/B-ONLY regime, enforced in-module: `FF_NN_NORM=layer`
+(kills the backbone BN — the model's only BN site — leaving a buffer-free vmap-clean
+model; LN-vs-BN measured noise at 8 seeds), FP32 (no GradScaler → no cross-member
+inf-coupling, provable parity), `FF_NN_FIXED_EPOCHS`, shared batch order (CRN variance
+reduction), dropout live via `randomness='different'`. Construction is captured from the
+REAL pipeline per seed (streams-prototype monkeypatch trick); the loss is the
+`compute_combined_capturable` the CUDA-graph paths already use; the one new math is the
+per-member grad clip (a global clip would couple members). CPU tests pin per-member-clip ≡
+`clip_grad_norm_`, step-0 forward parity (1e-6), single-batch post-clip grad parity
+(1e-5), and trained-end parity (1e-2 — fp32 vmap kernel-order compounding, same
+amplification physics as the graph drift). **Pending gates (GPU)**: N=8 speedup ≥3× vs
+same-regime sequential (`FF_FORCE_DROPOUT_ZERO=1 python -m src.tuning.ab_ensemble_seeds
+--position RB --seeds 8 --fixed-epochs 30 --parity-check` on the 5080), plus one
+historical-A/B reproduction; ab_harness `--stacked-seeds` integration (E2) only after.
+
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 
 **Idea:** the thing MPS would have done. Collapse the 6 subprocesses into **one process** running the 6 positions on separate `torch.cuda.Stream`s, so their kernels co-reside in one CUDA context and fill each other's idle gaps inside the scheduler — without a cross-process server.

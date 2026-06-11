@@ -130,3 +130,5 @@ The parallel + ablation machinery is already in the tree:
 - Measure parallel speedup vs sequential on both machines (GPU-launch-bound 5080 wave; 16-core CPU pool).
 - Smoke: 2 variants × 2 seeds × 1 position completes with **served `{pos}/outputs` untouched** + a clean
   ±std table.
+
+- 2026-06-11: stacked seed-ensemble prototype built ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py), Lever C in gpu_launch_bound_levers.md) — one host thread trains N seeds via torch.func vmap; pending GPU speedup gate, then an opt-in `--stacked-seeds` harness mode (group cells by position×variant; one full run for deterministic models + per-seed stacked attention).
