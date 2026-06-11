@@ -101,6 +101,26 @@ rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
 
 **Fixed-scale follow-up (2026-06-01):** lower explicit scales were tested on RB with fixed 30 epochs, dropout disabled, deterministic mode on, and graph BN warmup restored. `init_scale=2048` and `1024` still overflowed in the graph arm; `512` completed both graph and eager with identical scale/skip traces (2130 steps, 0 scale changes) but still produced a graph-vs-eager MAE delta (`4.044157` vs `4.060941`). That isolates the remaining difference to the expected multi-step FP16 trajectory drift from graph replay/kernel ordering. Fixed scale is not a bit-comparable bridge to eager and is its own worse-quality training regime, so the decision is: **graphed runs compare to graphed runs, not to eager baselines**; use a graphed local rebaseline for `FF_CUDA_GRAPH=1` A/Bs.
 
+### Thread-vs-MPS backend A/B (2026-06-11) — MPS wins by disqualification; thread+graph is concurrency-UNSAFE
+
+Two 20-target-trial RB tune jobs on identical g6.xlarge Spot hosts/image, `--n-jobs 4`:
+- **mps (processes): SUCCEEDED** — 45 trials (22 complete / 23 pruned / 0 fail) in **331 s**
+  (~8.2 trials/min incl. pruned), studies in `scheduler_v2_mps_graph`.
+- **thread: FAILED** — `torch.AcceleratorError: CUDA error: the operation cannot be performed
+  in the present state` (`cudaErrorIllegalState`) in `_maybe_graph_model` →
+  `make_graphed_callables` → `capture_begin`, a few trials in. Root cause is structural,
+  not a flake: `torch.cuda.graph` captures in the default **"global" capture mode**, which
+  errors when ANY other thread in the process has in-flight GPU work — with n_jobs>1
+  threads, one trial's capture races every other trial's kernel launches. Processes (MPS
+  backend) isolate capture state per trial; threads cannot, short of upstream
+  `capture_error_mode="thread_local"` support in `make_graphed_callables`.
+
+**Verdict: `auto` stays mps on Batch.** Corollary (chip filed): LOCAL thread-backend tuning
+with `n_jobs>1` on an sm_80+ box (the 5080's default `--n-jobs 2` + autodetect-ON graphs)
+has been a latent crash lottery since the 2026-06-05 cutover — tune_nn should force
+`FF_CUDA_GRAPH=0` (with the matching eager namespace) or n_jobs=1 in thread mode on
+graph-capable hosts.
+
 ### Lever A2 — FULL-STEP capture (`FF_CUDA_GRAPH_FULL`) — BUILT 2026-06-11, GPU gates pending
 
 Lever A collapsed the launches *inside* the model, but the L4 step remained ~7.5 ms of
