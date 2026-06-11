@@ -38,17 +38,25 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
-    # Stint-aware grouping key, built up-front so every per-player windowed
-    # feature below (rolling / EWMA / trend / share / air_yards_share) shares it.
-    # A player traded mid-season gets a fresh ``stint_id`` at the new team, so
-    # trailing features at his first weeks there don't blend the prior team's
-    # games (#722 umbrella; #666 for air_yards_share). Built here (was at the
-    # share block) purely so the rolling/EWMA/trend blocks can consume it too;
-    # ``team_changed`` + ``stint_id`` are dropped together at the cleanup near
-    # the end. The frame is already sorted by (player_id, season, week) above,
-    # so the per-group shift is chronological. Non-traded players have exactly
-    # one stint per season, so their grouping is unchanged — only traded players
-    # differ.
+    # ``stint_id`` (per-season, team-change-aware) is consumed ONLY by the
+    # team-relative SHARE features below (target/carry/air_yards share + the
+    # snap_pct static lag): a player traded mid-season starts a fresh stint so
+    # those team-relative ratios don't blend the prior team (#666 air_yards_share;
+    # #677 snap_pct). ``team_changed`` + ``stint_id`` are dropped at the cleanup
+    # near the end. The frame is already sorted by (player_id, season, week)
+    # above, so the per-group shift is chronological.
+    #
+    # The recent-FORM windows (rolling / EWMA / trend) deliberately do NOT use
+    # ``stint_id`` — they group by ``player_id`` alone (below), so a player's
+    # trailing production carries across the offseason AND across trades. The old
+    # per-(player, season[, stint]) grouping reset every rolling feature to 0 at
+    # each season's Week 1 (and at the first game after a trade); since the
+    # upcoming-week board only ever shows Week 1, Ridge — which leans on these
+    # windows and amplifies them through its PCA — collapsed every elite
+    # projection toward the mean at the opener (NN/LGBM lean on prior_season_*
+    # and were unaffected). A player's prior recent average is a far better
+    # estimate than 0. Leakage stays prevented by the ``shift(1)`` on the
+    # chronologically-sorted frame (each row still sees only past games).
     df["team_changed"] = (
         df.groupby(["player_id", "season"])["recent_team"].shift(1) != df["recent_team"]
     ).fillna(False)
@@ -57,7 +65,7 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     # --- Rolling Features (84: 81 mean/std/max + 3 min) ---
     rolling_cols: dict[str, pd.Series] = {}
     for stat in ROLL_STATS:
-        grouped = df.groupby(["player_id", "season", "stint_id"])[stat]
+        grouped = df.groupby("player_id")[stat]
         for window in ROLLING_WINDOWS:
             rolling_cols[f"rolling_mean_{stat}_L{window}"] = grouped.transform(
                 lambda x, w=window: x.shift(1).rolling(w, min_periods=1).mean()
@@ -229,11 +237,13 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
         df = df.merge(prior_external, on=["player_id", "season"], how="left")
 
     # --- EWMA Features (14) ---
-    # Stint-aware (#722): grouped by (player_id, season, stint_id) so a traded
-    # player's first weeks at the new team don't blend the prior team's EWMA.
+    # Player-level (carries across seasons + trades): grouped by ``player_id``
+    # alone so the EWMA never resets to 0 at a season opener — see the rolling
+    # block / stint comment above for why (the Week-1 Ridge collapse). ``shift(1)``
+    # keeps it leakage-safe.
     ewma_cols: dict[str, pd.Series] = {}
     for stat in EWMA_STATS:
-        grouped = df.groupby(["player_id", "season", "stint_id"])[stat]
+        grouped = df.groupby("player_id")[stat]
         for span in EWMA_SPANS:
             ewma_cols[f"ewma_{stat}_L{span}"] = grouped.transform(
                 lambda x, s=span: x.shift(1).ewm(span=s, min_periods=1).mean()
@@ -241,13 +251,14 @@ def build_features(df: pd.DataFrame, injuries_df: pd.DataFrame | None = None) ->
     df = pd.concat([df, pd.DataFrame(ewma_cols, index=df.index)], axis=1)
 
     # --- Trend / Momentum Features (4) ---
-    # Stint-aware (#722): the short/long trailing means reset at a mid-season
-    # team change, matching the rolling/EWMA blocks above.
+    # Player-level (carries across seasons + trades), matching the rolling/EWMA
+    # blocks above: the short/long trailing means group by ``player_id`` alone so
+    # the trend doesn't reset to 0 at the opener.
     for stat in TREND_STATS:
-        short = df.groupby(["player_id", "season", "stint_id"])[stat].transform(
+        short = df.groupby("player_id")[stat].transform(
             lambda x: x.shift(1).rolling(3, min_periods=1).mean()
         )
-        long = df.groupby(["player_id", "season", "stint_id"])[stat].transform(
+        long = df.groupby("player_id")[stat].transform(
             lambda x: x.shift(1).rolling(8, min_periods=1).mean()
         )
         df[f"trend_{stat}"] = short - long
@@ -986,10 +997,15 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         )
 
         def_pts = def_pts.sort_values(["opponent", "position", "season", "week"])
+        # Grouped by (opponent, position) ALONE (not per-season) so points-allowed-
+        # to-position carries across the offseason instead of resetting to 0 at
+        # every Week 1 — same season-opener fix as the opp-defense / player
+        # rolling windows. Sorted by (opponent, position, season, week), so
+        # shift(1) stays chronological and leakage-safe across the boundary.
         for col in ["pts_allowed_to_pos", "rush_pts_allowed_to_pos", "recv_pts_allowed_to_pos"]:
-            def_pts[f"opp_{col}"] = def_pts.groupby(["opponent", "position", "season"])[
-                col
-            ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
+            def_pts[f"opp_{col}"] = def_pts.groupby(["opponent", "position"])[col].transform(
+                lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
+            )
 
         def_pts.rename(
             columns={
@@ -1079,7 +1095,13 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
 
     def_stats.sort_values(["opponent_team", "season", "week"], inplace=True)
 
-    # L5 rolling averages with shift(1) for leakage prevention
+    # L5 rolling averages with shift(1) for leakage prevention. Grouped by
+    # ``opponent_team`` ALONE (not per-season) so a defense's trailing form
+    # carries across the offseason instead of resetting to 0 at every Week 1 —
+    # the same season-opener fix applied to the player rolling/EWMA/trend windows
+    # above (a Week-1 board with opp_def = 0 for every game collapses Ridge).
+    # ``def_stats`` is sorted by (opponent_team, season, week), so shift(1) stays
+    # chronological and leakage-safe across the boundary.
     stat_map = {
         "_def_sacks": "opp_def_sacks_L5",
         "_def_pass_yds": "opp_def_pass_yds_allowed_L5",
@@ -1088,7 +1110,7 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         "_def_rush_yds": "opp_def_rush_yds_allowed_L5",
     }
     for raw_col, out_col in stat_map.items():
-        def_stats[out_col] = def_stats.groupby(["opponent_team", "season"])[raw_col].transform(
+        def_stats[out_col] = def_stats.groupby("opponent_team")[raw_col].transform(
             lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
         )
 
@@ -1120,9 +1142,12 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     pts_allowed = pd.concat([away_pts, home_pts], ignore_index=True)
     pts_allowed.sort_values(["team", "season", "week"], inplace=True)
 
-    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby(["team", "season"])[
-        "points_allowed"
-    ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
+    # Grouped by ``team`` alone (not per-season) so points-allowed form carries
+    # across the offseason — same season-opener fix as the opp-defense rolling
+    # block above. Sorted by (team, season, week), so shift(1) stays leakage-safe.
+    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby("team")["points_allowed"].transform(
+        lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
+    )
 
     pts_merge = pts_allowed[["team", "season", "week", "opp_def_pts_allowed_L5"]].drop_duplicates()
     n_before = len(df)

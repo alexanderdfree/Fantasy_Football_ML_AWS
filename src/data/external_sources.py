@@ -275,8 +275,18 @@ def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.D
     need = {"gsis_id", "year_signed", "years", "guaranteed", "apy_cap_pct"}
     if contracts.empty or not need.issubset(contracts.columns):
         return pd.DataFrame(columns=base_cols)
+    # Drop ``year_signed == 0`` rows (OTC uses 0 as a missing-year placeholder for
+    # ~1.1k mostly-retired/practice-squad players). Left in, ``contract_age =
+    # season - 0 ≈ 2026`` — a wildly out-of-distribution value that the live
+    # serving override (src/serving/live_sources.fetch_contract_features) would
+    # then feed to inference for any such rostered player. Treating them as
+    # missing lets the downstream left-merge + ``fillna(0)`` / carry-forward
+    # handle them like any other no-contract player. (Inert for the training
+    # splits: these players have no weekly game rows, so they were never joined.)
     c = contracts.loc[
-        contracts["gsis_id"].notna() & contracts["year_signed"].notna(),
+        contracts["gsis_id"].notna()
+        & contracts["year_signed"].notna()
+        & (contracts["year_signed"] != 0),
         ["gsis_id", "year_signed", "years", "guaranteed", "apy_cap_pct"],
     ].copy()
     c["year_signed"] = c["year_signed"].astype("int64")

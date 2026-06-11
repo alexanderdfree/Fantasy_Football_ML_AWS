@@ -236,31 +236,117 @@ def _traded_with_varying_stats_frame() -> pd.DataFrame:
 
 
 @pytest.mark.unit
-def test_rolling_features_are_stint_aware():
-    """#722: rolling / EWMA / trend windowed features must reset at a mid-season
-    team change. A traded player's first weeks at the new team must NOT blend
-    the prior team's trailing games. Positive control on ``P1`` (KC 10, 20 →
-    BUF 2, 4 targets):
+def test_rolling_features_carry_across_team_changes():
+    """Recent-FORM windows (rolling / EWMA / trend) group by ``player_id`` alone,
+    so a player's trailing production carries across a team change (and across the
+    offseason) rather than resetting to 0 — a player's prior recent average is a
+    far better estimate than 0. This is the season-opener fix: the old
+    per-(player, season[, stint]) grouping zeroed every rolling feature at Week 1,
+    collapsing Ridge's elite projections on the upcoming-week board (which only
+    ever shows Week 1). Positive control on ``P1`` (KC 10, 20 → BUF 2, 4 targets):
 
-      * week 3 (first BUF game): stint-aware ``rolling_mean_targets_L3`` has no
-        prior BUF game → NaN. The OLD non-stint-aware grouping produced the KC
-        blend (10+20)/2 = 15.0.
-      * week 4: stint-aware mean = the lone prior BUF game (2.0). The OLD
-        grouping blended KC: (10+20+2)/3 ≈ 10.67.
+      * week 3 (first BUF game): trailing window carries the KC weeks →
+        ``rolling_mean_targets_L3`` = (10+20)/2 = 15.0, NOT 0/NaN.
+      * week 4: window = KC wk2 + BUF wk3 (+ KC wk1 dropping out of L3) →
+        (10+20+2)/3 ≈ 10.67.
+
+    (The team-relative SHARE features — air_yards_share / snap_pct static lag —
+    stay stint-aware; see their dedicated tests.)
     """
     out = build_features(_traded_with_varying_stats_frame())
     p1 = out[out["player_id"] == "P1"].sort_values("week")
     by_week = dict(zip(p1["week"], p1["rolling_mean_targets_L3"], strict=True))
 
-    # Week 3: stint-fresh → NaN (no prior game in the BUF stint), NOT the 15.0
-    # KC blend the old groupby produced.
-    assert pd.isna(by_week[3])
-    # Week 4: only the BUF week-3 game (targets=2) is in the trailing window —
-    # NOT 10.67, which would require blending the KC weeks.
-    assert by_week[4] == pytest.approx(2.0)
-    # EWMA resets too (week 4 sees only BUF week 3 → 2.0, not a KC-blended value).
+    # Week 3: carries the KC weeks (no reset to 0/NaN on the trade).
+    assert by_week[3] == pytest.approx(15.0)
+    # Week 4: trailing L3 over the prior three games (KC wk1+wk2, BUF wk3).
+    assert by_week[4] == pytest.approx((10 + 20 + 2) / 3)
+    # EWMA carries too — it sees the KC games, not just the lone BUF week-3 (2.0).
     ewma4 = p1[p1["week"] == 4]["ewma_targets_L3"].iloc[0]
-    assert ewma4 == pytest.approx(2.0)
+    assert ewma4 > 2.0
+
+
+def _two_season_frame() -> pd.DataFrame:
+    """RB ``P1`` plays the end of 2023 then the 2024 opener on the SAME team (KC);
+    ``P2`` plays end-2023 on KC then is traded to BUF for 2024. Used to assert the
+    recent-form windows carry across the offseason — including across an offseason
+    team change."""
+    rows = []
+    spec = [
+        # (player_id, season, week, team, rushing_yards, rushing_tds)
+        ("P1", 2023, 16, "KC", 100, 1),
+        ("P1", 2023, 17, "KC", 120, 1),
+        ("P1", 2024, 1, "KC", 0, 0),
+        ("P2", 2023, 16, "KC", 90, 1),
+        ("P2", 2023, 17, "KC", 110, 1),
+        ("P2", 2024, 1, "BUF", 0, 0),
+    ]
+    for pid, season, wk, team, ry, rtd in spec:
+        rows.append(
+            dict(
+                player_id=pid,
+                player_name=pid,
+                position="RB",
+                season=season,
+                week=wk,
+                recent_team=team,
+                opponent_team="DAL",
+                snap_pct=0.7,
+                targets=2,
+                carries=15,
+                receptions=2,
+                receiving_yards=10,
+                rushing_yards=float(ry),
+                passing_yards=0,
+                attempts=0,
+                completions=0,
+                interceptions=0,
+                fumbles_lost=0,
+                passing_tds=0,
+                rushing_tds=rtd,
+                receiving_tds=0,
+                receiving_air_yards=10,
+                receiving_yards_after_catch=5,
+                receiving_first_downs=1,
+                receiving_epa=1.0,
+                rushing_epa=0.5,
+                rushing_first_downs=1,
+                sacks=0,
+                sack_yards=0,
+                fantasy_points=float(ry) * 0.1 + rtd * 6,
+            )
+        )
+    return pd.DataFrame(rows)
+
+
+@pytest.mark.unit
+def test_rolling_features_carry_across_season_boundary():
+    """Season-opener fix: a player's recent-form window at Week 1 of a new season
+    carries the prior season's last games instead of resetting to 0 — even across
+    an offseason team change (a prior average beats 0). This is what un-collapses
+    Ridge on the upcoming-week (always Week 1) board."""
+    out = build_features(_two_season_frame())
+
+    # Same-team continuation: 2024 W1 carries 2023 weeks 16-17 (100, 120).
+    p1 = out[(out["player_id"] == "P1") & (out["season"] == 2024) & (out["week"] == 1)].iloc[0]
+    assert p1["rolling_mean_rushing_yards_L8"] == pytest.approx(110.0)
+
+    # Offseason trade (KC → BUF): still carries 2023 form, NOT reset to 0.
+    p2 = out[(out["player_id"] == "P2") & (out["season"] == 2024) & (out["week"] == 1)].iloc[0]
+    assert p2["rolling_mean_rushing_yards_L8"] == pytest.approx(100.0)  # (90+110)/2
+
+
+@pytest.mark.unit
+def test_opp_defense_static_features_carry_across_season_boundary():
+    """The static ``opp_def_*_L5`` rolling columns (distinct from the attention
+    opp-defense history sequence, which stays season-isolated) carry a defense's
+    trailing form across the offseason — same Week-1 fix as the player windows.
+    In ``_two_season_frame`` everyone plays vs ``DAL``: DAL allowed 190 rush yds in
+    2023 wk16 (100+90) and 230 in wk17 (120+110), so a 2024 Week-1 row vs DAL must
+    see the carried mean (210), NOT 0."""
+    out = build_features(_two_season_frame())
+    w1 = out[(out["season"] == 2024) & (out["week"] == 1)].iloc[0]
+    assert w1["opp_def_rush_yds_allowed_L5"] == pytest.approx(210.0)  # (190+230)/2, carried
 
 
 @pytest.mark.unit
