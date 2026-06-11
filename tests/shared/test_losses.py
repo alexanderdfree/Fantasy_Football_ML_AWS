@@ -414,3 +414,50 @@ class TestCapturableLossEquivalence:
         combined = loss_fn.compute_combined_capturable(preds, {"a": torch.tensor([0.5, 2.5])})
         combined.backward()
         assert preds["a"].grad is not None
+
+
+@pytest.mark.unit
+class TestCapturableComponentsEquivalence:
+    """The graphed VAL pass uses ``_compute_loss_components_capturable``;
+    pin (combined, every component) to the branchy original across head
+    families and hurdle data shapes."""
+
+    def _loss_fn(self):
+        return MultiTargetLoss(
+            target_names=["a", "b", "t"],
+            loss_weights={"a": 2.0, "b": 0.5, "t": 1.0},
+            head_losses={"a": "huber", "b": "poisson_nll", "t": "hurdle_poisson"},
+            gated_targets=["t"],
+        )
+
+    @pytest.mark.parametrize(
+        "t_values",
+        [
+            [0.0, 1.0, 2.0, 0.0],  # mixed
+            [0.0, 0.0, 0.0, 0.0],  # no positives (branchy early-return)
+            [1.0, 2.0, 3.0, 4.0],  # all positive
+        ],
+    )
+    def test_components_match_branchy(self, t_values):
+        loss_fn = self._loss_fn()
+        preds = {
+            "a": torch.tensor([1.0, 2.0, 3.0, 4.0]),
+            "b": torch.tensor([0.5, 1.5, 2.5, 0.7]),
+            "t_gate_logit": torch.tensor([-0.5, 0.2, 1.0, -1.2]),
+            "t_value_mu": torch.tensor([0.8, 1.2, 2.0, 0.6]),
+            "t_value_log_alpha": torch.tensor([0.0, 0.1, -0.1, 0.2]),
+        }
+        targets = {
+            "a": torch.tensor([1.5, 0.0, 3.0, 5.0]),
+            "b": torch.tensor([1.0, 1.0, 2.0, 1.0]),
+            "t": torch.tensor(t_values),
+        }
+        b_combined, b_comps = loss_fn._compute_loss_components(preds, targets)
+        c_combined, c_comps = loss_fn._compute_loss_components_capturable(preds, targets)
+        assert c_combined.item() == pytest.approx(b_combined.item(), rel=1e-6)
+        assert set(c_comps) == set(b_comps)
+        for key in b_comps:
+            assert c_comps[key].item() == pytest.approx(b_comps[key].item(), rel=1e-6, abs=1e-7), (
+                key
+            )
+        assert c_combined.dtype == torch.float32
