@@ -102,6 +102,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D17 | [Platform autodetection & per-arch optimization policy](adr/0017-platform-autodetection-per-arch-optimization-policy.md) | Accepted |
 | D18 | [Live upcoming-week predictions via ESPN + S3 artifact build](adr/0018-live-upcoming-week-predictions-espn.md) | Accepted |
 | D19 | [Split Batch training: GPU NN + c8a CPU Ridge/LightGBM](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md) | Accepted |
+| D20 | [Batch GPU execution path for the shared A/B harness](adr/0020-batch-gpu-execution-path-for-ab-harness.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 
