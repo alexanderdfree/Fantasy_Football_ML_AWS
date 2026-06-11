@@ -40,7 +40,9 @@ def build_features(
     report. Passed by the splits-building callers (refresh-splits); ``None`` (e.g. a
     diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
 
-    ``rosters_df`` is the raw nflverse weekly rosters frame (``src.data.nfl_source.rosters``).
+    ``rosters_df`` is the raw nflverse WEEKLY rosters frame
+    (``src.data.nfl_source.rosters_weekly`` — NOT the seasonal ``rosters``, which shares the
+    column schema but has ~1 row per player-season and yields an empty out-set).
     Players on injured reserve or the game-day inactives list (``status`` in {"RES", "INA"}) are
     absent from BOTH the weekly frame and the injury report, so without it a starter lost to IR or
     scratched is invisible to the vacancy signal (#1106; serving already sees the injury subset
