@@ -985,7 +985,22 @@ def _train_nested_attention_nn(
     return model, nn_scaler, test_preds, metrics, history
 
 
+def _splits_stat_key() -> tuple:
+    """(name, mtime_ns, size) of the three split parquets.
+
+    Cheap staleness guard for the per-worker trial-data memo: catches a
+    splits rebuild mid-process without paying the per-trial parquet read +
+    content hash the memo exists to skip.
+    """
+    return tuple(
+        (name, st.st_mtime_ns, st.st_size)
+        for name in ("train.parquet", "val.parquet", "test.parquet")
+        for st in (os.stat(f"{SPLITS_DIR}/{name}"),)
+    )
+
+
 def _train_attention_holdout(
+    position,
     cfg,
     targets,
     seed,
@@ -1091,6 +1106,66 @@ def _train_attention_holdout(
     history_stats = cfg.get("attn_history_stats", None)
     max_seq_len = cfg.get("attn_max_seq_len", 17)
 
+    # Per-worker trial-data memo (see run_pipeline): the history/opp arrays
+    # depend only on the prepared frames + the attn cfg below — never on
+    # sampled trial hyperparams — so trials 2+ of a tune worker reuse them.
+    # The fingerprint (attn cfg + row counts) guards both cfg drift and a
+    # same-position different-frames caller; consumers are read-only
+    # (tensors are index_select'd / narrow'd, never written).
+    memo = cfg.get("trial_data_memo")
+    attn_fp = None
+    cached_arrays = None
+    if memo is not None:
+        attn_fp = {
+            "history_stats": list(history_stats or []),
+            "max_seq_len": max_seq_len,
+            "opp_history_stats": list(cfg.get("opp_attn_history_stats") or []),
+            "opp_max_seq_len": cfg.get("opp_attn_max_seq_len"),
+            "opp_kind": cfg.get("opp_attn_kind", "defense"),
+            "n_rows": (len(pos_train), len(pos_val), len(pos_test)),
+        }
+        entry = memo.get(("attn_arrays", position))
+        if entry is not None and entry["fp"] == attn_fp:
+            cached_arrays = entry
+    if cached_arrays is not None:
+        hist_train, mask_train, hist_val, mask_val, hist_test, mask_test = cached_arrays["hist"]
+        (
+            opp_hist_train,
+            opp_mask_train,
+            opp_hist_val,
+            opp_mask_val,
+            opp_hist_test,
+            opp_mask_test,
+        ) = cached_arrays["opp"]
+        print(f"  History shape: {hist_train.shape} (game_dim={hist_train.shape[2]}) [trial_memo]")
+        return (
+            *_train_attention_nn(
+                X_attn_train,
+                X_attn_val,
+                X_attn_test,
+                hist_train,
+                mask_train,
+                hist_val,
+                mask_val,
+                hist_test,
+                mask_test,
+                y_train_dict,
+                y_val_dict,
+                y_test_dict,
+                cfg,
+                targets,
+                seed,
+                feature_cols=attn_feature_cols,
+                opp_hist_train=opp_hist_train,
+                opp_mask_train=opp_mask_train,
+                opp_hist_val=opp_hist_val,
+                opp_mask_val=opp_mask_val,
+                opp_hist_test=opp_hist_test,
+                opp_mask_test=opp_mask_test,
+            ),
+            attn_feature_cols,
+        )
+
     hist_train, mask_train = build_game_history_arrays(
         pos_train, history_stats=history_stats, max_seq_len=max_seq_len
     )
@@ -1146,6 +1221,20 @@ def _train_attention_holdout(
             f"  Opp-{opp_attn_kind} history shape: {opp_hist_train.shape} "
             f"(opp_dim={opp_hist_train.shape[2]})"
         )
+
+    if memo is not None:
+        memo[("attn_arrays", position)] = {
+            "fp": attn_fp,
+            "hist": (hist_train, mask_train, hist_val, mask_val, hist_test, mask_test),
+            "opp": (
+                opp_hist_train,
+                opp_mask_train,
+                opp_hist_val,
+                opp_mask_val,
+                opp_hist_test,
+                opp_mask_test,
+            ),
+        }
 
     return (
         *_train_attention_nn(
@@ -1361,6 +1450,23 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     phase_seconds: dict[str, float] = {}
 
     # --- Load data ---
+    # Per-worker trial-data memo (tune-only: src/tuning/tune_nn.py injects the
+    # dict post-deepcopy; absent everywhere else). Even an in-process
+    # feature-cache LRU hit still pays the per-trial parquet re-read and frame
+    # content-hashing — the memo skips both on trials 2+ of a worker. Guarded
+    # by a (mtime, size) stat of the split files so a splits rebuild
+    # mid-process invalidates. Disk-read path only: caller-passed frames are
+    # caller-owned (K/DST rebuild their own; the feature-cache LRU covers
+    # their prepared tuple).
+    memo = cfg.get("trial_data_memo")
+    prepared = None
+    frames_from_disk = train_df is None
+    if frames_from_disk and memo is not None:
+        entry = memo.get(("prepared", position))
+        if entry is not None and entry["splits_stat"] == _splits_stat_key():
+            train_df, val_df, test_df = entry["frames"]
+            prepared = entry["prepared"]
+            print(f"  [trial_memo] reusing prepared {position} data")
     if train_df is None:
         print("Loading general splits from disk...")
         train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
@@ -1370,6 +1476,14 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # --- Prepare position data ---
     print(f"Preparing {pos} data...")
     with timed("prepare_data", store=phase_seconds):
+        if prepared is None:
+            prepared = _prepare_position_data(position, cfg, train_df, val_df, test_df)
+            if frames_from_disk and memo is not None:
+                memo[("prepared", position)] = {
+                    "splits_stat": _splits_stat_key(),
+                    "frames": (train_df, val_df, test_df),
+                    "prepared": prepared,
+                }
         (
             X_train,
             X_val,
@@ -1381,7 +1495,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             pos_val,
             pos_test,
             feature_cols,
-        ) = _prepare_position_data(position, cfg, train_df, val_df, test_df)
+        ) = prepared
 
     print(f"  Feature matrix shape: {X_train.shape}")
 
@@ -1596,6 +1710,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     attn_history,
                     attn_feature_cols,
                 ) = _train_attention_holdout(
+                    position,
                     cfg,
                     targets,
                     seed,
@@ -2248,6 +2363,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             _attn_history,
             attn_static_cols,
         ) = _train_attention_holdout(
+            position,
             cfg,
             targets,
             seed,
