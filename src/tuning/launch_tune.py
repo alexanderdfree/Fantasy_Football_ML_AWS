@@ -73,7 +73,11 @@ SUPPORTED_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 # divergence only matters for someone invoking ``launch_tune`` locally
 # without that flag — which is the right ceiling for the Batch context.
 DEFAULT_N_TRIALS = 30
-DEFAULT_N_JOBS = 3
+# "auto" is resolved inside the container by tune_nn._resolve_n_jobs: thread
+# backend -> CPU count; mps backend -> CPU count RAM-clamped (~2 GiB/worker).
+# On the g6.xlarge job shape (4 vCPU / 15000 MiB) it resolves to 4 — the
+# validated ceiling (8 OOMs mid-run, 32 OOMs at startup, 2026-06-10).
+DEFAULT_N_JOBS = "auto"
 DEFAULT_PARALLEL_BACKEND = "auto"
 DEFAULT_CUDA_GRAPH = True
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
@@ -106,7 +110,7 @@ def submit_tune_job(
     n_trials: int = DEFAULT_N_TRIALS,
     timeout: int | None = None,
     seed: int = 42,
-    n_jobs: int = DEFAULT_N_JOBS,
+    n_jobs: int | str = DEFAULT_N_JOBS,
     parallel_backend: str = DEFAULT_PARALLEL_BACKEND,
     cuda_graph: bool = DEFAULT_CUDA_GRAPH,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
@@ -241,9 +245,13 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--n-jobs",
-        type=int,
+        type=str,
         default=DEFAULT_N_JOBS,
-        help=f"Concurrent trials per Batch GPU (default: {DEFAULT_N_JOBS})",
+        help=(
+            f"Concurrent trials per Batch GPU, or 'auto' (default: {DEFAULT_N_JOBS}). "
+            "auto is resolved inside the container: CPU count, RAM-clamped for "
+            "the mps backend — 4 on the current g6.xlarge job shape."
+        ),
     )
     parser.add_argument(
         "--parallel-backend",
@@ -290,8 +298,14 @@ def main():
     wait = args.wait.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
     cuda_graph = args.cuda_graph.strip().lower() in {"1", "true", "yes", "on"}
-    if args.n_jobs < 1:
-        raise SystemExit("--n-jobs must be >= 1")
+    n_jobs_text = str(args.n_jobs).strip().lower()
+    if n_jobs_text != "auto":
+        try:
+            n_jobs_int = int(n_jobs_text)
+        except ValueError:
+            raise SystemExit("--n-jobs must be a positive integer or 'auto'") from None
+        if n_jobs_int < 1:
+            raise SystemExit("--n-jobs must be >= 1")
     if args.attempt_timeout <= 0:
         raise SystemExit("--attempt-timeout must be > 0")
 

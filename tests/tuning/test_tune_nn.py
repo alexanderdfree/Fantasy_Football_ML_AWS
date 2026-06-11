@@ -895,3 +895,38 @@ def test_ram_safe_n_jobs_floor_is_one_worker():
     clamped, warning = tune_nn._ram_safe_n_jobs(4, 2 * 1024**3)
     assert clamped == 1
     assert warning is not None
+
+
+# ---------------------------------------------------------------------------
+# --n-jobs "auto" resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_n_jobs_int_passthrough_and_validation():
+    assert tune_nn._resolve_n_jobs("3", "thread") == 3
+    assert tune_nn._resolve_n_jobs(4, "mps") == 4
+    with pytest.raises(SystemExit):
+        tune_nn._resolve_n_jobs("0", "thread")
+    with pytest.raises(SystemExit):
+        tune_nn._resolve_n_jobs("four", "mps")
+
+
+def test_resolve_n_jobs_auto_thread_is_cpu_count(monkeypatch):
+    monkeypatch.setattr(tune_nn, "_current_cpu_ids", lambda: [0, 1, 2, 3])
+    # Thread backend shares one runtime; the RAM clamp must NOT apply.
+    monkeypatch.setattr(tune_nn, "_cgroup_memory_limit_bytes", lambda: 1)
+    assert tune_nn._resolve_n_jobs("auto", "thread") == 4
+
+
+def test_resolve_n_jobs_auto_mps_ram_clamps_cpu_count(monkeypatch):
+    # 16 CPUs but the 15000-MiB Batch shape only holds 6 MPS workers.
+    monkeypatch.setattr(tune_nn, "_current_cpu_ids", lambda: list(range(16)))
+    monkeypatch.setattr(tune_nn, "_cgroup_memory_limit_bytes", lambda: _BATCH_JOB_LIMIT_BYTES)
+    assert tune_nn._resolve_n_jobs("auto", "mps") == 6
+
+
+def test_resolve_n_jobs_auto_mps_cpu_bound_when_ram_ample(monkeypatch):
+    # The validated Batch g6.xlarge resolution: 4 vCPUs, RAM fits more -> 4.
+    monkeypatch.setattr(tune_nn, "_current_cpu_ids", lambda: [0, 1, 2, 3])
+    monkeypatch.setattr(tune_nn, "_cgroup_memory_limit_bytes", lambda: _BATCH_JOB_LIMIT_BYTES)
+    assert tune_nn._resolve_n_jobs("auto", "mps") == 4
