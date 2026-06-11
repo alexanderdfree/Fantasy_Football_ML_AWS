@@ -318,8 +318,40 @@ ENTRYPOINT) makes each Optuna trial evaluate its config as a stacked N-seed ense
 per-epoch stacked val pass reports the across-member MEAN val loss (seed-averaged
 objective; the "single-seed NN MAE is noise" fix) — in a `_ens{N}x{E}`-suffixed study
 namespace (fixed-epochs ensemble regime ≠ the eager early-stop objective). **(3)**
-Production training stays eager; nothing changes there. Peak-compute profiling
-(CPU/RSS/cgroup/GPU) of the stacked paths is the follow-up investigation.
+Production training stays eager; nothing changes there.
+
+**VALIDATED on Batch + peak compute measured (2026-06-11, image cbad0860, L4).**
+Shipped in #1150 (E2 + shared surface) and #1151 (stacked tune objective, ab_batch/launch_ab
+pass-through, [src/tuning/resource_probe.py](../src/tuning/resource_probe.py)). Three tests:
+**(a) local E2 smoke** (RB, 2 seeds × 2 epochs, CPU, `ab_example --only nn_dropout=0`):
+contracts hold — attention rows show per-seed variation, non-attention rows std=0, Ridge
+sentinel verified `expect=identical` with Δ=+0.00000, env restored between groups. CPU is
+correctness-only — stacking has no CPU throughput win (compute-bound; no idle engine to
+hide host cost in); CPU multi-seed A/Bs stay process-parallel eager.
+**(b) Batch stacked tune smoke** (job aea5aeec: RB, `--stacked-seeds 4`, target 8 completes,
+n_jobs=4): SUCCEEDED in 513.7 s — 8 complete + 27 Hyperband-pruned trials (per-epoch
+seed-averaged val reports drive the pruner correctly), namespace
+`scheduler_v2_mps_ens4x30`, provenance records stacked_seeds/epochs + graphs-off.
+Resources: `cpu_util_cores 3.82/4` (≈0.95 core/lane at 4 concurrent lanes — the 1-core/lane
+model holds under contention), `cgroup_peak 6.91 GiB / 14.65` (≈1.7 GiB/lane all-in; worker
+peak RSS 2.09 GiB), parent-process GPU counters read 0 (KNOWN probe limitation: workers own
+the CUDA contexts; per-lane VRAM comes from (c)).
+**(c) instrumented ensemble run** (job 1e35bd8d: 8 seeds × 30 epochs, parity off):
+SUCCEEDED — capture 33.9 s + stacked train 23.2 s; **one 8-seed lane = `cpu_util_cores`
+1.0 flat, cgroup peak 1.53 GiB, GPU 0.64 alloc / 0.83 GiB reserved of 24**.
+**Packing math (g6.xlarge):** cores bind first (4 lanes × 1.0 core), RAM second
+(~1.7-2.5 GiB/lane → ~6-8 lanes if oversubscription ever paid, which the n_jobs=5 probe says
+it doesn't), VRAM never (~0.85 GiB/lane). Width (seeds per lane) is the cheap axis: host
+cost is N-invariant; the free-lunch ceiling is where per-step GPU math outgrows the ~5-7 ms
+host gap, estimated **N ≈ 50-70/lane (~200-280 seeds/host)** — unmeasured beyond N=8, and
+the *useful* width is 8-16 (A/B doctrine / σ/√N returns), so spend surplus on width-per-trial,
+not more lanes. Eager-vs-stacked tuning rate: 35 trials (8C/27P) in 8.6 min at 4 seeds/trial
+(eager-regime vmapped, no graphs) vs 18.7 single-seed trials/min in the graphfull eager
+namespace — stacked trials cost ~2× an eager-regime trial for 4× the seeds.
+**Latent bug surfaced (chip filed):** `launch_tune --n-jobs auto` (the #1119 default) dies in
+the container — `src/batch/train.py`'s `--n-jobs` is `type=int` and every prior submission
+happened to pass a number. Fix = env channel (`FF_TUNE_N_JOBS`) in src/tuning, NOT a
+train.py edit (6-position retrain); explicit `--n-jobs 4` is the interim.
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 
