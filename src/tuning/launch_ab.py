@@ -404,12 +404,13 @@ def main() -> None:
     if args.collect_only:
         if not args.run_id:
             raise SystemExit("--collect-only requires --run-id")
-        s3 = boto3.client("s3", region_name=AWS_REGION)
-        # The manifest is authoritative for the grid (the submitting invocation
-        # may have used different overrides than this one).
-        manifest = load_run_manifest(
-            s3, bucket=S3_BUCKET, s3_prefix=args.s3_prefix, run_id=args.run_id
-        )
+        if not args.dry_run:
+            s3 = boto3.client("s3", region_name=AWS_REGION)
+            # The manifest is authoritative for the grid (the submitting
+            # invocation may have used different overrides than this one).
+            manifest = load_run_manifest(
+                s3, bucket=S3_BUCKET, s3_prefix=args.s3_prefix, run_id=args.run_id
+            )
         if manifest:
             args.spec = manifest["spec"]
             args.positions = manifest.get("positions") or args.positions
@@ -417,7 +418,9 @@ def main() -> None:
             args.only = manifest.get("only") or args.only
 
     image_sha = args.image_sha or _git_head_sha()
-    if not image_sha:
+    # Collect-only never submits, so it doesn't need a resolvable image (it
+    # always has --run-id, so the image-derived default run id is unused too).
+    if not image_sha and not args.collect_only:
         raise SystemExit("--image-sha is required when git HEAD cannot be resolved")
 
     spec = resolve_spec(args.spec, positions=args.positions, seeds=args.seeds, only=args.only)
