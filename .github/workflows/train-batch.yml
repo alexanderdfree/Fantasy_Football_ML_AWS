@@ -73,7 +73,11 @@ env:
   # warming goes through the ALB like any user request (a plain HTTPS GET to
   # /warm), not the ECS control plane, so it doesn't reintroduce the post-train
   # ECS coupling PR #330 removed. See the "Warm serving cache" step.
-  SERVICE_URL: https://alexfree.me
+  # The Flask app is on the `fantasy` subdomain (apex is a separate personal
+  # site — see deploy.yml); the stale apex value here meant every post-train
+  # warm probe silently 404'd and the S3 predictions cache went stale
+  # (caught 2026-06-11: cache stamped Jun-8 despite ~10 retrains).
+  SERVICE_URL: https://fantasy.alexfree.me
 
 permissions:
   contents: read
