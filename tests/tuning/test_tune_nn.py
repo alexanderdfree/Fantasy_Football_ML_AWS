@@ -441,6 +441,17 @@ def test_mps_graph_storage_profile_is_separate_from_eager():
     assert tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v2_mps_graph/rb"
 
 
+def test_thread_graph_storage_profile_is_separate_from_eager():
+    """Graphed thread runs (the sm_80+ default since the 2026-06-05 autodetect
+    cutover) must not resume the eager local study — full 2x2 backend×graph
+    namespace matrix."""
+    assert tune_nn._resolve_search_space_version("thread", cuda_graph=True) == (
+        "scheduler_v2_graph"
+    )
+    assert tune_nn._resolve_search_space_version("thread", cuda_graph=False) == "scheduler_v2"
+    assert tune_nn._resolve_search_space_version("mps", cuda_graph=False) == "scheduler_v2_mps"
+
+
 # ---------------------------------------------------------------------------
 # _worker_sampler_seed — MPS worker startup-phase draws
 # ---------------------------------------------------------------------------
