@@ -96,6 +96,7 @@ def _train_one_worker(which: str, position: str, seed: int, result_q) -> None:
             )
         elif which == "attn":
             _model, _scaler, test_preds, _metrics, _hist, _cols = _train_attention_holdout(
+                position,
                 cfg,
                 targets,
                 seed,

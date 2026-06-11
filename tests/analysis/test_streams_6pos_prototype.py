@@ -49,8 +49,28 @@ def test_depended_pipeline_signatures_unchanged():
     assert callable(_read_split)
     # _prepare_position_data(position, cfg, train_df, val_df, test_df)
     assert list(inspect.signature(_prepare_position_data).parameters)[:2] == ["position", "cfg"]
-    # _train_attention_holdout(..., opp_source_frames=...) — called positionally + this kwarg
-    assert "opp_source_frames" in inspect.signature(_train_attention_holdout).parameters
+    # _train_attention_holdout: _build_states passes 14 positionals + the
+    # opp_source_frames kwarg. Guard the positional prefix (an insertion like the
+    # trial-memo ``position`` param shifts every arg — the kwarg-only check missed
+    # it) and bind the exact call shape (catches arity / new-required-param drift).
+    sig = inspect.signature(_train_attention_holdout)
+    assert list(sig.parameters)[:14] == [
+        "position",
+        "cfg",
+        "targets",
+        "seed",
+        "X_train",
+        "X_val",
+        "X_test",
+        "y_train_dict",
+        "y_val_dict",
+        "y_test_dict",
+        "pos_train",
+        "pos_val",
+        "pos_test",
+        "feature_cols",
+    ]
+    sig.bind(*range(14), opp_source_frames=None)
 
 
 def test_capture_contract_train_signature_and_no_subclass_override():

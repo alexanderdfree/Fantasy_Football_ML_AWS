@@ -164,6 +164,7 @@ def _build_states(positions: list[str], seed: int, splits, fixed_epochs: int) ->
             # seed_everything(seed) is called INSIDE _train_attention_nn, so each
             # build re-seeds → models are identical across arms regardless of order.
             _train_attention_holdout(
+                pos,
                 cfg,
                 targets,
                 seed,
