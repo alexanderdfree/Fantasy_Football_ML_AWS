@@ -204,9 +204,12 @@ guard keeps their base tier.
 
 ## Step 2: Fanout
 
-Use the provider's available parallelism. Spawn all workers in one batch if the
-provider can do so. If not, run Layer A and then Layer B, or run the workers
-sequentially while preserving the same scopes and output contract.
+Use parallel workers where the provider supports them. How many workers to
+spawn, how scopes are grouped into workers, and how batches are sequenced is up
+to the runner — a worker may cover several scopes, and over-spawning is worse
+than fewer, deeper workers. Every scope below must be covered; run sequentially
+where parallelism is unavailable, preserving the same scopes and output
+contract.
 
 Layer A location-auditor scopes:
 
