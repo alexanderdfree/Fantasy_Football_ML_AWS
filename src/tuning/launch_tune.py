@@ -29,7 +29,7 @@ Config (env vars, all optional — same names as ``launch.py``):
 All six positions are now supported — K/DST were added once their ``run()``
 signatures accepted a ``config=`` kwarg. The 64-vCPU Spot quota fits a
 six-job tune fleet alongside a train fan-out; launches beyond the quota
-queue at ``RUNNABLE`` instead of pushing over-quota. The default
+still queue at ``RUNNABLE`` instead of pushing over-quota. The default
 ``--parallel-backend auto`` is resolved inside the Batch container by
 ``detect_platform()``: Batch g6/L4 or g5/A10G Linux uses NVIDIA MPS, while Mac
 and 5080 hosts keep the existing thread backend.
