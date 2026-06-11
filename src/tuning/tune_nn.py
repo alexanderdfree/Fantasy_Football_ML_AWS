@@ -87,6 +87,10 @@ from src.shared.core_pool import lease_cores as _lease_cores
 from src.shared.core_pool import start_coordinator as _start_core_pool
 from src.shared.platform_detect import detect_platform
 from src.shared.registry import get_config, get_runner
+
+# Already paid for: detect_platform imports torch at module level, so pulling
+# in the capture resolver adds no new import weight to the tune CLI.
+from src.shared.utils import cuda_graph_enabled as _cuda_graph_enabled
 from src.tuning.history import append_tuning_run
 from src.tuning.tune_nn_storage import (
     SEARCH_SPACE_VERSION as _DEFAULT_SEARCH_SPACE_VERSION,
@@ -160,7 +164,6 @@ _AUTO_BACKEND = "auto"
 _MPS_BACKEND = "mps"
 _THREAD_BACKEND = "thread"
 _PARALLEL_BACKENDS = (_THREAD_BACKEND, _MPS_BACKEND, _AUTO_BACKEND)
-_TRUTHY = {"1", "true", "yes", "on"}
 
 # HyperbandPruner: `min_resource` is the minimum epoch count a trial must
 # complete before it's eligible for pruning. We pick 8 to give the trial a
@@ -218,10 +221,6 @@ _TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().u
 # ---------------------------------------------------------------------------
 
 
-def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in _TRUTHY
-
-
 def _is_batch_mps_gpu_linux(platform_info) -> bool:
     gpu_name = (platform_info.gpu_name or "").lower()
     return (
@@ -246,6 +245,22 @@ def _resolve_parallel_backend(requested: str) -> str:
         return _MPS_BACKEND
     print(f"[tune_nn] parallel backend auto -> thread ({info.summary()})", flush=True)
     return _THREAD_BACKEND
+
+
+def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool]:
+    """Storage namespace for this run, plus the capture decision it keys on.
+
+    Keyed on ``cuda_graph_enabled()`` — the same autodetect + force-off-override
+    resolver the trainer consults at capture time — NOT on FF_CUDA_GRAPH
+    env-truthiness. Since the 2026-06-05 autodetect cutover the env is a
+    force-OFF override only, so a raw truthy read mislabels two real cases: an
+    sm_80+ box (5080, g6/L4, g5/A10G) with the env unset trains GRAPHED, and a
+    sub-sm_80 box (T4) with ``FF_CUDA_GRAPH=1`` trains EAGER (the sm gate
+    refuses capture). Either mislabel resumes a study DB from the wrong
+    training trajectory (ADR-0017: graphed and eager are not comparable).
+    """
+    cuda_graph = _cuda_graph_enabled()
+    return _resolve_search_space_version(parallel_backend, cuda_graph=cuda_graph), cuda_graph
 
 
 def _make_storage(db_path: str, sqlite_timeout: int = _DEFAULT_SQLITE_TIMEOUT_SECONDS):
@@ -1226,9 +1241,7 @@ def main():
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
     n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)
-    storage_version = _resolve_search_space_version(
-        parallel_backend, cuda_graph=_env_truthy("FF_CUDA_GRAPH")
-    )
+    storage_version, cuda_graph = _resolve_storage_version(parallel_backend)
 
     if not args.print_best:
         _ensure_data_from_s3()
@@ -1305,7 +1318,7 @@ def main():
         )
         print(
             f"  backend={parallel_backend} requested_backend={requested_backend} n_jobs={n_jobs} "
-            f"storage={storage_version} cuda_graph={_env_truthy('FF_CUDA_GRAPH')}"
+            f"storage={storage_version} cuda_graph={cuda_graph}"
         )
         print(f"{'=' * 70}")
 
@@ -1370,7 +1383,9 @@ def main():
             # (see _ram_safe_n_jobs), and tuning-history provenance must
             # record what ran, not what was asked for.
             "n_jobs": effective_n_jobs,
-            "cuda_graph": _env_truthy("FF_CUDA_GRAPH"),
+            # The actual capture decision (cuda_graph_enabled()), not the raw
+            # env — tuning-history provenance must record what ran.
+            "cuda_graph": cuda_graph,
             "elapsed_seconds": round(elapsed, 1),
         }
 
