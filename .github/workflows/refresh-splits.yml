@@ -558,7 +558,11 @@ jobs:
           set +e
           TITLE="[refresh-splits] run failed — S3 splits going stale"
           BODY=$(printf 'Refresh-splits run failed: %s\n\nS3 data/splits/ now lags main until a refresh-splits run succeeds.\nIf the "Verify engineered columns present" step failed: a whitelisted training-time-computed column is likely missing from the runtime_added_per_pos carve-out map (see the workflow comment and tests/test_refresh_splits_workflow.py).' "$RUN_URL")
-          EXISTING=$(gh issue list --state open --search 'refresh-splits run failed in:title' --json number --jq '.[0].number' 2>/dev/null)
+          # Word-match search to find candidates, then exact-title filter in
+          # jq — GitHub search tokenizes away brackets/punctuation, so an
+          # exact match must happen client-side or a similarly-worded issue
+          # could absorb the alert.
+          EXISTING=$(gh issue list --state open --search 'refresh-splits run failed in:title' --json number,title --jq "[.[] | select(.title == \"$TITLE\")][0].number" 2>/dev/null)
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" --body "$BODY" || true
           else
