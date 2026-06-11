@@ -5,7 +5,7 @@ Usage:
     python -m src.tuning.tune_nn QB RB WR TE            # multiple (sequential)
     python -m src.tuning.tune_nn RB --n-trials 30
     python -m src.tuning.tune_nn RB --timeout 7200      # seconds, per position
-    python -m src.tuning.tune_nn RB --n-jobs 3          # concurrent trials (GPU-bound)
+    python -m src.tuning.tune_nn RB --n-jobs 3          # concurrent trials (RAM/CPU-bound)
     python -m src.tuning.tune_nn RB --print-best        # inspect saved study
 
 MVP scope (v1)
@@ -288,6 +288,69 @@ def _current_cpu_ids() -> list[int]:
     with contextlib.suppress(AttributeError, OSError):
         return sorted(os.sched_getaffinity(0))
     return list(range(os.cpu_count() or 1))
+
+
+# Per-worker steady-state RSS on the Batch GPU shape, measured 2026-06-10 on a
+# g6.xlarge (4 vCPU / 15000 MiB job): n_jobs=4 fits, n_jobs=8 is OOM-killed
+# (exit=-9) mid-run, n_jobs=32 is OOM-killed during worker startup. Each
+# spawn-context worker carries a ~1.2-1.5 GiB torch+CUDA runtime floor plus its
+# own pandas splits / feature frames — nothing is shared across workers. The
+# binding resource is container RAM, NOT GPU VRAM (peak_mem_gb≈0.1/trial on the
+# 24 GiB L4).
+_MPS_WORKER_RSS_BYTES = 2 * 1024**3
+# Parent process + nvidia-cuda-mps-control daemon + slack.
+_MPS_PARENT_RESERVE_BYTES = 1 * 1024**3
+_CGROUP_V2_MEMORY_MAX = "/sys/fs/cgroup/memory.max"
+_CGROUP_V1_MEMORY_LIMIT = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+# cgroup v1 encodes "no limit" as a huge page-rounded sentinel near 2**63.
+_CGROUP_NO_LIMIT_THRESHOLD = 1 << 60
+
+
+def _cgroup_memory_limit_bytes(
+    v2_path: str = _CGROUP_V2_MEMORY_MAX,
+    v1_path: str = _CGROUP_V1_MEMORY_LIMIT,
+) -> int | None:
+    """The container's cgroup memory limit in bytes, or ``None`` when
+    unlimited or not in a memory-limited cgroup (local macOS / bare Linux)."""
+    for path in (v2_path, v1_path):
+        try:
+            with open(path) as f:
+                raw = f.read().strip()
+        except OSError:
+            continue
+        if raw == "max":  # cgroup v2 unlimited
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value <= 0 or value >= _CGROUP_NO_LIMIT_THRESHOLD:
+            return None
+        return value
+    return None
+
+
+def _ram_safe_n_jobs(n_jobs: int, limit_bytes: int | None) -> tuple[int, str | None]:
+    """Clamp the MPS worker count to what the container memory limit holds.
+
+    Returns ``(clamped_n_jobs, warning)``; ``warning`` is ``None`` when no
+    clamp applied. Worker RSS is an estimate (``_MPS_WORKER_RSS_BYTES``), so
+    this is a guardrail against egregious overcommit — n_jobs=32 on a
+    15000 MiB job dies in a SIGKILL storm before any trial completes — not a
+    guarantee that the clamped count fits.
+    """
+    if limit_bytes is None or n_jobs <= 1:
+        return n_jobs, None
+    fits = max(1, int((limit_bytes - _MPS_PARENT_RESERVE_BYTES) // _MPS_WORKER_RSS_BYTES))
+    if n_jobs <= fits:
+        return n_jobs, None
+    warning = (
+        f"[mps] clamping n_jobs {n_jobs} -> {fits}: container memory limit "
+        f"{limit_bytes / 1024**3:.1f} GiB holds ~{fits} workers at "
+        f"~{_MPS_WORKER_RSS_BYTES / 1024**3:.1f} GiB each (+ parent/daemon "
+        "reserve); exceeding it gets workers OOM-killed (exit=-9)"
+    )
+    return fits, warning
 
 
 class _NvidiaMPS:
@@ -923,6 +986,9 @@ def _run_mps_optimize(
     checkpoint_interval: int,
 ) -> None:
     n_jobs = max(1, int(n_jobs))
+    n_jobs, ram_warning = _ram_safe_n_jobs(n_jobs, _cgroup_memory_limit_bytes())
+    if ram_warning:
+        print(ram_warning, flush=True)
     deadline = time.time() + timeout if timeout is not None else None
     db_path = _study_db_path(pos, storage_version)
     _configure_sqlite_for_parallel(db_path, sqlite_timeout)
@@ -1046,10 +1112,13 @@ def main():
         type=int,
         default=_DEFAULT_N_JOBS,
         help=(
-            "Concurrent Optuna trials (thread-based; safe with the SQLite storage). "
-            "NN trials are GPU-bound and share the single GPU, so this is bounded by "
-            "GPU memory, not CPU cores — default 2 fits a 16 GB card (T4 / RTX 5080); "
-            "raising it gives diminishing returns since trials time-slice one GPU."
+            "Concurrent Optuna trials. GPU VRAM is NOT the constraint (~0.1 GiB/"
+            "trial); the binding resources are container/host RAM (~2 GiB per MPS "
+            "worker process — measured 2026-06-10 on the 4-vCPU/15000-MiB Batch "
+            "job: 4 fits, 8 OOMs mid-run, 32 OOMs at startup) and CPU cores "
+            "(~1 core per trial; the training loop is launch-bound). MPS mode "
+            "clamps to the container's cgroup memory limit; thread mode shares "
+            "one process (GIL) and tops out around 2-3."
         ),
     )
     parser.add_argument(
@@ -1218,11 +1287,11 @@ def main():
                     show_progress_bar=True,
                     # Concurrent-trial count via --n-jobs (default 2). Trials are
                     # attention-NN-only (Ridge / base NN / LGBM skipped via the cfg
-                    # overrides in _make_objective), so the CPU branch is idle and a
-                    # 16 GB card (T4 / RTX 5080) easily holds two small attention
-                    # models. NN trials are GPU-bound and time-slice the single GPU,
-                    # so raising --n-jobs is bounded by GPU memory, not CPU cores;
-                    # above ~2-3 risks CPU-side contention from FE / data loading.
+                    # overrides in _make_objective). GPU VRAM is NOT the constraint
+                    # (~0.1 GiB/trial); the training loop is CPU-launch-bound and
+                    # threads contend on the GIL, so thread mode tops out ~2-3.
+                    # For more concurrency use the mps backend (worker processes),
+                    # where container RAM (~2 GiB/worker) is what binds.
                     n_jobs=args.n_jobs,
                     callbacks=callbacks,
                 )
