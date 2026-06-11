@@ -4,8 +4,9 @@
 #
 # Prereqs:
 #   - AWS CLI v2 with credentials for the target account.
-#   - "All G and VT Spot Instance Requests" vCPU quota >= 24 (six 4-vCPU
-#     GPU Spot hosts in parallel). Script refuses to proceed otherwise.
+#   - "All G and VT Spot Instance Requests" vCPU quota >= 64 (sixteen 4-vCPU
+#     GPU Spot hosts: two concurrent six-position fan-outs plus tune-fleet
+#     headroom). Script refuses to proceed otherwise.
 #   - S3 bucket ff-predictor-training exists (training uses it).
 #   - ECR repo ff-training exists (created by batch-image.yml's first run).
 #
@@ -33,7 +34,10 @@ LOG_GROUP="/aws/batch/job"
 SPOT_QUOTA_CODE="L-3819A6DF"
 # "All Standard (A, C, D, H, I, M, R, T, Z) Spot Instance Requests".
 STANDARD_SPOT_QUOTA_CODE="L-34B43A08"
-MAX_VCPUS=24
+# Matches the live "All G and VT Spot Instance Requests" quota (raised 24 -> 64
+# on 2026-06-11): two concurrent six-position fan-outs (monolithic or split-nn)
+# plus tune-fleet headroom, 16 x 4-vCPU hosts max per CE.
+MAX_VCPUS=64
 CPU_MAX_VCPUS=64
 # GPU Spot instance types for the fan-out. Keep them in separate compute
 # environments so queue order can enforce preference: g6/L4 first, then g5/A10G
@@ -140,7 +144,7 @@ QUOTA=$(aws service-quotas get-service-quota \
   --output text)
 QUOTA_INT=${QUOTA%.*}
 if [ "$QUOTA_INT" -lt "$MAX_VCPUS" ]; then
-  log "ERROR: Spot G+VT quota is $QUOTA; need >= $MAX_VCPUS (6 x 4-vCPU GPU Spot hosts: $DESIRED_INSTANCE_TYPES)."
+  log "ERROR: Spot G+VT quota is $QUOTA; need >= $MAX_VCPUS (16 x 4-vCPU GPU Spot hosts: $DESIRED_INSTANCE_TYPES)."
   log "Request an increase:"
   log "  aws service-quotas request-service-quota-increase --service-code ec2 \\"
   log "    --quota-code $SPOT_QUOTA_CODE --desired-value $MAX_VCPUS --region $REGION"
@@ -350,18 +354,23 @@ ensure_compute_environment() {
       --query 'computeEnvironments[0].computeResources.subnets' \
       --output text 2>/dev/null || echo "None")
     CURRENT_SUBNETS_SORTED=$(printf '%s\n' $CURRENT_SUBNETS | sort | paste -sd' ' -)
-    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$instance_type" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ]; then
-      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> $instance_type; subnets refreshed for $instance_type offerings"
+    CURRENT_MAX=$(aws batch describe-compute-environments \
+      --compute-environments "$ce_name" \
+      --region "$REGION" \
+      --query 'computeEnvironments[0].computeResources.maxvCpus' \
+      --output text 2>/dev/null || echo "None")
+    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$instance_type" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ] || [ "$CURRENT_MAX" != "$MAX_VCPUS" ]; then
+      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> $instance_type; maxVcpus ${CURRENT_MAX:-None} -> $MAX_VCPUS; subnets refreshed for $instance_type offerings"
       log "  step 1/3: DISABLE"
       aws batch update-compute-environment \
         --compute-environment "$ce_name" \
         --state DISABLED \
         --region "$REGION" >/dev/null
       wait_for_compute_environment_valid "$ce_name" 30
-      log "  step 2/3: UPDATE instanceTypes/subnets"
+      log "  step 2/3: UPDATE instanceTypes/subnets/maxvCpus"
       aws batch update-compute-environment \
         --compute-environment "$ce_name" \
-        --compute-resources "{\"instanceTypes\": [\"$instance_type\"], \"subnets\": [$subnets_json]}" \
+        --compute-resources "{\"maxvCpus\": $MAX_VCPUS, \"instanceTypes\": [\"$instance_type\"], \"subnets\": [$subnets_json]}" \
         --region "$REGION" >/dev/null
       wait_for_compute_environment_valid "$ce_name" 30
       log "  step 3/3: ENABLE"
@@ -370,9 +379,9 @@ ensure_compute_environment() {
         --state ENABLED \
         --region "$REGION" >/dev/null
       wait_for_compute_environment_valid "$ce_name" 30
-      log "$ce_name reconciled — instanceTypes=[$instance_type]. Next Spot host picks it up."
+      log "$ce_name reconciled — instanceTypes=[$instance_type], maxVcpus=$MAX_VCPUS. Next Spot host picks it up."
     else
-      log "$ce_name already matches desired instance type/subnets ($instance_type)."
+      log "$ce_name already matches desired instance type/subnets/maxVcpus ($instance_type, $MAX_VCPUS)."
     fi
   fi
 

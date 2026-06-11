@@ -3,8 +3,9 @@ name: Retune NN on Batch (Spot)
 # Manually-triggered Optuna sweep of the attention-NN hyperparameters across
 # all six positions. Mirrors train-batch.yml's per-position fan-out — one
 # Spot GPU host per position via AWS Batch, preferring g6.xlarge and falling
-# back to g5.xlarge, saturating the 24-vCPU Spot G+VT quota (4 vCPU × 6
-# positions = 24 vCPU). Inside each position job, the tuner passes
+# back to g5.xlarge (4 vCPU × 6 positions = 24 vCPU; the Spot G+VT quota is
+# 64 since 2026-06-11, so a tune fleet no longer starves a concurrent train
+# fan-out). Inside each position job, the tuner passes
 # --parallel-backend auto; inside the g6/L4 or g5/A10G Linux container the
 # detect-platform path resolves that to NVIDIA CUDA MPS. Default is 3 workers
 # plus FF_CUDA_GRAPH=1.

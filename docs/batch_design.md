@@ -250,7 +250,7 @@ aws batch create-compute-environment \
     "type": "SPOT",
     "allocationStrategy": "SPOT_PRICE_CAPACITY_OPTIMIZED",
     "minvCpus": 0,
-    "maxvCpus": 24,
+    "maxvCpus": 64,
     "instanceTypes": ["g6.xlarge"],          # primary CE
     "subnets": ["SUBNET_A", "SUBNET_B"],
     "securityGroupIds": ["DEFAULT_SG"],
@@ -261,7 +261,7 @@ aws batch create-compute-environment \
 
 - `type=SPOT` — 70% cheaper than on-demand
 - `minvCpus=0` — scales to zero when idle (no cost)
-- `maxvCpus=24` — up to 6 concurrent 4-vCPU GPU hosts per CE (`g6.xlarge` primary, `g5.xlarge` fallback)
+- `maxvCpus=64` — up to 16 concurrent 4-vCPU GPU hosts per CE (`g6.xlarge` primary, `g5.xlarge` fallback); matches the Spot G+VT quota raised 24 → 64 on 2026-06-11, so two six-position fan-outs (or a fan-out plus a tune fleet) no longer starve each other at the CE ceiling
 - `allocationStrategy=SPOT_PRICE_CAPACITY_OPTIMIZED` — AWS-recommended strategy that weighs *both* capacity (lowest current reclaim risk) and Spot price. Strict superset of `SPOT_CAPACITY_OPTIMIZED`: same reclaim-avoidance behaviour plus price awareness
 
 ### Job Queue
@@ -366,12 +366,14 @@ CUDA auto-detection in `src/shared/pipeline.py` falls back to CPU. Local pipelin
 
 ## CPU Split Queue
 
-The CPU queue is now for split `cpu` and `merge` branches, not for routing K/DST
+The CPU queue is for split `cpu` and `merge` branches, not for routing K/DST
 monolithic jobs away from GPU. K and DST train attention NNs, so a full K/DST
 job still belongs on the GPU queue. `train-batch.yml` exports
 `FF_JOB_DEFINITION_CPU` and `FF_JOB_QUEUE_CPU` only when
-`BATCH_SPLIT_ACTIVE=true`; otherwise those env vars stay unset and the default
-monolithic path remains GPU-backed.
+`BATCH_SPLIT_ACTIVE=true` — **the production default since 2026-06-11** (first
+full split run validated Δ=0.0000 vs the monolithic baseline across all
+models/positions; see ADR-0019's changelog). Unset the variable to fall back
+to the monolithic GPU-backed path.
 
 The CPU job definition uses the same image as the GPU job definition but no GPU
 resource requirement:

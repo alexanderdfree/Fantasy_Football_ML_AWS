@@ -25,8 +25,8 @@ bash infra/batch/setup.sh
 ```
 
 Idempotent — reruns skip anything that already exists. It performs a quota
-preflight ("All G and VT Spot Instance Requests" >= 24 vCPU) and refuses to
-proceed if the quota hasn't been approved.
+preflight ("All G and VT Spot Instance Requests" >= 64 vCPU; raised from 24 on
+2026-06-11) and refuses to proceed if the quota hasn't been approved.
 
 The script creates:
 
@@ -38,8 +38,8 @@ The script creates:
 | Instance profile | `ecsInstanceRole` |
 | Security group | `ff-batch-sg` (egress only) |
 | Launch template | `ff-batch-lt` (UserData = [infra/batch/userdata.sh](userdata.sh), installs `soci-snapshotter-grpc` v0.13.0) |
-| Compute environment | `ff-gpu-spot` (SPOT, max 24 vCPU, g6.xlarge, queue order 1) |
-| Fallback compute environment | `ff-gpu-spot-g5` (SPOT, max 24 vCPU, g5.xlarge, queue order 2) |
+| Compute environment | `ff-gpu-spot` (SPOT, max 64 vCPU, g6.xlarge, queue order 1) |
+| Fallback compute environment | `ff-gpu-spot-g5` (SPOT, max 64 vCPU, g5.xlarge, queue order 2) |
 | Job queue | `ff-training-queue` |
 | Job definition | `ff-training-job` (rev 1; CI re-registers on every push) |
 | CloudWatch log group | `/aws/batch/job` (7-day retention) |
@@ -162,8 +162,9 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    AWS_REGION=us-east-1 python -m src.batch.launch \
      --positions QB RB WR TE K DST --seed 42
    ```
-   All six should reach RUNNING simultaneously (six 4-vCPU GPU Spot hosts,
-   exactly saturating the 24 vCPU Spot quota; g6 preferred, g5 fallback). Total wall-clock for the
+   All six should reach RUNNING simultaneously (six 4-vCPU GPU Spot hosts;
+   the 64 vCPU Spot quota leaves headroom for a second concurrent fan-out or a
+   tune fleet; g6 preferred, g5 fallback). Total wall-clock for the
    "Submit Batch jobs and wait" step measured ~10 min on 2026-05-21
    — the slowest position dominates, not the sum.
 

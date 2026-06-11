@@ -2,8 +2,9 @@
 
 Mirrors ``src/batch/launch.py`` but submits ``--mode=tune`` jobs instead of
 training jobs. Each position runs in its own Spot g6.xlarge/g5.xlarge
-container so the six positions tune in parallel (matches the 24-vCPU Spot
-G+VT quota documented in the AWS-quota auto-memory).
+container so the six positions tune in parallel (the Spot G+VT quota is
+64 vCPU since 2026-06-11 — a six-host tune fleet uses 24, leaving room for a
+concurrent train fan-out; see the AWS-quota auto-memory).
 
 Reuses ``submit_job`` / ``wait_for_jobs`` / ``RETRY_STRATEGY`` from
 ``launch.py`` by importing them — except ``submit_job`` itself, because
@@ -26,9 +27,9 @@ Config (env vars, all optional — same names as ``launch.py``):
                          since NN tuning can run ~30 trials × ~2 min/trial)
 
 All six positions are now supported — K/DST were added once their ``run()``
-signatures accepted a ``config=`` kwarg. The 24-vCPU Spot quota tolerates
-six concurrent 4-vCPU GPU Spot jobs exactly; concurrent local launches will
-queue at ``RUNNABLE`` instead of pushing over-quota. The default
+signatures accepted a ``config=`` kwarg. The 64-vCPU Spot quota fits a
+six-job tune fleet alongside a train fan-out; launches beyond the quota
+still queue at ``RUNNABLE`` instead of pushing over-quota. The default
 ``--parallel-backend auto`` is resolved inside the Batch container by
 ``detect_platform()``: Batch g6/L4 or g5/A10G Linux uses NVIDIA MPS, while Mac
 and 5080 hosts keep the existing thread backend.

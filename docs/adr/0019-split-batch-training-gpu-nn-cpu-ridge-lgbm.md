@@ -39,8 +39,10 @@ s3://ff-predictor-training/split-runs/{run_id}/{POS}/nn/
 s3://ff-predictor-training/split-runs/{run_id}/{POS}/cpu/
 ```
 
-The default full path remains available and unchanged unless `--split` (or the
-workflow variable `BATCH_SPLIT_ACTIVE=true`) opts in.
+The monolithic full path remains available and unchanged when `--split` is not
+passed (CI: when the repo variable `BATCH_SPLIT_ACTIVE` is not `true`).
+**Since 2026-06-11 `BATCH_SPLIT_ACTIVE=true` is the production default** — see
+the changelog; unsetting the variable is the instant rollback to monolithic.
 
 ## Consequences
 
@@ -70,6 +72,15 @@ workflow variable `BATCH_SPLIT_ACTIVE=true`) opts in.
 
 ## Changelog
 
+- 2026-06-11 · **Split mode enabled as the production default**
+  (`BATCH_SPLIT_ACTIVE=true`) after the first full 6-position split run
+  (workflow 27324790653, image `ed14915b`, seed 42): 18 jobs (6 nn → GPU queue
+  rev 270, 6 cpu + 6 merge → CPU queue rev 19), all SUCCEEDED; merge
+  dependencies honored; freshness gate + benchmark append green; **metrics
+  byte-identical to the same-image monolithic baseline for every model × every
+  position (Δ=0.0000 incl. Ridge data-identity)**; per-position branch elapsed
+  nn 20–56 s / cpu 4–19 s / merge <1 s, end-to-end ~8 min. Rollback: unset the
+  repo variable.
 - 2026-06-10 · Initial decision: opt-in split Batch mode with GPU NN branch,
   c8a CPU Ridge/LightGBM branch, staged S3 artifacts, and merge-only manifest
   promotion.
