@@ -113,5 +113,15 @@ if __name__ == "__main__":
     # local dev entrypoint. Debug defaults off — set FLASK_DEBUG=1 for the
     # Werkzeug debugger locally. Bound to 127.0.0.1 so the debugger console is
     # never reachable off-box even when enabled.
+    #
+    # Serve the canonical ``src.serving.app`` instance, NOT this module's
+    # ``app``. Under ``python -m src.serving.app`` this file executes as
+    # ``__main__``, so routes.py's ``from src.serving.app import app``
+    # re-executes it as a second module instance — every @app.route handler
+    # registers on THAT instance's Flask app (and handlers read shared state
+    # via ``app_pkg``, i.e. the canonical module). Running this module's
+    # ``app`` would serve the route-less duplicate: 404 on every endpoint.
+    from src.serving.app import app as _canonical_app
+
     debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
-    app.run(debug=debug, host="127.0.0.1", port=5050, use_reloader=False)
+    _canonical_app.run(debug=debug, host="127.0.0.1", port=5050, use_reloader=False)
