@@ -474,6 +474,9 @@ def run_batch_entry(position: str) -> None:
     The report JSON goes to stdout (CloudWatch) and, when ``S3_BUCKET`` is
     set, to ``s3://$S3_BUCKET/ensemble_ab/{POS}/report.json``.
     """
+    # Fail before the multi-minute S3 data sync, not inside capture_seeds.
+    if position not in ENSEMBLE_POSITIONS:
+        raise SystemExit(f"ensemble mode supports {ENSEMBLE_POSITIONS}, got {position}")
     n_seeds = int(os.environ.get("FF_ENSEMBLE_SEEDS", "8"))
     fixed_epochs = int(os.environ.get("FF_ENSEMBLE_FIXED_EPOCHS", "30"))
     parity = os.environ.get("FF_ENSEMBLE_PARITY", "1").strip() == "1"
