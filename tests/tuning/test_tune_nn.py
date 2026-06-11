@@ -490,6 +490,48 @@ def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch)
     assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v2_graph"
 
 
+def test_concurrent_thread_trials_force_eager(monkeypatch, capsys):
+    """thread backend + n_jobs > 1 on a would-capture host must force
+    FF_CUDA_GRAPH=0 (and the full-step variant) with a loud explanation:
+    concurrent in-process trials race torch.cuda.graph's global-mode capture
+    (cudaErrorIllegalState on Batch g6/L4, 2026-06-11, job 614ae7d7). Even an
+    explicit FF_CUDA_GRAPH=1 is overridden — that is the config that crashed."""
+    monkeypatch.setenv("FF_CUDA_GRAPH", "1")
+    monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
+    assert tune_nn._force_eager_for_concurrent_thread_trials("thread", 2) is True
+    assert os.environ["FF_CUDA_GRAPH"] == "0"
+    assert os.environ["FF_CUDA_GRAPH_FULL"] == "0"
+    out = capsys.readouterr().out
+    assert "cudaErrorIllegalState" in out
+    assert "FF_CUDA_GRAPH=0" in out
+
+
+def test_single_thread_and_mps_backends_keep_graph_capture(monkeypatch, capsys):
+    """n_jobs == 1 thread mode (no concurrent threads) and the process-per-trial
+    mps backend (per-process capture state) are race-free — leave them graphed."""
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
+    assert tune_nn._force_eager_for_concurrent_thread_trials("thread", 1) is False
+    assert tune_nn._force_eager_for_concurrent_thread_trials("mps", 4) is False
+    assert "FF_CUDA_GRAPH" not in os.environ
+    assert "FF_CUDA_GRAPH_FULL" not in os.environ
+    assert capsys.readouterr().out == ""
+
+
+def test_eager_host_needs_no_thread_concurrency_force(monkeypatch, capsys):
+    """No capture to race (CPU/Mac, T4 sm gate, or FF_CUDA_GRAPH already falsy):
+    the guard must not touch the env or warn."""
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
+    assert tune_nn._force_eager_for_concurrent_thread_trials("thread", 4) is False
+    assert "FF_CUDA_GRAPH" not in os.environ
+    assert "FF_CUDA_GRAPH_FULL" not in os.environ
+    assert capsys.readouterr().out == ""
+
+
 # ---------------------------------------------------------------------------
 # _worker_sampler_seed — MPS worker startup-phase draws
 # ---------------------------------------------------------------------------

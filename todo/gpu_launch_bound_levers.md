@@ -115,11 +115,24 @@ Two 20-target-trial RB tune jobs on identical g6.xlarge Spot hosts/image, `--n-j
   backend) isolate capture state per trial; threads cannot, short of upstream
   `capture_error_mode="thread_local"` support in `make_graphed_callables`.
 
-**Verdict: `auto` stays mps on Batch.** Corollary (chip filed): LOCAL thread-backend tuning
+**Verdict: `auto` stays mps on Batch.** Corollary: LOCAL thread-backend tuning
 with `n_jobs>1` on an sm_80+ box (the 5080's default `--n-jobs 2` + autodetect-ON graphs)
-has been a latent crash lottery since the 2026-06-05 cutover — tune_nn should force
-`FF_CUDA_GRAPH=0` (with the matching eager namespace) or n_jobs=1 in thread mode on
-graph-capable hosts.
+has been a latent crash lottery since the 2026-06-05 cutover.
+
+**Guard shipped (2026-06-11):** `tune_nn.py::_force_eager_for_concurrent_thread_trials` —
+when the resolved backend is `thread` AND resolved `n_jobs>1` AND `cuda_graph_enabled()`
+(the trainer's actual capture decision, not the raw env), it forces `FF_CUDA_GRAPH=0` +
+`FF_CUDA_GRAPH_FULL=0` (Lever A2 shares the constraint and gates on the base resolver
+anyway) **before** `_resolve_storage_version`, so the study lands in the eager
+`scheduler_v2` namespace the trials actually train under, and prints a one-liner citing
+`cudaErrorIllegalState`. `n_jobs==1` thread mode and the mps backend stay graphed. A
+capture lock was considered and rejected: it only serializes captures, but global-mode
+capture also conflicts with other threads' *ordinary* kernel launches mid-capture, so
+eager is the only safe thread-concurrent configuration (short of the upstream
+`thread_local` support above). **A/B consequence:** a graphed thread-concurrent arm is
+not a valid configuration at all — the backend A/B is thread-eager-vs-MPS-graphed
+(different training regimes, separate namespaces), or thread `n_jobs=1` graphed vs MPS
+graphed for a same-regime comparison.
 
 ### Lever A2 — FULL-STEP capture (`FF_CUDA_GRAPH_FULL`) — BUILT 2026-06-11, GPU gates pending
 

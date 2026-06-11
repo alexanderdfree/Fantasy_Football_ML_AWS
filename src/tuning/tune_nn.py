@@ -248,6 +248,44 @@ def _resolve_parallel_backend(requested: str) -> str:
     return _THREAD_BACKEND
 
 
+def _force_eager_for_concurrent_thread_trials(parallel_backend: str, n_jobs: int) -> bool:
+    """Force the eager NN path when concurrent thread-mode trials would capture graphs.
+
+    ``torch.cuda.graph`` captures in the default *global* mode, which raises
+    ``cudaErrorIllegalState`` ("the operation cannot be performed in the present
+    state") the moment any OTHER thread in the process has in-flight GPU work —
+    with the thread backend and ``n_jobs > 1``, one trial's
+    ``MultiHeadTrainer._maybe_graph_model`` capture races every other trial's
+    kernel launches (measured on Batch g6/L4 2026-06-11, job 614ae7d7,
+    ``--parallel-backend thread --n-jobs 4``). A capture lock can't fix it:
+    global-mode capture also conflicts with other threads' *ordinary* kernel
+    launches mid-capture, not just with concurrent captures, so eager is the
+    only safe thread-concurrent configuration. The process-per-trial mps
+    backend is immune (capture state is per-process) and ``n_jobs == 1`` thread
+    mode has no concurrent threads — both stay graphed.
+
+    Deliberately overrides an explicit ``FF_CUDA_GRAPH=1`` (that is the exact
+    config the measured job crashed under). Must run BEFORE
+    ``_resolve_storage_version`` so the study lands in the eager namespace
+    (``scheduler_v2``) the trials will actually train under.
+    """
+    if parallel_backend != _THREAD_BACKEND or n_jobs <= 1 or not _cuda_graph_enabled():
+        return False
+    os.environ["FF_CUDA_GRAPH"] = "0"
+    # The full-step capture (cuda_graph_full_enabled) gates on cuda_graph_enabled,
+    # so zeroing the base env already kills it; force its env too so the regime
+    # is explicit in the environment a worker or subprocess might inherit.
+    os.environ["FF_CUDA_GRAPH_FULL"] = "0"
+    print(
+        f"[tune_nn] thread backend with n_jobs={n_jobs} > 1: forcing FF_CUDA_GRAPH=0 "
+        "(eager trials) — torch.cuda.graph's global-mode capture races other trial "
+        "threads' in-flight GPU work (cudaErrorIllegalState); use the mps backend or "
+        "n_jobs=1 to tune graphed.",
+        flush=True,
+    )
+    return True
+
+
 def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool, bool]:
     """Storage namespace for this run, plus the capture decision it keys on.
 
@@ -1251,6 +1289,9 @@ def main():
     requested_backend = args.parallel_backend
     parallel_backend = _resolve_parallel_backend(requested_backend)
     n_jobs = _resolve_n_jobs(args.n_jobs, parallel_backend)
+    # Order matters: the eager-force mutates FF_CUDA_GRAPH[_FULL], and the storage
+    # resolver below keys the study namespace off cuda_graph[_full]_enabled().
+    _force_eager_for_concurrent_thread_trials(parallel_backend, n_jobs)
     storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(parallel_backend)
 
     if not args.print_best:
