@@ -97,13 +97,35 @@ def _to_pandas(df: pl.DataFrame | pl.LazyFrame) -> pd.DataFrame:
     return df.to_pandas()
 
 
+def _native_int_seasons(seasons: list[int]) -> list[int]:
+    """Coerce a season list to native Python ints for the nflreadpy boundary.
+
+    nflreadpy 0.1.5's season-taking loaders (``load_rosters`` / ``load_pbp`` /
+    ``load_snap_counts`` / ``load_injuries`` / ``load_rosters_weekly`` /
+    ``load_player_stats`` / ...) validate each season with a strict
+    ``not isinstance(season, int)`` check that REJECTS numpy integers — a
+    DataFrame-derived list (``df["season"].astype(int).unique()`` yields
+    ``numpy.int64``) trips it with a misleading "Season must be between <lo> and
+    <hi>" even for an in-range year. Normalizing the season type here is this
+    boundary adapter's job (mirrors the Polars→pandas reconciliation it already
+    owns) and is numerically inert: ``int(2025)`` and ``int(np.int64(2025))`` are
+    the same value, so the fetched data — and any model trained on it — is
+    byte-identical. The serving expert join hit this exact trap (the NFL.com
+    Season Leaders column served all-null); coercing at the boundary protects
+    every caller, not just that one. See ``todo/fixed-archive.md``.
+    """
+    return [int(s) for s in seasons]
+
+
 def weekly_data(seasons: list[int]) -> pd.DataFrame:
-    df = _to_pandas(_nflreadpy.load_player_stats(seasons, summary_level="week"))
+    df = _to_pandas(
+        _nflreadpy.load_player_stats(_native_int_seasons(seasons), summary_level="week")
+    )
     return df.rename(columns=_WEEKLY_RENAME)
 
 
 def rosters(seasons: list[int]) -> pd.DataFrame:
-    df = _to_pandas(_nflreadpy.load_rosters(seasons))
+    df = _to_pandas(_nflreadpy.load_rosters(_native_int_seasons(seasons)))
     if "player_id" not in df.columns and "gsis_id" in df.columns:
         df["player_id"] = df["gsis_id"]
     return df
@@ -119,26 +141,26 @@ def rosters_weekly(seasons: list[int]) -> pd.DataFrame:
     The inheritance vacancy out-set (#1106 findings A/INA) must use this one;
     building it from the seasonal frame silently registers ~no vacancies.
     """
-    df = _to_pandas(_nflreadpy.load_rosters_weekly(seasons))
+    df = _to_pandas(_nflreadpy.load_rosters_weekly(_native_int_seasons(seasons)))
     if "player_id" not in df.columns and "gsis_id" in df.columns:
         df["player_id"] = df["gsis_id"]
     return df
 
 
 def schedules(seasons: list[int]) -> pd.DataFrame:
-    return _to_pandas(_nflreadpy.load_schedules(seasons))
+    return _to_pandas(_nflreadpy.load_schedules(_native_int_seasons(seasons)))
 
 
 def snap_counts(seasons: list[int]) -> pd.DataFrame:
-    return _to_pandas(_nflreadpy.load_snap_counts(seasons))
+    return _to_pandas(_nflreadpy.load_snap_counts(_native_int_seasons(seasons)))
 
 
 def injuries(seasons: list[int]) -> pd.DataFrame:
-    return _to_pandas(_nflreadpy.load_injuries(seasons))
+    return _to_pandas(_nflreadpy.load_injuries(_native_int_seasons(seasons)))
 
 
 def depth_charts(seasons: list[int]) -> pd.DataFrame:
-    return _to_pandas(_nflreadpy.load_depth_charts(seasons))
+    return _to_pandas(_nflreadpy.load_depth_charts(_native_int_seasons(seasons)))
 
 
 def player_ids() -> pd.DataFrame:
@@ -167,7 +189,7 @@ def team_week_stats_release(season: int) -> pd.DataFrame:
 
 
 def pbp_data(seasons: list[int], cols: tuple[str, ...]) -> pd.DataFrame:
-    df = _nflreadpy.load_pbp(seasons)
+    df = _nflreadpy.load_pbp(_native_int_seasons(seasons))
     available = [c for c in cols if c in df.columns]
     return _to_pandas(df.select(available))
 
@@ -176,7 +198,7 @@ def ff_opportunity(seasons: list[int]) -> pd.DataFrame:
     """ff_opportunity expected-points per player-game (ffverse ``ep_weekly``
     model). gsis-keyed (``player_id``); ``*_exp`` columns are the modeled
     expected stats the opportunity features read."""
-    return _to_pandas(_nflreadpy.load_ff_opportunity(seasons))
+    return _to_pandas(_nflreadpy.load_ff_opportunity(_native_int_seasons(seasons)))
 
 
 def contracts() -> pd.DataFrame:
