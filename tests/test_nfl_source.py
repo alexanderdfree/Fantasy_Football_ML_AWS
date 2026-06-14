@@ -9,6 +9,7 @@ the loader's weekly path (see tests/test_data_loader.py).
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
@@ -143,3 +144,37 @@ def test_rosters_weekly_adds_player_id_from_gsis(monkeypatch):
     assert "player_id" in out.columns
     assert len(out) == 2  # one row per week, not per season
     assert set(out["status"]) == {"ACT", "INA"}
+
+
+@pytest.mark.unit
+def test_native_int_seasons_coerces_numpy_int():
+    """The boundary helper yields native Python ints from numpy-int input."""
+    out = nfl_source._native_int_seasons([np.int64(2023), np.int64(2024)])
+    assert out == [2023, 2024]
+    assert all(type(s) is int for s in out)
+
+
+@pytest.mark.unit
+def test_rosters_coerces_numpy_int_seasons_for_strict_loader(monkeypatch):
+    """nflreadpy's ``load_rosters`` validates seasons with a strict
+    ``not isinstance(season, int)`` guard that REJECTS numpy.int64 (the NFL.com
+    Season Leaders all-null bug — a DataFrame-derived ``season.astype(int).unique()``
+    list is numpy.int64). The shim must coerce to native int before the call so
+    such a list still loads instead of raising "Season must be between …"."""
+    captured: dict[str, list[int]] = {}
+
+    def _strict_load_rosters(seasons):
+        for s in seasons:  # mirror nflreadpy 0.1.5's exact guard
+            if not isinstance(s, int):
+                raise ValueError("Season must be between 1920 and 2026")
+        captured["seasons"] = list(seasons)
+        return pl.DataFrame({"gsis_id": ["00-0000001"], "season": [int(seasons[0])]})
+
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_rosters", _strict_load_rosters)
+
+    # numpy.int64 seasons would raise without the boundary coercion.
+    out = nfl_source.rosters([np.int64(2023), np.int64(2024)])
+
+    assert isinstance(out, pd.DataFrame)
+    assert captured["seasons"] == [2023, 2024]
+    assert all(type(s) is int for s in captured["seasons"])
