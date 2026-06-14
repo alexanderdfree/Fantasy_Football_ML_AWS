@@ -146,7 +146,16 @@ def _historical_expert_seasons(results: pd.DataFrame) -> list[int]:
     allowed = {int(s) for s in TEST_SEASONS}
     if allowed:
         seasons = seasons[seasons.astype(int).isin(allowed)]
-    return sorted(seasons.astype(int).unique())
+    # Return native Python ints, NOT numpy.int64. _apply_expert_predictions passes
+    # this straight to load_nflcom_with_gsis_id -> nfl_source.rosters ->
+    # nflreadpy.load_rosters, which validates seasons with a strict
+    # ``not isinstance(season, int)`` check that REJECTS numpy integers (raising a
+    # misleading "Season must be between 1920 and <year>" even for an in-range
+    # year). A bare ``sorted(seasons.astype(int).unique())`` yields numpy.int64 and
+    # silently killed the ENTIRE NFL.com expert column in serving (all-null ->
+    # "undefined" in the Season Leaders tab). RotoWire was immune: sleeper's
+    # _validate_sleeper_seasons coerces to int and player_ids() takes no season.
+    return sorted(int(s) for s in seasons.astype(int).unique())
 
 
 def _project_rotowire_to_fantasy(
@@ -1366,7 +1375,12 @@ _PREDICTIONS_CACHE_DIR = os.path.join(_REPO_ROOT, "data", "serving_cache")
 _PREDICTIONS_PARQUET = "predictions.parquet"
 _METRICS_JSON = "metrics.json"
 _FINGERPRINT_JSON = "fingerprint.json"
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 5
+# Bumped 5 -> 6 to force a one-time recompute on deploy: the prior cache was built
+# with the numpy.int64 season bug above, which left every nflcom_pred* value null.
+# The fix lives in serving code only, so the model fingerprint is unchanged and a
+# fresh container would otherwise re-hydrate the stale null-NFL.com cache. The
+# schema bump invalidates it so the corrected expert join repopulates the column.
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 6
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is

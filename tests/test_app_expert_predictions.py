@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 import src.serving.core as core
+from src.config import TEST_SEASONS
 from src.shared.aggregate_targets import DST_TARGETS, predictions_to_fantasy_points
 
 pytestmark = pytest.mark.unit
@@ -110,6 +111,33 @@ def _rotowire_raw() -> pd.DataFrame:
             dst_row,
         ]
     )
+
+
+def test_historical_expert_seasons_returns_native_python_ints():
+    """Seasons handed to the expert loaders must be native ``int``, not numpy.int64.
+
+    Regression for the all-null NFL.com Season Leaders column: nflreadpy's
+    ``load_rosters`` (reached via load_nflcom_with_gsis_id -> nfl_source.rosters)
+    validates with a strict ``not isinstance(season, int)`` that rejects
+    numpy.int64, raising a misleading "Season must be between 1920 and <year>".
+    That exception was swallowed by _apply_expert_predictions, leaving every
+    nflcom_pred* value null. ``sorted(arr.astype(int).unique())`` yields
+    numpy.int64, so the contract is asserted here.
+    """
+    yr = int(TEST_SEASONS[0])
+    results = pd.DataFrame(
+        {
+            "player_id": ["RB1", "RB1"],
+            "season": [yr, yr],
+            "week": [1, 2],
+            "fantasy_points": [10.0, 12.0],
+        }
+    )
+    seasons = core._historical_expert_seasons(results)
+    assert seasons == [yr]
+    # The crux: every element passes nflreadpy's ``isinstance(season, int)`` gate.
+    assert all(type(s) is int for s in seasons)
+    assert all(isinstance(s, int) and not isinstance(s, np.integer) for s in seasons)
 
 
 def test_apply_expert_predictions_joins_sources_and_formats():
