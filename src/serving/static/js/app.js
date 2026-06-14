@@ -15,6 +15,11 @@ let upcomingState = "loading"; // loading | warming | offseason | ready | error
 let currentPage = 1;
 let currentSort = "actual";
 let currentOrder = "desc";
+// Homepage ("Next Week") table sort state. Independent of the Season Leaders
+// table's currentSort/currentOrder. "rank" sorts by the best-available
+// projection (upcomingProjection) — the default ordering shown on load.
+let homepageSort = "rank";
+let homepageOrder = "desc";
 let playerChart = null;
 let positionMaeChart = null;
 let positionR2Chart = null;
@@ -150,6 +155,7 @@ async function init() {
     setupNavTabs();
     setupPositionFilters();
     setupSortHeaders();
+    setupHomepageSortHeaders();
     setupModal();
     setupSearch();
     setupColumnFilter();
@@ -518,6 +524,27 @@ function setupSortHeaders() {
     });
 }
 
+// Click-to-sort for the homepage ("Next Week") table. Mirrors setupSortHeaders
+// but drives the independent homepageSort/homepageOrder state and re-renders the
+// homepage. The <thead> is static HTML, so the handler is attached once here and
+// indicators are refreshed in renderHomepage() via updateHomepageSortIndicators.
+function setupHomepageSortHeaders() {
+    const head = document.querySelector("#homepage-table thead");
+    if (!head) return;
+    head.addEventListener("click", e => {
+        const th = e.target.closest("th.sortable");
+        if (!th || !head.contains(th)) return;
+        const sort = th.dataset.sort;
+        if (homepageSort === sort) {
+            homepageOrder = homepageOrder === "desc" ? "asc" : "desc";
+        } else {
+            homepageSort = sort;
+            homepageOrder = "desc";
+        }
+        renderHomepage();
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Predictions
 // ---------------------------------------------------------------------------
@@ -584,14 +611,48 @@ function getFilteredUpcoming() {
     });
 }
 
+// Value a homepage row sorts by for a given column key. "rank" maps to the
+// best-available projection (the default ranking shown on load); "matchup"
+// sorts by opponent team code; the rest map straight to the row field.
+function homepageSortValue(p, key) {
+    switch (key) {
+        case "rank":    return upcomingProjection(p);
+        case "matchup": return p.opponent || null;
+        default:        return p[key];
+    }
+}
+
+// Sync the homepage header's active-sort highlight + arrow glyph to the current
+// sort state. The homepage <thead> is static HTML (unlike Season Leaders, which
+// re-renders its header each time), so toggle classes/arrows in place.
+function updateHomepageSortIndicators() {
+    const head = document.querySelector("#homepage-table thead");
+    if (!head) return;
+    head.querySelectorAll("th.sortable").forEach(th => {
+        const active = th.dataset.sort === homepageSort;
+        th.classList.toggle("active-sort", active);
+        const arrow = th.querySelector(".sort-arrow");
+        if (arrow) arrow.textContent = active ? (homepageOrder === "desc" ? "▼" : "▲") : "";
+    });
+}
+
 function renderHomepage() {
     if (upcomingState !== "ready") return;
+    updateHomepageSortIndicators();
+    // Sort locally for instant re-sorting, mirroring renderTable(): numeric
+    // columns (preds, rank) compare by value, string columns (name/pos/team/
+    // matchup) by locale, and missing/null values sink to the bottom regardless
+    // of direction.
     const rows = getFilteredUpcoming().slice().sort((a, b) => {
-        const va = upcomingProjection(a), vb = upcomingProjection(b);
+        const va = homepageSortValue(a, homepageSort);
+        const vb = homepageSortValue(b, homepageSort);
         if (va == null && vb == null) return 0;
         if (va == null) return 1;
         if (vb == null) return -1;
-        return vb - va;
+        const cmp = (typeof va === "string" || typeof vb === "string")
+            ? String(va).localeCompare(String(vb))
+            : va - vb;
+        return homepageOrder === "desc" ? -cmp : cmp;
     });
     const count = document.getElementById("homepage-count");
     if (count) count.textContent = `${rows.length.toLocaleString()} player${rows.length !== 1 ? "s" : ""}`;
