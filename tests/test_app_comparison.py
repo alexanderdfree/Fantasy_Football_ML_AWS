@@ -217,7 +217,9 @@ def _fake_experts():
         "top_n": 30,
         "top12_n": 12,
         "experts_meta": {"model": {}, "nflcom": {"note": "n"}, "rotowire": {"note": "r"}},
-        "top12_ids": {p: [f"{p}000", f"{p}001"] for p in _POSITIONS},
+        # top12 is a strict subset of top30 (one player/pos vs two), so the route
+        # test can prove the top-12 model column slices by top12_ids, not top30_ids.
+        "top12_ids": {p: [f"{p}000"] for p in _POSITIONS},
         "top30_ids": {p: [f"{p}000", f"{p}001"] for p in _POSITIONS},
         "subsets": {"all": subset(1.0), "top12": subset(1.05), "top30": subset(1.1)},
         "expert_reliability": {
@@ -272,10 +274,11 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     assert top_qb["ridge"]["n"] == 14
     assert top_qb["nflcom"]["mae"] == 5.5  # 5.0 * 1.1
 
-    # Top-12 uses the same id filter here, so the model slice matches; experts carry
+    # Top-12 slices by top12_ids (one player/pos here), so its model n is half of
+    # top-30's 14 — proving the route uses top12_ids, not top30_ids. Experts carry
     # the top12 subset's own (faked) numbers (5.0 * 1.05).
     top12_qb = body["subsets"]["top12"]["QB"]
-    assert top12_qb["ridge"]["n"] == 14
+    assert top12_qb["ridge"]["n"] == 7
     assert top12_qb["nflcom"]["mae"] == 5.25  # 5.0 * 1.05
 
     assert body["generated_at"] and "experts_meta" in body
