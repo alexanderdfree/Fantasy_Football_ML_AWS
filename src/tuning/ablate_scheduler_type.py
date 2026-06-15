@@ -53,6 +53,13 @@ CUDA graphs (autodetect-ON for sm_80+, PR #874/#889) are NOT numerically inert
 ``FF_CUDA_GRAPH=0``; the Batch launcher (``launch_ablate_scheduler.py``) does
 this so the scheduler deltas are not polluted by graph-capture non-determinism.
 
+STACKED PORT: for the GPU-default N=24 stacked-seed regime use the ab_harness spec
+``src.tuning.ab_scheduler_type`` (``python -m src.tuning.launch_ab --spec
+src.tuning.ab_scheduler_type``); it compares onecycle vs cosine for the attention NN with
+canonical params on both arms. This eager script stays for the ``plateau`` arm (dropped from the
+stacked port — ``train_stacked`` rejects ``ReduceLROnPlateau``), the cross-position rollup, and
+the ``src/batch/train.py --ablation scheduler-type`` entrypoint.
+
 Usage (local):
     python -m src.tuning.ablate_scheduler_type                      # all six, seed 42
     python -m src.tuning.ablate_scheduler_type --positions k dst    # subset

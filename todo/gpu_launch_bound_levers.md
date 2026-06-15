@@ -374,6 +374,14 @@ tune + every `ab_*.py` spec (and any `ab_harness`-based ablation) — NOT the le
 stacking-compatible and several break under the LN/FP32/NN-only regime (`backbone_norm`
 forces LN; `ridge_pca` is a Ridge ablation; `min_games`/`injury_features` are data
 ablations). Owner chose "leave ablate_* eager — ab_harness already covers it."
+**Follow-up (2026-06-15, re-confirmed):** the two stackable NN ablations were then ported to
+`ab_harness` specs — `attn_arch` → `src.tuning.ab_attn_arch` (drops the `entropy` arm, a vmap
+side-channel) and `scheduler_type` → `src.tuning.ab_scheduler_type` (drops `plateau`, which
+`train_stacked` rejects) — so they now inherit the N=24 default. `rb_gate` (its per-target
+head-MAE + gate-AUC decision rule isn't surfaced by the stacked harness, which only exposes
+`pred_attn_nn_total`; D/E are the reverted `hurdle_poisson`) and `batch_lr` (a throughput
+ablation the FP32/vmap/fixed-epochs regime structurally can't measure) were evaluated and
+**deliberately left eager** — don't "finish" the job by porting those two.
 `resolve_default_stacked_seeds()` ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py)):
 `cuda_enabled()` → 24, else 0 (eager) — CPU/MPS must fall back because the FP32 stack is
 *slower* there. Wiring: tune `--stacked-seeds` default = the resolver (was 0);
