@@ -512,6 +512,62 @@ def test_tune_nn_env_dispatch_routes_to_batch_entry(monkeypatch):
     assert calls == ["RB"]
 
 
+def test_apply_eager_graph_env_sets_fp16_fullgraph_and_holds_norm(monkeypatch):
+    import os
+
+    from src.tuning.ab_ensemble_seeds import apply_eager_graph_env
+
+    for k in ("FF_NN_NORM", "FF_AMP_DTYPE", "FF_CUDA_GRAPH", "FF_CUDA_GRAPH_FULL", "FF_COMPILE"):
+        monkeypatch.setenv(k, "managed-for-restore")
+        monkeypatch.delenv(k)
+    monkeypatch.setenv("FF_COMPILE", "1")  # must be cleared (incompatible)
+    apply_eager_graph_env(30)
+    assert os.environ["FF_NN_NORM"] == "layer"  # held constant with stacked arm
+    assert os.environ["FF_AMP_DTYPE"] == "auto"  # -> FP16 on CUDA
+    assert os.environ["FF_CUDA_GRAPH"] == "1"
+    assert os.environ["FF_CUDA_GRAPH_FULL"] == "1"
+    assert os.environ["FF_NN_FIXED_EPOCHS"] == "30"
+    assert "FF_COMPILE" not in os.environ
+
+
+def test_tune_nn_env_dispatch_routes_to_compare(monkeypatch):
+    import sys
+
+    from src.tuning import tune_nn
+
+    calls: list[str] = []
+    monkeypatch.setattr("src.tuning.ab_ensemble_seeds.run_compare_batch_entry", calls.append)
+    monkeypatch.setattr(
+        tune_nn, "_resolve_n_jobs", lambda *a, **k: (_ for _ in ()).throw(AssertionError("early"))
+    )
+    monkeypatch.delenv("FF_TUNE_ENSEMBLE_AB", raising=False)
+    monkeypatch.setenv("FF_TUNE_ENSEMBLE_COMPARE", "1")
+    monkeypatch.setattr(sys, "argv", ["tune_nn", "rb", "--checkpoint-s3"])
+    tune_nn.main()
+    assert calls == ["RB"]
+
+
+def test_run_compare_batch_entry_env_knobs(monkeypatch):
+    import src.tuning.ab_ensemble_seeds as ab
+
+    seen: dict = {}
+
+    def fake_compare(position, n_seeds, fixed_epochs):
+        seen.update(position=position, n_seeds=n_seeds, fixed_epochs=fixed_epochs)
+        return {"position": position, "stacked_speedup_per_seed": 4.0}
+
+    monkeypatch.setattr(ab, "run_compare", fake_compare)
+    monkeypatch.setattr("src.tuning.tune_nn._ensure_data_from_s3", lambda: None)
+    monkeypatch.delenv("S3_BUCKET", raising=False)
+    monkeypatch.setenv("FF_COMPARE_SEEDS", "4")
+    monkeypatch.setenv("FF_COMPARE_FIXED_EPOCHS", "30")
+    ab.run_compare_batch_entry("RB")
+    assert seen == {"position": "RB", "n_seeds": 4, "fixed_epochs": 30}
+
+    with pytest.raises(SystemExit):
+        ab.run_compare_batch_entry("K")  # not a flat-history ensemble position
+
+
 def test_run_batch_entry_env_knobs_and_parity_gate(monkeypatch):
     import os
 

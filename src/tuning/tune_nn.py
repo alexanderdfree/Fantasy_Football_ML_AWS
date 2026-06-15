@@ -1436,6 +1436,15 @@ def main():
         run_batch_entry(positions[0])
         return
 
+    # Same env-flag route for the eager-vs-stacked timing A/B (FP16+full-step
+    # graph vs FP32+vmap, per-seed, norm held constant). See
+    # src.tuning.ab_ensemble_seeds.run_compare_batch_entry for the env knobs.
+    if os.environ.get("FF_TUNE_ENSEMBLE_COMPARE", "").strip() == "1":
+        from src.tuning.ab_ensemble_seeds import run_compare_batch_entry
+
+        run_compare_batch_entry(positions[0])
+        return
+
     # Same env-flag route for the shared A/B harness: FF_TUNE_AB_SPEC=<dotted
     # spec module> (set by src/tuning/launch_ab.py) runs this position's
     # variant x seed cells with per-cell S3 checkpointing instead of Optuna.

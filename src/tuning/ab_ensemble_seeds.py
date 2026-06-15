@@ -677,6 +677,181 @@ def run_batch_entry(position: str) -> None:
         raise SystemExit(f"[ensemble] parity gate FAILED: {report['parity']}")
 
 
+# ---------------------------------------------------------------------------
+# Timing A/B: FP16 + full-step graph (eager) vs FP32 + vmap (stacked)
+# ---------------------------------------------------------------------------
+
+
+def apply_eager_graph_env(fixed_epochs: int) -> None:
+    """The production-style arm of the timing A/B: FP16 + full-step CUDA graph.
+
+    ``FF_NN_NORM=layer`` is held CONSTANT with the stacked arm so the only
+    moving axes are dtype (FP16 vs FP32) and execution (graphed-eager vs
+    vmap) — norm is a third axis deliberately pinned (LN-vs-BN is measured
+    noise, 8-seed A/B). ``FF_AMP_DTYPE=auto`` → FP16 on CUDA; ``FF_CUDA_GRAPH``
+    + ``FF_CUDA_GRAPH_FULL=1`` engage full-step capture on sm_80+.
+    """
+    os.environ["FF_NN_NORM"] = "layer"
+    os.environ["FF_AMP_DTYPE"] = "auto"
+    os.environ["FF_CUDA_GRAPH"] = "1"
+    os.environ["FF_CUDA_GRAPH_FULL"] = "1"
+    os.environ["FF_NN_FIXED_EPOCHS"] = str(int(fixed_epochs))
+    os.environ.pop("FF_COMPILE", None)
+
+
+def _attention_only_cfg(position: str) -> dict:
+    from src.shared.registry import get_config
+
+    cfg = copy.deepcopy(get_config(position))
+    cfg["train_ridge"] = False
+    cfg["train_elasticnet"] = False
+    cfg["train_lightgbm"] = False
+    cfg["train_base_nn"] = False
+    return cfg
+
+
+def run_eager_arm(position: str, seeds: list[int], memo: dict) -> list[float]:
+    """Train each seed's attention NN FOR REAL under the current env (the caller
+    sets FP16 + full-step graph), one at a time on one core, non-attention
+    branches off, shared memo. Returns per-seed ``attn_nn_train`` seconds — the
+    pipeline's own train-phase timer, so data prep (memoized, identical to the
+    stacked arm) is excluded exactly as ``stacked_train_sec`` excludes it.
+    """
+    from src.shared.registry import get_runner
+
+    runner = get_runner(position)
+    per_seed: list[float] = []
+    for s in seeds:
+        cfg = _attention_only_cfg(position)
+        cfg["trial_data_memo"] = memo
+        result = runner(seed=s, config=cfg)
+        secs = (result.get("phase_seconds") or {}).get("attn_nn_train")
+        if secs is None:
+            raise RuntimeError(f"{position} seed {s}: no attn_nn_train phase in result")
+        per_seed.append(float(secs))
+    return per_seed
+
+
+def run_compare(position: str, n_seeds: int, fixed_epochs: int) -> dict:
+    """Head-to-head per-seed timing: FP16+full-step-graph eager vs FP32+vmap
+    stacked, holding config / seeds / epochs / data / norm (LN) constant.
+
+    Both arms train ``n_seeds`` seeds of the SAME config for ``fixed_epochs``
+    on ONE core; the only differences are dtype and execution. Data prep is
+    warmed once into a shared memo so neither arm's timer or resource window
+    includes the one-time feature build.
+    """
+    from src.shared.platform_detect import detect_platform
+    from src.shared.registry import get_config
+    from src.shared.utils import amp_dtype, cuda_graph_full_enabled
+    from src.tuning.resource_probe import ResourceProbe
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    seeds = list(range(42, 42 + n_seeds))
+    cfg = get_config(position)
+    memo: dict = {}
+
+    # Warm the shared data memo ONCE (prepared frames + attn arrays are
+    # regime-independent — no dtype/norm/graph dependence), outside both arms.
+    with ensemble_env(fixed_epochs):
+        warm, _ = capture_seeds(position, seeds[:1], base_cfg=None, memo=memo)
+    del warm
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    # --- Arm B: FP32 + vmap stacked (1 core) ---
+    with ensemble_env(fixed_epochs):
+        probe_b = ResourceProbe().start()
+        captures, _ = capture_seeds(position, seeds, base_cfg=None, memo=memo)
+        t0 = time.perf_counter()
+        train_stacked(captures, cfg, device, fixed_epochs)
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        stacked_sec = time.perf_counter() - t0
+        res_b = probe_b.stop()
+    del captures
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+    # --- Arm A: FP16 + full-step graph eager (1 core, seeds sequential) ---
+    apply_eager_graph_env(fixed_epochs)
+    eager_amp = str(amp_dtype())
+    eager_full_graph = cuda_graph_full_enabled()
+    probe_a = ResourceProbe().start()
+    t0 = time.perf_counter()
+    per_seed = run_eager_arm(position, seeds, memo)
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+    eager_wall = time.perf_counter() - t0
+    res_a = probe_a.stop()
+    eager_train = sum(per_seed)
+
+    eager_per_seed = eager_train / n_seeds
+    stacked_per_seed = stacked_sec / n_seeds
+    return {
+        "position": position,
+        "n_seeds": n_seeds,
+        "n_epochs": fixed_epochs,
+        "device": str(device),
+        "gpu_name": detect_platform().gpu_name,
+        "held_constant": {"norm": "layer", "config": "production", "seeds": seeds},
+        "eager_fp16_graph": {
+            "amp_dtype": eager_amp,
+            "full_step_graph_active": eager_full_graph,
+            "train_sec_attn_sum": round(eager_train, 2),
+            "wall_sec": round(eager_wall, 2),
+            "per_seed_attn_sec": [round(x, 3) for x in per_seed],
+            "sec_per_seed": round(eager_per_seed, 3),
+            "resources": res_a,
+        },
+        "stacked_fp32_vmap": {
+            "train_sec": round(stacked_sec, 2),
+            "sec_per_seed": round(stacked_per_seed, 3),
+            "resources": res_b,
+        },
+        "stacked_speedup_per_seed": round(eager_per_seed / max(stacked_per_seed, 1e-9), 2),
+    }
+
+
+def run_compare_batch_entry(position: str) -> None:
+    """AWS Batch entry for the eager-vs-stacked timing A/B, reached via
+    ``FF_TUNE_ENSEMBLE_COMPARE=1``. Env knobs: ``FF_COMPARE_SEEDS`` (default 4),
+    ``FF_COMPARE_FIXED_EPOCHS`` (default 30). Report → stdout +
+    ``s3://$S3_BUCKET/ensemble_compare/{POS}/report.json``.
+    """
+    if position not in ENSEMBLE_POSITIONS:
+        raise SystemExit(f"compare mode supports {ENSEMBLE_POSITIONS}, got {position}")
+    # One core per arm so the per-seed comparison is apples-to-apples.
+    for key in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ.setdefault(key, "1")
+    n_seeds = int(os.environ.get("FF_COMPARE_SEEDS", "4"))
+    fixed_epochs = int(os.environ.get("FF_COMPARE_FIXED_EPOCHS", "30"))
+
+    from src.tuning.tune_nn import _ensure_data_from_s3
+
+    _ensure_data_from_s3()
+    report = run_compare(position, n_seeds, fixed_epochs)
+    print(json.dumps(report, indent=2))
+
+    bucket = os.environ.get("S3_BUCKET")
+    if bucket:
+        import boto3
+
+        key = f"ensemble_compare/{position.upper()}/report.json"
+        boto3.client("s3").put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(report, indent=2).encode(),
+            ContentType="application/json",
+        )
+        print(f"[compare] uploaded report to s3://{bucket}/{key}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--position", required=True, choices=list(ENSEMBLE_POSITIONS))
@@ -688,8 +863,17 @@ def main() -> None:
         help="also train the sequential reference arm and compare predictions "
         "(requires FF_FORCE_DROPOUT_ZERO=1)",
     )
+    parser.add_argument(
+        "--compare",
+        action="store_true",
+        help="timing A/B: FP16+full-step-graph eager vs FP32+vmap stacked "
+        "(per-seed, 1 core, norm held constant)",
+    )
     args = parser.parse_args()
-    report = run_ensemble_ab(args.position, args.seeds, args.fixed_epochs, args.parity_check)
+    if args.compare:
+        report = run_compare(args.position, args.seeds, args.fixed_epochs)
+    else:
+        report = run_ensemble_ab(args.position, args.seeds, args.fixed_epochs, args.parity_check)
     print(json.dumps(report, indent=2))
 
 
