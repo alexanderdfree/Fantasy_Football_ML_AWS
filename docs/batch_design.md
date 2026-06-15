@@ -559,8 +559,8 @@ AL2 lineage; revisit only if Option B repeatedly fails.
 `aws batch update-compute-environment --compute-environment ff-gpu-spot
 --compute-resources 'launchTemplate={}'` (with disable/enable
 bracketing). Next Spot host uses the default AMI again; pull window
-returns to ~122 s. See [infra/batch/README.md](../infra/batch/README.md)
-"Rollback SOCI launch template" for the full sequence.
+returns to ~122 s. (Historical — the launch template and this rollback
+procedure were removed 2026-06-07.)
 
 **Version pin discipline**: `SOCI_VERSION` in
 `infra/batch/userdata.sh` (host snapshotter)
