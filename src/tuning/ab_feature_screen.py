@@ -25,12 +25,15 @@ its columns out of BOTH model paths — the flat linear/tree list
 (``get_feature_columns_fn``) and the attention static branch
 (``attn_static_features``) — mirroring ``ablate_injury_features``'s mutator.
 
-Why ``expect_ridge_identical`` is left unset (report-only): a PB row whose only
-dropped families are empty for a given position (e.g. RB's ``ewma`` is ``[]``)
-removes no columns, so Ridge stays byte-identical — asserting "must differ"
-would false-positive. The sentinel still REPORTS each row's Ridge Δ, so you can
-read off whether the drop took; it just doesn't hard-assert. Read a row with
-Ridge Δ=0 as "this row dropped nothing real for this position".
+Every PB row declares ``expect_ridge_identical=False`` — dropping real feature
+columns MUST move Ridge, so a Δ=0 means the drop silently didn't take and the
+harness fails the run loudly. (The first cut used report-only ``None``, which
+masked exactly that: the mutator was reading the absent ``cfg["include_features"]``
+and no-opping, producing a baseline-identical null result that the report-only
+sentinel happily reported as "data-identical" — the #1172 stacked-validation
+finding. Source family→columns from :data:`_FAMILY_COLS`, never the cfg.) Each
+row drops several of the eight screened families, all populated on every skill
+position, so the assertion never false-trips.
 
 Scope: skill positions only (QB/RB/WR/TE — they carry the ``include_features``
 category dict; K/DST use a flat ``all_features`` list and are skipped). The
@@ -77,20 +80,43 @@ SCREENED_FAMILIES: tuple[str, ...] = (
 )
 
 
+# The runtime pipeline cfg does NOT carry ``include_features`` (build_pipeline_config
+# flattens it into ``get_feature_columns_fn``), so we cannot read family→columns
+# off the cfg — doing so silently no-ops the screen (the #1172 null-result bug).
+# Precompute it from each skill position's ``PositionConfig.include_features`` (the
+# source of truth) as the UNION across positions: family membership is by column
+# NAME, which is position-consistent, so the union intersected with this position's
+# live ``get_feature_columns_fn()`` yields exactly this position's family columns.
+_FAMILY_SOURCE_POSITIONS = ("QB", "RB", "WR", "TE")
+
+
+def _family_columns() -> dict[str, frozenset[str]]:
+    import importlib
+
+    cols: dict[str, set[str]] = {fam: set() for fam in SCREENED_FAMILIES}
+    for pos in _FAMILY_SOURCE_POSITIONS:
+        inc = importlib.import_module(f"src.{pos.lower()}.config").POSITION_CONFIG.include_features
+        for fam in SCREENED_FAMILIES:
+            cols[fam].update(inc.get(fam, ()))
+    return {fam: frozenset(c) for fam, c in cols.items()}
+
+
+_FAMILY_COLS = _family_columns()
+
+
 def _drop_families(cfg: dict, families: frozenset[str]) -> dict:
     """Filter every column belonging to ``families`` out of both model paths.
 
-    Surgical filter (the ``ablate_injury_features`` pattern), not a rebuild: it
-    removes exactly the dropped families' columns from ``get_feature_columns_fn``
-    (linear/tree) and ``attn_static_features`` (attention static branch), leaving
-    any column the pipeline adds outside ``include_features`` untouched. A family
-    that is empty for this position drops nothing (a no-op row — see module doc).
+    Surgical filter (the ``ablate_injury_features`` pattern): removes the dropped
+    families' columns from ``get_feature_columns_fn`` (linear/tree) and
+    ``attn_static_features`` (attention static branch). Family→columns comes from
+    :data:`_FAMILY_COLS` (NOT ``cfg["include_features"]``, which is absent at
+    runtime — the #1172 null-result bug); intersecting the union with the live
+    feature list removes only this position's columns.
     """
-    include = cfg.get("include_features") or {}
-    dropped_cols = {col for fam in families for col in include.get(fam, [])}
+    dropped_cols = {c for fam in families for c in _FAMILY_COLS.get(fam, ())}
     if not dropped_cols:
         return cfg
-
     base_get = cfg.get("get_feature_columns_fn")
     if base_get is not None:
         cfg["get_feature_columns_fn"] = lambda _b=base_get: [
@@ -99,8 +125,6 @@ def _drop_families(cfg: dict, families: frozenset[str]) -> dict:
     static = cfg.get("attn_static_features")
     if static is not None:
         cfg["attn_static_features"] = [c for c in static if c not in dropped_cols]
-    # Keep include_features consistent for any downstream reader.
-    cfg["include_features"] = {k: ([] if k in families else v) for k, v in include.items()}
     return cfg
 
 
@@ -126,9 +150,10 @@ def _build_variants() -> list[Variant]:
             Variant(
                 f"pb{run_idx:02d}",
                 cfg_mutator=_make_mutator(drop),
-                # report-only: a row dropping only empty-for-this-position families
-                # is a no-op and would false-trip a "must differ" assertion.
-                expect_ridge_identical=None,
+                # MUST move Ridge: every PB row drops >=1 populated family, so a
+                # Delta=0 means the drop didn't take (#1172 null-result bug) —
+                # fail loud rather than silently emit a baseline-identical row.
+                expect_ridge_identical=False,
                 label=f"drop={sorted(drop)} keep={kept}",
             )
         )

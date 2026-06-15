@@ -10,13 +10,19 @@ only the execution backend changes (eager → stacked), which is exactly the
 validated stacked path rather than hand-rolling a second vmap loop.
 
 Each variant is one PB row: ``+1`` sets the knob to its high bound, ``-1`` to its
-low bound (``attn_knob_experiments.doe_overrides``). All variants — including
-``baseline`` — also disable the non-attention models (LightGBM / base NN /
-ElasticNet), keeping only Ridge (for the data-identity sentinel) and the
-attention NN, mirroring ``attn_knob_experiments._make_cfg``. The knobs are
-attention-only, so Ridge MUST stay byte-identical across every arm:
-``expect_ridge_identical=True`` turns the harness sentinel into a hard guard
-that a knob change didn't leak into the shared data path.
+low bound (``attn_knob_experiments.doe_overrides``); ``baseline`` is the
+identity (production knobs). The knobs are attention-only, so Ridge MUST stay
+byte-identical across every arm: ``expect_ridge_identical=True`` turns the
+harness sentinel into a hard guard that a knob change didn't leak into the
+shared data path.
+
+This runs the **full pipeline** (it does NOT disable the non-attention models).
+The stacked harness's Phase-A run (``run_group_stacked``, attention OFF) must
+reach the pipeline's normal return that carries ``test_df``; disabling the
+non-attn models drops Phase-A into an early-return path that omits ``test_df``
+and ``KeyError``s every cell — the #1172 stacked-validation failure. (The
+``attn_knob_experiments`` eager path can disable them because it reads
+``attn_nn_metrics`` directly and never goes through the Phase-A ``test_df``.)
 
 Judge on the attention NN's ``test_df`` fantasy-point MAE (the harness default
 metric). For per-knob main effects across the 12 runs, post-process the
@@ -48,27 +54,20 @@ from src.tuning.attn_knob_experiments import (
 
 POSITIONS = ["RB"]  # lead; run QB/WR/TE via --positions (flat-history, stackable)
 
-# Train only what the screen reads: the attention NN, plus Ridge as the
-# data-identity sentinel. Mirrors attn_knob_experiments._make_cfg.
-_DISABLE_NON_ATTN = {
-    "train_lightgbm": False,
-    "train_base_nn": False,
-    "train_elasticnet": False,
-    "train_ridge": True,
-}
-
-
-def _apply(cfg: dict, overrides: dict) -> dict:
-    cfg.update(_DISABLE_NON_ATTN)
-    cfg.update(overrides)
-    return cfg
+# This screen runs the FULL pipeline — it does NOT disable the non-attention
+# models. The stacked harness's Phase-A run (run_group_stacked, attention OFF)
+# must reach the pipeline's normal return that carries ``test_df``; disabling
+# LightGBM/base-NN/ElasticNet drops Phase-A into an early-return path that omits
+# ``test_df`` and KeyErrors every cell (the #1172 stacked-validation failure).
+# The knobs are attention-only, so Ridge/LightGBM are constant across arms anyway.
 
 
 def _make_mutator(overrides: dict):
     """Bind one PB row's knob overrides into a cfg mutator (no late-binding)."""
 
     def _mut(cfg, _ov=overrides):
-        return _apply(cfg, _ov)
+        cfg.update(_ov)
+        return cfg
 
     return _mut
 
@@ -76,17 +75,9 @@ def _make_mutator(overrides: dict):
 def _build_variants() -> list[Variant]:
     """baseline (production knobs) + one variant per 12-run PB row."""
     design = plackett_burman_design(len(ATTN_KNOBS))
-    # baseline keeps production knob values but matches the model-disabling so
-    # its attention-NN MAE is comparable; declared BASELINE since the mutator
-    # makes it non-identity-shaped.
-    variants = [
-        Variant(
-            "baseline",
-            cfg_mutator=_make_mutator({}),
-            expect_ridge_identical=True,
-            label="production attention knobs",
-        )
-    ]
+    # Identity baseline = production knobs + full pipeline, so the stacked
+    # Phase-A reaches the test_df return. Auto-picked as the sentinel baseline.
+    variants = [Variant("baseline", label="production attention knobs")]
     for run_idx, signs in enumerate(design, start=1):
         overrides = doe_overrides(signs)
         variants.append(
