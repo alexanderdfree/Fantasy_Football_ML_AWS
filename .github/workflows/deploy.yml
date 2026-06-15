@@ -139,11 +139,26 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Pull current task definition
+        # Start from the live task def (preserves the real ARNs / env / secrets /
+        # log config), swap the image below — but source cpu/memory from the
+        # in-repo infra/aws/task-definition.json so serving capacity is codified
+        # in git rather than drifting on whatever the last register-task-definition
+        # set. The prediction-cache recompute needs 8 GB headroom: on a cold /
+        # fingerprint-drifted boot both gunicorn workers recompute concurrently
+        # and OOM'd the 4 GB task (2026-06-15 incident; see ADR-0018). Only the
+        # two scalar capacity fields are read from the file (the rest of it is a
+        # placeholder setup template), so this never reintroduces __PLACEHOLDER__s.
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY \
             --query 'taskDefinition' --output json \
           | jq 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
           > task-definition.json
+          cpu=$(jq -r '.cpu' infra/aws/task-definition.json)
+          mem=$(jq -r '.memory' infra/aws/task-definition.json)
+          jq --arg cpu "$cpu" --arg mem "$mem" '.cpu = $cpu | .memory = $mem' \
+            task-definition.json > task-definition.pinned.json
+          mv task-definition.pinned.json task-definition.json
+          echo "Pinned serving capacity from infra/aws/task-definition.json: cpu=$cpu memory=$mem"
 
       - name: Update image in task definition
         id: render-task-def

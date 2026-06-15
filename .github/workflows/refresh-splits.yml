@@ -94,7 +94,9 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30 -> 45: the post-upload "Build + upload serving prediction cache" step runs
+    # the full 6-position inference (~10 min) on top of the ~10 min splits regen.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -487,6 +489,25 @@ jobs:
               raise SystemExit("Depth-chart alignment gate failed (DEPTH_ALIGN_HARD_FAIL=1).")
           print("Depth-chart alignment guard:", "FLAGGED (warn-only)" if failed else "clean")
           PY
+
+      - name: Build + upload serving prediction cache
+        # ADR-0018 / 2026-06-15 incident: build the prediction cache HERE (CI has
+        # ample memory) from the splits we just uploaded + the current S3 models,
+        # and publish it to S3 BEFORE the rolling deploy below — so the fresh tasks
+        # HYDRATE it instead of recomputing the full 6-position pipeline
+        # in-container. Two gunicorn workers recomputing concurrently OOM'd the
+        # serving task on a fingerprint-drifted boot (exactly this splits refresh
+        # changes the fingerprint), taking Season Leaders / Model Performance down.
+        # The script syncs the same S3 artifacts serving syncs, so the content-hash
+        # fingerprint matches and hydrate succeeds. Best-effort: on failure, fall
+        # through to the (now 8 GB) in-container recompute rather than blocking the
+        # splits refresh — the next boot still serves, just the slow way.
+        continue-on-error: true
+        env:
+          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
+          FF_MODEL_S3_PREFIX: models
+          FF_DEVICE: cpu
+        run: python -m src.scripts.build_serving_cache
 
       - name: Kick off ECS rolling deploy (non-blocking)
         # Force the ECS service to roll new tasks so they re-sync the fresh
