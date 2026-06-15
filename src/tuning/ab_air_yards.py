@@ -47,8 +47,8 @@ flat/negative WR result pauses the rollout (the signal may be position-specific)
 Run (local authoring smoke only — the real A/B runs on the GPU Batch fleet; local training
 SIGSEGVs on the macOS torch+lightgbm+sklearn libomp triple-load)::
 
-    python -m src.tuning.ab_air_yards --list                 # show the grid, run nothing
-    python -m src.tuning.launch_ab --spec ab_air_yards       # GPU fleet (WR, default)
+    python -m src.tuning.ab_air_yards --list                       # show the grid, run nothing
+    python -m src.tuning.launch_ab --spec src.tuning.ab_air_yards   # GPU fleet (WR, default)
     python -m src.tuning.ab_air_yards --positions TE         # next gated phase
     python -m src.tuning.ab_air_yards --positions RB --only baseline +air +air_yac
     python -m src.tuning.ab_air_yards --positions QB         # passing decomposition + mobility
