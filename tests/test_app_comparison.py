@@ -11,7 +11,7 @@ Coverage:
     empty-slice → all-``None`` paths (unit).
   - the route's merge, the model-unavailable fallback, and scoring passthrough
     (integration, via the Flask test client).
-  - the committed JSON's data contract (six positions × two subsets, coverage
+  - the committed JSON's data contract (six positions × three subsets, coverage
     holes nulled, metrics present) — guards the generator's output shape.
 """
 
@@ -173,9 +173,9 @@ def test_model_reliabilities_all_none_when_no_predictions(app_module):
 
 
 def _fake_experts():
-    """Controlled expert payload whose top30_ids match the synthetic results
-    (player_id ``{POS}000``..``{POS}003``), so the route's top-30 model slice is
-    exercised deterministically without depending on the committed file."""
+    """Controlled expert payload whose top12_ids / top30_ids match the synthetic
+    results (player_id ``{POS}000``..``{POS}003``), so the route's ranked model
+    slices are exercised deterministically without depending on the committed file."""
 
     def cell(mae):
         return {"mae": mae, "rmse": mae + 2.0, "r2": 0.3, "n": 100}
@@ -215,9 +215,11 @@ def _fake_experts():
         "generated_at": "2026-05-31T00:00:00+00:00",
         "scoring": "ppr",
         "top_n": 30,
+        "top12_n": 12,
         "experts_meta": {"model": {}, "nflcom": {"note": "n"}, "rotowire": {"note": "r"}},
+        "top12_ids": {p: [f"{p}000", f"{p}001"] for p in _POSITIONS},
         "top30_ids": {p: [f"{p}000", f"{p}001"] for p in _POSITIONS},
-        "subsets": {"all": subset(1.0), "top30": subset(1.1)},
+        "subsets": {"all": subset(1.0), "top12": subset(1.05), "top30": subset(1.1)},
         "expert_reliability": {
             "seasons": [2024, 2025],
             "scoring": "ppr",
@@ -243,7 +245,7 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
         body = c.get("/api/comparison").get_json()
 
     assert body["model_source"] == "live"
-    assert set(body["subsets"]) == {"all", "top30"}
+    assert set(body["subsets"]) == {"all", "top12", "top30"}
 
     qb = body["subsets"]["all"]["QB"]
     # Each architecture is its own block now (no single "Our Model" / best_arch).
@@ -269,6 +271,12 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     top_qb = body["subsets"]["top30"]["QB"]
     assert top_qb["ridge"]["n"] == 14
     assert top_qb["nflcom"]["mae"] == 5.5  # 5.0 * 1.1
+
+    # Top-12 uses the same id filter here, so the model slice matches; experts carry
+    # the top12 subset's own (faked) numbers (5.0 * 1.05).
+    top12_qb = body["subsets"]["top12"]["QB"]
+    assert top12_qb["ridge"]["n"] == 14
+    assert top12_qb["nflcom"]["mae"] == 5.25  # 5.0 * 1.05
 
     assert body["generated_at"] and "experts_meta" in body
 
@@ -372,8 +380,8 @@ def test_committed_expert_summary_contract():
     with open(comparison._COMPARISON_EXPERTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
 
-    assert set(data["subsets"]) == {"all", "top30"}
-    for subset in ("all", "top30"):
+    assert set(data["subsets"]) == {"all", "top12", "top30"}
+    for subset in ("all", "top12", "top30"):
         assert set(data["subsets"][subset]) == set(_POSITIONS)
         for pos in _POSITIONS:
             assert set(data["subsets"][subset][pos]) == {"nflcom", "rotowire"}
@@ -384,10 +392,12 @@ def test_committed_expert_summary_contract():
         qb_nfl = data["subsets"][subset]["QB"]["nflcom"]
         assert {"mae", "rmse", "r2", "n"} <= set(qb_nfl)
 
-    assert set(data["top30_ids"]) == set(_POSITIONS)
-    for pos in _POSITIONS:
-        ids = data["top30_ids"][pos]
-        assert 0 < len(ids) <= data["top_n"]
+    # Each ranked tier emits a per-position id set, capped by its own cutoff.
+    for ids_key, cap in (("top30_ids", data["top_n"]), ("top12_ids", data["top12_n"])):
+        assert set(data[ids_key]) == set(_POSITIONS)
+        for pos in _POSITIONS:
+            ids = data[ids_key][pos]
+            assert 0 < len(ids) <= cap
     assert "experts_meta" in data and "generated_at" in data
 
     # Per-source residual-σ block (expert uncertainty): multi-season, expert-only,
