@@ -734,10 +734,12 @@ class TestHardwareMetadata:
             train, "detect_platform", lambda: SimpleNamespace(gpu_name="NVIDIA L4", sm="sm_89")
         )
         monkeypatch.setattr(train, "cuda_graph_enabled", lambda: True)
+        monkeypatch.setattr(train, "cuda_graph_full_enabled", lambda: True)
         assert train._hardware_metadata() == {
             "gpu_name": "NVIDIA L4",
             "sm": "sm_89",
             "cuda_graph_active": True,
+            "cuda_graph_full_active": True,  # prod default since 2026-06-15
         }
 
     def test_t4_reports_eager(self, monkeypatch):
@@ -751,10 +753,13 @@ class TestHardwareMetadata:
             train, "detect_platform", lambda: SimpleNamespace(gpu_name="Tesla T4", sm="sm_75")
         )
         monkeypatch.setattr(train, "cuda_graph_enabled", lambda: False)
+        # Full-step requires the base gate, so sm_75 reports it off too.
+        monkeypatch.setattr(train, "cuda_graph_full_enabled", lambda: False)
         assert train._hardware_metadata() == {
             "gpu_name": "Tesla T4",
             "sm": "sm_75",
             "cuda_graph_active": False,
+            "cuda_graph_full_active": False,
         }
 
     def test_cpu_box_reports_none(self, monkeypatch):
@@ -768,10 +773,12 @@ class TestHardwareMetadata:
             train, "detect_platform", lambda: SimpleNamespace(gpu_name=None, sm=None)
         )
         monkeypatch.setattr(train, "cuda_graph_enabled", lambda: False)
+        monkeypatch.setattr(train, "cuda_graph_full_enabled", lambda: False)
         assert train._hardware_metadata() == {
             "gpu_name": None,
             "sm": None,
             "cuda_graph_active": False,
+            "cuda_graph_full_active": False,
         }
 
 
