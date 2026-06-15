@@ -616,6 +616,52 @@ def test_example_variants_declare_sentinel_expectations():
 # --------------------------------------------------------------------------- #
 # Stacked-seeds mode (E2): groups, group runner contract, orchestration
 # --------------------------------------------------------------------------- #
+def test_resolve_spec_default_seeds_fallback():
+    """default_seeds is the FINAL fallback — an explicit seeds= or a spec SEEDS
+    still wins, so the eager path keeps the lean default."""
+    mod = SimpleNamespace(VARIANTS=[Variant("baseline")], POSITIONS=["RB"])
+    assert H.resolve_spec(mod, default_seeds=[1, 2, 3]).seeds == [1, 2, 3]
+    assert H.resolve_spec(mod).seeds == list(H.DEFAULT_SEEDS)
+    assert H.resolve_spec(mod, seeds=[9], default_seeds=[1, 2, 3]).seeds == [9]
+    mod2 = SimpleNamespace(VARIANTS=[Variant("baseline")], POSITIONS=["RB"], SEEDS=[7, 8])
+    assert H.resolve_spec(mod2, default_seeds=[1, 2, 3]).seeds == [7, 8]
+
+
+def test_run_ab_stacked_default_is_gpu_gated(monkeypatch, tmp_path):
+    """stacked_seeds=None -> ON + 24-seed grid on CUDA, OFF + lean default on
+    CPU (no local/CI regression); explicit False forces eager even on CUDA."""
+    spec = SimpleNamespace(VARIANTS=[Variant("baseline")], POSITIONS=["RB"])
+    captured: dict = {}
+    monkeypatch.setattr(H, "resolve_jobs", lambda *a, **k: 1)
+    monkeypatch.setattr(
+        H, "aggregate", lambda spec, results: {"table": {}, "sentinel": [], "n_ok": 0, "failed": []}
+    )
+    monkeypatch.setattr(H, "print_report", lambda *a, **k: None)
+
+    def _seq_stacked(resolved, groups, leftover, data_dir, stacked_epochs):
+        captured.update(mode="stacked", seeds=resolved.seeds)
+        return []
+
+    def _seq(resolved, cells, data_dir):
+        captured.update(mode="eager", seeds=resolved.seeds)
+        return []
+
+    monkeypatch.setattr(H, "run_sequential_stacked", _seq_stacked)
+    monkeypatch.setattr(H, "run_sequential", _seq)
+
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: True)
+    H.run_ab(spec, data_dir=str(tmp_path))
+    assert captured["mode"] == "stacked" and captured["seeds"] == list(range(42, 66))
+
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: False)
+    H.run_ab(spec, data_dir=str(tmp_path))
+    assert captured["mode"] == "eager" and captured["seeds"] == list(H.DEFAULT_SEEDS)
+
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: True)
+    H.run_ab(spec, data_dir=str(tmp_path), stacked_seeds=False)
+    assert captured["mode"] == "eager" and captured["seeds"] == list(H.DEFAULT_SEEDS)
+
+
 def test_build_stacked_units_split():
     """Flat-history positions become groups; K/DST fall back to eager cells."""
     spec = _spec(

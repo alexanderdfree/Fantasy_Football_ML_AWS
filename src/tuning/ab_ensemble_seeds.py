@@ -79,6 +79,37 @@ ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
 _CLIP_MAX_NORM = 1.0  # mirrors the hardcoded clip_grad_norm_(1.0) in MultiHeadTrainer
 _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * epoch
 
+# Default stacked width for the comparative pipelines (tune / ablation / A/B).
+# 24 is the measured per-seed optimum on the L4 (2026-06-11, jobs b12a4b6a/
+# 330a698a): ~1.0 s/seed, ~14x the eager per-seed cost, flat-region top before
+# the (24, 50] bandwidth knee. CPU/RAM are width-invariant; ~0.10 GiB VRAM/seed.
+DEFAULT_STACKED_SEEDS = 24
+
+
+def resolve_default_stacked_seeds(explicit: int | str | None = None) -> int:
+    """Default stacked width for the comparative pipelines.
+
+    Returns :data:`DEFAULT_STACKED_SEEDS` (24) on CUDA — where stacking is the
+    measured win above ~9 seeds — and 0 (eager) off-CUDA, because on CPU/MPS the
+    FP32+vmap stack is compute-bound and SLOWER per seed than the eager path
+    (so a default-on stack would regress local/CI runs). An explicit value
+    (CLI flag / env) always wins: ``0`` forces eager, ``N>=2`` pins the width,
+    ``1`` is rejected (it is just the eager objective).
+    """
+    if explicit is not None and str(explicit).strip() != "":
+        n = int(explicit)
+        if n == 1:
+            raise SystemExit("stacked seeds must be >= 2 (1 is just the eager path)")
+        return max(0, n)
+    from src.shared.utils import cuda_enabled
+
+    return DEFAULT_STACKED_SEEDS if cuda_enabled() else 0
+
+
+def stacked_default_seed_list(n: int = DEFAULT_STACKED_SEEDS) -> list[int]:
+    """The canonical ``n``-seed list (42..42+n) the default stacked grid uses."""
+    return list(range(42, 42 + n))
+
 
 _ENSEMBLE_ENV_KEYS = (
     "FF_NN_NORM",

@@ -1387,13 +1387,15 @@ def main():
     parser.add_argument(
         "--stacked-seeds",
         type=int,
-        default=int(os.environ.get("FF_TUNE_STACKED_SEEDS", "0") or 0),
+        default=os.environ.get("FF_TUNE_STACKED_SEEDS"),
         help=(
             "N >= 2 evaluates each trial as a vmap-stacked N-seed ensemble "
             "(seed-averaged objective, ensemble regime, fixed --stacked-epochs; "
-            "studies land in _ens{N}x{E} namespaces). 0 (default) = eager "
-            "single-seed trials. Env default: FF_TUNE_STACKED_SEEDS — the "
-            "Batch route, since train.py forwards a fixed argv. QB/RB/WR/TE only."
+            "studies land in _ens{N}x{E} namespaces, coexisting with eager-regime "
+            "studies). DEFAULT is now GPU-gated: 24 on CUDA (the measured per-seed "
+            "optimum), 0 (eager single-seed) off-CUDA where the FP32 stack is "
+            "slower. Pass 0 to force eager. Env: FF_TUNE_STACKED_SEEDS (the Batch "
+            "route, since train.py forwards a fixed argv). QB/RB/WR/TE only."
         ),
     )
     parser.add_argument(
@@ -1455,18 +1457,34 @@ def main():
         ab_run_batch_entry(positions[0])
         return
 
-    stacked_n = max(0, int(args.stacked_seeds))
+    # GPU-gated default: 24 on CUDA, eager off-CUDA (resolver handles an explicit
+    # 0/N override and rejects 1). K/DST aren't flat-history, so they always fall
+    # back to eager below regardless of the resolved width.
+    from src.tuning.ab_ensemble_seeds import resolve_default_stacked_seeds
+
+    stacked_n = resolve_default_stacked_seeds(args.stacked_seeds)
     stacked_epochs = int(args.stacked_epochs)
-    if stacked_n == 1:
-        raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
     if stacked_n and not args.print_best:
         from src.tuning.ab_ensemble_seeds import ENSEMBLE_POSITIONS, apply_ensemble_env
 
         bad = [p for p in positions if p not in ENSEMBLE_POSITIONS]
         if bad:
-            raise SystemExit(
-                f"--stacked-seeds supports {ENSEMBLE_POSITIONS} (flat-history); got {bad}"
+            # K/DST aren't flat-history (nested / own-splits) so they can't vmap.
+            # An EXPLICIT --stacked-seeds for them is a hard error; the default-on
+            # path falls back to eager so a plain `tune_nn K` still works.
+            explicit = args.stacked_seeds is not None
+            if explicit:
+                raise SystemExit(
+                    f"--stacked-seeds supports {ENSEMBLE_POSITIONS} (flat-history); got {bad}"
+                )
+            print(
+                f"[tune] {bad}: not flat-history — stacking unavailable, running eager.",
+                flush=True,
             )
+            stacked_n = 0
+    if stacked_n and not args.print_best:
+        from src.tuning.ab_ensemble_seeds import apply_ensemble_env
+
         # Regime BEFORE backend/namespace resolution: ensemble mode forces the
         # graphs off (the hand-rolled vmapped loop is eager) and FP32/LN, so
         # the storage version resolves graph-less and then gets the explicit

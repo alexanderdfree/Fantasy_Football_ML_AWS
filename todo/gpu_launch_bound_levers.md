@@ -366,6 +366,24 @@ doctrine) — the headroom to 24 is free sharpening when wanted. Trials still ca
 seeds-per-config, lanes/hosts multiply configs. Eager-vs-stacked tuning rate: 35 trials (8C/27P) in 8.6 min at 4 seeds/trial
 (eager-regime vmapped, no graphs) vs 18.7 single-seed trials/min in the graphfull eager
 namespace — stacked trials cost ~2× an eager-regime trial for 4× the seeds.
+**DEFAULT-ON at N=24 for tune / ablation / A/B (owner call, 2026-06-15).** Given the
+crossover (eager-FP16+full-graph wins ≤8 seeds; stacking wins ≥~9, measured 2.68 vs
+1.0 s/seed at N=24), stacking is now the GPU default at the per-seed optimum.
+`resolve_default_stacked_seeds()` ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py)):
+`cuda_enabled()` → 24, else 0 (eager) — CPU/MPS must fall back because the FP32 stack is
+*slower* there. Wiring: tune `--stacked-seeds` default = the resolver (was 0);
+`launch_tune` default = 24, resolved per-position (K/DST → eager, no `_ens` suffix, so the
+predicted namespace matches the container fallback); `ab_harness --stacked-seeds` is now a
+GPU-gated tri-state (`--no-stacked-seeds` forces eager) and, when on with no explicit seeds,
+defaults the grid to the wide 24-seed list while the eager path keeps the lean 3-seed
+default (no CPU/CI regression). Stacked artifacts land in `_ens{N}x{E}` namespaces that
+**coexist** with eager-regime history (owner chose coexist over replace). Production
+training unchanged. The user accepted 24-seed tune objectives (σ/√24, ~9× fewer configs
+per budget) as an explicit precision-over-breadth call. (The earlier note that the
+"useful width stays 8-16" is superseded for the *default*: 24 is the throughput optimum
+and the chosen objective width; 8-16 remains the statistical sweet spot if a leaner run is
+wanted via `--stacked-seeds N`.)
+
 **Latent bug surfaced (chip filed):** `launch_tune --n-jobs auto` (the #1119 default) dies in
 the container — `src/batch/train.py`'s `--n-jobs` is `type=int` and every prior submission
 happened to pass a number. Fix = env channel (`FF_TUNE_N_JOBS`) in src/tuning, NOT a

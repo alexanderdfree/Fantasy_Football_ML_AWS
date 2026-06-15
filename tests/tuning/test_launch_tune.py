@@ -79,6 +79,45 @@ def test_submit_tune_job_builds_expected_command():
     assert kwargs["jobName"].startswith("ff-tune-rb-")
 
 
+def test_submit_tune_job_stacked_default_per_position():
+    """The CLI default stacked width (24) lands as FF_TUNE_STACKED_SEEDS + an
+    _ens24x30 namespace for flat-history positions, but K/DST resolve to eager
+    (no stacked env, no suffix) so the predicted namespace matches the
+    container's fallback."""
+    from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS
+
+    # RB (flat-history): stacked at the default width.
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "j"}
+    launch_tune.submit_tune_job(
+        "RB", n_trials=5, stacked_seeds=DEFAULT_STACKED_SEEDS, batch_client=batch
+    )
+    env = {
+        e["name"]: e["value"]
+        for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert env["FF_TUNE_STACKED_SEEDS"] == "24"
+    assert env["FF_TUNE_STACKED_EPOCHS"] == "30"
+    assert env["TUNE_NN_STORAGE_VERSION"].endswith("_ens24x30")
+    # Stacked forces graphs off in-container; the predicted base must match.
+    assert env["FF_CUDA_GRAPH"] == "0" and env["FF_CUDA_GRAPH_FULL"] == "0"
+
+    # K (nested history): the same submission resolves to eager — no stacked
+    # env, no suffix, graphs back on.
+    batch_k = MagicMock()
+    batch_k.submit_job.return_value = {"jobId": "j"}
+    launch_tune.submit_tune_job(
+        "K", n_trials=5, stacked_seeds=DEFAULT_STACKED_SEEDS, batch_client=batch_k
+    )
+    env_k = {
+        e["name"]: e["value"]
+        for e in batch_k.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert "FF_TUNE_STACKED_SEEDS" not in env_k
+    assert "_ens" not in env_k["TUNE_NN_STORAGE_VERSION"]
+    assert env_k["FF_CUDA_GRAPH"] == "1"
+
+
 def test_submit_tune_job_omits_timeout_when_none():
     """timeout=None should drop the --timeout flag from the command — Batch
     enforces its own wait-timeout layer via launch.py's WAIT_TIMEOUT_SECONDS."""

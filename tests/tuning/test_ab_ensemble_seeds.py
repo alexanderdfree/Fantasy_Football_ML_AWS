@@ -512,12 +512,50 @@ def test_tune_nn_env_dispatch_routes_to_batch_entry(monkeypatch):
     assert calls == ["RB"]
 
 
+def test_resolve_default_stacked_seeds_gpu_gated(monkeypatch):
+    import src.tuning.ab_ensemble_seeds as ab
+    from src.tuning.ab_ensemble_seeds import (
+        DEFAULT_STACKED_SEEDS,
+        resolve_default_stacked_seeds,
+        stacked_default_seed_list,
+    )
+
+    # Explicit wins regardless of device.
+    assert resolve_default_stacked_seeds(0) == 0  # force eager
+    assert resolve_default_stacked_seeds(8) == 8  # explicit width
+    assert resolve_default_stacked_seeds("16") == 16  # env arrives as str
+    with pytest.raises(SystemExit):
+        resolve_default_stacked_seeds(1)  # N=1 rejected
+
+    # Auto (None/empty): 24 on CUDA, 0 (eager) off-CUDA.
+    monkeypatch.setattr(ab, "cuda_enabled", lambda: True, raising=False)
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: True)
+    assert resolve_default_stacked_seeds(None) == DEFAULT_STACKED_SEEDS == 24
+    assert resolve_default_stacked_seeds("") == 24
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: False)
+    assert resolve_default_stacked_seeds(None) == 0  # CPU/MPS -> eager (no regress)
+
+    assert stacked_default_seed_list() == list(range(42, 66))
+    assert stacked_default_seed_list(3) == [42, 43, 44]
+
+
 def test_apply_eager_graph_env_sets_fp16_fullgraph_and_holds_norm(monkeypatch):
     import os
 
     from src.tuning.ab_ensemble_seeds import apply_eager_graph_env
 
-    for k in ("FF_NN_NORM", "FF_AMP_DTYPE", "FF_CUDA_GRAPH", "FF_CUDA_GRAPH_FULL", "FF_COMPILE"):
+    # Register EVERY key apply_eager_graph_env writes for monkeypatch restore
+    # (incl. FF_NN_FIXED_EPOCHS) so the regime can't leak into a later trainer
+    # test — the function writes os.environ directly, and a plain delenv of an
+    # absent key records no undo (the #1138 leak shape).
+    for k in (
+        "FF_NN_NORM",
+        "FF_AMP_DTYPE",
+        "FF_CUDA_GRAPH",
+        "FF_CUDA_GRAPH_FULL",
+        "FF_NN_FIXED_EPOCHS",
+        "FF_COMPILE",
+    ):
         monkeypatch.setenv(k, "managed-for-restore")
         monkeypatch.delenv(k)
     monkeypatch.setenv("FF_COMPILE", "1")  # must be cleared (incompatible)

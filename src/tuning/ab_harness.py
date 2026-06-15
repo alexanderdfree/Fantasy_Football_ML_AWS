@@ -222,12 +222,17 @@ def resolve_spec(
     positions: Sequence[str] | None = None,
     seeds: Sequence[int] | None = None,
     only: Sequence[str] | None = None,
+    default_seeds: Sequence[int] | None = None,
 ) -> Spec:
     """Turn a spec module (or dotted path) + CLI overrides into a :class:`Spec`.
 
     ``spec`` may be an imported module/object or a dotted module path string. A
     string is required for parallel (subprocess) execution so each worker can
     re-import it; an object resolves only the in-process sequential path.
+
+    ``default_seeds`` overrides the final seed fallback (used by stacked mode to
+    default to the wide ``DEFAULT_STACKED_SEEDS`` grid); an explicit ``seeds`` or
+    a spec ``SEEDS`` still wins, so a CPU/eager run keeps the lean 3-seed default.
     """
     dotted: str | None = None
     if isinstance(spec, str):
@@ -256,7 +261,9 @@ def resolve_spec(
     bad = [p for p in pos if p not in ALL_POSITIONS]
     if bad:
         raise ValueError(f"unknown positions {bad}; valid: {ALL_POSITIONS}")
-    sds = [int(s) for s in (seeds or getattr(spec, "SEEDS", None) or DEFAULT_SEEDS)]
+    sds = [
+        int(s) for s in (seeds or getattr(spec, "SEEDS", None) or default_seeds or DEFAULT_SEEDS)
+    ]
     metric_fn = getattr(spec, "metric_fn", default_metric_fn)
     name = getattr(spec, "AB_NAME", None) or (dotted or "ab").rsplit(".", 1)[-1]
     return Spec(variants, baseline, pos, sds, metric_fn, dotted, name)
@@ -1080,7 +1087,7 @@ def run_ab(
     sequential: bool = False,
     feature_cache: bool = False,
     data_dir: str | None = None,
-    stacked_seeds: bool = False,
+    stacked_seeds: bool | None = None,
     stacked_epochs: int = DEFAULT_STACKED_EPOCHS,
 ) -> dict:
     """Resolve the spec, run the grid (parallel or sequential), aggregate, print.
@@ -1089,15 +1096,28 @@ def run_ab(
     dotted path string (required for parallel). The feature cache is disabled by
     default for A/B correctness; ``feature_cache=True`` re-enables it.
 
-    ``stacked_seeds=True`` switches the unit of work from one (position,
-    variant, seed) cell to one (position, variant) GROUP whose attention NN
-    trains all seeds at once via the vmap ensemble harness (~4.5× per host
-    thread; see :func:`run_group_stacked` for regime + contract). Results stay
-    per-seed, so aggregation, Δ-vs-baseline, and the Ridge sentinel are
-    unchanged. Stacked results are within-mode consistent — never compare a
-    stacked arm against an eager arm seed-by-seed.
+    ``stacked_seeds`` switches the unit of work from one (position, variant,
+    seed) cell to one (position, variant) GROUP whose attention NN trains all
+    seeds at once via the vmap ensemble harness (see :func:`run_group_stacked`
+    for regime + contract). Results stay per-seed, so aggregation, Δ-vs-baseline,
+    and the Ridge sentinel are unchanged. Stacked results are within-mode
+    consistent — never compare a stacked arm against an eager arm seed-by-seed.
+
+    ``None`` (the default) is GPU-gated: stacking ON on CUDA (where it wins) and
+    OFF on CPU/MPS (where the FP32 stack is slower). When stacking is on and
+    neither the caller nor the spec set seeds, the grid defaults to the wide
+    ``DEFAULT_STACKED_SEEDS`` (24) grid; the eager path keeps the lean 3-seed
+    default, so a CPU/CI run is unchanged.
     """
-    resolved = resolve_spec(spec, positions=positions, seeds=seeds, only=only)
+    from src.shared.utils import cuda_enabled
+    from src.tuning.ab_ensemble_seeds import stacked_default_seed_list
+
+    if stacked_seeds is None:
+        stacked_seeds = cuda_enabled()
+    default_seeds = stacked_default_seed_list() if stacked_seeds else None
+    resolved = resolve_spec(
+        spec, positions=positions, seeds=seeds, only=only, default_seeds=default_seeds
+    )
     data_dir = os.path.abspath(data_dir or "data")
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"data dir not found: {data_dir} (need data/splits/*.parquet)")
@@ -1176,10 +1196,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--stacked-seeds",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Train each (position, variant)'s seeds as ONE vmap ensemble "
-        "(~4.5x/thread; QB/RB/WR/TE only, others fall back to eager cells). "
-        "Within-mode consistent — compare stacked runs only against stacked runs.",
+        "(QB/RB/WR/TE only, others fall back to eager cells). DEFAULT is "
+        "GPU-gated: ON on CUDA (the measured win), OFF on CPU/MPS (where the "
+        "FP32 stack is slower). When ON and no --seeds/spec SEEDS given, the "
+        "grid defaults to the wide DEFAULT_STACKED_SEEDS (24) grid. Within-mode "
+        "consistent — compare stacked runs only against stacked runs. Use "
+        "--no-stacked-seeds to force eager.",
     )
     p.add_argument(
         "--stacked-epochs",
@@ -1257,11 +1282,21 @@ def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> i
         return 2
 
     if args.list:
-        spec = resolve_spec(spec_ref, positions=args.positions, seeds=args.seeds, only=args.only)
+        from src.shared.utils import cuda_enabled
+        from src.tuning.ab_ensemble_seeds import stacked_default_seed_list
+
+        stacked = cuda_enabled() if args.stacked_seeds is None else args.stacked_seeds
+        spec = resolve_spec(
+            spec_ref,
+            positions=args.positions,
+            seeds=args.seeds,
+            only=args.only,
+            default_seeds=stacked_default_seed_list() if stacked else None,
+        )
         print(f"spec={spec.dotted or spec.name} baseline={spec.baseline}")
         print(f"variants={list(spec.variants)}")
         print(f"positions={spec.positions} seeds={spec.seeds}")
-        if args.stacked_seeds:
+        if stacked:
             groups, leftover = build_stacked_units(spec)
             jobs = resolve_jobs(len(groups) + len(leftover), args.jobs, sequential=args.sequential)
             print(
