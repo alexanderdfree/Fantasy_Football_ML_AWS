@@ -794,7 +794,13 @@ def run_compare(position: str, n_seeds: int, fixed_epochs: int) -> dict:
         "n_epochs": fixed_epochs,
         "device": str(device),
         "gpu_name": detect_platform().gpu_name,
-        "held_constant": {"norm": "layer", "config": "production", "seeds": seeds},
+        "held_constant": {"norm": "layer", "config": "production_attention", "seeds": seeds},
+        "note": (
+            "eager per-seed includes its one-time graph capture (each fresh-config "
+            "training pays it — realistic). full_step_graph_active reflects the "
+            "resolved env; _maybe_graph_full_step may fall back to model-only "
+            "capture if a guard fails — confirm via the CloudWatch capture log."
+        ),
         "eager_fp16_graph": {
             "amp_dtype": eager_amp,
             "full_step_graph_active": eager_full_graph,
