@@ -5,11 +5,11 @@ the macOS libomp triple-load anyway). Coverage is the pure logic these specs
 add on top of the shared ``ab_harness`` execution + #720 PB engine:
 
   * spec resolution + design shape (1 baseline + 12 Plackett-Burman rows; the
-    correct ``expect_ridge_identical`` per spec — feature drops are report-only,
+    correct ``expect_ridge_identical`` per spec — feature drops MUST move Ridge,
     attention-only knob arms must keep Ridge byte-identical),
-  * the cfg mutators (feature-family drop filters BOTH model paths and no-ops a
-    family absent for the position; knob arms apply overrides + disable the
-    non-attention models),
+  * the cfg mutators against the REAL runtime cfg shape (no ``include_features``
+    key — the #1172 null-result bug): the feature drop still removes columns via
+    ``_FAMILY_COLS``; knob arms apply overrides and run the full pipeline,
   * the main-effects estimators recover a single planted effect and leave the
     orthogonal factors at zero (the PB design is balanced 6/6, so the contrast
     is clean).
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.unit
 # --------------------------------------------------------------------------- #
 # spec resolution + design shape
 # --------------------------------------------------------------------------- #
-def test_feature_screen_resolves_with_pb_rows_report_only():
+def test_feature_screen_resolves_with_pb_rows():
     spec = H.resolve_spec("src.tuning.ab_feature_screen")
     assert spec.dotted == "src.tuning.ab_feature_screen"
     assert spec.positions == ["RB"]
@@ -42,9 +42,8 @@ def test_feature_screen_resolves_with_pb_rows_report_only():
         if name == "baseline":
             continue
         assert v.cfg_mutator is not None
-        # report-only: an all-empty-family drop for some position would false-trip
-        # a "must differ" assertion (see module docstring).
-        assert v.expect_ridge_identical is None
+        # MUST move Ridge — a Δ=0 (drop didn't take) fails loud (#1172 fix).
+        assert v.expect_ridge_identical is False
 
 
 def test_knob_doe_resolves_attention_only_must_keep_ridge():
@@ -52,9 +51,12 @@ def test_knob_doe_resolves_attention_only_must_keep_ridge():
     assert spec.positions == ["RB"]
     assert spec.baseline == "baseline"
     assert len(spec.variants) == 1 + len(plackett_burman_design(len(ATTN_KNOBS)))
-    # every arm (baseline included) disables non-attn models, so none is identity-shaped;
-    # all are attention-only → Ridge must stay byte-identical.
-    for v in spec.variants.values():
+    # baseline is the identity (production knobs, full pipeline); the PB arms
+    # apply knob overrides and are attention-only → Ridge must stay identical.
+    assert spec.variants["baseline"].is_baseline_shape
+    for name, v in spec.variants.items():
+        if name == "baseline":
+            continue
         assert v.cfg_mutator is not None
         assert v.expect_ridge_identical is True
 
@@ -62,69 +64,88 @@ def test_knob_doe_resolves_attention_only_must_keep_ridge():
 # --------------------------------------------------------------------------- #
 # feature-family drop mutator
 # --------------------------------------------------------------------------- #
-def _skill_cfg() -> dict:
-    """A skill-position-shaped cfg: category dict + both model feature paths."""
+def _runtime_like_cfg() -> dict:
+    """A cfg shaped like the REAL runtime pipeline cfg: NO ``include_features``
+    key (build_pipeline_config flattens it into get_feature_columns_fn), just the
+    two feature paths populated with real RB columns. This is the shape the #1172
+    bug silently no-opped on."""
+    from src.rb.config import POSITION_CONFIG
+
+    inc = POSITION_CONFIG.include_features
+    flat = [c for fam in inc for c in inc[fam]]
+    static = [
+        c
+        for fam in ("prior_season", "matchup", "contextual", "weather_vegas")
+        for c in inc.get(fam, [])
+    ]
     return {
-        "include_features": {
-            "rolling": ["rolling_x", "rolling_y"],
-            "prior_season": ["prior_x"],  # a DEFAULT_ATTN_STATIC category
-            "share": ["share_x"],
-            "ewma": [],  # empty for this position
-        },
-        "get_feature_columns_fn": lambda: ["rolling_x", "rolling_y", "prior_x", "share_x"],
-        "attn_static_features": ["prior_x"],  # only static categories feed this branch
+        "get_feature_columns_fn": (lambda f=list(flat): list(f)),
+        "attn_static_features": list(static),
     }
 
 
-def test_drop_nonstatic_family_moves_only_linear_path():
-    cfg = F._drop_families(_skill_cfg(), frozenset({"rolling"}))
-    assert cfg["get_feature_columns_fn"]() == ["prior_x", "share_x"]  # rolling cols gone
-    assert cfg["attn_static_features"] == ["prior_x"]  # rolling isn't static → unchanged
-    assert cfg["include_features"]["rolling"] == []
+def test_drop_family_removes_cols_without_cfg_include_features():
+    """#1172 regression: the runtime cfg has NO ``include_features``, yet dropping
+    a family must still remove its columns (sourced from _FAMILY_COLS, not the
+    cfg). The buggy version no-opped → this asserts something WAS removed."""
+    cfg = _runtime_like_cfg()
+    assert "include_features" not in cfg  # the real runtime shape
+    before = set(cfg["get_feature_columns_fn"]())
+    F._drop_families(cfg, frozenset({"rolling"}))
+    after = set(cfg["get_feature_columns_fn"]())
+    rolling = F._FAMILY_COLS["rolling"]
+    assert rolling  # rolling is populated for RB
+    assert before - after  # something was actually removed (a no-op would fail here)
+    assert after == before - rolling  # exactly rolling's columns removed
 
 
-def test_drop_static_family_moves_both_paths():
-    cfg = F._drop_families(_skill_cfg(), frozenset({"prior_season"}))
-    assert cfg["get_feature_columns_fn"]() == ["rolling_x", "rolling_y", "share_x"]
-    assert cfg["attn_static_features"] == []  # prior_x is a static feature → dropped
+def test_drop_static_family_also_filters_attn_static():
+    cfg = _runtime_like_cfg()
+    pri = F._FAMILY_COLS["prior_season"]
+    assert set(cfg["attn_static_features"]) & pri  # prior_season feeds the static branch
+    F._drop_families(cfg, frozenset({"prior_season"}))
+    assert not (set(cfg["attn_static_features"]) & pri)  # gone from the static branch
+    assert not (set(cfg["get_feature_columns_fn"]()) & pri)  # and the linear/tree path
 
 
-def test_drop_empty_family_is_a_noop():
-    cfg = F._drop_families(_skill_cfg(), frozenset({"ewma"}))
-    assert cfg["get_feature_columns_fn"]() == ["rolling_x", "rolling_y", "prior_x", "share_x"]
-    assert cfg["attn_static_features"] == ["prior_x"]
+def test_drop_nonstatic_family_leaves_attn_static_untouched():
+    cfg = _runtime_like_cfg()
+    static_before = list(cfg["attn_static_features"])
+    F._drop_families(cfg, frozenset({"rolling"}))  # rolling is not a static category
+    assert cfg["attn_static_features"] == static_before
 
 
-def test_drop_on_flat_position_cfg_is_safe():
-    """K/DST carry no include_features dict → mutator is a no-op, not a crash."""
+def test_drop_unknown_family_is_safe_noop():
+    """An unscreened/empty family contributes no columns → mutator is a no-op."""
     cfg = {"get_feature_columns_fn": lambda: ["a", "b"], "attn_static_features": ["a"]}
-    out = F._drop_families(cfg, frozenset({"rolling"}))
-    assert out["get_feature_columns_fn"]() == ["a", "b"]
-    assert out["attn_static_features"] == ["a"]
+    F._drop_families(cfg, frozenset({"ewma"}))  # ewma is not in SCREENED_FAMILIES
+    assert cfg["get_feature_columns_fn"]() == ["a", "b"]
+    assert cfg["attn_static_features"] == ["a"]
 
 
 # --------------------------------------------------------------------------- #
 # knob override mutator
 # --------------------------------------------------------------------------- #
-def test_knob_baseline_disables_non_attn_without_overriding_knobs():
+def test_knob_baseline_is_identity():
+    """Baseline = production knobs + FULL pipeline (no model-disabling), so the
+    stacked Phase-A reaches the test_df return (#1172 fix)."""
     baseline = K.VARIANTS[0]
     assert baseline.name == "baseline"
-    cfg = baseline.cfg_mutator({"attn_d_model": 32})
-    assert cfg["train_lightgbm"] is False
-    assert cfg["train_base_nn"] is False
-    assert cfg["train_elasticnet"] is False
-    assert cfg["train_ridge"] is True
-    assert cfg["attn_d_model"] == 32  # production value untouched on the baseline arm
+    assert baseline.cfg_mutator is None  # identity
+    assert baseline.is_baseline_shape
 
 
-def test_knob_pb_arm_applies_overrides_and_disables_non_attn():
+def test_knob_pb_arm_applies_overrides_without_disabling_models():
     pb01 = K.VARIANTS[1]
     assert pb01.name == "pb01"
     cfg = pb01.cfg_mutator({})
-    assert cfg["train_lightgbm"] is False
     # every screened knob is set to one of its two bounds
     for knob in ATTN_KNOBS:
         assert cfg[knob.name] in (knob.low, knob.high)
+    # the #1172 fix: PB arms must NOT disable the non-attn models (that dropped
+    # the stacked Phase-A into the early-return path that omits test_df).
+    assert "train_lightgbm" not in cfg
+    assert "train_base_nn" not in cfg
 
 
 # --------------------------------------------------------------------------- #
