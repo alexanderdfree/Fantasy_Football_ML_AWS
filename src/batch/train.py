@@ -51,7 +51,7 @@ from src.shared.registry import (
     is_cpu_only,
 )
 from src.shared.smoke_test import SmokeTestFailed, run_smoke_test
-from src.shared.utils import cuda_graph_enabled, seed_everything
+from src.shared.utils import cuda_graph_enabled, cuda_graph_full_enabled, seed_everything
 from src.shared.utils import timed as _timed
 
 SPLIT_BRANCHES = {"nn", "cpu"}
@@ -461,6 +461,10 @@ def _hardware_metadata() -> dict:
         "gpu_name": info.gpu_name,
         "sm": info.sm,
         "cuda_graph_active": cuda_graph_enabled(),
+        # Records the capture SCOPE so the History tab marks the 2026-06-15
+        # full-step rebaseline discontinuity (full-step is the prod default on
+        # sm_80+; ADR-0017). model-only-graphed history predates this flag.
+        "cuda_graph_full_active": cuda_graph_full_enabled(),
     }
 
 

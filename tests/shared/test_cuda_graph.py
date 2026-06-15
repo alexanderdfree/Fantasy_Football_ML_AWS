@@ -30,7 +30,7 @@ from src.shared.training import (
     _snapshot_batchnorm_state,
     make_history_dataloaders,
 )
-from src.shared.utils import cuda_graph_enabled
+from src.shared.utils import cuda_graph_enabled, cuda_graph_full_enabled
 
 _TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 _WEIGHTS = {t: 1.0 for t in _TARGETS}
@@ -103,6 +103,65 @@ def test_cuda_graph_enabled_on_sm80plus(monkeypatch, cap):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: cap)
     assert cuda_graph_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# cuda_graph_full_enabled() — promoted 2026-06-15 to autodetect-ON sm_80+
+# (FF_CUDA_GRAPH_FULL = force-off override), mirroring cuda_graph_enabled()
+# ---------------------------------------------------------------------------
+def _sm89(monkeypatch):
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (8, 9))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("env", ["unset", "", "1", "true"])
+def test_cuda_graph_full_autodetect_on_sm80plus(monkeypatch, env):
+    """New default: sm_80+ with FF_CUDA_GRAPH_FULL unset/empty/truthy → full-step ON."""
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    if env == "unset":
+        monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    else:
+        monkeypatch.setenv("FF_CUDA_GRAPH_FULL", env)
+    _sm89(monkeypatch)
+    assert cuda_graph_full_enabled() is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("flag", ["0", "false", "no", "off"])
+def test_cuda_graph_full_force_off_override(monkeypatch, flag):
+    """A falsy FF_CUDA_GRAPH_FULL force-disables full-step (model-only still on)."""
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    monkeypatch.setenv("FF_CUDA_GRAPH_FULL", flag)
+    _sm89(monkeypatch)
+    assert cuda_graph_full_enabled() is False
+    assert cuda_graph_enabled() is True  # base capture unaffected by the full force-off
+
+
+@pytest.mark.unit
+def test_cuda_graph_full_requires_base_gate(monkeypatch):
+    """Full-step is a superset of the base gate: FF_CUDA_GRAPH=0 disables BOTH,
+    and CPU/CI is always off regardless of FF_CUDA_GRAPH_FULL."""
+    monkeypatch.setenv("FF_CUDA_GRAPH", "0")
+    monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    _sm89(monkeypatch)
+    assert cuda_graph_full_enabled() is False  # base force-off cascades
+    monkeypatch.setenv("FF_DEVICE", "cpu")
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    monkeypatch.setenv("FF_CUDA_GRAPH_FULL", "1")
+    assert cuda_graph_full_enabled() is False  # no CUDA → off
+
+
+@pytest.mark.unit
+def test_cuda_graph_full_noop_on_t4_sm75(monkeypatch):
+    """T4 (sm_75) can't capture, so full-step is off even with the default on."""
+    monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
+    monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (7, 5))
+    assert cuda_graph_full_enabled() is False
 
 
 # ---------------------------------------------------------------------------

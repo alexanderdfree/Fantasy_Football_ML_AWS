@@ -194,20 +194,25 @@ def cuda_graph_full_enabled() -> bool:
     ``_GraphedTrainStep`` in ``src/shared/training.py``), eliminating the
     eager per-step loss/gather kernel launches on the launch-bound host path.
 
-    **Opt-in** (``FF_CUDA_GRAPH_FULL`` truthy), unlike the autodetect-ON
-    model-only capture: the owner approved ONE graphed rebaseline (ADR-0017);
-    a second silent capture-scope change to the production training path
-    would re-open benchmark comparability, so tune jobs enable this
-    explicitly (``launch_tune --cuda-graph-full``) while training stays on
-    the model-only capture until a per-position A/B clears it. Requires
-    ``cuda_graph_enabled()`` (CUDA sm_80+, not force-disabled) — full-step
-    capture is a superset, never a substitute, of the base gate.
+    **Autodetect-ON for CUDA sm_80+** (the production default since 2026-06-15;
+    ADR-0017 Changelog), ``FF_CUDA_GRAPH_FULL`` is a **force-off override**
+    (``0``/``false``/``no``/``off``) — mirroring :func:`cuda_graph_enabled`. This
+    is the **owner-approved second graphed rebaseline**: full-step capture is
+    per-step bitwise-exact but the FP16+GradScaler path amplifies the multi-step
+    trajectory the same way model-only capture does (~0.5% worst-target eval
+    drift, the 2026-06-05 model-only promotion below), so the next 6-position
+    retrain rebaselines graphed-full-vs-graphed-full. Validated on Batch before
+    promotion (graph-scope determinism + bounded divergence vs model-only).
+    Requires ``cuda_graph_enabled()`` (CUDA sm_80+, not force-disabled) —
+    full-step capture is a superset, never a substitute, of the base gate, so
+    ``FF_CUDA_GRAPH=0`` disables both. K's nested trainer no-ops capture; the
+    ensemble/stacked regime sets ``FF_CUDA_GRAPH_FULL=0`` to stay eager.
     """
-    if os.environ.get(_CUDA_GRAPH_FULL_ENV, "").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    if os.environ.get(_CUDA_GRAPH_FULL_ENV, "").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
     }:
         return False
     return cuda_graph_enabled()
