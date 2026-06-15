@@ -103,6 +103,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D18 | [Live upcoming-week predictions via ESPN + S3 artifact build](adr/0018-live-upcoming-week-predictions-espn.md) | Accepted |
 | D19 | [Split Batch training: GPU NN + c8a CPU Ridge/LightGBM](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md) | Accepted |
 | D20 | [Batch GPU execution path for the shared A/B harness](adr/0020-batch-gpu-execution-path-for-ab-harness.md) | Accepted |
+| D21 | [Systematic knob + feature-family screens as stacked A/B-harness specs](adr/0021-systematic-doe-screens-on-ab-harness.md) | Proposed |
 
 ## 4. Cross-Cutting Consequences
 
