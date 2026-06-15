@@ -8,7 +8,6 @@ direct-import e2e tests, the latter by the attention-static whitelist test.
 
 from src.shared.position_config import (
     DEFAULT_ATTN_STATIC_CATEGORIES,
-    DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
     alpha_grid,
     derive_attn_static_features,
@@ -314,8 +313,12 @@ POSITION_CONFIG = PositionConfig(
     attn_gated=True,
     attn_gate_hidden=16,
     attn_gate_weight=1.0,
-    opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),
-    opp_attn_max_seq_len=17,
+    # opp-defense attention branch disabled 2026-06-15: a 24-seed stacked Batch
+    # A/B (src.tuning.ab_opp_def) showed it does not improve the attention NN
+    # (hurts QB/RB/TE, WR within noise) — see ADR-0004 changelog. Empty ⇒ no opp
+    # tensors ⇒ single-branch NN (pre-#123); static opp_def_*_L5 still feeds
+    # Ridge/LGBM via INCLUDE_FEATURES["defense"].
+    opp_attn_history_stats=[],
     # === LightGBM (Optuna retune, 50 trials, CV MAE 4.6876) ===
     # Switched "huber" → "regression" (L2/MSE) to chase the elite tail; was
     # "fair" → "huber" via PR 3 LGBM unification. Holdout: Total MAE

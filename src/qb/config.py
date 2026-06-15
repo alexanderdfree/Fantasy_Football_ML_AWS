@@ -13,7 +13,6 @@ construction.
 from src.shared.position_config import (
     DEFAULT_ATTN_STATIC_CATEGORIES,
     DEFAULT_ENET_L1_RATIOS,
-    DEFAULT_OPP_DEF_HISTORY_STATS,
     PositionConfig,
     alpha_grid,
     derive_attn_static_features,
@@ -356,13 +355,12 @@ POSITION_CONFIG = PositionConfig(
     attn_gated=False,
     attn_gate_hidden=16,
     attn_gate_weight=1.0,
-    # Per-game opponent-defense stats fed to the second attention branch.
-    # Mirrors the L5 static aggregates (opp_def_*_L5) but unrolled per
-    # game, so the NN learns the trailing-form weighting itself instead
-    # of being handed a fixed 5-game mean. Built by
-    # src.features.engineer.build_opp_defense_history_arrays.
-    opp_attn_history_stats=list(DEFAULT_OPP_DEF_HISTORY_STATS),
-    opp_attn_max_seq_len=17,
+    # opp-defense attention branch disabled 2026-06-15: a 24-seed stacked Batch
+    # A/B (src.tuning.ab_opp_def) showed it does not improve the attention NN
+    # (hurts QB/RB/TE, WR within noise) — see ADR-0004 changelog. Empty ⇒ no opp
+    # tensors ⇒ single-branch NN (pre-#123); static opp_def_*_L5 still feeds
+    # Ridge/LGBM via INCLUDE_FEATURES["defense"].
+    opp_attn_history_stats=[],
     # === LightGBM (Optuna-tuned, 50 trials, CV MAE 5.7415) ===
     # PR #870 switched all six positions (QB included) to MSE (`regression`,
     # see lgbm_objective below). Historical note: QB previously kept LightGBM
