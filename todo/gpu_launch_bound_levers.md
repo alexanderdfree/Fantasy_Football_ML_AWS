@@ -366,9 +366,14 @@ doctrine) — the headroom to 24 is free sharpening when wanted. Trials still ca
 seeds-per-config, lanes/hosts multiply configs. Eager-vs-stacked tuning rate: 35 trials (8C/27P) in 8.6 min at 4 seeds/trial
 (eager-regime vmapped, no graphs) vs 18.7 single-seed trials/min in the graphfull eager
 namespace — stacked trials cost ~2× an eager-regime trial for 4× the seeds.
-**DEFAULT-ON at N=24 for tune / ablation / A/B (owner call, 2026-06-15).** Given the
-crossover (eager-FP16+full-graph wins ≤8 seeds; stacking wins ≥~9, measured 2.68 vs
-1.0 s/seed at N=24), stacking is now the GPU default at the per-seed optimum.
+**DEFAULT-ON at N=24 for NN tuning + the ab_harness A/B path (owner call, 2026-06-15).**
+Given the crossover (eager-FP16+full-graph wins ≤8 seeds; stacking wins ≥~9, measured 2.68
+vs 1.0 s/seed at N=24), stacking is now the GPU default at the per-seed optimum. **Scope:
+tune + every `ab_*.py` spec (and any `ab_harness`-based ablation) — NOT the legacy
+`ablate_*` scripts on `ablation_runner`**, which stay eager: only ~3 of 8 are
+stacking-compatible and several break under the LN/FP32/NN-only regime (`backbone_norm`
+forces LN; `ridge_pca` is a Ridge ablation; `min_games`/`injury_features` are data
+ablations). Owner chose "leave ablate_* eager — ab_harness already covers it."
 `resolve_default_stacked_seeds()` ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py)):
 `cuda_enabled()` → 24, else 0 (eager) — CPU/MPS must fall back because the FP32 stack is
 *slower* there. Wiring: tune `--stacked-seeds` default = the resolver (was 0);
