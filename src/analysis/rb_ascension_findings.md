@@ -45,8 +45,8 @@ Ridge/LightGBM undershoot is deterministic and large.
 ## Why the model can't see it coming
 
 Every RB volume/role feature is a `shift=1` rolling aggregate
-([src/shared/feature_build.py](src/shared/feature_build.py)::`rolling_agg`) or the
-prior-game attention sequence ([src/rb/config.py](src/rb/config.py)
+([src/shared/feature_build.py](../shared/feature_build.py)::`rolling_agg`) or the
+prior-game attention sequence ([src/rb/config.py](../rb/config.py)
 `attn_history_stats`, "prior in-season games only"). At week W they all encode
 *backup* usage. `practice_status`/`game_status` are the player's **own** injury
 status, not the teammate's. There is **no vacated-volume / teammate-availability
@@ -85,7 +85,7 @@ concentrated almost entirely on the ascension week itself.
 
 - **2025 is covered, not missing.** The 2025 depth feed is the ESPN-format schema
   (no legacy `formation`/`depth_team`); the loader normalizes it via
-  `_normalize_espn_depth` ([src/data/loader.py](src/data/loader.py), PR #370). Loaded
+  `_normalize_espn_depth` ([src/data/loader.py](../data/loader.py), PR #370). Loaded
   the production way, 2025 has 24,596 offensive player-weeks and **100% of the 14 2025
   ascension events carry a depth_chart_rank**. (An earlier cut of this doc said "2025
   dead" — that was a bug in *this diagnostic*, which pulled the raw

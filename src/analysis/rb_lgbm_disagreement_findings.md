@@ -111,7 +111,7 @@ the within-season sequence holds only **1 game** — shouldn't it have regressed
 toward LGBM's ~12 rather than printing 17.2?
 
 **The structure is as assumed, and the masking is correct.**
-`build_game_history_arrays` ([src/features/engineer.py](src/features/engineer.py))
+`build_game_history_arrays` ([src/features/engineer.py](../features/engineer.py))
 groups by `(player_id, season)`, so the sequence is within-season: Henry W2 = 1
 real game + 16 zero-padded slots, and `AttentionPool` masks the padding with
 `-inf` before softmax — the model attends *only* to the one real game.
