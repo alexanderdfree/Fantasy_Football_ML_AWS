@@ -1,0 +1,68 @@
+name: CodeQL
+
+# Advanced setup that REPLACES the previous CodeQL default setup. It mirrors the
+# prior default-setup coverage exactly: languages python + javascript-typescript
+# + actions, the `extended` query suite, and a weekly schedule plus push/PR on
+# main.
+#
+# Swift is DELIBERATELY OMITTED. `ios/` contains tracked .swift sources but no
+# Package.swift / .xcodeproj / .xcworkspace (only an XcodeGen `project.yml`), so
+# Swift autobuild fails on the Linux runners default setup uses ("No Xcode
+# project or workspace found ... nor a Swift package"), and build-mode:none is
+# not supported for Swift. Default setup auto-detects Swift via GitHub Linguist
+# and keeps re-adding it on every scan; an explicit `languages` matrix here makes
+# the analyzed set deterministic so Swift can never be re-added.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "31 5 * * 1"  # weekly (Mondays) — mirrors default-setup "weekly"
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default GITHUB_TOKEN to read-only at the workflow level; the analyze job
+# re-grants only what it needs. Satisfies CodeQL's
+# actions/missing-workflow-permissions rule.
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
+      # major version comment. SHA = github/codeql-action v4.36.2.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e  # v4.36.2
+        with:
+          category: "/language:${{ matrix.language }}"
