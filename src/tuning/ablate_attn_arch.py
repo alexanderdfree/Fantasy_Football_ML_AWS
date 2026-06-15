@@ -52,6 +52,12 @@ Method (mirrors ablate_backbone_norm.py):
     given seed. That equality is the data-identity sentinel; a mismatch means the
     runs did not see the same data/seed and the deltas are meaningless.
 
+STACKED PORT: for the GPU-default N=24 stacked-seed regime use the ab_harness spec
+``src.tuning.ab_attn_arch`` (``python -m src.tuning.launch_ab --spec src.tuning.ab_attn_arch``).
+This eager script stays for the per-target attention-MAE decision table and the ``entropy`` arm,
+both dropped from the stacked port (per-target arrays aren't surfaced under stacking, and
+``attn_entropy_coeff`` is a vmap side-channel reject).
+
 Usage:
     python -m src.tuning.ablate_attn_arch                          # RB, seed 42, all flags
     python -m src.tuning.ablate_attn_arch --seeds 42,7,123,5       # multi-seed (>=8 advised)

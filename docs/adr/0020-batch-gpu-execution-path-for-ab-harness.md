@@ -136,3 +136,9 @@ tests: [tests/tuning/test_ab_batch.py](../../tests/tuning/test_ab_batch.py),
   `--mode=tune` env dispatch, per-cell S3 checkpoint/resume, `ff-ab-job`
   cloned definition for arbitrary image SHAs, branch-image guards in
   batch-image.yml, ab-batch.yml dispatch workflow.
+- **2026-06-15** — Two new `ab_*` consumers of this path: the stackable
+  legacy NN ablations `attn_arch` and `scheduler_type` were ported to
+  `ab_harness` specs ([src/tuning/ab_attn_arch.py](../../src/tuning/ab_attn_arch.py),
+  [src/tuning/ab_scheduler_type.py](../../src/tuning/ab_scheduler_type.py)) so
+  they run on the Spot fleet at the GPU-default N=24 stacked width via
+  `launch_ab --spec …`. `rb_gate`/`batch_lr` were evaluated and left eager.

@@ -18,6 +18,14 @@ The full prior lives in the harness module docstring; in short:
   positions" stop-rule; expect a regression, confirm once, then delete the dead code.
 
 ## How to run
+**Preferred (GPU-default N=24 stacked).** This ablation is now an `ab_harness` spec —
+[src/tuning/ab_attn_arch.py](../src/tuning/ab_attn_arch.py). Run it on the Spot fleet (the
+production metric path) with `python -m src.tuning.launch_ab --spec src.tuning.ab_attn_arch`, or
+locally with `python -m src.tuning.ab_attn_arch --positions RB` (eager 3-seed on CPU; add
+`--stacked-seeds` on a CUDA box). The `entropy` arm is dropped from the stacked spec (vmap
+side-channel) — use the eager `ablate_attn_arch` recipe below for it and for the per-target Δ
+table:
+
 1. **Data prereq.** Needs a complete local `data/raw` (the harness calls the real pipeline). If
    `data/splits` is a stale symlink (missing recently-added feature columns → `KeyError`), rebuild
    a LOCAL splits dir — the fresh-splits recipe is in the `[PRIORITY] PCA-before-Ridge` entry of
