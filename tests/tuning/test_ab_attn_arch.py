@@ -12,7 +12,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from src.tuning import ab_attn_arch as A  # noqa: F401  (imported for symmetry / module-load check)
 from src.tuning import ab_harness as H
 
 pytestmark = pytest.mark.unit
