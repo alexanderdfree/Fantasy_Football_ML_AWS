@@ -57,6 +57,7 @@ from src.batch.launch import (  # noqa: E402
     WAIT_TIMEOUT_SECONDS,
     wait_for_jobs,
 )
+from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS  # noqa: E402
 from src.tuning.tune_nn_storage import resolve_search_space_version, s3_prefix  # noqa: E402
 
 # All six positions now have ``run(config=...)``; argparse choices still pin
@@ -151,11 +152,17 @@ def submit_tune_job(
     reads the env as its ``--n-jobs`` default; an explicit ``--n-jobs``
     in a hand-built submission's command still wins over the env.
     """
+    from src.tuning.ab_ensemble_seeds import ENSEMBLE_POSITIONS
+
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
     if stacked_seeds == 1:
         raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
+    # K/DST aren't flat-history, so they can't vmap-stack — they run eager even
+    # under the default-on stacking, and the container falls back the same way.
+    # Resolve per-position HERE so the predicted namespace matches what runs.
+    stacked_seeds = stacked_seeds if position.upper() in ENSEMBLE_POSITIONS else 0
     stacked = stacked_seeds >= 2
 
     command = [
@@ -349,12 +356,14 @@ def main():
     parser.add_argument(
         "--stacked-seeds",
         type=int,
-        default=0,
+        default=DEFAULT_STACKED_SEEDS,
         help=(
             "N >= 2: each trial trains a vmap-stacked N-seed ensemble "
             "(seed-averaged objective; rides FF_TUNE_STACKED_SEEDS through the "
-            "fixed ENTRYPOINT; QB/RB/WR/TE only; studies land in _ens{N}x{E} "
-            "namespaces with graphs forced off). 0 (default) = eager trials."
+            "fixed ENTRYPOINT; QB/RB/WR/TE only — K/DST run eager; studies land "
+            f"in _ens{{N}}x{{E}} namespaces with graphs forced off). DEFAULT is "
+            f"{DEFAULT_STACKED_SEEDS} (the measured per-seed optimum on the Batch "
+            "GPU fleet); pass 0 for eager trials."
         ),
     )
     parser.add_argument(
