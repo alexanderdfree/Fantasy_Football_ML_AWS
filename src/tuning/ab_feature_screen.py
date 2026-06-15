@@ -141,7 +141,6 @@ BASELINE = "baseline"
 
 def feature_main_effects(
     variant_seed_mae: dict[str, dict[int, float]],
-    model: str = "Attn NN",
 ) -> dict[str, dict[str, float]]:
     """High-minus-low main effect per screened family, averaged across seeds.
 
