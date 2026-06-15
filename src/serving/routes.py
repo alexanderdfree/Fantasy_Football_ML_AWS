@@ -606,8 +606,8 @@ def api_wiki_page(slug):
 
 @app.route("/api/comparison")
 def api_comparison():
-    """Our model (live) vs NFL.com / RotoWire (static), by position, for two
-    subsets (all rostered players + top-30 per position). MAE/RMSE/R² each.
+    """Our model (live) vs NFL.com / RotoWire (static), by position, for three
+    subsets (all rostered players + top-30 + top-12 per position). MAE/RMSE/R² each.
     """
     # The committed expert columns (``comparison_experts.json`` via
     # ``build_comparison_summary.SCORING_FORMAT="ppr"``) are baked PPR-only, so
@@ -635,15 +635,19 @@ def api_comparison():
     if results is None or getattr(results, "empty", True):
         model_source = "unavailable"
 
-    top30_ids = experts.get("top30_ids", {})
     expert_subsets = experts.get("subsets", {})
+    # Each ranked subset slices the live model column to the SAME players the static
+    # expert numbers were computed on; "all" applies no filter. Add a tier by adding
+    # its {tier: "<tier>_ids"} entry — the loop and the model slice handle the rest.
+    id_map_keys = {"top12": "top12_ids", "top30": "top30_ids"}
     out_subsets = {}
-    for subset in ("all", "top30"):
+    for subset in ("all", "top30", "top12"):
         out_subsets[subset] = {}
         pos_experts = expert_subsets.get(subset, {})
+        ids_for_pos = experts.get(id_map_keys[subset], {}) if subset in id_map_keys else {}
         for pos in _ALL_POSITIONS:
             cell = pos_experts.get(pos) or {}
-            id_filter = set(map(str, top30_ids.get(pos, []))) if subset == "top30" else None
+            id_filter = set(map(str, ids_for_pos.get(pos, []))) if subset in id_map_keys else None
             # One block per model (ridge/nn/attn_nn/lgbm), each None when that model
             # has no predictions for the slice; spread alongside the static experts.
             blocks = (
@@ -680,6 +684,7 @@ def api_comparison():
             "generated_at": experts.get("generated_at"),
             "experts_meta": experts.get("experts_meta", {}),
             "top_n": experts.get("top_n"),
+            "top12_n": experts.get("top12_n"),
             "subsets": out_subsets,
             # Per-source residual σ: experts are static multi-season (2018–2025) from the
             # committed JSON; the model side is computed live on the 2025 test season

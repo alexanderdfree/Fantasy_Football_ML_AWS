@@ -2,10 +2,11 @@
 
 Writes ``src/serving/comparison_experts.json`` — for each position, the
 ``{mae, rmse, r2, n}`` of each EXPERT (NFL.com, RotoWire via Sleeper) scored
-against actuals, on (a) all matched player-weeks and (b) the top-30-per-position
-subset (ranked by actual fantasy points). Also emits the top-30 ``player_id`` sets
-(so the serving app slices the *same* players for its live model column) and
-source metadata for the tab's explanation block.
+against actuals, on (a) all matched player-weeks, (b) the top-30-per-position
+subset, and (c) the top-12-per-position subset (each ranked by actual fantasy
+points). Also emits the top-30 and top-12 ``player_id`` sets (so the serving app
+slices the *same* players for its live model column) and source metadata for the
+tab's explanation block.
 
 The MODEL column is deliberately NOT in this file: the serving app computes our
 model's MAE/RMSE/R² live from loaded models (``_ensure_metrics`` →
@@ -18,7 +19,7 @@ PPR aggregator used for the projections — apples-to-apples.
 
 Operator usage:
   python -m src.analysis.build_comparison_summary
-  python -m src.analysis.build_comparison_summary --seasons 2025 --top-n 30
+  python -m src.analysis.build_comparison_summary --seasons 2025 --top-n 30 --top12-n 12
 """
 
 from __future__ import annotations
@@ -54,6 +55,10 @@ EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else
 POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 SCORING_FORMAT = "ppr"
 TOP_N_DEFAULT = 30
+# Smaller ranked tier (the fantasy-relevant starter core). Kept local rather than
+# reusing ``src.config.TOP_K_RANKING`` (the unrelated backtest top-K knob) so a
+# backtest tweak can't silently move this tab.
+TOP12_DEFAULT = 12
 _KEYS = ["player_id", "season", "week"]
 
 # Which expert covers which position (mirrors analysis_expert_comparison): NFL.com
@@ -137,25 +142,36 @@ def _normalize_keys(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _expert_subsets(
-    actuals: pd.DataFrame, projection: pd.DataFrame, pred_col: str, top_ids: set[str]
+    actuals: pd.DataFrame,
+    projection: pd.DataFrame,
+    pred_col: str,
+    tier_id_sets: dict[str, set[str]],
 ) -> dict:
-    """Join one expert's projection to actuals; return all/top30 metric blocks."""
+    """Join one expert's projection to actuals; return all + per-tier metric blocks.
+
+    ``tier_id_sets`` maps each ranked-tier name (e.g. ``"top12"``, ``"top30"``) to its
+    set of top-N ``player_id`` strings; the returned dict carries an ``"all"`` block plus
+    one block per tier (every key ``None`` when the expert has no overlap with actuals).
+    """
+    empty = {"all": None, **{tier: None for tier in tier_id_sets}}
     if actuals.empty or projection is None or projection.empty:
-        return {"all": None, "top30": None}
+        return empty
     a = _normalize_keys(actuals[[*_KEYS, "actual_pts"]])
     e = _normalize_keys(projection[[*_KEYS, pred_col]])
     joined = a.merge(e, on=_KEYS, how="inner")
     if joined.empty:
-        return {"all": None, "top30": None}
-    all_block = _round_metrics(joined["actual_pts"].to_numpy(), joined[pred_col].to_numpy())
-    top = joined[joined["player_id"].isin(top_ids)]
-    top_block = _round_metrics(top["actual_pts"].to_numpy(), top[pred_col].to_numpy())
-    return {"all": all_block, "top30": top_block}
+        return empty
+    blocks = {"all": _round_metrics(joined["actual_pts"].to_numpy(), joined[pred_col].to_numpy())}
+    for tier, ids in tier_id_sets.items():
+        top = joined[joined["player_id"].isin(ids)]
+        blocks[tier] = _round_metrics(top["actual_pts"].to_numpy(), top[pred_col].to_numpy())
+    return blocks
 
 
 def build_summary(
     eval_seasons: Sequence[int] = EVAL_SEASONS_DEFAULT,
     top_n: int = TOP_N_DEFAULT,
+    top12_n: int = TOP12_DEFAULT,
     *,
     nflcom_loader=None,
     sleeper_loader=None,
@@ -186,32 +202,36 @@ def build_summary(
     print(f"Loading RotoWire (Sleeper) projections for {list(eval_seasons)}...")
     sleeper_full = sleeper_loader(list(eval_seasons))
 
+    top12_ids: dict[str, list[str]] = {}
     top30_ids: dict[str, list[str]] = {}
-    subsets: dict[str, dict] = {"all": {}, "top30": {}}
+    subsets: dict[str, dict] = {"all": {}, "top12": {}, "top30": {}}
+    empty_blocks = {"all": None, "top12": None, "top30": None}
 
     for pos in POSITIONS:
         actuals = _position_actuals(pos, offense_actuals, dst_actuals, eval_seasons)
-        ids = _top_n_ids(actuals, top_n)
-        top30_ids[pos] = ids
-        id_set = set(ids)
+        ids12 = _top_n_ids(actuals, top12_n)
+        ids30 = _top_n_ids(actuals, top_n)
+        top12_ids[pos] = ids12
+        top30_ids[pos] = ids30
+        tier_id_sets = {"top12": set(ids12), "top30": set(ids30)}
 
         if pos in _NFLCOM_POSITIONS:
             nfl_proj = _project_nflcom_to_ppr(nflcom_full, pos, SCORING_FORMAT)
-            nfl_blocks = _expert_subsets(actuals, nfl_proj, "nflcom_pred_total", id_set)
+            nfl_blocks = _expert_subsets(actuals, nfl_proj, "nflcom_pred_total", tier_id_sets)
         else:
-            nfl_blocks = {"all": None, "top30": None}
+            nfl_blocks = dict(empty_blocks)
 
         if pos in _ROTOWIRE_POSITIONS:
             rw_proj = _project_sleeper_to_ppr(sleeper_full, pos, SCORING_FORMAT)
-            rw_blocks = _expert_subsets(actuals, rw_proj, _EXPERT_PRED_COL, id_set)
+            rw_blocks = _expert_subsets(actuals, rw_proj, _EXPERT_PRED_COL, tier_id_sets)
         else:
-            rw_blocks = {"all": None, "top30": None}
+            rw_blocks = dict(empty_blocks)
 
-        subsets["all"][pos] = {"nflcom": nfl_blocks["all"], "rotowire": rw_blocks["all"]}
-        subsets["top30"][pos] = {"nflcom": nfl_blocks["top30"], "rotowire": rw_blocks["top30"]}
+        for subset in ("all", "top12", "top30"):
+            subsets[subset][pos] = {"nflcom": nfl_blocks[subset], "rotowire": rw_blocks[subset]}
         print(
             f"  {pos:<4} all: nflcom={nfl_blocks['all']} rotowire={rw_blocks['all']} "
-            f"(top30 ids: {len(ids)})"
+            f"(top12 ids: {len(ids12)}, top30 ids: {len(ids30)})"
         )
 
     # Per-source residual σ over a wider archive than the 2025 head-to-head. Deferred
@@ -239,12 +259,14 @@ def build_summary(
         "scoring": SCORING_FORMAT,
         "test_seasons": list(eval_seasons),
         "top_n": int(top_n),
+        "top12_n": int(top12_n),
         "rank_basis": "actual_ppr_fantasy_points",
         "experts_meta": {
             "model": {"train": "2012-2023", "val": "2024", "test": "2025"},
             "nflcom": {"label": "NFL.com", "note": _NFLCOM_NOTE, "seasons": "2025"},
             "rotowire": {"label": "RotoWire", "note": _ROTOWIRE_NOTE, "seasons": "2025"},
         },
+        "top12_ids": top12_ids,
         "top30_ids": top30_ids,
         "subsets": subsets,
         "expert_reliability": expert_reliability,
@@ -254,10 +276,11 @@ def build_summary(
 def main(
     eval_seasons: Sequence[int] = EVAL_SEASONS_DEFAULT,
     top_n: int = TOP_N_DEFAULT,
+    top12_n: int = TOP12_DEFAULT,
     output_path: str = OUTPUT_PATH_DEFAULT,
     reliability_seasons: Sequence[int] | None = None,
 ) -> dict:
-    result = build_summary(eval_seasons, top_n, reliability_seasons=reliability_seasons)
+    result = build_summary(eval_seasons, top_n, top12_n, reliability_seasons=reliability_seasons)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(result, f, indent=2, default=_json_default)
@@ -271,6 +294,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seasons", nargs="+", type=int, default=list(EVAL_SEASONS_DEFAULT))
     parser.add_argument("--top-n", type=int, default=TOP_N_DEFAULT)
+    parser.add_argument("--top12-n", type=int, default=TOP12_DEFAULT)
     parser.add_argument("--output-path", default=OUTPUT_PATH_DEFAULT)
     parser.add_argument(
         "--reliability-seasons",
@@ -288,6 +312,7 @@ if __name__ == "__main__":
     main(
         eval_seasons=tuple(args.seasons),
         top_n=args.top_n,
+        top12_n=args.top12_n,
         output_path=args.output_path,
         reliability_seasons=(
             tuple(args.reliability_seasons) if args.reliability_seasons is not None else None

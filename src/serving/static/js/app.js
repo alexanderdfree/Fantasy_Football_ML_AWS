@@ -1477,8 +1477,8 @@ async function loadModelArchitecture() {
 
 // ---------------------------------------------------------------------------
 // Comparison — our four model architectures (live) vs expert projection sources
-// (NFL.com, RotoWire), by position, on two player subsets (all + top-30/position).
-// One /api/comparison fetch; the MAE/RMSE/R² toggle re-renders from the cached
+// (NFL.com, RotoWire), by position, on three player subsets (all + top-30 +
+// top-12/position). One /api/comparison fetch; the MAE/RMSE/R² toggle re-renders from the cached
 // payload. Lower is better for MAE/RMSE, higher for R²; best cell per row is
 // highlighted.
 // ---------------------------------------------------------------------------
@@ -1514,6 +1514,7 @@ async function loadComparison() {
     if (comparisonLoaded) return;
     const allBody = document.getElementById("comparison-all-body");
     const top30Body = document.getElementById("comparison-top30-body");
+    const top12Body = document.getElementById("comparison-top12-body");
     try {
         comparisonData = await fetchJSON("/api/comparison");
         if (comparisonData.error) throw new Error(comparisonData.error);
@@ -1527,6 +1528,7 @@ async function loadComparison() {
         const msg = `<tr><td colspan="7" class="arch-error">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
         if (allBody) allBody.innerHTML = msg;
         if (top30Body) top30Body.innerHTML = msg;
+        if (top12Body) top12Body.innerHTML = msg;
     }
 }
 
@@ -1582,8 +1584,10 @@ function renderComparisonTables() {
     const subsets = comparisonData.subsets || {};
     const allBody = document.getElementById("comparison-all-body");
     const top30Body = document.getElementById("comparison-top30-body");
+    const top12Body = document.getElementById("comparison-top12-body");
     if (allBody) allBody.innerHTML = renderComparisonRows(subsets.all || {});
     if (top30Body) top30Body.innerHTML = renderComparisonRows(subsets.top30 || {});
+    if (top12Body) top12Body.innerHTML = renderComparisonRows(subsets.top12 || {});
 }
 
 // Source reliability — residual σ per source on the 2025 test season. The model
@@ -1679,6 +1683,7 @@ function renderComparisonNotes() {
             <li><strong>NFL.com.</strong> ${escapeHtml(nflNote)}</li>
             <li><strong>RotoWire.</strong> ${escapeHtml(rwNote)}</li>
             <li><strong>Top 30.</strong> The second table restricts to the top 30 players per position by actual 2025 fantasy points — the fantasy-relevant starters.</li>
+            <li><strong>Top 12.</strong> The third table tightens further to the top 12 per position by actual 2025 fantasy points — roughly a standard league's starters at each spot.</li>
             <li><strong>Caveat.</strong> Each source is scored on the players it actually projects, so this is an approximate scoreboard rather than a strictly paired test. For the rigorous paired, significance-tested head-to-heads, see the <a href="#wiki:expert-comparison" class="comparison-link" data-slug="expert-comparison">Expert Projection Comparison</a> wiki page.</li>
             ${date ? `<li class="comparison-note-meta">Expert data generated ${escapeHtml(date)}.</li>` : ""}
         </ul>`;
