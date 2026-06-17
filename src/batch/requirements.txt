@@ -15,9 +15,9 @@ nflreadpy==0.1.5
 polars==1.41.2
 scikit-learn==1.9.0
 scipy==1.17.1
-matplotlib==3.10.9
+matplotlib==3.11.0
 joblib==1.5.3
 lightgbm==4.6.0
 mord==0.7
-boto3==1.43.26
+boto3==1.43.31
 optuna==4.9.0
