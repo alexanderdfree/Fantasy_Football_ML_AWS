@@ -114,7 +114,7 @@ jobs:
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = aws-actions/amazon-ecr-login v2 tip as
         # of 2026-05-21.
-        uses: aws-actions/amazon-ecr-login@fa648b43de3d4d023bcb3f89ed6940096949c419  # v2
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64  # v2
 
       - name: Set up Docker Buildx
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
