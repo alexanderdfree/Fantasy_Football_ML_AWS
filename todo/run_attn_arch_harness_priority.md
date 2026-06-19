@@ -71,7 +71,9 @@ The local-CPU recipe below stays valid for a box with a GPU + data on disk.
 - **Flat / regression** (esp. `selfattn`): leave OFF, or **delete the dead code** (the flag's
   branch in `src/shared/neural_net.py` + its tests). Deletion is numerically inert — confirm via
   the Ridge-identity tell and mark the commit training-skipped. Record a `[TESTED, REJECTED]`
-  archive entry with the table.
+  archive entry with the table. **(2026-06-19: ran — all arms flat-to-regressing; per owner the
+  scaffolding is KEPT, no deletion taken. `[TESTED, REJECTED]` record + full table in
+  [fixed-archive.md](fixed-archive.md).)**
 
 ## Stop-rules / gotchas
 - Don't headline a single-seed overall-MAE win or a best-model flip (auto-memory
@@ -81,4 +83,4 @@ The local-CPU recipe below stays valid for a box with a GPU + data on disk.
 - A reduced-config proxy can flip the sign of a small effect — the harness already uses production
   NN config, so don't "speed it up" by shrinking epochs.
 
-**Status:** harness merged (PR #662); this is the run + adopt/delete follow-up. Pick up here.
+**Status:** DONE (2026-06-19). Ran the grid — RB stacked N=24 (`ab_attn_arch-20260615T072824Z-b5b46ea`) for the six vmap-safe flags, plus eager RB+QB 8-seed for `selfattn` (`selfattn-confirm-15d827c`, via the new `launch_ablate` Batch path, #1180). **No flag beats baseline beyond the 0.02 FP-MAE noise floor; none adopted.** Per owner, the scaffolding is **kept** (no dead-code deletion). Full table + lesson in [fixed-archive.md](fixed-archive.md). Only `entropy` remains un-run (eager-only vmap side-channel). Nothing to pick up.
