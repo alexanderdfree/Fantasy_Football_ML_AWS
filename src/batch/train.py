@@ -920,7 +920,13 @@ def _merge_split_artifacts(
         if branch_metrics.get("elapsed_sec") is not None:
             metrics["phase_seconds"][f"split.{branch}.elapsed_sec"] = branch_metrics["elapsed_sec"]
 
-    for key in ("git_sha", "gpu_name", "sm", "cuda_graph_active"):
+    # The NN branch carries the GPU/capture facts (Ridge/LGBM run CPU-only).
+    # Derive the keys FROM _hardware_metadata (values still come from nn_metrics)
+    # so a new field can't silently drop out of the merged artifact — exactly
+    # how cuda_graph_full_active (the 2026-06-15 full-step rebaseline marker,
+    # ADR-0017) was lost from production History rows until 2026-06-19. We use
+    # only its .keys(); the merge job's own platform is irrelevant here.
+    for key in ("git_sha", *_hardware_metadata()):
         if key in nn_metrics:
             metrics[key] = nn_metrics[key]
 
