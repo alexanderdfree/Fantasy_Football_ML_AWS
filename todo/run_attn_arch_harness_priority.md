@@ -28,6 +28,15 @@ real-GPU stacked seed, run_id `ab_attn_arch-20260615T072824Z-b5b46ea`) — use t
 `ablate_attn_arch` recipe below for them (and for the per-target Δ table); `selfattn` is the
 Tier-4 "confirm once eagerly, then delete the dead code" arm below:
 
+**Eager arms on the GPU fleet (Batch path, ADR-0020).** The eager `selfattn`/`entropy` arms now
+have a Batch entry point that runs them on the production L4/FP16 metric path instead of a local
+box: `python -m src.tuning.launch_ablate --mod src.tuning.ablate_attn_arch --only selfattn
+--positions RB QB --seeds 42 7 123 5 99 17 31 8 --image-sha <sha>` submits one Spot job per
+position (eager, `--cuda-graph false` default; per-cell S3 checkpoint/resume under
+`ablation_runs/{run_id}/`) and aggregates through `ablate_attn_arch.print_summary`. For an unmerged
+branch, dispatch `batch-image.yml` on it first (`gh workflow run batch-image.yml --ref <branch>`).
+The local-CPU recipe below stays valid for a box with a GPU + data on disk.
+
 1. **Data prereq.** Needs a complete local `data/raw` (the harness calls the real pipeline). If
    `data/splits` is a stale symlink (missing recently-added feature columns → `KeyError`), rebuild
    a LOCAL splits dir — the fresh-splits recipe is in the `[PRIORITY] PCA-before-Ridge` entry of

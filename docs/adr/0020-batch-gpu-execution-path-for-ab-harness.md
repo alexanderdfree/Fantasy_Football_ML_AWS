@@ -142,3 +142,14 @@ tests: [tests/tuning/test_ab_batch.py](../../tests/tuning/test_ab_batch.py),
   [src/tuning/ab_scheduler_type.py](../../src/tuning/ab_scheduler_type.py)) so
   they run on the Spot fleet at the GPU-default N=24 stacked width via
   `launch_ab --spec …`. `rb_gate`/`batch_lr` were evaluated and left eager.
+- **2026-06-19** — Path extended to the **eager `ablation_runner` family**
+  (config-injection ablations like `ablate_attn_arch`, distinct from the
+  frame-injection `ab_harness` specs): sibling launcher
+  [src/tuning/launch_ablate.py](../../src/tuning/launch_ablate.py) + container
+  entry [src/tuning/ablate_batch.py](../../src/tuning/ablate_batch.py) ride the
+  same `--mode=tune` dispatch via a new `FF_TUNE_ABLATE_MOD` env flag, reuse the
+  `ff-ab-job` clone + per-cell S3 checkpoint/resume, and aggregate through the
+  ablation module's own `print_summary`. Motivated by `selfattn`, which can't
+  vmap (dropped from the stacked `ab_attn_arch` spec) so it has no GPU home
+  otherwise; `--cuda-graph false` defaults to a clean eager FP16 A/B. Results
+  land under `ablation_runs/{run_id}/`.

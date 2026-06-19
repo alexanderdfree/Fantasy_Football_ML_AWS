@@ -1457,6 +1457,16 @@ def main():
         ab_run_batch_entry(positions[0])
         return
 
+    # Same env-flag route for the eager ablation_runner family: FF_TUNE_ABLATE_MOD=
+    # <dotted ablation module> (set by src/tuning/launch_ablate.py) runs this
+    # position's variant x seed cells eagerly (one full pipeline per cell) with
+    # per-cell S3 checkpointing. See src/tuning/ablate_batch.py for the env contract.
+    if os.environ.get("FF_TUNE_ABLATE_MOD", "").strip():
+        from src.tuning.ablate_batch import run_batch_entry as ablate_run_batch_entry
+
+        ablate_run_batch_entry(positions[0])
+        return
+
     # GPU-gated default: 24 on CUDA, eager off-CUDA (resolver handles an explicit
     # 0/N override and rejects 1). K/DST aren't flat-history, so they always fall
     # back to eager below regardless of the resolved width.
