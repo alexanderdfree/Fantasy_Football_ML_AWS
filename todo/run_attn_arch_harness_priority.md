@@ -22,9 +22,11 @@ The full prior lives in the harness module docstring; in short:
 [src/tuning/ab_attn_arch.py](../src/tuning/ab_attn_arch.py). Run it on the Spot fleet (the
 production metric path) with `python -m src.tuning.launch_ab --spec src.tuning.ab_attn_arch`, or
 locally with `python -m src.tuning.ab_attn_arch --positions RB` (eager 3-seed on CPU; add
-`--stacked-seeds` on a CUDA box). The `entropy` arm is dropped from the stacked spec (vmap
-side-channel) — use the eager `ablate_attn_arch` recipe below for it and for the per-target Δ
-table:
+`--stacked-seeds` on a CUDA box). The `entropy` and `selfattn` arms are dropped from the stacked
+spec (vmap side-channels — `selfattn`'s `nn.MultiheadAttention` SDPA `attn_bias` errors on every
+real-GPU stacked seed, run_id `ab_attn_arch-20260615T072824Z-b5b46ea`) — use the eager
+`ablate_attn_arch` recipe below for them (and for the per-target Δ table); `selfattn` is the
+Tier-4 "confirm once eagerly, then delete the dead code" arm below:
 
 1. **Data prereq.** Needs a complete local `data/raw` (the harness calls the real pipeline). If
    `data/splits` is a stale symlink (missing recently-added feature columns → `KeyError`), rebuild
