@@ -216,6 +216,14 @@ class PositionConfig:
     # Learned per-target embedding for empty-history (season-opener) rows; see
     # MultiHeadNetWithHistory. Off by default; RB opts in.
     attn_no_history_embedding: bool = False
+    # Context-conditioned attention queries (#121): each per-target query gets a
+    # per-row delta projected from the static feature vector, so a player attends
+    # to the past games in their history that resemble this week's
+    # matchup/role/game-script. Zero-init cond_proj ⇒ baseline-identical at
+    # step 0; architecture-changing when on. Off by default; RB opts in (a
+    # boom/bust-tail RMSE win — see ADR-0004 / todo/fixed-archive). Consumed by
+    # both the flat and nested (K, outer-pool) attention factories.
+    attn_condition_queries_on_static: bool = False
 
     # === Opposing-side attention branch ===
     opp_attn_history_stats: list[str] = field(default_factory=list)

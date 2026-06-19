@@ -397,6 +397,14 @@ POSITION_CONFIG = PositionConfig(
     attn_gated=True,
     attn_gate_hidden=16,
     attn_gate_weight=1.0,
+    # Context-conditioned attention queries (#121) — ENABLED for RB only. The
+    # N=24 stacked screen (condq-screen-stacked-80494dd) measured attn-NN FP
+    # RMSE −0.051±0.028 (better on 24/24 seeds) with MAE flat (−0.002): condq
+    # trims the boom/bust tail by retrieving matchup/game-script-similar past
+    # games — a signal that is strongly conditional for RB (workload/run-D/
+    # script) but not for QB/WR (which regress), so it is RB-specific. See
+    # ADR-0004 + todo/fixed-archive.md.
+    attn_condition_queries_on_static=True,
     # === LightGBM (Optuna retune, 50 trials, CV MAE 4.5244) ===
     # Switched "huber" → "regression" (L2/MSE) to chase the elite tail; was
     # flipped from "fair" → "huber" in PR 3 LGBM unification. Holdout vs old
