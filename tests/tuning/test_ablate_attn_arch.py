@@ -169,12 +169,12 @@ def test_extract_run_payload_raises_when_only_attn_present():
 def test_extract_run_payload_maps_all_fields():
     result = {
         "attn_nn_metrics": {
-            "total": {"mae": 4.21},
-            "rushing_yards": {"mae": 20.5},
-            "rushing_tds": {"mae": 0.3},
+            "total": {"mae": 4.21, "rmse": 5.90},
+            "rushing_yards": {"mae": 20.5, "rmse": 28.1},
+            "rushing_tds": {"mae": 0.3, "rmse": 0.5},
         },
-        "nn_metrics": {"total": {"mae": 4.50}},
-        "ridge_metrics": {"total": {"mae": 4.72}},
+        "nn_metrics": {"total": {"mae": 4.50, "rmse": 6.10}},
+        "ridge_metrics": {"total": {"mae": 4.72, "rmse": 6.30}},
     }
     payload = aaa._extract_run_payload(
         result,
@@ -185,9 +185,16 @@ def test_extract_run_payload_maps_all_fields():
     assert payload["metrics"]["attn_fp_mae"] == pytest.approx(4.21)
     assert payload["metrics"]["base_fp_mae"] == pytest.approx(4.50)
     assert payload["metrics"]["ridge_fp_mae"] == pytest.approx(4.72)
+    assert payload["metrics"]["attn_fp_rmse"] == pytest.approx(5.90)
+    assert payload["metrics"]["base_fp_rmse"] == pytest.approx(6.10)
+    assert payload["metrics"]["ridge_fp_rmse"] == pytest.approx(6.30)
     assert payload["metrics"]["attn_targets"] == {
         "rushing_yards": pytest.approx(20.5),
         "rushing_tds": pytest.approx(0.3),
+    }
+    assert payload["metrics"]["attn_targets_rmse"] == {
+        "rushing_yards": pytest.approx(28.1),
+        "rushing_tds": pytest.approx(0.5),
     }
     assert payload["timings"] == {}
     assert payload["metadata"]["variant_label"] == "alibi"
@@ -243,6 +250,7 @@ def _make_result(
     base: float,
     ridge: float,
     targets: dict[str, float] | None = None,
+    attn_rmse: float | None = None,
 ) -> AblationResult:
     return AblationResult(
         position="RB",
@@ -252,7 +260,11 @@ def _make_result(
             "attn_fp_mae": attn,
             "base_fp_mae": base,
             "ridge_fp_mae": ridge,
+            "attn_fp_rmse": attn_rmse if attn_rmse is not None else attn + 1.5,
+            "base_fp_rmse": base + 1.5,
+            "ridge_fp_rmse": ridge + 1.5,
             "attn_targets": targets or {"rushing_yards": 20.2, "rushing_tds": 0.29},
+            "attn_targets_rmse": {"rushing_yards": 28.0, "rushing_tds": 0.5},
         },
         timings={},
         metadata={"run_kind": "experiment"},
@@ -344,6 +356,41 @@ def test_print_summary_errors_are_skipped(capsys):
     ok = aaa.print_summary(results, targets, ["baseline", "alibi"])
     # Sentinel sees only 1 value → skips the spread check → remains True.
     assert ok is True
+
+
+def test_print_summary_shows_rmse_row(capsys):
+    """The RMSE headline row appears when results carry ``attn_fp_rmse`` — a flag
+    can be MAE-flat but RMSE-better (the condq case), which only RMSE surfaces."""
+    targets = ["rushing_yards"]
+    results = [
+        _make_result("baseline", 42, 4.50, 4.00, 4.72, attn_rmse=6.00),
+        _make_result("condq", 42, 4.50, 4.00, 4.72, attn_rmse=5.90),  # MAE flat, RMSE -0.10
+        _make_result("baseline", 43, 4.50, 4.00, 4.72, attn_rmse=6.00),
+        _make_result("condq", 43, 4.50, 4.00, 4.72, attn_rmse=5.92),
+    ]
+    aaa.print_summary(results, targets, ["baseline", "condq"])
+    out = capsys.readouterr().out
+    assert "FP RMSE" in out
+
+
+def test_print_summary_tolerates_missing_rmse(capsys):
+    """Older MAE-only result JSONs (no ``attn_fp_rmse``) must still print — the
+    RMSE row is skipped, no KeyError (the optional-key guard in _vals)."""
+    targets = ["rushing_yards"]
+    mae_only = {
+        "attn_fp_mae": 4.5,
+        "base_fp_mae": 4.0,
+        "ridge_fp_mae": 4.72,
+        "attn_targets": {"rushing_yards": 20.2},
+    }
+    results = [
+        AblationResult("RB", 42, "baseline", dict(mae_only), {}, {"run_kind": "experiment"}),
+        AblationResult("RB", 42, "condq", dict(mae_only), {}, {"run_kind": "experiment"}),
+    ]
+    aaa.print_summary(results, targets, ["baseline", "condq"])
+    out = capsys.readouterr().out
+    assert "FP MAE" in out
+    assert "FP RMSE" not in out  # skipped gracefully
 
 
 # ---------------------------------------------------------------------------

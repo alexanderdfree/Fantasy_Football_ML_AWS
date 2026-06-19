@@ -171,7 +171,11 @@ def _extract_run_payload(
         "attn_fp_mae": float(attn["total"]["mae"]),
         "base_fp_mae": float(base["total"]["mae"]),
         "ridge_fp_mae": float(ridge["total"]["mae"]),
+        "attn_fp_rmse": float(attn["total"]["rmse"]),
+        "base_fp_rmse": float(base["total"]["rmse"]),
+        "ridge_fp_rmse": float(ridge["total"]["rmse"]),
         "attn_targets": {t: float(attn[t]["mae"]) for t in targets},
+        "attn_targets_rmse": {t: float(attn[t]["rmse"]) for t in targets},
     }
     timings: dict[str, Any] = {}
     return {"metrics": metrics, "timings": timings, "metadata": metadata}
@@ -219,7 +223,13 @@ def _build_jobs(
 
 
 def _vals(by: dict, variant: str, seeds: list[int], key: str) -> list[float]:
-    return [by[(variant, s)]["metrics"][key] for s in seeds if (variant, s) in by]
+    # ``key in metrics`` guard so an optional metric (e.g. ``attn_fp_rmse``, absent
+    # from pre-RMSE-capture result JSONs) is tolerated rather than raising.
+    return [
+        by[(variant, s)]["metrics"][key]
+        for s in seeds
+        if (variant, s) in by and key in by[(variant, s)]["metrics"]
+    ]
 
 
 def _paired_deltas(by: dict, variant: str, seeds: list[int], key: str) -> list[float]:
@@ -228,7 +238,10 @@ def _paired_deltas(by: dict, variant: str, seeds: list[int], key: str) -> list[f
     return [
         by[(variant, s)]["metrics"][key] - by[(BASELINE, s)]["metrics"][key]
         for s in seeds
-        if (variant, s) in by and (BASELINE, s) in by
+        if (variant, s) in by
+        and (BASELINE, s) in by
+        and key in by[(variant, s)]["metrics"]
+        and key in by[(BASELINE, s)]["metrics"]
     ]
 
 
@@ -264,6 +277,22 @@ def print_summary(
         else:
             delta_str = fmt_mean_std(_paired_deltas(by, v, seeds, "attn_fp_mae"))
         print(f"  {v:<12}{abs_str:>16}{delta_str:>20}  {VARIANTS[v][0]}")
+
+    # --- Headline: attention-NN FP RMSE per variant + paired Δ vs baseline ---
+    # A flag can be MAE-flat but trim the large-error (boom/bust) tail, which only
+    # RMSE surfaces (e.g. condq). Show both. Guarded so older MAE-only result JSONs
+    # (pre-RMSE-capture) still print without the RMSE row.
+    if any("attn_fp_rmse" in r["metrics"] for r in rows):
+        print("\nAttention NN — FP RMSE (mean±std across seeds), Δ vs baseline (paired):")
+        print(f"  {'variant':<12}{'FP RMSE':>16}{'Δ vs baseline':>20}  label")
+        print("  " + "-" * 86)
+        for v in variants_run:
+            abs_str = fmt_mean_std(_vals(by, v, seeds, "attn_fp_rmse"))
+            if v == BASELINE:
+                delta_str = "—"
+            else:
+                delta_str = fmt_mean_std(_paired_deltas(by, v, seeds, "attn_fp_rmse"))
+            print(f"  {v:<12}{abs_str:>16}{delta_str:>20}  {VARIANTS[v][0]}")
 
     # --- Base MLP NN (attention-free) — should also be ~flat across variants ---
     print("\nBase NN — FP MAE (mean±std):  ", end="")
