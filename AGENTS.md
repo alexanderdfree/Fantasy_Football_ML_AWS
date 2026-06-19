@@ -227,6 +227,7 @@ Hard-won lessons from prior sessions. One line each; provider-neutral. (Claude C
 ### Verification, audit & communication
 - **Audit by running the test, not grepping.** "Every position satisfies Y" needs an actual run — symbol grep misses `LOSS_WEIGHTS=` vs `loss_weights=` kwarg forms.
 - **Check ALL config layers for "is X implemented?"** In Batch/ECS a per-submission `submit_job(...)` override can invalidate the resource default.
+- **"Did we remove/change X?" is two layers, not one.** A correct code/config state ≠ a clean repo — the change that landed X often updated *some* mirrors (ADR, CHANGELOG) but not all. `git grep -i <feature>` across `docs/`, `docs/adr/`, `TODO.md`, `todo/` for stale recommendations / active-tense prose; a "go add it" follow-up for a now-removed feature actively misleads the next contributor. Fix the harmful ones (PR + merge if repo-tracked); leave accepted convention alone (CHANGELOG `(PR pending)` markers). opp-def removal #1175 left `docs/rb_feature_history.md` recommending RB add the just-removed branch → caught only on a re-sweep (#1184).
 - **Changing an endpoint contract:** grep the route path AND the handler name (`def health`, `/health`), not just the data structures read.
 - **Enumerate before filtering in tree-wide sweeps.** One unfiltered `grep -rn <term> .`, categorize EVERY hit, THEN filter — a `grep -v` as the sweep tool gives phantom completeness (#637 missed user-facing wiki refs).
 - **Default investigation sweep target is the property-extremum case,** not the example the user happened to name.
