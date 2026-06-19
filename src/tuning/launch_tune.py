@@ -58,7 +58,20 @@ from src.batch.launch import (  # noqa: E402
     wait_for_jobs,
 )
 from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS  # noqa: E402
-from src.tuning.tune_nn_storage import resolve_search_space_version, s3_prefix  # noqa: E402
+from src.tuning.tune_nn_storage import (  # noqa: E402
+    SCOPE_ROOTS,
+    SEARCH_SPACE_VERSION,
+    resolve_search_space_version,
+    s3_prefix,
+)
+
+# tune_nn --scope values (mirror tune_nn._DEFAULT_SCOPE / _HISTORY_SCOPE). The
+# history scope tunes the attention game-history branch (seq len + per-game
+# token bundles, static backbone frozen) and rides FF_TUNE_SCOPE through the
+# fixed ENTRYPOINT, exactly like FF_TUNE_STACKED_SEEDS.
+SCOPE_FULL = "full"
+SCOPE_HISTORY = "history"
+HISTORY_POSITIONS = ("QB", "RB", "WR", "TE")
 
 # All six positions now have ``run(config=...)``; argparse choices still pin
 # the input to known names so a typo fails locally instead of submitting a
@@ -129,6 +142,7 @@ def submit_tune_job(
     stacked_seeds: int = 0,
     stacked_epochs: int = 30,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
+    scope: str = SCOPE_FULL,
     batch_client=None,
 ) -> tuple[str, str]:
     """Submit one Batch tuning job. Returns (position, job_id).
@@ -159,6 +173,11 @@ def submit_tune_job(
     suffix = uuid.uuid4().hex[:6]
     if stacked_seeds == 1:
         raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
+    if scope == SCOPE_HISTORY and position.upper() not in HISTORY_POSITIONS:
+        raise SystemExit(
+            f"--scope history supports {list(HISTORY_POSITIONS)} (flat-history "
+            f"game-history branch); got {position}"
+        )
     # K/DST aren't flat-history, so they can't vmap-stack — they run eager even
     # under the default-on stacking, and the container falls back the same way.
     # Resolve per-position HERE so the predicted namespace matches what runs.
@@ -187,6 +206,8 @@ def submit_tune_job(
         # namespace resolves — predict the same graph-less base here.
         cuda_graph=cuda_graph and not stacked,
         full_graph=cuda_graph_full and not stacked,
+        # --scope history lands in the history_v1 root (separate study DB).
+        root=SCOPE_ROOTS.get(scope, SEARCH_SPACE_VERSION),
     ) + _stacked_suffix(stacked_seeds, stacked_epochs)
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
@@ -240,6 +261,10 @@ def submit_tune_job(
                     if stacked
                     else []
                 ),
+                # --scope history rides FF_TUNE_SCOPE through the fixed ENTRYPOINT
+                # (train.py forwards a fixed argv). Only emitted off-default so a
+                # full-scope submission's env stays byte-identical to before.
+                *([{"name": "FF_TUNE_SCOPE", "value": scope}] if scope != SCOPE_FULL else []),
             ],
         },
     )
@@ -260,12 +285,14 @@ def _print_plan(
     attempt_timeout: int,
     stacked_seeds: int = 0,
     stacked_epochs: int = 30,
+    scope: str = SCOPE_FULL,
 ) -> None:
     stacked = stacked_seeds >= 2
     storage_version = resolve_search_space_version(
         _batch_storage_backend(parallel_backend),
         cuda_graph=cuda_graph and not stacked,
         full_graph=cuda_graph_full and not stacked,
+        root=SCOPE_ROOTS.get(scope, SEARCH_SPACE_VERSION),
     ) + _stacked_suffix(stacked_seeds, stacked_epochs)
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:       {AWS_REGION}")
@@ -276,6 +303,7 @@ def _print_plan(
     print(f"  definition:   {_tune_job_definition()}")
     print(f"  wait timeout: {WAIT_TIMEOUT_SECONDS}s")
     print(f"  attempt cap:  {attempt_timeout}s")
+    print(f"  scope:        {scope}")
     print(f"  n_trials:     {n_trials}")
     print(f"  n_jobs:       {n_jobs}")
     print(f"  backend:      {parallel_backend}")
@@ -373,6 +401,18 @@ def main():
         help="Fixed epochs per stacked trial (default 30).",
     )
     parser.add_argument(
+        "--scope",
+        choices=[SCOPE_FULL, SCOPE_HISTORY],
+        default=SCOPE_FULL,
+        help=(
+            "tune_nn search-space scope. 'full' (default) tunes attention sizing "
+            "+ static backbone + scheduler. 'history' tunes the attention "
+            "game-history branch (attn_max_seq_len + per-game token bundles, "
+            "static backbone frozen); rides FF_TUNE_SCOPE into the container, "
+            "lands in the history_v1 namespace, QB/RB/WR/TE only."
+        ),
+    )
+    parser.add_argument(
         "--attempt-timeout",
         type=int,
         default=DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
@@ -421,6 +461,13 @@ def main():
         bad = [p for p in positions if p not in ("QB", "RB", "WR", "TE")]
         if bad:
             raise SystemExit(f"--stacked-seeds supports QB/RB/WR/TE (flat-history); got {bad}")
+    if args.scope == SCOPE_HISTORY:
+        bad = [p for p in positions if p not in HISTORY_POSITIONS]
+        if bad:
+            raise SystemExit(
+                f"--scope history supports {list(HISTORY_POSITIONS)} (flat-history "
+                f"game-history branch); got {bad}"
+            )
 
     if args.dry_run:
         _print_plan(
@@ -435,6 +482,7 @@ def main():
             args.attempt_timeout,
             stacked_seeds=stacked_seeds,
             stacked_epochs=args.stacked_epochs,
+            scope=args.scope,
         )
         return
 
@@ -458,6 +506,7 @@ def main():
                 stacked_seeds=stacked_seeds,
                 stacked_epochs=args.stacked_epochs,
                 attempt_timeout=args.attempt_timeout,
+                scope=args.scope,
                 batch_client=batch_client,
             ): pos
             for pos in positions
@@ -480,6 +529,7 @@ def main():
             _batch_storage_backend(args.parallel_backend),
             cuda_graph=cuda_graph and not stacked_seeds,
             full_graph=cuda_graph_full and not stacked_seeds,
+            root=SCOPE_ROOTS.get(args.scope, SEARCH_SPACE_VERSION),
         ) + _stacked_suffix(stacked_seeds, args.stacked_epochs)
         print(
             f"Results land at s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
@@ -507,6 +557,7 @@ def main():
             _batch_storage_backend(args.parallel_backend),
             cuda_graph=cuda_graph and not stacked_seeds,
             full_graph=cuda_graph_full and not stacked_seeds,
+            root=SCOPE_ROOTS.get(args.scope, SEARCH_SPACE_VERSION),
         ) + _stacked_suffix(stacked_seeds, args.stacked_epochs)
         print(
             f"  Per-position results: s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"

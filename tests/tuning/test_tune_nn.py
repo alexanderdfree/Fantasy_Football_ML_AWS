@@ -682,7 +682,7 @@ def test_objective_validates_overrides_before_training(monkeypatch):
     bad_overrides = _base_valid_overrides()
     bad_overrides["nn_head_hidden"] = 0
 
-    monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial: bad_overrides)
+    monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial, *a, **k: bad_overrides)
     monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fail_runner)
 
     study = optuna.create_study(direction="minimize")
@@ -718,7 +718,7 @@ def test_objective_maps_sampled_scheduler_lr_to_attention_override(
         return {"attn_history": {"val_loss": [0.5]}}
 
     base_cfg = {"train_attention_nn": True, "scheduler_type": scheduler_type, attn_key: base_value}
-    monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial: dict(overrides))
+    monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial, *a, **k: dict(overrides))
     monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fake_runner)
 
     study = optuna.create_study(direction="minimize")

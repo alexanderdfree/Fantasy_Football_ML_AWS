@@ -118,6 +118,59 @@ def test_submit_tune_job_stacked_default_per_position():
     assert env_k["FF_CUDA_GRAPH"] == "1"
 
 
+def test_submit_tune_job_history_scope_sets_env_and_namespace():
+    """--scope history rides FF_TUNE_SCOPE (fixed ENTRYPOINT can't take --scope)
+    and lands in the separate history_v1 root; with the default stacked width
+    that's history_v1_mps_ens24x30."""
+    from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS
+
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "j"}
+    launch_tune.submit_tune_job(
+        "RB", n_trials=5, stacked_seeds=DEFAULT_STACKED_SEEDS, scope="history", batch_client=batch
+    )
+    env = {
+        e["name"]: e["value"]
+        for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert env["FF_TUNE_SCOPE"] == "history"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v1_mps_ens24x30"
+
+
+def test_submit_tune_job_full_scope_omits_scope_env():
+    """Full scope (default) must NOT emit FF_TUNE_SCOPE — the env stays
+    byte-identical to pre-history submissions."""
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "j"}
+    launch_tune.submit_tune_job("RB", n_trials=5, batch_client=batch)
+    env_keys = {
+        e["name"] for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert "FF_TUNE_SCOPE" not in env_keys
+
+
+def test_submit_tune_job_history_root_applies_when_eager():
+    """The history root applies regardless of stacking — eager lands in
+    history_v1_mps_graphfull (graphs on)."""
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "j"}
+    launch_tune.submit_tune_job(
+        "WR", n_trials=5, stacked_seeds=0, scope="history", batch_client=batch
+    )
+    env = {
+        e["name"]: e["value"]
+        for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    assert env["FF_TUNE_SCOPE"] == "history"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v1_mps_graphfull"
+
+
+def test_submit_tune_job_history_scope_rejects_non_flat_position():
+    batch = MagicMock()
+    with pytest.raises(SystemExit, match="scope history"):
+        launch_tune.submit_tune_job("K", scope="history", batch_client=batch)
+
+
 def test_submit_tune_job_omits_timeout_when_none():
     """timeout=None should drop the --timeout flag from the command — Batch
     enforces its own wait-timeout layer via launch.py's WAIT_TIMEOUT_SECONDS."""
