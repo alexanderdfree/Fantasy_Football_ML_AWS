@@ -133,7 +133,7 @@ Standing follow-ups, mapped to decisions (item 1 is also tracked in the [TODO.md
 
 1. **K cross-season rolling leakage** — related to D1 (temporal split) and D5 (per-position non-negative targets). Requires either collecting more K games or accepting the bias.
 2. **PPR-only training** — related to D2 (multi-target). Needs a training-matrix flag for scoring format and re-running six position pipelines.
-3. **No lineup optimizer** — out of scope for this ADR; tracked as a follow-up project, not a revision of D1–D17.
+3. **No lineup optimizer** — out of scope for this ADR; tracked as a follow-up project, not a revision of D1–D21.
 
 ---
 

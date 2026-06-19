@@ -27,8 +27,9 @@ _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 # autodetects ON for CUDA sm_80+; set this falsy to force the eager path —
 # see ``cuda_graph_enabled``.
 _CUDA_GRAPH_ENV = "FF_CUDA_GRAPH"
-# Full-step capture is OPT-IN (unlike the autodetect-ON model-only capture):
-# truthy enables it on top of ``cuda_graph_enabled()`` — see
+# Full-step capture autodetects ON for CUDA sm_80+ (like the model-only
+# capture); this env var is a force-off override (set it falsy to force the
+# eager path) gating on top of ``cuda_graph_enabled()`` — see
 # ``cuda_graph_full_enabled``.
 _CUDA_GRAPH_FULL_ENV = "FF_CUDA_GRAPH_FULL"
 
