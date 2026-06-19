@@ -1086,9 +1086,9 @@ class MultiHeadTrainer:
         self._graphed_val = gv
 
     def _maybe_graph_full_step(self, train_loader) -> bool:
-        """Opt-in FULL-STEP capture (``FF_CUDA_GRAPH_FULL`` + the base
-        sm_80+ gate): one graph covering batch gather + model forward +
-        combined loss via :class:`_GraphedTrainStep`.
+        """Autodetect-ON FULL-STEP capture for CUDA sm_80+ (``FF_CUDA_GRAPH_FULL``
+        is a force-off override on the base sm_80+ gate): one graph covering
+        batch gather + model forward + combined loss via :class:`_GraphedTrainStep`.
 
         Strictly wider capture than :meth:`_maybe_graph_model` — the eager
         per-step remainder drops from {gather, forward-replay, criterion
@@ -1226,9 +1226,10 @@ class MultiHeadTrainer:
         self._graphed = True
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
-        # CUDA graph capture, widest applicable scope first: opt-in full-step
-        # (gather+fwd+loss, FF_CUDA_GRAPH_FULL) subsumes the autodetect-ON
-        # model-only capture (FF_CUDA_GRAPH=0 forces eager); no-op otherwise.
+        # CUDA graph capture, widest applicable scope first: autodetect-ON
+        # full-step (gather+fwd+loss; FF_CUDA_GRAPH_FULL=0 forces eager)
+        # subsumes the autodetect-ON model-only capture (FF_CUDA_GRAPH=0 forces
+        # eager); no-op otherwise.
         if not self._maybe_graph_full_step(train_loader):
             self._maybe_graph_model(train_loader)
         # FF_NN_FIXED_EPOCHS=<N> (test-only): train exactly N epochs, never

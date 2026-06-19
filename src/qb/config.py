@@ -186,12 +186,13 @@ ATTN_STATIC_CATEGORIES = DEFAULT_ATTN_STATIC_CATEGORIES
 # ``tests/_pipeline_e2e_utils.py::_TINY_OVERRIDES`` so they're shared across
 # every position. Only the QB-specific shrinks stay here:
 #   * per-target Ridge alpha grids collapsed to one alpha,
-#   * loss weights mirroring the production 2.0/delta rebalance on Huber
-#     heads + 1.0 on Poisson NLL heads (without these the count heads
+#   * loss weights mirroring the production 1/delta MSE rebalance on the
+#     yards heads + 1.0 on Poisson NLL heads (without these the count heads
 #     collapse to mean under yards-dominated gradients — see
 #     ``loss_weights`` comment lower in this file),
-#   * Huber deltas matching production so the test exercises the same
-#     loss-head shape as the real run.
+#   * Huber deltas matching production (retained as the characteristic error
+#     scale the 1/delta MSE weights derive from) so the test exercises the
+#     same loss-head shape as the real run.
 # Attention + LightGBM disabled (they're already disabled by ``_TINY_OVERRIDES``
 # but spelling them here makes the override explicit when reading config_tiny
 # in isolation).

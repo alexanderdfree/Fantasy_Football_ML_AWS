@@ -118,7 +118,7 @@ class TestMultiHeadNet:
         assert (x.grad != 0).any(), "Gradients should be non-zero near zero"
 
     def test_single_backbone_layer(self):
-        """Single-layer backbone (current RB config) should work correctly."""
+        """Single-layer backbone should work correctly."""
         model = MultiHeadNet(
             input_dim=10,
             target_names=TARGETS,
