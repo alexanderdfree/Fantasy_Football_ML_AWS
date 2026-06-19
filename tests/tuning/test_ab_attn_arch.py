@@ -1,35 +1,41 @@
 """Unit tests for the stacked attn-arch A/B spec (src/tuning/ab_attn_arch.py).
 
-No training in the resolve/mutator tests (that's the GPU-fleet run). Coverage: spec resolution
-(the ``entropy`` arm is DROPPED for the stacked port; attention-only ⇒
-``expect_ridge_identical=True``), the flag mutators (touch only ``KNOWN_FLAG_KEYS`` — guards the
-typo'd-no-op footgun), and a CPU vmap smoke for the ``selfattn`` flag (``nn.MultiheadAttention``
-under ``torch.func`` — the one path the existing ensemble tests don't already cover).
+No training here (that's the GPU-fleet run). Coverage: spec resolution (the ``entropy`` and
+``selfattn`` arms are DROPPED for the stacked port — both are vmap-incompatible; attention-only ⇒
+``expect_ridge_identical=True``) and the flag mutators (touch only ``KNOWN_FLAG_KEYS`` — guards the
+typo'd-no-op footgun).
+
+``selfattn`` is dropped because ``nn.MultiheadAttention``'s fused-SDPA ``attn_bias`` does not
+compose with the stacked ensemble's extra ``torch.func.vmap`` "members" batch dim — every real-GPU
+stacked seed errors ``attn_bias: wrong shape``. A prior CPU vmap smoke for it PASSED yet missed the
+GPU-only SDPA failure ("GPU-guarded code is invisible to CPU unit tests"), so it was removed with
+the arm; confirm/delete ``selfattn`` eagerly via ``ablate_attn_arch.py`` instead.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from src.tuning import ab_harness as H
 
 pytestmark = pytest.mark.unit
 
-_FLAGS = {"temp", "seqdrop", "swiglu", "alibi", "alibi_only", "selfattn", "condq"}
+_FLAGS = {"temp", "seqdrop", "swiglu", "alibi", "alibi_only", "condq"}
 
 
-def test_attn_arch_spec_resolves_without_entropy():
-    """RB-default; baseline + 7 flags with the ``entropy`` arm DROPPED. Every flag is a
-    cfg-mutator-only NN change (no frame injector) declaring ``expect_ridge_identical=True`` (the
-    flags feed the NN only — Ridge must stay byte-identical); ``baseline`` is identity."""
+def test_attn_arch_spec_resolves_without_dropped_arms():
+    """RB-default; baseline + 6 flags with the ``entropy`` and ``selfattn`` arms DROPPED (both
+    vmap-incompatible — see module docstring). Every flag is a cfg-mutator-only NN change (no
+    frame injector) declaring ``expect_ridge_identical=True`` (the flags feed the NN only — Ridge
+    must stay byte-identical); ``baseline`` is identity."""
     spec = H.resolve_spec("src.tuning.ab_attn_arch")
     assert spec.dotted == "src.tuning.ab_attn_arch"
     assert spec.positions == ["RB"]
     assert spec.baseline == "baseline"
-    assert (
-        "entropy" not in spec.variants
-    )  # vmap side-channel reject — dropped from the stacked port
+    # Both dropped from the stacked port: entropy is an attention-entropy side-channel; selfattn's
+    # nn.MultiheadAttention SDPA attn_bias won't compose with the vmap "members" batch dim.
+    assert "entropy" not in spec.variants
+    assert "selfattn" not in spec.variants
     assert set(spec.variants) == {"baseline", *_FLAGS}
     assert spec.variants["baseline"].is_baseline_shape
     for name in _FLAGS:
@@ -53,34 +59,3 @@ def test_attn_arch_mutators_touch_only_known_flag_keys():
         assert touched <= KNOWN_FLAG_KEYS, (
             f"{name} touches unknown keys {touched - KNOWN_FLAG_KEYS}"
         )
-
-
-def test_selfattn_flag_vmaps_under_ensemble_regime():
-    """De-risk the one flag whose vmap-safety the existing ensemble tests don't exercise:
-    ``attn_self_layers`` wires in a ``SelfAttentionBlock`` (``nn.MultiheadAttention``). Build
-    LayerNorm models under the ensemble regime and run the REAL stacked fwd+bwd for 1 epoch on
-    synthetic data — finite per-member predictions ⇒ the flag vmaps under ``torch.func``."""
-    import torch
-
-    from src.tuning.ab_ensemble_seeds import ensemble_env, predict_stacked, train_stacked
-    from tests.tuning.test_ab_ensemble_seeds import (
-        _build_models,
-        _captures_for,
-        _criterion,
-        _synthetic,
-        _test_capture,
-        _tiny_cfg,
-    )
-
-    with ensemble_env(2):  # FF_NN_NORM=layer (buffer-free → vmap-safe), FP32, fixed epochs
-        cfg = _tiny_cfg(attn_self_layers=1)
-        models = _build_models(cfg, n_members=2)
-        criterion = _criterion(cfg)
-        feats, _y, loader = _synthetic()
-        captures = _captures_for(models, criterion, loader)
-        device = torch.device("cpu")
-        params, buffers, template = train_stacked(captures, cfg, device, n_epochs=1)
-        preds = predict_stacked(template, params, buffers, _test_capture(feats), device)
-
-    assert len(preds) == 2
-    assert all(np.all(np.isfinite(v)) for member in preds for v in member.values())
