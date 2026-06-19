@@ -118,6 +118,35 @@ def test_design_loo_for_large_group_count():
     assert {next(iter(d)) for _, d in rows} == set(names)
 
 
+@pytest.mark.parametrize("n", [1, 2])
+def test_design_small_n_uses_loo_no_empty_drop(n):
+    """PB's tiny designs contain an all-kept row that drops nothing — a
+    baseline-identical variant that would false-trip the Ridge sentinel. n<=2
+    must fall back to leave-one-out so every row drops exactly one group."""
+    names = [f"g{i}" for i in range(n)]
+    rows = fg.design_for_groups(names)
+    assert len(rows) == n
+    assert all(len(d) == 1 for _, d in rows)  # every row drops one group, none empty
+
+
+@pytest.mark.parametrize(
+    "group_cols",
+    [
+        {"solo": frozenset({"c1"})},  # 1 group
+        {"a": frozenset({"c1"}), "b": frozenset({"c2"})},  # 2 groups
+    ],
+)
+def test_build_drop_variants_never_emits_empty_drop(group_cols):
+    """Every non-baseline variant must drop >=1 real column (else Ridge Δ=0 trips
+    the expect_ridge_identical=False sentinel)."""
+    variants, row_drops = fg.build_drop_variants(group_cols)
+    assert len(variants) == 1 + len(group_cols)  # baseline + one per group
+    for v in variants[1:]:
+        cfg = {"get_feature_columns_fn": lambda: ["c1", "c2", "other"]}
+        v.cfg_mutator(cfg)
+        assert cfg["get_feature_columns_fn"]() != ["c1", "c2", "other"]  # something dropped
+
+
 # --------------------------------------------------------------------------- #
 # feature_groups: the drop mutator filters BOTH model paths (#1172 shape)
 # --------------------------------------------------------------------------- #

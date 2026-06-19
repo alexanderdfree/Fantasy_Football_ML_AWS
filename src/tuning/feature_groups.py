@@ -249,22 +249,27 @@ def subfamily_groups(position: str, family: str) -> dict[str, frozenset[str]]:
 
 
 # --------------------------------------------------------------------------- #
-# Designs: Plackett-Burman main-effects (<=11 groups) else leave-one-out
+# Designs: Plackett-Burman main-effects (3..11 groups) else leave-one-out
 # --------------------------------------------------------------------------- #
+_PB_MIN_FACTORS = 3  # below this, PB has an all-kept row that drops nothing
+
+
 def design_for_groups(group_names: Sequence[str]) -> list[tuple[str, frozenset[str]]]:
     """Map a group list to ``(variant_name, dropped_groups)`` rows (no baseline).
 
-    <=11 groups -> the 12-run Plackett-Burman main-effects design (every group's
+    3..11 groups -> the 12-run Plackett-Burman main-effects design (every group's
     effect is estimated from all 12 rows; tighter than OFAT and interactions
-    don't alias onto the wrong group). >11 groups -> leave-one-out (one row per
-    group dropping only that group) — exact for vs-baseline main effects when PB
-    is unavailable, at N rows instead of 12.
+    don't alias onto the wrong group). Outside that range -> leave-one-out (one
+    row per group, dropping only that group): exact for vs-baseline main effects,
+    at N rows. LOO is also used for n<=2 because the small PB designs contain an
+    all-``+1`` row that drops nothing — a baseline-identical variant that would
+    false-trip the ``expect_ridge_identical=False`` sentinel.
     """
     names = list(group_names)
     n = len(names)
     if n == 0:
         return []
-    if n <= _PB_MAX_FACTORS:
+    if _PB_MIN_FACTORS <= n <= _PB_MAX_FACTORS:
         design = plackett_burman_design(n)
         rows: list[tuple[str, frozenset[str]]] = []
         for idx, signs in enumerate(design, start=1):
@@ -313,6 +318,10 @@ def build_drop_variants(
     row_drops: dict[str, frozenset[str]] = {}
     for vname, dropped in design_for_groups(names):
         cols = frozenset(c for g in dropped for c in group_cols[g])
+        if not cols:
+            # A design row that drops no columns is baseline-identical and would
+            # false-trip the expect_ridge_identical=False sentinel — skip it.
+            continue
         kept = [g for g in names if g not in dropped]
         variants.append(
             Variant(
