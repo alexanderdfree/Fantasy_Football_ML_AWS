@@ -120,11 +120,14 @@ ablation-harness item in TODO.md; this audit just makes the live/dormant boundar
 
 ## 4. Recommendations
 
-1. **Adopt-or-delete the dormant attention extensions** — already tracked: run the PR #662
-   ablation harness (TODO.md). Flags that beat baseline beyond noise (≥8 seeds) get enabled
-   in the relevant `POSITION_CONFIG`; flat/regressing branches (esp. `selfattn`, expected to
-   regress on ~15K-sample positions) get their dead code + tests deleted. Reduces the
-   live-vs-dormant gap this audit surfaced.
+1. **Adopt-or-delete the dormant attention extensions** — **DONE (2026-06-19).** Ran the PR #662
+   harness (RB stacked N=24 `ab_attn_arch-…b5b46ea` for the six vmap-safe flags; eager RB+QB
+   8-seed for the vmap-incompatible `selfattn` via the new `launch_ablate` Batch path, #1180): no
+   flag beats baseline beyond the 0.02 FP-MAE noise floor, and `selfattn` regresses on both RB
+   (≈15K) and the small-sample QB (RB Δ +0.116 / QB +0.076, worse on 14/16 seeds). **None adopted;
+   all kept default-OFF; the scaffolding is retained (owner decision — not deleted).** Full table +
+   lesson in [fixed-archive.md](fixed-archive.md). The live-vs-dormant gap this audit surfaced is
+   now a documented, deliberate keep.
 2. **Optional `log_alpha` clamp** (§3.B) — low-risk hardening; only worthwhile bundled with
    other gated-head work given the retrain cost.
 3. **No other action.** Enabling/disabling architecture is an ablation decision requiring
