@@ -30,10 +30,23 @@ Out of scope (v1)
   coupling, not two independent axes. Searching deltas + deriving weights also
   blows up search dimensionality past what ~30 trials resolve. Hand-tune loss
   config via the `ablate_rb_gate.py` pattern.
-* **`ATTN_STATIC_FEATURES` / `ATTN_HISTORY_STATS`**: structural feature
-  choices, not hyperparams. CLAUDE.md's stop-rule on rolling-features-in-
-  static still applies.
+* **`ATTN_STATIC_FEATURES`**: structural feature choice, not a hyperparam.
+  CLAUDE.md's stop-rule on rolling-features-in-static still applies.
+  (**`ATTN_HISTORY_STATS`** is fixed in the default *full* scope but IS
+  searched as a token-bundle subset under ``--scope history`` — see that
+  arg and ``src/tuning/attn_history_space.py``; the windowed-column
+  stop-rule is enforced by ``assert_raw_per_game``.)
 * **`nn_non_negative_targets`**: per-head correctness constraint.
+
+Scope (``--scope``)
+-------------------
+``full`` (default) searches attention sizing + static backbone + scheduler
+(the historical scheduler_v2 space). ``history`` searches the attention
+game-history branch — ``attn_max_seq_len`` (sequence length) + an
+``attn_history_stats`` token-bundle subset — with the static backbone frozen
+at production; it lands in the separate ``history_v1`` study namespace and
+supports QB/RB/WR/TE only. The Batch route carries it via ``FF_TUNE_SCOPE``
+(the fixed ENTRYPOINT can't take ``--scope``), set by ``launch_tune --scope``.
 
 Batch follow-up
 ---------------
@@ -92,7 +105,14 @@ from src.shared.registry import get_config, get_runner
 # in the capture resolver adds no new import weight to the tune CLI.
 from src.shared.utils import cuda_graph_enabled as _cuda_graph_enabled
 from src.shared.utils import cuda_graph_full_enabled as _cuda_graph_full_enabled
+
+# Attention game-history-branch search space (``--scope history``). Dependency-
+# free (re only); safe to import at module top.
+from src.tuning import attn_history_space as _attn_hist
 from src.tuning.history import append_tuning_run
+from src.tuning.tune_nn_storage import (
+    SCOPE_ROOTS as _SCOPE_ROOTS,
+)
 from src.tuning.tune_nn_storage import (
     SEARCH_SPACE_VERSION as _DEFAULT_SEARCH_SPACE_VERSION,
 )
@@ -108,6 +128,9 @@ from src.tuning.tune_nn_storage import (
 from src.tuning.tune_nn_storage import (
     study_name as _study_name,
 )
+
+_DEFAULT_SCOPE = "full"
+_HISTORY_SCOPE = "history"
 
 
 def _ensure_data_from_s3() -> None:
@@ -224,6 +247,29 @@ _TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().u
     *_SCHEDULER_PARAM_KEYS.values()
 )
 
+# ``--scope history`` search space: the attention sizing + scheduler knobs (shared
+# with full scope) PLUS the two game-history-branch axes (sequence length + the
+# resolved per-game token list), and it FREEZES the static backbone (no nn_*
+# keys — those stay at the position's production POSITION_CONFIG). The token
+# bundle booleans are Optuna trial params only; the cfg/override carries the
+# resolved ``attn_history_stats`` list, so validation never sees the booleans.
+_HISTORY_REQUIRED_KEYS: frozenset[str] = frozenset(
+    {
+        "attn_d_model",
+        "attn_n_heads",
+        "attn_encoder_hidden_dim",
+        "attn_dropout",
+        "attn_lr",
+        "attn_batch_size",
+        "scheduler_type",
+        "attn_max_seq_len",
+        "attn_history_stats",
+    }
+)
+_HISTORY_ALLOWED_KEYS: frozenset[str] = _HISTORY_REQUIRED_KEYS | frozenset().union(
+    *_SCHEDULER_PARAM_KEYS.values()
+)
+
 
 # ---------------------------------------------------------------------------
 # Storage / process backend helpers
@@ -294,8 +340,13 @@ def _force_eager_for_concurrent_thread_trials(parallel_backend: str, n_jobs: int
     return True
 
 
-def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool, bool]:
+def _resolve_storage_version(
+    parallel_backend: str, scope: str = _DEFAULT_SCOPE
+) -> tuple[str, bool, bool]:
     """Storage namespace for this run, plus the capture decision it keys on.
+
+    ``scope`` selects the search-space root (``scheduler_v2`` for full,
+    ``history_v1`` for ``--scope history``) so the two never share a study DB.
 
     Keyed on ``cuda_graph_enabled()`` — the same autodetect + force-off-override
     resolver the trainer consults at capture time — NOT on FF_CUDA_GRAPH
@@ -310,7 +361,10 @@ def _resolve_storage_version(parallel_backend: str) -> tuple[str, bool, bool]:
     full_graph = _cuda_graph_full_enabled()
     return (
         _resolve_search_space_version(
-            parallel_backend, cuda_graph=cuda_graph, full_graph=full_graph
+            parallel_backend,
+            cuda_graph=cuda_graph,
+            full_graph=full_graph,
+            root=_SCOPE_ROOTS.get(scope, _DEFAULT_SEARCH_SPACE_VERSION),
         ),
         cuda_graph,
         full_graph,
@@ -535,20 +589,29 @@ def _is_positive_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0.0
 
 
-def _validate_overrides(overrides: dict) -> None:
+def _validate_overrides(overrides: dict, scope: str = _DEFAULT_SCOPE) -> None:
     """Validate sampled tune_nn overrides before training or reporting them.
 
     ``attn_encoder_hidden_dim == 0`` is the one intentional zero sentinel: it
     selects the single-layer game encoder in ``_build_game_encoder``. Every real
     dimension, width, batch size, and optimizer scale must be positive.
+
+    ``scope == "history"`` validates the game-history-branch search space: the
+    attention sizing + scheduler knobs PLUS ``attn_max_seq_len`` +
+    ``attn_history_stats``, with the static backbone frozen (no nn_* keys
+    required or allowed — they stay at the production config).
     """
+    history = scope == _HISTORY_SCOPE
+    required_keys = _HISTORY_REQUIRED_KEYS if history else _BASE_TUNED_OVERRIDE_KEYS
+    allowed_keys = _HISTORY_ALLOWED_KEYS if history else _TUNED_OVERRIDE_KEYS
+
     errors: list[str] = []
 
-    unknown = sorted(set(overrides) - _TUNED_OVERRIDE_KEYS)
+    unknown = sorted(set(overrides) - allowed_keys)
     if unknown:
         errors.append(f"unknown keys: {unknown}")
 
-    missing = sorted(_BASE_TUNED_OVERRIDE_KEYS - overrides.keys())
+    missing = sorted(required_keys - overrides.keys())
     if missing:
         errors.append(f"missing keys: {missing}")
 
@@ -571,25 +634,31 @@ def _validate_overrides(overrides: dict) -> None:
             "attn_encoder_hidden_dim must be 0 (single-layer encoder sentinel) or a positive int"
         )
 
-    backbone_layers = overrides.get("nn_backbone_layers")
-    if not isinstance(backbone_layers, list) or not backbone_layers:
-        errors.append("nn_backbone_layers must be a non-empty list of positive ints")
-    elif any(not _is_positive_int(v) for v in backbone_layers):
-        errors.append("nn_backbone_layers entries must be positive ints")
+    # Static-backbone (nn_*) knobs are sampled only in full scope; history scope
+    # freezes them at the production config, so they're absent from `overrides`.
+    if not history:
+        backbone_layers = overrides.get("nn_backbone_layers")
+        if not isinstance(backbone_layers, list) or not backbone_layers:
+            errors.append("nn_backbone_layers must be a non-empty list of positive ints")
+        elif any(not _is_positive_int(v) for v in backbone_layers):
+            errors.append("nn_backbone_layers entries must be positive ints")
 
-    if not _is_positive_int(overrides.get("nn_head_hidden")):
-        errors.append("nn_head_hidden must be a positive int")
+        if not _is_positive_int(overrides.get("nn_head_hidden")):
+            errors.append("nn_head_hidden must be a positive int")
 
-    for key in ("attn_dropout", "nn_dropout"):
+    dropout_keys = ("attn_dropout",) if history else ("attn_dropout", "nn_dropout")
+    for key in dropout_keys:
         value = overrides.get(key)
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0.0 <= value < 1.0:
             errors.append(f"{key} must be in [0, 1)")
 
-    for key in ("attn_lr", "nn_lr", "nn_weight_decay"):
+    lr_keys = ("attn_lr",) if history else ("attn_lr", "nn_lr", "nn_weight_decay")
+    for key in lr_keys:
         if not _is_positive_number(overrides.get(key)):
             errors.append(f"{key} must be positive")
 
-    for key in ("attn_batch_size", "nn_batch_size"):
+    batch_keys = ("attn_batch_size",) if history else ("attn_batch_size", "nn_batch_size")
+    for key in batch_keys:
         if not _is_positive_int(overrides.get(key)):
             errors.append(f"{key} must be a positive int")
 
@@ -632,29 +701,34 @@ def _validate_overrides(overrides: dict) -> None:
             ):
                 errors.append("onecycle_pct_start must be in (0, 1)")
 
+    if history:
+        if not _is_positive_int(overrides.get("attn_max_seq_len")):
+            errors.append("attn_max_seq_len must be a positive int")
+        stats = overrides.get("attn_history_stats")
+        if (
+            not isinstance(stats, list)
+            or not stats
+            or any(not isinstance(s, str) or not s for s in stats)
+        ):
+            errors.append("attn_history_stats must be a non-empty list of column-name strings")
+        else:
+            # Stop-rule guard: history tokens must be raw per-game signals, never
+            # windowed/expanding/rolling derivations.
+            try:
+                _attn_hist.assert_raw_per_game(stats)
+            except ValueError as exc:
+                errors.append(str(exc))
+
     if errors:
         raise ValueError("Invalid tune_nn overrides: " + "; ".join(errors))
 
 
-def _sample_overrides(trial: optuna.Trial) -> dict:
-    """Sample one trial's cfg overrides. Raises ``optuna.TrialPruned`` for
-    invalid combinations (e.g. ``n_heads`` not dividing ``d_model``).
-    """
-    d_model = trial.suggest_categorical("attn_d_model", [16, 24, 32, 48, 64])
-    n_heads = trial.suggest_categorical("attn_n_heads", [1, 2, 4])
-    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
-        raise optuna.TrialPruned()
-
-    backbone_idx = trial.suggest_categorical(
-        "nn_backbone_layers_idx", list(range(len(_BACKBONE_PRESETS)))
-    )
-
-    attn_lr = trial.suggest_float("attn_lr", 1e-4, 5e-3, log=True)
-    nn_lr = trial.suggest_float("nn_lr", 1e-4, 5e-3, log=True)
+def _sample_scheduler(trial: optuna.Trial) -> tuple[str, dict]:
+    """Sample the (attention) scheduler type + its shape params. Shared by both
+    scopes; the param names/ranges match the historical scheduler_v2 space."""
     scheduler_type = trial.suggest_categorical(
         "scheduler_type", ["cosine_warm_restarts", "onecycle"]
     )
-    scheduler_overrides: dict
     if scheduler_type == "cosine_warm_restarts":
         scheduler_overrides = {
             "cosine_t0": trial.suggest_categorical("cosine_t0", [10, 20, 30, 40, 60]),
@@ -667,6 +741,66 @@ def _sample_overrides(trial: optuna.Trial) -> dict:
             "onecycle_max_lr": onecycle_max_lr,
             "onecycle_pct_start": trial.suggest_float("onecycle_pct_start", 0.1, 0.4),
         }
+    return scheduler_type, scheduler_overrides
+
+
+def _sample_overrides(
+    trial: optuna.Trial, scope: str = _DEFAULT_SCOPE, position: str | None = None
+) -> dict:
+    """Sample one trial's cfg overrides. Raises ``optuna.TrialPruned`` for
+    invalid combinations (e.g. ``n_heads`` not dividing ``d_model``).
+
+    ``scope == "history"`` samples the game-history-branch space: attention
+    sizing + scheduler (shared) PLUS ``attn_max_seq_len`` and a per-game token
+    subset (one boolean per optional bundle, resolved to ``attn_history_stats``),
+    with the static backbone FROZEN at production (no nn_* params sampled).
+    """
+    d_model = trial.suggest_categorical("attn_d_model", [16, 24, 32, 48, 64])
+    n_heads = trial.suggest_categorical("attn_n_heads", [1, 2, 4])
+    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
+        raise optuna.TrialPruned()
+
+    if scope == _HISTORY_SCOPE:
+        if position is None:
+            raise ValueError("history scope requires a position (for token bundles)")
+        # Shared attention sizing + scheduler (no nn_* — backbone frozen).
+        attn_encoder = trial.suggest_categorical("attn_encoder_hidden_dim", [0, 16, 32, 64])
+        attn_dropout = trial.suggest_float("attn_dropout", 0.0, 0.3)
+        attn_lr = trial.suggest_float("attn_lr", 1e-4, 5e-3, log=True)
+        attn_batch = trial.suggest_categorical("attn_batch_size", [128, 256, 512])
+        scheduler_type, scheduler_overrides = _sample_scheduler(trial)
+        # Game-history-branch axes: sequence length + per-game token subset.
+        seq_len = trial.suggest_categorical("attn_max_seq_len", _attn_hist.SEQ_LEN_CHOICES)
+        enabled = [
+            bundle
+            for bundle in _attn_hist.optional_bundles(position)
+            if trial.suggest_categorical(f"histbundle_{bundle}", [False, True])
+        ]
+        stats = _attn_hist.resolve_history_stats(position, enabled)
+        # Resolved list + chosen bundles as user_attrs so _trial_to_params can
+        # round-trip the config without reconstructing from the booleans.
+        trial.set_user_attr("attn_history_stats", stats)
+        trial.set_user_attr("attn_history_bundles", enabled)
+        return {
+            "attn_d_model": d_model,
+            "attn_n_heads": n_heads,
+            "attn_encoder_hidden_dim": attn_encoder,
+            "attn_dropout": attn_dropout,
+            "attn_lr": attn_lr,
+            "attn_batch_size": attn_batch,
+            "scheduler_type": scheduler_type,
+            **scheduler_overrides,
+            "attn_max_seq_len": seq_len,
+            "attn_history_stats": stats,
+        }
+
+    backbone_idx = trial.suggest_categorical(
+        "nn_backbone_layers_idx", list(range(len(_BACKBONE_PRESETS)))
+    )
+
+    attn_lr = trial.suggest_float("attn_lr", 1e-4, 5e-3, log=True)
+    nn_lr = trial.suggest_float("nn_lr", 1e-4, 5e-3, log=True)
+    scheduler_type, scheduler_overrides = _sample_scheduler(trial)
 
     return {
         "attn_d_model": d_model,
@@ -694,7 +828,13 @@ def _sample_overrides(trial: optuna.Trial) -> dict:
 
 
 def _make_objective(
-    pos: str, base_cfg: dict, seed: int, *, stacked_n: int = 0, stacked_epochs: int = 30
+    pos: str,
+    base_cfg: dict,
+    seed: int,
+    *,
+    stacked_n: int = 0,
+    stacked_epochs: int = 30,
+    scope: str = _DEFAULT_SCOPE,
 ):
     """Return the Optuna objective for ``pos``.
 
@@ -727,11 +867,11 @@ def _make_objective(
     runner = get_runner(pos)
 
     if stacked_n >= 2:
-        return _make_stacked_objective(pos, base_cfg, seed, stacked_n, stacked_epochs)
+        return _make_stacked_objective(pos, base_cfg, seed, stacked_n, stacked_epochs, scope=scope)
 
     def objective(trial: optuna.Trial) -> float:
-        overrides = _sample_overrides(trial)
-        _validate_overrides(overrides)
+        overrides = _sample_overrides(trial, scope, pos)
+        _validate_overrides(overrides, scope)
         # Deep-copy so per-trial mutations (overrides + epoch_callback
         # installation + K's runner-side `attn_history_builder_fn`
         # injection) don't leak across trials. Assumes cfg values are
@@ -790,7 +930,12 @@ def _make_objective(
 
 
 def _make_stacked_objective(
-    pos: str, base_cfg: dict, seed: int, stacked_n: int, stacked_epochs: int
+    pos: str,
+    base_cfg: dict,
+    seed: int,
+    stacked_n: int,
+    stacked_epochs: int,
+    scope: str = _DEFAULT_SCOPE,
 ):
     """The vmap seed-ensemble trial body (see ``_make_objective``'s docstring).
 
@@ -808,8 +953,8 @@ def _make_stacked_objective(
 
         from src.tuning.ab_ensemble_seeds import capture_seeds, train_stacked
 
-        overrides = _sample_overrides(trial)
-        _validate_overrides(overrides)
+        overrides = _sample_overrides(trial, scope, pos)
+        _validate_overrides(overrides, scope)
         cfg = copy.deepcopy(base_cfg)
         cfg.update(overrides)
         _apply_attention_scheduler_overrides(cfg, overrides)
@@ -851,6 +996,11 @@ _PARAM_TO_CONST = {
     "attn_dropout": "ATTN_DROPOUT",
     "attn_lr": "ATTN_LR",
     "attn_batch_size": "ATTN_BATCH_SIZE",
+    # Game-history-branch axes (--scope history only): emitted when present so a
+    # tuned winner pastes straight into POSITION_CONFIG. Absent from full-scope
+    # best_params, so _format_config_lines skips them there.
+    "attn_max_seq_len": "ATTN_MAX_SEQ_LEN",
+    "attn_history_stats": "ATTN_HISTORY_STATS",
     # The tuner objective trains ATTENTION only, so every sampled scheduler param
     # (type + shape + LR scale) must be pasted into the attention-specific config
     # fields (ATTN_*), never the shared SCHEDULER_*/COSINE_*/ONECYCLE_* fields the
@@ -934,14 +1084,38 @@ def _format_config_lines(pos: str, best_params: dict) -> str:
     return "\n".join(lines)
 
 
-def _trial_to_params(trial: optuna.trial.FrozenTrial) -> dict:
+def _trial_to_params(
+    trial: optuna.trial.FrozenTrial, scope: str = _DEFAULT_SCOPE, position: str | None = None
+) -> dict:
     """Pull a clean params dict from a completed Optuna trial.
 
-    Resolves ``nn_backbone_layers_idx`` (stored as int in Optuna) back to the
-    concrete preset list so downstream consumers (JSON output, config-line
-    rendering) see the user-facing key name and shape.
+    Full scope: resolves ``nn_backbone_layers_idx`` (stored as int in Optuna)
+    back to the concrete preset list so downstream consumers (JSON output,
+    config-line rendering) see the user-facing key name and shape.
+
+    History scope: the per-game token bundle booleans (``histbundle_*``) are
+    search params, not cfg keys — drop them and substitute the resolved
+    ``attn_history_stats`` (stored as a ``user_attr`` at sample time;
+    reconstructed from the booleans + ``position`` as a fallback).
     """
     p = dict(trial.params)
+    if scope == _HISTORY_SCOPE:
+        bundle_flags = {
+            k[len("histbundle_") :]: v for k, v in p.items() if k.startswith("histbundle_")
+        }
+        for k in [k for k in p if k.startswith("histbundle_")]:
+            del p[k]
+        stats = trial.user_attrs.get("attn_history_stats")
+        if stats is None:
+            if position is None:
+                raise ValueError(
+                    "history _trial_to_params needs a position to resolve token bundles"
+                )
+            enabled = [b for b, on in bundle_flags.items() if on]
+            stats = _attn_hist.resolve_history_stats(position, enabled)
+        p["attn_history_stats"] = list(stats)
+        _validate_overrides(p, scope)
+        return p
     if "nn_backbone_layers_idx" in p:
         idx = p.pop("nn_backbone_layers_idx")
         if (
@@ -1139,6 +1313,7 @@ def _mps_worker_entry(
     env_overrides: dict[str, str],
     stacked_n: int = 0,
     stacked_epochs: int = 30,
+    scope: str = _DEFAULT_SCOPE,
 ) -> None:
     os.environ.update(env_overrides)
     os.environ[_CORE_POOL_POS_ENV] = f"{pos}-tune-{worker_idx}"
@@ -1154,7 +1329,7 @@ def _mps_worker_entry(
     _configure_sqlite_for_parallel(db_path, sqlite_timeout)
     base_cfg = get_config(pos)
     objective = _make_objective(
-        pos, base_cfg, seed, stacked_n=stacked_n, stacked_epochs=stacked_epochs
+        pos, base_cfg, seed, stacked_n=stacked_n, stacked_epochs=stacked_epochs, scope=scope
     )
 
     for iteration in itertools.count():
@@ -1197,6 +1372,7 @@ def _run_mps_optimize(
     checkpoint_interval: int,
     stacked_n: int = 0,
     stacked_epochs: int = 30,
+    scope: str = _DEFAULT_SCOPE,
 ) -> int:
     """Run the spawn-based MPS optimize loop.
 
@@ -1252,6 +1428,7 @@ def _run_mps_optimize(
                 env_overrides,
                 stacked_n,
                 stacked_epochs,
+                scope,
             ),
             name=f"tune-nn-{pos.lower()}-{idx}",
         )
@@ -1317,6 +1494,26 @@ def main():
         "positions",
         nargs="+",
         help="Positions to tune (QB, RB, WR, TE, K, DST).",
+    )
+    parser.add_argument(
+        "--scope",
+        choices=[_DEFAULT_SCOPE, _HISTORY_SCOPE],
+        # Env default (FF_TUNE_SCOPE) is the Batch route: src/batch/train.py
+        # --mode=tune forwards a FIXED argv, so --scope can't ride the command;
+        # launch_tune sets FF_TUNE_SCOPE in the job environment instead (same
+        # channel as FF_TUNE_STACKED_SEEDS / FF_TUNE_N_JOBS).
+        default=os.environ.get("FF_TUNE_SCOPE", _DEFAULT_SCOPE),
+        help=(
+            "Search-space scope. 'full' (default) tunes attention sizing + static "
+            "backbone + scheduler (the historical scheduler_v2 space). 'history' "
+            "tunes the attention GAME-HISTORY branch: attention sizing + scheduler "
+            "PLUS attn_max_seq_len (sequence length) and a per-game token subset "
+            "(attn_history_stats bundles), with the static backbone FROZEN at the "
+            "position's production config. History-scope studies live in the "
+            "separate history_v1 namespace and support QB/RB/WR/TE only (flat "
+            "history). Pairs with stacked seeds for cheap seed-robust evaluation. "
+            "Env default: FF_TUNE_SCOPE (the Batch route)."
+        ),
     )
     parser.add_argument(
         "--n-trials",
@@ -1425,6 +1622,20 @@ def main():
     args = parser.parse_args()
 
     positions = [p.upper() for p in args.positions]
+    scope = args.scope
+    # argparse `choices` validates an explicit --scope but NOT an env-sourced
+    # default (FF_TUNE_SCOPE), so guard the env path explicitly.
+    if scope not in (_DEFAULT_SCOPE, _HISTORY_SCOPE):
+        raise SystemExit(
+            f"scope must be one of {{{_DEFAULT_SCOPE}, {_HISTORY_SCOPE}}}, got {scope!r}"
+        )
+    if scope == _HISTORY_SCOPE:
+        unsupported = [p for p in positions if not _attn_hist.is_supported(p)]
+        if unsupported:
+            raise SystemExit(
+                f"--scope history supports {_attn_hist.supported_positions()} "
+                f"(flat-history game-history branch); got {unsupported}"
+            )
 
     # Batch env-flag dispatch: the training image's ENTRYPOINT is fixed to
     # src.batch.train, whose --mode=tune forwards a fixed argv here — there is
@@ -1507,7 +1718,7 @@ def main():
     # Order matters: the eager-force mutates FF_CUDA_GRAPH[_FULL], and the storage
     # resolver below keys the study namespace off cuda_graph[_full]_enabled().
     _force_eager_for_concurrent_thread_trials(parallel_backend, n_jobs)
-    storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(parallel_backend)
+    storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(parallel_backend, scope)
     if stacked_n:
         # Seed-averaged fixed-epochs objective ≠ the eager early-stop objective;
         # never mix their trials in one study.
@@ -1528,7 +1739,7 @@ def main():
                     study_name=study_name,
                     storage=_make_storage(db_path, args.sqlite_timeout),
                 )
-                best = _trial_to_params(study.best_trial)
+                best = _trial_to_params(study.best_trial, scope, pos)
                 print(
                     f"\n{pos} best trial #{study.best_trial.number} "
                     f"(val_loss = {study.best_value:.4f}):"
@@ -1573,7 +1784,12 @@ def main():
         remaining = max(0, args.n_trials - completed)
 
         objective = _make_objective(
-            pos, base_cfg, args.seed, stacked_n=stacked_n, stacked_epochs=stacked_epochs
+            pos,
+            base_cfg,
+            args.seed,
+            stacked_n=stacked_n,
+            stacked_epochs=stacked_epochs,
+            scope=scope,
         )
         from src.tuning.resource_probe import ResourceProbe
 
@@ -1593,7 +1809,8 @@ def main():
             f"running {remaining} more"
         )
         print(
-            f"  backend={parallel_backend} requested_backend={requested_backend} n_jobs={n_jobs} "
+            f"  scope={scope} backend={parallel_backend} "
+            f"requested_backend={requested_backend} n_jobs={n_jobs} "
             f"storage={storage_version} cuda_graph={cuda_graph} "
             f"cuda_graph_full={cuda_graph_full}"
         )
@@ -1615,6 +1832,7 @@ def main():
                         checkpoint_interval=args.checkpoint_interval,
                         stacked_n=stacked_n,
                         stacked_epochs=stacked_epochs,
+                        scope=scope,
                     )
                 study = _create_or_load_study(
                     pos,
@@ -1644,7 +1862,7 @@ def main():
 
         resources = probe.stop()
         elapsed = time.time() - t0
-        best = _trial_to_params(study.best_trial)
+        best = _trial_to_params(study.best_trial, scope, pos)
         state_counts = _study_state_counts(study)
         print(f"\n{pos} tuning complete in {elapsed:.0f}s")
         print(f"  Best trial #{study.best_trial.number}: val_loss = {study.best_value:.4f}")
@@ -1657,6 +1875,7 @@ def main():
             "best_params": best,
             "n_trials": len(study.trials),
             "trial_state_counts": state_counts,
+            "scope": scope,
             "storage_version": storage_version,
             "parallel_backend": parallel_backend,
             "requested_parallel_backend": requested_backend,
