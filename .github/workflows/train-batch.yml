@@ -48,11 +48,20 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
-  # No ECS_CLUSTER/ECS_SERVICE here — PR #330 removed the post-train ECS
-  # refresh step from this workflow (the serving container's in-flight
-  # manifest poller now picks up new stable artifacts without a forced
-  # rollover), so this path no longer touches ECS. The EC2 path keeps its
-  # ECS rollover, so train-ec2.yml still defines them.
+  # Serving ECS service, rolled after a successful train (see the ecs_rollout
+  # job). PR #330 removed the post-train rollover on the theory that the
+  # in-flight manifest poller (FF_MODEL_REFRESH_INTERVAL_S) would hot-swap new
+  # stable artifacts without one. That holds for a weight-only retrain, but an
+  # architecture-changing retrain leaves a long-running task's loaded checkpoint
+  # shape-incompatible with the new serving code: e.g. #1175 dropped the
+  # opp-defense attention branch for QB/RB/WR/TE, so load_state_dict on the old
+  # two-branch artifact failed, attn preds went NaN, and the comparison/metrics
+  # tabs silently dropped those positions until a task happened to recycle —
+  # fantasy.alexfree.me served that stale state for ~4 days (2026-06-15→06-19,
+  # see TODO.md fixed-archive). A forced rollover guarantees a clean boot-time
+  # sync against the freshly promoted stable artifact. Mirrors train-ec2.yml.
+  ECS_CLUSTER: fantasy-cluster
+  ECS_SERVICE: fantasy-service
   # Required for `uv pip install -r requirements-dev.txt` to resolve transitive
   # deps that exist on multiple indexes (e.g. `requests`, found on PyTorch CPU
   # index but at a different version than the one resolved by other deps —
@@ -69,10 +78,10 @@ env:
   # every line stamped with the exit time, which made live triage and
   # post-hoc forensics needlessly hard.
   PYTHONUNBUFFERED: "1"
-  # Public serving URL for the post-train cache-warm probe. NOT an ECS var —
-  # warming goes through the ALB like any user request (a plain HTTPS GET to
-  # /warm), not the ECS control plane, so it doesn't reintroduce the post-train
-  # ECS coupling PR #330 removed. See the "Warm serving cache" step.
+  # Public serving URL for the post-train cache-warm probe. Distinct from the
+  # ECS control-plane vars above (used by ecs_rollout): warming is a plain
+  # HTTPS GET to /warm through the ALB, exactly like a user request. See the
+  # "Warm serving cache" step.
   # The Flask app is on the `fantasy` subdomain (apex is a separate personal
   # site — see deploy.yml); the stale apex value here meant every post-train
   # warm probe silently 404'd and the S3 predictions cache went stale
@@ -555,12 +564,11 @@ jobs:
       - name: Append Batch run to benchmark_history/
         # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
         # src/batch/benchmark.py::_maybe_upload_to_s3) so the serving
-        # container's boot-time sync_benchmark_history_from_s3 picks it up
-        # on the next task roll. PR #330 removed this workflow's forced ECS
-        # service refresh (the EC2 path keeps it; see train-ec2.yml's
-        # "Refresh ECS service" step), so there is no ordering dependency on
-        # an ECS step here anymore — the History tab simply reflects the
-        # S3-mirrored JSON whenever serving tasks next cycle.
+        # container's boot-time sync_benchmark_history_from_s3 picks it up on
+        # the next task roll — which the ecs_rollout job (needs: train) now
+        # forces, so the History tab reflects this run's JSON without waiting
+        # for a task to recycle on its own. This step runs in `train` (before
+        # ecs_rollout) so the JSON is in S3 by the time the rollover boots.
         if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -728,28 +736,75 @@ jobs:
           echo "::error::Training for ${HEAD_SHA::7} did not complete within the wait + recovery window — failing the run. See the recovery step's tracking issue."
           exit 1
 
+  ecs_rollout:
+    # Force a rolling redeploy of the serving service so the freshly promoted
+    # stable artifacts are loaded by a clean boot-time sync_models_from_s3,
+    # rather than relying on the best-effort in-flight poller. This is the
+    # correctness backstop the poller alone failed to provide for an
+    # architecture-changing retrain (see the ECS_CLUSTER note in `env:` + the
+    # 2026-06-15 attn-NN incident in TODO.md). Its own job (needs: train) so
+    # the rolling-deploy wait stays off the critical path of the benchmark
+    # commit + dedup marker, exactly like warm_cache. NOT continue-on-error:
+    # a new task that can't load the new artifacts must redden the run here
+    # instead of silently serving NaN preds.
+    needs: train
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        # Pinned per CodeQL actions/unpinned-tag — SHA = aws-actions/
+        # configure-aws-credentials v6.2.0, matching the train job above.
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b  # v6.2.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Refresh ECS service to pick up new model + benchmark artifacts
+        # Boot-time sync_models_from_s3 / sync_benchmark_history_from_s3 only run
+        # when an ECS task starts, so freshly promoted stable pointers in S3 are
+        # invisible to a long-running task until it recycles. force-new-deployment
+        # re-runs both syncs on a clean boot (same image, new task);
+        # services-stable waits for the new task to pass health checks and the
+        # old to drain, so a task that fails to load the new artifacts surfaces
+        # here instead of silently serving NaN preds. Idempotent when no stable
+        # advanced. Only smoke-passed artifacts ever become stable
+        # (artifact_gc.py), so the rollover can't promote a broken model.
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --force-new-deployment \
+            --no-cli-pager > /dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
+
   # Post-train serving-cache warm — split out of the `train` job (was its
   # next-to-last step) so its up-to-180s fingerprint poll no longer sits on
   # the critical path ahead of the benchmark-history commit and the dedup
-  # success-marker write. Those now land ~3 min sooner (History tab + the
-  # marker that gates the next push's retrain), while this best-effort warm
-  # runs in parallel and `needs: train` so it only fires after a clean train.
-  # It needs nothing AWS-side (no creds / no checkout) — just an HTTPS GET to
+  # success-marker write. Those land in `train`; this best-effort warm runs
+  # after ecs_rollout (needs: [train, ecs_rollout]) so it warms the FRESH
+  # tasks the rollover just started rather than ones about to drain. It needs
+  # nothing AWS-side (no creds / no checkout) — just an HTTPS GET to
   # SERVICE_URL/warm through the ALB, exactly like a user request — so a bare
   # ubuntu runner with the inherited workflow-level SERVICE_URL env suffices.
   warm_cache:
-    needs: train
+    needs: [train, ecs_rollout]
     runs-on: ubuntu-latest
     steps:
       - name: Warm serving cache
-        # Move the post-retrain recompute off the user request path. The
-        # in-flight refresh poller (FF_MODEL_REFRESH_INTERVAL_S, default 30s)
-        # swaps the freshly-trained models into the running tasks; the next
-        # /warm (the same _ensure_metrics() the first /api/predictions a user
-        # makes would run) recomputes predictions + re-uploads the S3 cache
-        # (D14). Probing /warm here means a CI runner eats that 30-60s, not a
-        # real visitor — and guarantees the fresh cache exists in S3 before
-        # traffic, so any later container hydrates instantly.
+        # Move the post-retrain recompute off the user request path. ecs_rollout
+        # already started fresh tasks that boot-synced the new stable models and
+        # pre-warmed (post_fork); this step spreads /warm across their gunicorn
+        # workers so each one's _ensure_metrics() (the same compute the first
+        # /api/predictions a user makes would run) recomputes predictions +
+        # re-uploads the S3 cache (D14) before real traffic — so any later
+        # container hydrates instantly. A CI runner eats that 30-60s, not a real
+        # visitor. (The in-flight poller, FF_MODEL_REFRESH_INTERVAL_S, remains the
+        # between-train fast-path; the rollover above is the per-train guarantee.)
         #
         # Best-effort: a warm miss must never fail the train workflow. The
         # existing post_fork pre-warm + lazy compute paths are the backstop.
