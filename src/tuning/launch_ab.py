@@ -182,6 +182,7 @@ def submit_ab_job(
     feature_cache: bool = False,
     stacked: bool = False,
     stacked_epochs: int = 30,
+    extra_env: dict[str, str] | None = None,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     batch_client=None,
 ) -> tuple[str, str]:
@@ -191,6 +192,10 @@ def submit_ab_job(
     each variant's seeds as ONE vmap ensemble (owner-sanctioned opt-in; see
     ab_harness --stacked-seeds). Per-seed result keys are unchanged, so the
     collector works as-is; compare stacked runs only against stacked runs.
+
+    ``extra_env`` forwards arbitrary KEY=VALUE container env vars (``--env``),
+    e.g. the ``FF_SUBSCREEN_FAMILY`` a parametrized spec reads at import. They
+    are appended last so they never silently clobber a managed var above.
     """
     import boto3
 
@@ -223,6 +228,12 @@ def submit_ab_job(
     if stacked:
         environment.append({"name": ENV_STACKED, "value": "1"})
         environment.append({"name": ENV_STACKED_EPOCHS, "value": str(int(stacked_epochs))})
+    if extra_env:
+        managed = {e["name"] for e in environment}
+        for key, value in extra_env.items():
+            if key in managed:
+                raise ValueError(f"--env {key} collides with a managed A/B env var; remove it")
+            environment.append({"name": key, "value": value})
 
     response = batch.submit_job(
         jobName=f"ff-ab-{position.lower()}-{int(time.time())}-{uuid.uuid4().hex[:6]}",
@@ -365,6 +376,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "correctness — see ab_harness).",
     )
     p.add_argument(
+        "--env",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help="Extra container env var (repeatable), e.g. --env FF_SUBSCREEN_FAMILY=rolling "
+        "for a parametrized spec. Cannot override a managed A/B var.",
+    )
+    p.add_argument(
         "--attempt-timeout",
         type=int,
         default=DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
@@ -420,8 +439,22 @@ def _aggregate_and_report(spec, results, *, s3, run_id: str, s3_prefix: str) -> 
     return len(agg["failed"])
 
 
+def _parse_env_pairs(pairs: list[str] | None) -> dict[str, str]:
+    """Parse repeated ``--env KEY=VALUE`` into a dict (value may contain ``=``)."""
+    out: dict[str, str] = {}
+    for item in pairs or []:
+        if "=" not in item:
+            raise SystemExit(f"--env expects KEY=VALUE, got {item!r}")
+        key, _, value = item.partition("=")
+        if not key:
+            raise SystemExit(f"--env expects a non-empty KEY, got {item!r}")
+        out[key] = value
+    return out
+
+
 def main() -> None:
     args = _build_parser().parse_args()
+    extra_env = _parse_env_pairs(args.env)
     wait = args.wait.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
 
@@ -506,6 +539,7 @@ def main() -> None:
                 feature_cache=args.feature_cache,
                 stacked=args.stacked_seeds,
                 stacked_epochs=args.stacked_epochs,
+                extra_env=extra_env,
                 attempt_timeout=args.attempt_timeout,
                 batch_client=batch,
             ): pos
@@ -536,6 +570,7 @@ def main() -> None:
             "image_sha": image_sha,
             "job_definition": job_definition,
             "cuda_graph": args.cuda_graph,
+            "extra_env": extra_env or None,
             "jobs": job_ids,
             "created_at": datetime.now(UTC).isoformat(),
         },
