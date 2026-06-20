@@ -310,6 +310,11 @@ def render_report_md(
     lines.append(
         "- **Sign:** `+` = dropping RAISES error = group carries signal (keep). `-` = dropping LOWERS error = drop candidate."
     )
+    lines.append(
+        "- **Ridge:** PCA is disabled for the screen (raw features) for robustness + clean "
+        "attribution. Production RB/WR/DST ship PCA-Ridge — confirm a final cut on the production "
+        "config (Stage 3 / the benchmark gate), not this screen's Ridge column."
+    )
     lines.append("")
     models = list(effects)
 

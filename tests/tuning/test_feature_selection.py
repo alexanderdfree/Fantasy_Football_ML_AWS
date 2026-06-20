@@ -170,7 +170,14 @@ def test_build_drop_variants_shape_and_sentinel():
     variants, row_drops = fg.build_drop_variants(
         {"x": frozenset({"x1", "x2"}), "y": frozenset({"y1"})}
     )
-    assert variants[0].name == "baseline" and variants[0].is_baseline_shape
+    assert variants[0].name == "baseline"
+    # baseline now carries a drop-nothing PCA-off mutator (shares the screen
+    # config), so it is NOT is_baseline_shape — but it must drop no columns.
+    assert variants[0].cfg_mutator is not None
+    cfg = {"get_feature_columns_fn": lambda: ["x1", "x2", "y1"]}
+    variants[0].cfg_mutator(cfg)
+    assert cfg["get_feature_columns_fn"]() == ["x1", "x2", "y1"]  # baseline drops nothing
+    assert cfg["ridge_pca_components"] is None  # but disables PCA
     for v in variants[1:]:
         assert v.cfg_mutator is not None
         assert v.expect_ridge_identical is False  # a real drop MUST move Ridge
@@ -182,6 +189,27 @@ def test_build_drop_variants_prunes_empty_group():
     the Ridge sentinel."""
     _, row_drops = fg.build_drop_variants({"x": frozenset({"x1"}), "empty": frozenset()})
     assert all("empty" not in dropped for dropped in row_drops.values())
+
+
+def test_full_feature_set_skips_all_drop_arm():
+    """When the screened groups ARE the whole feature set, the all-drop PB arm
+    leaves 0 features and crashes StandardScaler — it must be skipped."""
+    cols = {"a": frozenset({"a1"}), "b": frozenset({"b1"}), "c": frozenset({"c1"})}
+    _, full = fg.build_drop_variants(cols, full_feature_set=True)
+    assert all(d != frozenset({"a", "b", "c"}) for d in full.values())  # no all-drop arm
+    # sub-screen (other families remain) keeps the whole-family-drop arm
+    _, sub = fg.build_drop_variants(cols, full_feature_set=False)
+    assert any(d == frozenset({"a", "b", "c"}) for d in sub.values())
+
+
+def test_drop_mutator_disables_pca():
+    cfg = {"get_feature_columns_fn": lambda: ["a", "b"], "ridge_pca_components": 80}
+    fg.drop_columns_mutator(frozenset({"a"}))(cfg)
+    assert cfg["ridge_pca_components"] is None  # screen runs Ridge on raw features
+    # opt-out keeps PCA for callers that want pure column-dropping
+    cfg2 = {"get_feature_columns_fn": lambda: ["a", "b"], "ridge_pca_components": 80}
+    fg.drop_columns_mutator(frozenset({"a"}), disable_pca=False)(cfg2)
+    assert cfg2["ridge_pca_components"] == 80
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +273,7 @@ def test_extract_variant_seed_metric_skips_bad_cells():
 def test_spec_design_new_spec_uses_row_drops():
     names, row_drops = fs.spec_design("src.tuning.ab_feature_screen_k")
     assert len(names) == 6  # the six K groups
-    assert len(row_drops) == 12  # PB rows
+    assert len(row_drops) == 11  # 12 PB rows minus the skipped all-drop arm (pb12)
     assert all(isinstance(v, frozenset) for v in row_drops.values())
 
 

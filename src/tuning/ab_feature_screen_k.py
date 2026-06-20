@@ -34,7 +34,9 @@ SEEDS = [42, 123, 7]  # eager 3-seed default (K can't stack); bump with --seeds
 _GROUP_COLS = special_family_columns("K")
 SCREENED_FAMILIES: list[str] = list(_GROUP_COLS)
 
-VARIANTS, ROW_DROPS = build_drop_variants(_GROUP_COLS)
+# full_feature_set=True: the six groups ARE K's whole all_features list, so the
+# all-drop PB arm would leave 0 features — skip it.
+VARIANTS, ROW_DROPS = build_drop_variants(_GROUP_COLS, full_feature_set=True)
 BASELINE = "baseline"
 
 

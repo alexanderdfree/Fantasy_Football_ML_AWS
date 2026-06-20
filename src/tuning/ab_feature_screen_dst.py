@@ -37,7 +37,9 @@ SEEDS = [42, 123, 7]  # eager 3-seed default (DST can't stack); bump with --seed
 _GROUP_COLS = special_family_columns("DST")
 SCREENED_FAMILIES: list[str] = list(_GROUP_COLS)
 
-VARIANTS, ROW_DROPS = build_drop_variants(_GROUP_COLS)
+# full_feature_set=True: the nine groups ARE DST's whole all_features list, so
+# the all-drop PB arm would leave 0 features — skip it.
+VARIANTS, ROW_DROPS = build_drop_variants(_GROUP_COLS, full_feature_set=True)
 BASELINE = "baseline"
 
 
