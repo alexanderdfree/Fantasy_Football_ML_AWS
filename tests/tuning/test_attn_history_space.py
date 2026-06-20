@@ -115,8 +115,9 @@ def test_assert_raw_per_game_rejects_windowed(col):
 
 
 def _ask_history_overrides(pos: str, seed: int = 0) -> tuple[optuna.Trial, dict]:
-    """Drive _sample_overrides in history scope with a real Optuna trial,
-    skipping the occasional d_model%n_heads prune."""
+    """Drive _sample_overrides in history scope (v2 isolation) with a real
+    Optuna trial. The v2 history space samples only seq_len + token bundles
+    (no d_model/n_heads), so it never prunes; the retry loop is just defensive."""
     study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=seed))
     for _ in range(20):
         trial = study.ask()
@@ -124,14 +125,26 @@ def _ask_history_overrides(pos: str, seed: int = 0) -> tuple[optuna.Trial, dict]
             return trial, tune_nn._sample_overrides(trial, "history", pos)
         except optuna.TrialPruned:
             study.tell(trial, state=optuna.trial.TrialState.PRUNED)
-    raise AssertionError("could not sample a non-pruned history trial")
+    raise AssertionError("could not sample a history trial")
 
 
-def test_history_sample_overrides_are_valid_and_backbone_frozen():
+def test_history_sample_overrides_are_isolated_to_two_axes():
+    """v2 isolation: history sampling returns EXACTLY the two game-history axes —
+    attn_max_seq_len + attn_history_stats — and freezes the whole production
+    recipe (no attn sizing, lr, batch, scheduler, or nn_* keys)."""
     trial, overrides = _ask_history_overrides("RB")
-    # Required history keys present; no static-backbone (nn_*) keys sampled.
-    assert set(overrides) >= tune_nn._HISTORY_REQUIRED_KEYS
+    assert set(overrides) == {"attn_max_seq_len", "attn_history_stats"}
+    assert set(overrides) == tune_nn._HISTORY_REQUIRED_KEYS
+    # No frozen-recipe key leaks into the override set.
     assert not any(k.startswith("nn_") for k in overrides)
+    assert not any(
+        k in overrides
+        for k in ("attn_d_model", "attn_n_heads", "attn_lr", "attn_batch_size", "scheduler_type")
+    )
+    # The trial params carry only seq_len + the histbundle_* booleans (nothing
+    # from the frozen recipe gets a suggest_* call).
+    assert "attn_max_seq_len" in trial.params
+    assert all(k == "attn_max_seq_len" or k.startswith("histbundle_") for k in trial.params)
     # Sequence length is one of the candidate values.
     assert overrides["attn_max_seq_len"] in ahs.SEQ_LEN_CHOICES
     # Token set is a subset of production that always contains core.
@@ -144,9 +157,20 @@ def test_history_sample_overrides_are_valid_and_backbone_frozen():
     tune_nn._validate_overrides(overrides, "history")
 
 
-def test_history_validate_rejects_full_scope_keys():
+@pytest.mark.parametrize(
+    "frozen_key,value",
+    [
+        ("nn_dropout", 0.2),  # static-backbone key
+        ("attn_d_model", 32),  # v1 REQUIRED this; v2 freezes it
+        ("attn_lr", 1e-3),  # the v1 confound — frozen in v2
+        ("scheduler_type", "onecycle"),
+    ],
+)
+def test_history_validate_rejects_frozen_recipe_keys(frozen_key, value):
+    """v2 isolation: any frozen-recipe key (sizing, lr, scheduler, nn_*) is an
+    unknown key under history scope — even the ones v1 sampled/required."""
     _, overrides = _ask_history_overrides("WR")
-    overrides["nn_dropout"] = 0.2  # a frozen-backbone key has no place here
+    overrides[frozen_key] = value
     with pytest.raises(ValueError, match="unknown keys"):
         tune_nn._validate_overrides(overrides, "history")
 
@@ -181,6 +205,8 @@ def test_history_trial_to_params_roundtrip_and_config_lines():
     assert p["attn_history_stats"] == overrides["attn_history_stats"]
     assert p["attn_max_seq_len"] == overrides["attn_max_seq_len"]
     assert not any(k.startswith("nn_") for k in p)
+    # v2: the resolved params are exactly the two history axes — nothing else.
+    assert set(p) == {"attn_max_seq_len", "attn_history_stats"}
 
     lines = tune_nn._format_config_lines("RB", p)
     assert "attn_max_seq_len=" in lines
@@ -200,15 +226,10 @@ def test_history_overrides_build_attention_model_and_forward():
     _, overrides = _ask_history_overrides("RB")
     seq_len = overrides["attn_max_seq_len"]
     game_dim = len(overrides["attn_history_stats"])
-    # History scope freezes the backbone, so supply minimal nn_* the factory
-    # reads from the (production) base cfg; enable PE so seq_len sizes it.
-    cfg = {
-        **overrides,
-        "nn_backbone_layers": [32],
-        "nn_head_hidden": 16,
-        "nn_dropout": 0.1,
-        "attn_positional_encoding": True,
-    }
+    # v2 history freezes the ENTIRE recipe (attn sizing + static backbone), so
+    # the factory reads sizing from the production config; overlay only the two
+    # searched axes (seq_len + tokens). Enable PE so seq_len sizes the embedding.
+    cfg = {**get_config("RB"), **overrides, "attn_positional_encoding": True}
     targets = ["target_a", "target_b"]
     batch, static_dim = 3, 5
     x_static = torch.randn(batch, static_dim)
@@ -256,10 +277,10 @@ def test_history_storage_namespace_is_separate():
 
     assert HISTORY_SEARCH_SPACE_VERSION != SEARCH_SPACE_VERSION
     eager = resolve_search_space_version("thread", root=HISTORY_SEARCH_SPACE_VERSION)
-    assert eager == "history_v1"
+    assert eager == "history_v2"
     assert resolve_search_space_version("thread") == SEARCH_SPACE_VERSION
     # Execution-profile suffixes still apply to the history root.
     assert (
         resolve_search_space_version("mps", cuda_graph=True, root=HISTORY_SEARCH_SPACE_VERSION)
-        == "history_v1_mps_graph"
+        == "history_v2_mps_graph"
     )
