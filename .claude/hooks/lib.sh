@@ -356,3 +356,29 @@ claude_promote_worktree_splits() {
   fi
   return 0
 }
+
+# List memory files present in the Claude memory dir ($1) but NOT referenced in
+# its MEMORY.md index — the "orphan" signature of an index edit lost to the
+# last-writer-wins S3 sync. MEMORY.md is rewritten wholesale by every session
+# that records a memory, so two overlapping (often cross-platform) sessions each
+# overwrite it from the same base: the later push wins and the earlier session's
+# index line vanishes. The topic file itself survives (push is additive, no
+# --delete), leaving it present-but-unindexed → recall never surfaces it.
+#
+# Pure + READ-ONLY: prints one basename per orphan to stdout, nothing when the
+# index is complete or absent. session-start.sh only WARNS on the output; it
+# deliberately does not auto-edit MEMORY.md, which would add yet another
+# concurrent writer to the very file that is the collision point. $1 = memory dir.
+claude_list_unindexed_memories() {
+  local memdir="${1:-}" index f base
+  [ -n "$memdir" ] && [ -f "$memdir/MEMORY.md" ] || return 0
+  index="$memdir/MEMORY.md"
+  for f in "$memdir"/*.md; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f")"
+    [ "$base" = "MEMORY.md" ] && continue
+    # Match the exact markdown link target "](<base>)" (fixed-string) so a slug
+    # that is a substring of another (foo.md vs foobar.md) is not a false match.
+    grep -qF "]($base)" "$index" || printf '%s\n' "$base"
+  done
+}

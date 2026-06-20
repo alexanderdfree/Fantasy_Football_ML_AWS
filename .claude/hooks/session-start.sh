@@ -15,6 +15,22 @@ if [ -f "$repo_root/.claude/hooks/lib.sh" ]; then
   # shellcheck source=.claude/hooks/lib.sh
   . "$repo_root/.claude/hooks/lib.sh"
   claude_link_worktree_data "$repo_root" || true
+
+  # After the pull, surface any memory file missing from the MEMORY.md index (an
+  # orphan from an index edit lost to the concurrent/cross-platform S3 sync — see
+  # claude_list_unindexed_memories in lib.sh). Warn only; never auto-edit the
+  # index (that would add another concurrent writer to the collision point).
+  if [ -x "$repo_root/scripts/agent-memory-sync.sh" ]; then
+    _ff_memdir="$(cd "$repo_root" && bash scripts/agent-memory-sync.sh claude path 2>/dev/null || true)"
+    if [ -n "${_ff_memdir:-}" ]; then
+      _ff_orphans="$(claude_list_unindexed_memories "$_ff_memdir" || true)"
+      if [ -n "${_ff_orphans:-}" ]; then
+        echo "[memory-sync] WARN: $(printf '%s\n' "$_ff_orphans" | grep -c .) memory file(s) present but NOT in MEMORY.md (add a one-line index entry so recall surfaces them):"
+        printf '%s\n' "$_ff_orphans" | sed 's/^/  - /'
+      fi
+    fi
+    unset _ff_memdir _ff_orphans
+  fi
 fi
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then

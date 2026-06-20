@@ -12,7 +12,7 @@ set -euo pipefail
 log() { echo "[memory-sync] $*" >&2; }
 
 usage() {
-  log "usage: $(basename "$0") {claude|codex|all} {pull|push|status} [--prune] [--dry-run]"
+  log "usage: $(basename "$0") {claude|codex|all} {pull|push|status|path} [--prune] [--dry-run]"
 }
 
 agent="${1:-}"
@@ -38,7 +38,7 @@ case "$agent" in
   *) log "unknown agent: $agent"; usage; exit 2 ;;
 esac
 case "$cmd" in
-  pull | push | status) ;;
+  pull | push | status | path) ;;
   *) log "unknown command: $cmd"; usage; exit 2 ;;
 esac
 
@@ -164,6 +164,22 @@ sync_one() {
       ;;
   esac
 }
+
+# `path`: print the resolved local memory dir(s) for the agent, then exit. Needs
+# no S3/credentials, so it short-circuits before preflight. This is the single
+# source of truth for the dir, consumed by .claude/hooks/session-start.sh's
+# orphan-index check (so that check never re-derives the slug independently).
+if [ "$cmd" = "path" ]; then
+  case "$agent" in
+    claude) claude_memory_dir ;;
+    codex) codex_memory_dir ;;
+    all)
+      claude_memory_dir
+      codex_memory_dir
+      ;;
+  esac
+  exit 0
+fi
 
 : "${FF_MEMORY_S3_BUCKET:=ff-predictor-training}"
 preflight_s3
