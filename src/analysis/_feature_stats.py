@@ -21,6 +21,25 @@ from sklearn.linear_model import LinearRegression  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 
+def _clean_features(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Return a copy of ``df`` with NaN/±inf in the present ``cols`` filled to 0.0.
+
+    Mirrors the production catch-all at ``src/shared/feature_build.py:110``
+    (``build_position_features``: ``replace([inf,-inf], nan).fillna(0)``), the
+    last NaN-handling step every model's feature matrix passes through. Using
+    this instead of listwise ``dropna()`` keeps the audit on the SAME full,
+    imputed population the models actually train on — not the veteran-heavy
+    complete-case subset (rookies have NaN ``prior_season_*``; a player's early
+    games have NaN rolling stats). dropna() silently restricted the audit to a
+    minority of rows; production sees 100%. See PR #594.
+    """
+    out = df.copy()
+    present = [c for c in cols if c in out.columns]
+    if present:
+        out[present] = out[present].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return out
+
+
 def _high_corr_pairs(corr: pd.DataFrame, threshold: float) -> list[tuple[str, str, float]]:
     """Return upper-triangle (a, b, r) pairs with |r| >= threshold, sorted by |r| desc."""
     arr = corr.to_numpy()

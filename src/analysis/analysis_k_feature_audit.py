@@ -89,6 +89,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.analysis._feature_stats import (
     _classify_condition_number,
+    _clean_features,
     _high_corr_pairs,
     _print_top,
     _print_vif,
@@ -285,11 +286,24 @@ def main() -> int:
         )
         print(f"  WARN: {len(missing)} feature(s) missing from frame: {preview}")
 
-    full_present = _present_numeric(train_df, feature_cols)
-    static_present = _present_numeric(train_df, static_cols)
-    targets_present = _present_numeric(train_df, list(TARGETS))
-    specific_present = _present_numeric(train_df, list(SPECIFIC_FEATURES))
-    contextual_present = _present_numeric(train_df, list(CONTEXTUAL_FEATURES))
+    # Impute NaN/±inf -> 0 to match the production catch-all
+    # (build_position_features) — the same full, imputed population the models
+    # train on, not the veteran-heavy complete-case subset. See PR #594 / #1218.
+    all_audit_cols = (
+        list(feature_cols)
+        + list(static_cols)
+        + list(TARGETS)
+        + list(SPECIFIC_FEATURES)
+        + list(CONTEXTUAL_FEATURES)
+        + [SANITY_TARGET_PRIMARY, SANITY_TARGET_FALLBACK]
+    )
+    train_imp = _clean_features(train_df, all_audit_cols)
+
+    full_present = _present_numeric(train_imp, feature_cols)
+    static_present = _present_numeric(train_imp, static_cols)
+    targets_present = _present_numeric(train_imp, list(TARGETS))
+    specific_present = _present_numeric(train_imp, list(SPECIFIC_FEATURES))
+    contextual_present = _present_numeric(train_imp, list(CONTEXTUAL_FEATURES))
 
     print(
         f"  features used in audit: full={len(full_present)} "
@@ -299,22 +313,22 @@ def main() -> int:
 
     # ── Correlation matrices ───────────────────────────────────────────────
     print("\nComputing Pearson correlations …")
-    full_pearson = train_df[full_present].corr(method="pearson")
-    static_pearson = train_df[static_present].corr(method="pearson")
+    full_pearson = train_imp[full_present].corr(method="pearson")
+    static_pearson = train_imp[static_present].corr(method="pearson")
 
     print("Computing Spearman correlations (full set) …")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        full_spearman = _spearman_matrix(train_df, full_present)
+        full_spearman = _spearman_matrix(train_imp, full_present)
 
     high_full = _high_corr_pairs(full_pearson, threshold=args.corr_threshold)
     high_static = _high_corr_pairs(static_pearson, threshold=args.corr_threshold)
 
     # ── VIF + condition number on the full feature set ─────────────────────
     print("\nComputing VIF on ALL_FEATURES …")
-    vif = _vif(train_df, full_present)
+    vif = _vif(train_imp, full_present)
 
-    cond = _condition_number(train_df, full_present)
+    cond = _condition_number(train_imp, full_present)
     cond_label = _classify_condition_number(cond)
     print(f"  condition number (standardised ALL_FEATURES): {cond:.3g} ({cond_label})")
     print(
@@ -324,7 +338,7 @@ def main() -> int:
 
     # ── Pre-registered pairs ───────────────────────────────────────────────
     print("\nPre-registered by-construction pairs:")
-    pre_reg = _pre_registered_table(train_df, PRE_REGISTERED_PAIRS)
+    pre_reg = _pre_registered_table(train_imp, PRE_REGISTERED_PAIRS)
     print(f"    {'a':<42s} {'b':<42s} {'pearson':>9s} {'spearman':>10s}")
     for row in pre_reg:
         p = "—" if row.get("pearson") is None else f"{row['pearson']:9.3f}"
@@ -332,10 +346,10 @@ def main() -> int:
         print(f"    {row['a'][:42]:<42s} {row['b'][:42]:<42s} {p:>9s} {s:>10s}")
 
     # ── Sanity: top features by |Pearson| with a leak-free target ──────────
-    if SANITY_TARGET_PRIMARY in train_df.columns:
+    if SANITY_TARGET_PRIMARY in train_imp.columns:
         target_col: str | None = SANITY_TARGET_PRIMARY
         header = f"\nTop 10 features by |Pearson| with {target_col} (sanity check):"
-    elif SANITY_TARGET_FALLBACK in train_df.columns:
+    elif SANITY_TARGET_FALLBACK in train_imp.columns:
         target_col = SANITY_TARGET_FALLBACK
         header = (
             f"\nTop 10 features by |Pearson| with {target_col} "
@@ -353,7 +367,7 @@ def main() -> int:
     target_signal: dict[str, float] = {}
     if target_col is not None:
         # corrwith is O(n_features) vs O(n_features²) for a full corr matrix.
-        rys = train_df[full_present].corrwith(train_df[target_col])
+        rys = train_imp[full_present].corrwith(train_imp[target_col])
         target_signal = {f: float(v) for f, v in rys.items()}
         top_ry = rys.abs().sort_values(ascending=False).head(10)
         for f, _v in top_ry.items():

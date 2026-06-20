@@ -51,6 +51,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.analysis._feature_stats import (
+    _clean_features,
     _high_corr_pairs,
     _print_top,
     _print_vif,
@@ -228,11 +229,23 @@ def main() -> int:
         )
         print(f"  ⚠ {len(missing)} feature(s) missing from frame: {preview}")
 
-    full_present = _present_numeric(rb_train, feature_cols)
-    static_present = _present_numeric(rb_train, static_cols)
-    history_present = _present_numeric(rb_train, history_cols)
-    targets_present = _present_numeric(rb_train, list(TARGETS))
-    specific_present = _present_numeric(rb_train, list(SPECIFIC_FEATURES))
+    # Impute NaN/±inf -> 0 to match the production catch-all
+    # (build_position_features) — the same full, imputed population the models
+    # train on, not the veteran-heavy complete-case subset. See PR #594 / #1218.
+    all_audit_cols = (
+        list(feature_cols)
+        + list(static_cols)
+        + list(history_cols)
+        + list(TARGETS)
+        + list(SPECIFIC_FEATURES)
+    )
+    rb_imp = _clean_features(rb_train, all_audit_cols)
+
+    full_present = _present_numeric(rb_imp, feature_cols)
+    static_present = _present_numeric(rb_imp, static_cols)
+    history_present = _present_numeric(rb_imp, history_cols)
+    targets_present = _present_numeric(rb_imp, list(TARGETS))
+    specific_present = _present_numeric(rb_imp, list(SPECIFIC_FEATURES))
 
     print(
         f"  features used in audit: full={len(full_present)} "
@@ -242,29 +255,29 @@ def main() -> int:
 
     # ── Correlation matrices ───────────────────────────────────────────────
     print("\nComputing Pearson correlations …")
-    full_pearson = rb_train[full_present].corr(method="pearson")
-    static_pearson = rb_train[static_present].corr(method="pearson")
+    full_pearson = rb_imp[full_present].corr(method="pearson")
+    static_pearson = rb_imp[static_present].corr(method="pearson")
 
     print("Computing Spearman correlations (full set, may take a few seconds) …")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        full_spearman = _spearman_matrix(rb_train, full_present)
+        full_spearman = _spearman_matrix(rb_imp, full_present)
 
     high_full = _high_corr_pairs(full_pearson, threshold=args.corr_threshold)
     high_static = _high_corr_pairs(static_pearson, threshold=args.corr_threshold)
 
     # ── VIF + condition number on the static block ─────────────────────────
     print("\nComputing VIF on ATTN_STATIC_FEATURES …")
-    vif = _vif(rb_train, static_present)
+    vif = _vif(rb_imp, static_present)
 
-    cond_pre, cond_post = _condition_number(rb_train, static_present)
+    cond_pre, cond_post = _condition_number(rb_imp, static_present)
     print(
         f"  condition number  pre-PCA: {cond_pre:.3g}   post-PCA({RIDGE_PCA_COMPONENTS}): {cond_post:.3g}"
     )
 
     # ── Pre-registered pairs ───────────────────────────────────────────────
     print("\nPre-registered by-construction pairs:")
-    pre_reg = _pre_registered_table(rb_train, PRE_REGISTERED_PAIRS)
+    pre_reg = _pre_registered_table(rb_imp, PRE_REGISTERED_PAIRS)
     print(f"    {'a':<42s} {'b':<42s} {'pearson':>9s} {'spearman':>10s}")
     for row in pre_reg:
         p = "—" if row.get("pearson") is None else f"{row['pearson']:9.3f}"
@@ -273,10 +286,8 @@ def main() -> int:
 
     # ── Targets vs features (high signal sanity check) ─────────────────────
     print("\nTop 10 features by |Pearson| with rushing_yards (sanity check):")
-    if "rushing_yards" in rb_train.columns:
-        rys = (
-            rb_train[full_present + ["rushing_yards"]].corr()["rushing_yards"].drop("rushing_yards")
-        )
+    if "rushing_yards" in rb_imp.columns:
+        rys = rb_imp[full_present + ["rushing_yards"]].corr()["rushing_yards"].drop("rushing_yards")
         top_ry = rys.abs().sort_values(ascending=False).head(10)
         for f, _v in top_ry.items():
             print(f"    {f[:48]:<48s} {rys[f]:>7.3f}")

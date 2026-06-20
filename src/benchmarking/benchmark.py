@@ -277,12 +277,19 @@ def _load_full_featured_frame():
     )
 
 
-def _slice_origin(df, test_season, min_train_season=2012):
+def _slice_origin(df, test_season, min_train_season=None):
     """Season-slice a self-loaded (K/DST) frame into (train, val, test) for one origin.
 
     Mirrors ``rolling_origin_folds`` but without the skill-split ``season_type`` /
-    ``snap_pct`` handling (K/DST team/kicker frames carry neither).
+    ``snap_pct`` handling (K/DST team/kicker frames carry neither). The train
+    floor defaults to production's first train season (``TRAIN_SEASONS[0]``, 2013)
+    so the final origin reproduces the production split rather than silently
+    training on the context-only 2012 season.
     """
+    if min_train_season is None:
+        from src.config import TRAIN_SEASONS
+
+        min_train_season = TRAIN_SEASONS[0]
     val_season = test_season - 1
     train_seasons = list(range(min_train_season, val_season))
     tr = df[df["season"].isin(train_seasons)].copy()

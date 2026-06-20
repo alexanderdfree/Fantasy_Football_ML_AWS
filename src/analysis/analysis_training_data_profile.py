@@ -9,7 +9,7 @@ markdown profile covering:
      genuine missingness (cold-start / external-source coverage gaps)
   4. Target distributions per position — min/pX/mean/max, zero%, skew, shape
   5. Fantasy-points label distribution and pairwise variant correlations
-  6. Temporal drift (train 2012–23 → val 2024 → test 2025 target means)
+  6. Temporal drift (train 2013–23 → val 2024 → test 2025 target means)
   7. Integrity checks (duplicate key rows, season_type, cross-split season overlap)
   8. Data-quality flags (empty columns, K inconsistency, schema drift, sentinels)
   9. Relationship summary (top fantasy-points correlates, high-|r| pairs)
@@ -302,7 +302,7 @@ def build_profile() -> str:
         )
 
     # 6. Temporal drift
-    L.append("## 6. Temporal drift (train 2012–23 → val 2024 → test 2025)\n")
+    L.append("## 6. Temporal drift (train 2013–23 → val 2024 → test 2025)\n")
     L.append("Mean of headline targets per split:")
     L.append("")
     L.append("| Metric | scope | train | val | test |")
