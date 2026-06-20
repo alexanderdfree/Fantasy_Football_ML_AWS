@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
+# Helpers for the Codex (.codex/) hooks.
+#
+# The provider-neutral core (gh-pr tokenizer, find_jq, main_worktree, abs_path,
+# tool_command) lives once in scripts/agent-hooks-lib.sh (audit P4); this file
+# sources it and re-exports those under the codex_* names the hooks/tests call,
+# then defines the genuinely Codex-specific bits (apply_patch path parsing,
+# CODEX_HOME worktree classification, the parent-housekeeping helpers).
 
-codex_find_jq() {
-  local candidate
-  for candidate in jq /usr/bin/jq /usr/local/bin/jq /opt/homebrew/bin/jq /home/linuxbrew/.linuxbrew/bin/jq; do
-    if command -v "$candidate" >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
+_codex_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/agent-hooks-lib.sh
+. "$_codex_lib_dir/../../scripts/agent-hooks-lib.sh"
+
+# Re-export the shared core under the codex_* prefix. codex_hook_command is the
+# Codex name for the shared tool_command extractor.
+codex_find_jq() { agent_hooks_find_jq "$@"; }
+codex_main_worktree() { agent_hooks_main_worktree "$@"; }
+codex_abs_path() { agent_hooks_abs_path "$@"; }
+codex_hook_command() { agent_hooks_tool_command "$@"; }
+codex_is_env_assignment() { agent_hooks_is_env_assignment "$@"; }
+codex_pr_subcommand_segment_matches() { agent_hooks_pr_subcommand_segment_matches "$@"; }
+codex_pr_create_segment_matches() { agent_hooks_pr_create_segment_matches "$@"; }
+codex_command_invokes_gh_pr_subcommand() { agent_hooks_command_invokes_gh_pr_subcommand "$@"; }
+codex_command_invokes_gh_pr_create() { agent_hooks_command_invokes_gh_pr_create "$@"; }
+codex_command_invokes_gh_pr_merge() { agent_hooks_command_invokes_gh_pr_merge "$@"; }
+
+# --- Codex-specific helpers ---------------------------------------------------
 
 codex_project_root() {
   local input="$1"
@@ -30,13 +45,6 @@ except Exception:
   fi
 
   git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$candidate"
-}
-
-codex_main_worktree() {
-  local root="$1"
-  git -C "$root" worktree list --porcelain 2>/dev/null \
-    | awk 'NR == 1 && /^worktree / { print substr($0, 10); exit }' \
-    | tr -d '\r'
 }
 
 # Best-effort fast-forward of the main/parent checkout's `main` branch to
@@ -160,207 +168,6 @@ codex_is_clean_codex_worktree() {
   [ -z "$(git -C "$root" status --porcelain 2>/dev/null)" ]
 }
 
-codex_hook_command() {
-  local input="$1"
-  local jq_bin="$2"
-  if [ -n "$jq_bin" ]; then
-    printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty' 2>/dev/null || true
-  elif command -v python3 >/dev/null 2>&1; then
-    # python3 fallback (robust JSON parse) so jq-less boxes keep the guard armed.
-    printf '%s' "$input" | python3 -c 'import json, sys
-try:
-    ti = json.load(sys.stdin).get("tool_input") or {}
-except Exception:
-    sys.exit(0)
-print(ti.get("command") or "")' 2>/dev/null || true
-  fi
-}
-
-codex_is_env_assignment() {
-  [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]
-}
-
-codex_pr_subcommand_segment_matches() {
-  if [ "$#" -lt 1 ]; then
-    return 1
-  fi
-  local subcmd="$1"
-  shift
-
-  if [ "$#" -eq 0 ]; then
-    return 1
-  fi
-
-  local -a words=("$@")
-  local idx=0
-
-  while [ "$idx" -lt "${#words[@]}" ] && codex_is_env_assignment "${words[$idx]}"; do
-    idx=$((idx + 1))
-  done
-
-  if [ "$idx" -lt "${#words[@]}" ]; then
-    case "${words[$idx]}" in
-      env | */env)
-        idx=$((idx + 1))
-        while [ "$idx" -lt "${#words[@]}" ]; do
-          case "${words[$idx]}" in
-            -u | --unset | -C | --chdir | -S | --split-string)
-              idx=$((idx + 2))
-              ;;
-            -*)
-              idx=$((idx + 1))
-              ;;
-            *=*)
-              idx=$((idx + 1))
-              ;;
-            *)
-              break
-              ;;
-          esac
-        done
-        ;;
-    esac
-  fi
-
-  if [ $((idx + 2)) -ge "${#words[@]}" ]; then
-    return 1
-  fi
-
-  case "${words[$idx]}" in
-    gh | */gh) ;;
-    *) return 1 ;;
-  esac
-
-  [ "${words[$((idx + 1))]}" = "pr" ] && [ "${words[$((idx + 2))]}" = "$subcmd" ]
-}
-
-# Back-compat wrapper: `gh pr create` segment matcher.
-codex_pr_create_segment_matches() {
-  codex_pr_subcommand_segment_matches create "$@"
-}
-
-codex_command_invokes_gh_pr_subcommand() {
-  local subcmd="$1"
-  local cmd="$2"
-  local ch next quote="" token=""
-  local escaped=0
-  local in_comment=0
-  local -a words=()
-  local i
-
-  for ((i = 0; i < ${#cmd}; i++)); do
-    ch="${cmd:i:1}"
-
-    if [ "$in_comment" -eq 1 ]; then
-      if [ "$ch" = $'\n' ]; then
-        in_comment=0
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
-          return 0
-        fi
-        words=()
-      fi
-      continue
-    fi
-
-    if [ "$escaped" -eq 1 ]; then
-      token+="$ch"
-      escaped=0
-      continue
-    fi
-
-    if [ -n "$quote" ]; then
-      if [ "$ch" = "$quote" ]; then
-        quote=""
-      elif [ "$quote" = '"' ] && [ "$ch" = "\\" ]; then
-        escaped=1
-      else
-        token+="$ch"
-      fi
-      continue
-    fi
-
-    case "$ch" in
-      "\\")
-        escaped=1
-        ;;
-      "'" | '"')
-        quote="$ch"
-        ;;
-      "#")
-        if [ -z "$token" ]; then
-          in_comment=1
-        else
-          token+="$ch"
-        fi
-        ;;
-      $'\n')
-        if [ -n "$token" ]; then
-          words+=("$token")
-          token=""
-        fi
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
-          return 0
-        fi
-        words=()
-        ;;
-      " " | $'\t' | $'\r')
-        if [ -n "$token" ]; then
-          words+=("$token")
-          token=""
-        fi
-        ;;
-      ";" | "|")
-        if [ -n "$token" ]; then
-          words+=("$token")
-          token=""
-        fi
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
-          return 0
-        fi
-        words=()
-        if [ "$ch" = "|" ]; then
-          next="${cmd:$((i + 1)):1}"
-          if [ "$next" = "|" ]; then
-            i=$((i + 1))
-          fi
-        fi
-        ;;
-      "&")
-        if [ -n "$token" ]; then
-          words+=("$token")
-          token=""
-        fi
-        if [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"; then
-          return 0
-        fi
-        words=()
-        next="${cmd:$((i + 1)):1}"
-        if [ "$next" = "&" ]; then
-          i=$((i + 1))
-        fi
-        ;;
-      *)
-        token+="$ch"
-        ;;
-    esac
-  done
-
-  if [ -n "$token" ]; then
-    words+=("$token")
-  fi
-
-  [ "${#words[@]}" -gt 0 ] && codex_pr_subcommand_segment_matches "$subcmd" "${words[@]}"
-}
-
-# Public matchers: back-compat `create` + new `merge`.
-codex_command_invokes_gh_pr_create() {
-  codex_command_invokes_gh_pr_subcommand create "$1"
-}
-
-codex_command_invokes_gh_pr_merge() {
-  codex_command_invokes_gh_pr_subcommand merge "$1"
-}
-
 codex_patch_paths() {
   sed -n \
     -e 's/^\*\*\* Add File: //p' \
@@ -389,22 +196,12 @@ print(ti.get("file_path") or ti.get("notebook_path") or "")' 2>/dev/null || true
   codex_hook_command "$input" "$jq_bin" | codex_patch_paths
 }
 
-codex_abs_path() {
-  local root="$1"
-  local path="$2"
-  case "$path" in
-    /*) printf '%s\n' "$path" ;;
-    ./*) printf '%s/%s\n' "$root" "${path#./}" ;;
-    *) printf '%s/%s\n' "$root" "$path" ;;
-  esac
-}
-
 codex_json_context() {
   local event="$1"
   local context="$2"
   local jq_bin="${3:-}"
   if [ -z "$jq_bin" ]; then
-    jq_bin="$(codex_find_jq)" || return 0
+    jq_bin="$(agent_hooks_find_jq)" || return 0
   fi
   "$jq_bin" -n --arg event "$event" --arg context "$context" '{
     hookSpecificOutput: {

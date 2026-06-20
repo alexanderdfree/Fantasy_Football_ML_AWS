@@ -74,4 +74,12 @@ Ordered by risk-adjusted value; each ships as its own PR (tier-by-risk).
 - [x] P1 — shared-file neutrality + Antigravity doc reframe
 - [x] P2 — Gemini hooks (`.gemini/hooks/` guard-worktree-path + pre-pr + ruff-format; `tests/scripts/test_gemini_hooks.py`)
 - [x] P3 — Gemini memory sync (`agent-memory-sync.sh gemini` + `gemini-memory-sync.sh` + `.gemini/` SessionStart/SessionEnd hooks)
-- [ ] P4 — hook-lib consolidation (optional; de-triplicate the three `lib.sh`)
+- [x] P4 — hook-lib consolidation (see note below)
+
+### P4 decision — what was consolidated
+
+The safety-critical, 3×-duplicated, provably byte-identical core moved to one **`scripts/agent-hooks-lib.sh`** (the gh-pr subcommand tokenizer that gates destructive PR/merge actions, plus `find_jq` / `main_worktree` / `abs_path` / `tool_command`). Each provider's `.{claude,codex,gemini}/hooks/lib.sh` now sources it and re-exports the canonical functions under its own prefix (`claude_*` / `codex_*` / `gemini_*`), so every existing hook and test calls the same names while the implementation lives once. Pinned by `tests/scripts/test_cross_model_parity.py` (shared lib exists + each provider sources it) on top of the per-provider tokenizer tests.
+
+**Deliberately left per-provider** (a lower-value, higher-risk follow-up, not done): `refresh_parent_main` / `promote_worktree_splits` (git-mutating, only 2× duplicated, with provider-divergent signatures + call sites and per-provider merge-behavior tests) and the genuinely provider-specific `project_root` / `tool_paths` (apply_patch is Codex-only) / `json_context`.
+
+No `docs/adr/` entry: that set is scoped to ML-system decisions and deploys to the public project wiki; this is agent-tooling, recorded here instead.
