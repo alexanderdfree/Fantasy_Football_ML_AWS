@@ -732,8 +732,9 @@ def _validate_overrides(overrides: dict, scope: str = _DEFAULT_SCOPE) -> None:
 
 
 def _sample_scheduler(trial: optuna.Trial) -> tuple[str, dict]:
-    """Sample the (attention) scheduler type + its shape params. Shared by both
-    scopes; the param names/ranges match the historical scheduler_v2 space."""
+    """Sample the (attention) scheduler type + its shape params. Used by full
+    scope only (v2 history freezes the scheduler); the param names/ranges match
+    the historical scheduler_v2 space."""
     scheduler_type = trial.suggest_categorical(
         "scheduler_type", ["cosine_warm_restarts", "onecycle"]
     )
