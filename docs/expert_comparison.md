@@ -12,7 +12,7 @@ This document compares our model's weekly fantasy point predictions against publ
 - **Primary metric:** MAE (Mean Absolute Error) on total weekly fantasy points
 - **Player pool:** All rostered players at each position with recorded game stats
 - **Prediction style:** Pure pre-game projections using only data available before kickoff
-- **Architectures:** Ridge regression (per-target), Multi-Head NN (shared backbone + per-target heads), Attention NN (per-target heads with per-target attention over player history + opponent context), LightGBM (per-target boosted trees). Trained per position (QB, RB, WR, TE, K, DST).
+- **Architectures:** Ridge regression (per-target), Multi-Head NN (shared backbone + per-target heads), Attention NN (per-target heads with per-target attention over player history; opponent-context attention is DST-only since #1175 — QB/RB/WR/TE use single-branch player-history attention), LightGBM (per-target boosted trees). Trained per position (QB, RB, WR, TE, K, DST).
 
 **Important caveats on comparability:**
 - Expert sites and our model were not evaluated on identical player pools or seasons. Expert accuracy rankings (e.g., from Fantasy Football Analytics) cover 2019-2023 and use curated pools (top 20 QBs, top 50 RBs/WRs, top 20 TEs), while our test set covers all 2025 rostered players.
@@ -207,7 +207,7 @@ RBs are among the most volatile fantasy positions due to game-script dependence 
 
 **Our best MAE: 4.238 (LightGBM)** --- competitive (< 5.0), with LightGBM edging the attention NN by ~0.05 MAE points.
 
-WR is a tight race between the trees and the neural models: receiver production has strong route/scheme/coverage dependencies that the attention NN captures via learned attention over player history + opponent defensive context, but LightGBM narrowly takes the MAE this run while the Multi-Head and attention NNs stay within ~0.05.
+WR is a tight race between the trees and the neural models: receiver production has strong route/scheme/coverage dependencies that the attention NN captures via learned attention over player history (opponent-defense signal reaches the WR models only through static `opp_def_*` features for Ridge/LightGBM since #1175 disabled the WR opponent-attention branch), but LightGBM narrowly takes the MAE this run while the Multi-Head and attention NNs stay within ~0.05.
 - The academic linear regression benchmark for WRs reported RMSE of 3.64, which is lower but used a curated player pool (top 50 WRs only) and a different season.
 - Our best R² of 0.368 (Multi-Head NN) sits within the published WR consistency range (R² ~ 0.30–0.65 depending on methodology).
 - Per-target MAE (Attention NN): receiving_yards 20.3 yds × 0.1 ≈ 2.0 pts is the largest contributor; receptions 1.37 × 1.0 (PPR) ≈ 1.4 pts; receiving_tds 0.30 × 6 ≈ 1.8 pts.

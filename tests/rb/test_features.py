@@ -156,7 +156,9 @@ class TestFullTrainTeamTotals:
         per-game carry share for RB_A is 0.5 in the weeks RB_B also played
         (10 / (10 + 10)); without it the denominator undercounts and the share
         reads 1.0."""
-        # MIN_GAMES_PER_SEASON == 6: 7 games survives, 3 games is dropped.
+        # RB's min_games_per_season is 1 (PR #656), so the real filter drops
+        # neither player; filtered_train selects RB_A manually below to model
+        # the pipeline's post-filter frame (RB_B is the dropped teammate).
         rb_a = make_player_games("RB_A", season=2023, n_weeks=7, carries=10, recent_team="KC")
         rb_b = make_player_games("RB_B", season=2023, n_weeks=3, carries=10, recent_team="KC")
         full_train = pd.concat([rb_a, rb_b], ignore_index=True)
