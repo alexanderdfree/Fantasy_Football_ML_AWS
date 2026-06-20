@@ -15,9 +15,9 @@ Gemini has access to specialized project skills located in `.agents/skills/`. To
 Each is a thin wrapper that reads the shared, provider-neutral `agent-workflows/<name>/instructions.md` (the same source the Claude skills and Codex prompts use). (`worktree-cleanup` is Claude-only — it has no shared instructions file, so Gemini does not wrap it.)
 
 ## Auto-Memory & State
-Unlike Claude and Codex, which maintain local SQL/JSON memory databases and sync them across machines via `scripts/agent-memory-sync.sh` to S3, Gemini CLI manages state through plain Markdown files:
-- **Private Project Memory:** `~/.gemini/tmp/final-project/memory/MEMORY.md`. Use this for personal-to-the-user, project-specific notes, local setup facts, or private workflows that should **not** be committed to the repository.
-- **Global Personal Memory:** `~/.gemini/GEMINI.md`. Use this for cross-project user preferences.
+Gemini CLI / Antigravity manages state through plain Markdown files (no SQL/JSON DB like Claude/Codex):
+- **Private Project Memory:** `~/.gemini/tmp/final-project/memory/MEMORY.md`. Use this for personal-to-the-user, project-specific notes, local setup facts, or private workflows that should **not** be committed to the repository. **Synced across machines** (like Claude/Codex) via `scripts/agent-memory-sync.sh gemini {pull|push}` to `s3://$FF_MEMORY_S3_BUCKET/gemini-memory/<repo>/memory/` — wired into the `.gemini/` `SessionStart` (pull) / `SessionEnd` (push) hooks. Antigravity's project slug is not derivable by the script, so set **`GEMINI_MEMORY_DIR`** to the exact local memory path if the default (`~/.gemini/tmp/<main-checkout-basename-lowercased>/memory`) is wrong. The sync is a cross-machine cache of incidental recall, not a source of truth.
+- **Global Personal Memory:** `~/.gemini/GEMINI.md`. Use this for cross-project user preferences (not synced).
 - **Durable Cross-Agent Project Facts:** Any fact, ML method, or Git workflow that applies to the entire team or multiple agents (Claude/Codex/Gemini) belongs in **`AGENTS.md`** — never just in Gemini's private memory.
 
 ## Hooks (`.gemini/hooks/` + `.gemini/settings.json`)

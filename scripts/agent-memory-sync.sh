@@ -4,15 +4,19 @@
 # Remote layout is intentionally split by agent:
 #   s3://$FF_MEMORY_S3_BUCKET/claude-memory/<repo>/memory/
 #   s3://$FF_MEMORY_S3_BUCKET/codex-memory/<repo>/memories/
+#   s3://$FF_MEMORY_S3_BUCKET/gemini-memory/<repo>/memory/
 #
 # Claude memory is project-scoped. Codex memory is global to CODEX_HOME, so this
 # script syncs the markdown memory tree only, not Codex's SQLite runtime state.
+# Gemini/Antigravity memory is plain Markdown under ~/.gemini/tmp/<project>/memory
+# (override with GEMINI_MEMORY_DIR — the reliable path, since Antigravity's project
+# slug is not derivable here); the whole markdown tree syncs.
 set -euo pipefail
 
 log() { echo "[memory-sync] $*" >&2; }
 
 usage() {
-  log "usage: $(basename "$0") {claude|codex|all} {pull|push|status|path|generate} [--prune] [--dry-run]"
+  log "usage: $(basename "$0") {claude|codex|gemini|all} {pull|push|status|path|generate} [--prune] [--dry-run]"
 }
 
 agent="${1:-}"
@@ -34,7 +38,7 @@ for arg in "$@"; do
 done
 
 case "$agent" in
-  claude | codex | all) ;;
+  claude | codex | gemini | all) ;;
   *) log "unknown agent: $agent"; usage; exit 2 ;;
 esac
 case "$cmd" in
@@ -78,6 +82,23 @@ codex_memory_dir() {
   printf '%s\n' "${codex_home}/memories"
 }
 
+# Gemini/Antigravity keeps plain-Markdown project memory under
+# ~/.gemini/tmp/<project>/memory. Antigravity's <project> slug is not reliably
+# derivable here, so GEMINI_MEMORY_DIR is the authoritative override; the default
+# mirrors the documented layout (main-checkout basename, lowercased).
+gemini_memory_dir() {
+  if [ -n "${GEMINI_MEMORY_DIR:-}" ]; then
+    printf '%s\n' "${GEMINI_MEMORY_DIR%/}"
+    return 0
+  fi
+  local gemini_home main slug
+  gemini_home="${GEMINI_HOME:-${HOME}/.gemini}"
+  main="$(main_worktree || true)"
+  [ -n "$main" ] || main="$repo_root"
+  slug="$(basename "$main" | tr '[:upper:]' '[:lower:]' | tr ' _' '--')"
+  printf '%s\n' "${gemini_home}/tmp/${slug}/memory"
+}
+
 remote_for_agent() {
   local one="$1"
   local repo_id prefix leaf
@@ -90,6 +111,10 @@ remote_for_agent() {
     codex)
       prefix="${FF_CODEX_MEMORY_S3_PREFIX:-codex-memory/${repo_id}}"
       leaf="memories"
+      ;;
+    gemini)
+      prefix="${FF_GEMINI_MEMORY_S3_PREFIX:-gemini-memory/${repo_id}}"
+      leaf="memory"
       ;;
     *) return 2 ;;
   esac
@@ -128,6 +153,12 @@ sync_one() {
       # .git: Codex's SQLite/runtime state. *.DS_Store: macOS cruft that would
       # otherwise be pushed to S3 (it was, until #697 follow-up cleanup).
       exclude_flags=(--exclude ".git" --exclude ".git/*" --exclude "*.DS_Store")
+      ;;
+    gemini)
+      mem_dir="$(gemini_memory_dir)"
+      # Gemini memory is plain Markdown with no generated index (unlike Claude's
+      # MEMORY.md), so the whole tree syncs; just drop macOS cruft.
+      exclude_flags=(--exclude "*.DS_Store")
       ;;
     *) return 2 ;;
   esac
@@ -180,9 +211,11 @@ if [ "$cmd" = "path" ]; then
   case "$agent" in
     claude) claude_memory_dir ;;
     codex) codex_memory_dir ;;
+    gemini) gemini_memory_dir ;;
     all)
       claude_memory_dir
       codex_memory_dir
+      gemini_memory_dir
       ;;
   esac
   exit 0
@@ -223,6 +256,7 @@ preflight_s3
 if [ "$agent" = "all" ]; then
   sync_one claude
   sync_one codex
+  sync_one gemini
 else
   sync_one "$agent"
 fi

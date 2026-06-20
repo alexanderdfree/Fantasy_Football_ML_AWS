@@ -52,6 +52,30 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "memory-pull",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/session-start.sh",
+            "timeout": 120000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "name": "memory-push",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/session-end.sh",
+            "timeout": 120000
+          }
+        ]
+      }
     ]
   }
 }

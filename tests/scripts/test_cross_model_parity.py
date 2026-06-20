@@ -56,6 +56,13 @@ ALLOWED_AUDIT_LABELS = {"claude-audit", "codex-audit"}
 HOOK_DIRS = {"claude": ".claude/hooks", "codex": ".codex/hooks", "gemini": ".gemini/hooks"}
 GUARDRAIL_HOOKS = ("guard-worktree-path", "pre-pr", "ruff-format")
 
+# Provider -> thin memory-sync wrapper over scripts/agent-memory-sync.sh (audit P3).
+MEMORY_SYNC_WRAPPERS = {
+    "claude": "scripts/claude-memory-sync.sh",
+    "codex": "scripts/codex-memory-sync.sh",
+    "gemini": "scripts/gemini-memory-sync.sh",
+}
+
 # Provider-specific authority pointers that must NOT appear in the shared,
 # provider-neutral instruction files (finding F3). The neutral home for the
 # tier-by-risk consolidation pattern and the pre-PR rule is AGENTS.md; the worker
@@ -175,6 +182,14 @@ def test_guardrail_hook_exists(provider: str, hook: str) -> None:
     assert (PROJECT_ROOT / rel).is_file(), (
         f"{provider} is missing the '{hook}' guardrail hook (expected {rel}). "
         "All three providers wire guard-worktree-path + pre-pr + ruff-format."
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(MEMORY_SYNC_WRAPPERS))
+def test_memory_sync_wrapper_exists(provider: str) -> None:
+    rel = MEMORY_SYNC_WRAPPERS[provider]
+    assert (PROJECT_ROOT / rel).is_file(), (
+        f"{provider} is missing its memory-sync wrapper (expected {rel})."
     )
 
 

@@ -70,8 +70,8 @@ Ordered by risk-adjusted value; each ships as its own PR (tier-by-risk).
 
 ## Remediation status
 
-- [ ] P0 — parity drift test
-- [ ] P1 — shared-file neutrality + Antigravity doc reframe
-- [ ] P2 — Gemini hooks
-- [ ] P3 — Gemini memory sync
-- [ ] P4 — hook-lib consolidation (optional)
+- [x] P0 — parity drift test (`tests/scripts/test_cross_model_parity.py`)
+- [x] P1 — shared-file neutrality + Antigravity doc reframe
+- [x] P2 — Gemini hooks (`.gemini/hooks/` guard-worktree-path + pre-pr + ruff-format; `tests/scripts/test_gemini_hooks.py`)
+- [x] P3 — Gemini memory sync (`agent-memory-sync.sh gemini` + `gemini-memory-sync.sh` + `.gemini/` SessionStart/SessionEnd hooks)
+- [ ] P4 — hook-lib consolidation (optional; de-triplicate the three `lib.sh`)
