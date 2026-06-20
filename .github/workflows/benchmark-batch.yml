@@ -117,7 +117,9 @@ jobs:
             # primitive (same path ab-batch.yml uses), so production job-def names
             # never reference a branch image.
             echo "No prod revision for ${HEAD_SHA}; cloning ff-ab-job onto ff-training:${HEAD_SHA}"
-            JD=$(python -c "import boto3; from src.tuning.launch_ab import resolve_job_definition; print(resolve_job_definition('${HEAD_SHA}', boto3.client('batch', region_name='${AWS_REGION}')))")
+            # resolve_job_definition logs "[ab] registered ..." to stdout before
+            # returning the name:revision, so take only the final line.
+            JD=$(python -c "import boto3; from src.tuning.launch_ab import resolve_job_definition; print(resolve_job_definition('${HEAD_SHA}', boto3.client('batch', region_name='${AWS_REGION}')))" | tail -n1)
             echo "Resolved job definition ${JD}"
             echo "job_def=${JD%%:*}" >> "$GITHUB_OUTPUT"
             echo "revision=${JD##*:}" >> "$GITHUB_OUTPUT"
