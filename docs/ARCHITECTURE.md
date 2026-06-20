@@ -22,7 +22,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 **Problem.** Predict weekly fantasy football points for individual NFL players across six positions (QB, RB, WR, TE, K, DST) for the 2025 season, using 2012–2024 as training history. Primary output is a per-player point projection (regression); ranking metrics (top-12 hit rate, Spearman correlation) are derived from projections post-hoc.
 
 **Constraints.**
-- Solo personal project, ~2 weeks of initial execution.
+- Personal project, single maintainer, modest scope.
 - Small-sample ML regime: after position filtering and the per-position games-per-season minimum (global default ≥6, with position overrides), roughly 200–600 player-seasons per position — orders of magnitude smaller than datasets most modern NN architectures assume.
 - Public data only — `nflreadpy` ([nflverse](https://github.com/nflverse)) weekly stats, rosters, schedules, snap counts. Snap count coverage starts 2012, which bounds the training window.
 - Documenting design decisions with technical trade-offs is what this ADR satisfies.

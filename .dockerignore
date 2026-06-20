@@ -94,7 +94,6 @@ data/
 # only, no runtime artifacts.
 models/
 notebooks/
-videos/
 
 # Per-position outputs — models fetched from S3 at startup via
 # src.shared.model_sync.sync_models_from_s3; figures are always local scratch.
