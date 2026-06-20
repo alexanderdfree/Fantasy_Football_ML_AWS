@@ -246,7 +246,7 @@ Hard-won lessons from prior sessions. One line each; provider-neutral. (Claude C
 - **macOS has no `timeout`, and `cmd | tail` makes the exit code tail's (0)** — redirect to a file and verify the artifact, not the reported code.
 - **`uv pip install <pkg>` from outside a uv-project wipes the `.venv`** — use requirements.txt + reinstall, or `uv run --with`.
 - **Don't symlink the `.venv` in a worktree** (site-packages resolves wrong) — use an absolute python path. Data symlinks ARE fine.
-- **Fresh worktree: symlink the parent's `data/{splits,raw}`** (`rm -rf` first) instead of a slow first pull.
+- **Fresh worktree: symlink the parent's `data/{splits,raw}`** (`rm -rf` first) instead of a slow first pull. **Claude's `SessionStart` hook now does this automatically** (`claude_link_worktree_data`, [.claude/hooks/lib.sh](.claude/hooks/lib.sh) → [.claude/hooks/session-start.sh](.claude/hooks/session-start.sh)); the manual command is the fallback for Codex / non-hook contexts (Codex covers it in [scripts/codex-fresh-worktree.sh](scripts/codex-fresh-worktree.sh)).
 - **A fresh worktree has no `.venv` and the parent's can be stale** — an env with full deps (e.g. the miniforge3 base) mirrors the pre-PR gate; verify there.
 - **Symlinked parent `data/splits` lag main's feature whitelist** → pipeline fails loud (`KeyError: N whitelisted cols missing`); rebuild splits locally, or verify non-model code with synthetic tests — don't diagnose via column-diff (pipeline-time features are absent by design) (#656).
 - **The pre-PR `pytest -m unit` includes data-dependent tests that read `data/raw/*.parquet`;** a partial worktree `data/raw` flakes by xdist ordering — populate it from the parent (`cp -R`), don't retry-as-flake (#662).
