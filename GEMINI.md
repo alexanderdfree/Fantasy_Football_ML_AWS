@@ -18,4 +18,11 @@ Unlike Claude and Codex, which maintain local SQL/JSON memory databases and sync
 - **Durable Cross-Agent Project Facts:** Any fact, ML method, or Git workflow that applies to the entire team or multiple agents (Claude/Codex/Gemini) belongs in **`AGENTS.md`** — never just in Gemini's private memory.
 
 ## Hooks and Workflows
-Currently, Gemini CLI relies on standard system hooks and manual invocation of the scripts in `scripts/` where appropriate. While Claude and Codex have dedicated guardrail hooks (e.g., `.claude/hooks/guard-worktree-path.sh`), Gemini's core behavioral constraints and context filtering are defined natively by its overarching system prompt and its adherence to `AGENTS.md`. 
+Currently, Gemini CLI relies on standard system hooks and manual invocation of the scripts in `scripts/` where appropriate. While Claude and Codex have dedicated guardrail hooks (e.g., `.claude/hooks/guard-worktree-path.sh`), Gemini's core behavioral constraints and context filtering are defined natively by its overarching system prompt and its adherence to `AGENTS.md`.
+
+## Audit Routine Wrappers (`.agents/routines/`)
+Gemini-side wrappers for the shared, read-only audit routines live under `.agents/routines/<name>/prompt.md`. They set `AUDIT_PROVIDER=Gemini` and — because Gemini has no provider-specific audit label — file under the shared `claude-audit` label, deduping against both providers' pools (the project decision is to reuse the existing `claude-audit`/`codex-audit` labels and the `agent-audit/v1` schema, not mint new ones). Tracked today:
+- **tests-audit**: [`.agents/routines/tests-audit/prompt.md`](.agents/routines/tests-audit/prompt.md) → shared [`routines/tests-audit/instructions.md`](routines/tests-audit/instructions.md) (deep-audits the test suite).
+- **infrastructure-audit**: [`.agents/routines/infrastructure-audit/prompt.md`](.agents/routines/infrastructure-audit/prompt.md) → shared [`routines/infrastructure-audit/instructions.md`](routines/infrastructure-audit/instructions.md) (deep-audits CI/CD, Batch/EC2, Docker, serving/ECS, IAM, artifact lifecycle).
+
+These are tracked prompt templates; a Gemini run is pointed at one to execute it (no active automation is created here). The general code audit's shared instructions live at [`routines/audit/instructions.md`](routines/audit/instructions.md), consumed downstream by the `solve-issues` backlog.
