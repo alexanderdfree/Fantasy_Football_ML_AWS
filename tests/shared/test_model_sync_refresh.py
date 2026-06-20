@@ -7,11 +7,9 @@ The boot-time sync path is exercised by test_model_sync.py.
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import sys
-import tarfile
 import threading
 import time
 from pathlib import Path
@@ -25,16 +23,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.shared import model_sync
-
-
-def _make_tarball(members: dict[str, bytes]) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, data in members.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
+from tests.shared._helpers import FakeBody as _FakeBody
+from tests.shared._helpers import make_tarball as _make_tarball
 
 
 def _manifest_body(history_key: str) -> bytes:
@@ -52,14 +42,6 @@ def _manifest_body(history_key: str) -> bytes:
             "history": [history_key],
         }
     ).encode("utf-8")
-
-
-class _FakeBody:
-    def __init__(self, data: bytes):
-        self._data = data
-
-    def read(self) -> bytes:
-        return self._data
 
 
 def _nosuchkey() -> ClientError:
