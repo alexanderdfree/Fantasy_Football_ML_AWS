@@ -7,7 +7,19 @@
   "permissions": {
     "allow": [
       "Bash(python -m pytest:*)",
-      "Bash(ruff check:*)"
+      "Bash(ruff check:*)",
+      "Bash(git fetch origin:*)",
+      "Bash(aws s3 ls:*)",
+      "Bash(/Users/alex/miniforge3/bin/ruff check:*)",
+      "Bash(aws batch describe-jobs:*)",
+      "Bash(gh run watch:*)",
+      "Bash(aws batch describe-job-definitions:*)",
+      "Bash(aws logs get-log-events:*)",
+      "Bash(aws batch list-jobs:*)",
+      "Bash(gh label list:*)",
+      "Bash(aws batch describe-compute-environments:*)",
+      "Bash(aws service-quotas get-service-quota:*)",
+      "Bash(gh variable list:*)"
     ]
   },
   "hooks": {
