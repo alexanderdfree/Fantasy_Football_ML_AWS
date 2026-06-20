@@ -226,3 +226,31 @@ def test_shared_workflow_instructions_are_provider_neutral(name: str) -> None:
         f"agent-workflows/{name}/instructions.md leaks provider-specific authority pointers {hits}; "
         "re-point to AGENTS.md / WORKFLOW_SUBAGENTS so the shared brain stays model-agnostic."
     )
+
+
+# --- audit routines that scan hook dirs must scan ALL THREE providers (F6) ----
+
+
+@pytest.mark.parametrize("name", ROUTINE_NAMES)
+def test_routine_hook_scope_covers_all_providers(name: str) -> None:
+    """An audit routine that enumerates provider hook dirs as scan scope must name
+    all three. ``.gemini/hooks/`` shipped (audit P2) after the routines were
+    written, so a routine listing only ``.claude/hooks`` + ``.codex/hooks`` would
+    silently skip Gemini's deterministic guardrails when it runs. Scoped to
+    routines that already reference BOTH the Claude and Codex hook dirs, so a
+    test-only routine that names no hook dir stays exempt. Complements
+    ``test_guardrail_hook_exists`` (which pins the hook FILES per provider): this
+    pins that the routines actually look at them.
+    """
+    text = _read(f"routines/{name}/instructions.md")
+    claude_hooks, codex_hooks, gemini_hooks = (
+        HOOK_DIRS["claude"],
+        HOOK_DIRS["codex"],
+        HOOK_DIRS["gemini"],
+    )
+    if claude_hooks in text and codex_hooks in text:
+        assert gemini_hooks in text, (
+            f"routines/{name}/instructions.md scans {claude_hooks} and {codex_hooks} "
+            f"but not {gemini_hooks}; all three providers wire the same guardrail hooks "
+            "(audit P2), so the audit scope must enumerate every provider hook dir."
+        )
