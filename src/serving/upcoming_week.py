@@ -7,8 +7,12 @@ anti-drift guarantee), we splice synthetic player-week rows for the upcoming
 slate onto the full nflverse history and run the real offline pipeline
 (``load_raw_data`` -> ``preprocess`` -> ``engineer.build_features``), then feed
 the upcoming slice to the existing per-position serving inference
-(``core._apply_position_models``). A background poller writes a serve-off-disk
-JSON artifact every few hours.
+(``core._apply_position_models``). The artifact is **built by a scheduled CI
+job** (``.github/workflows/refresh-upcoming-week.yml``) and uploaded to S3;
+serving only **downloads** it — a background poller syncs the latest from S3,
+it does not build it in the serving container (ADR-0018; the in-container build
+was reverted in #1069 -> #1076 because a 2-worker task OOMs running
+``load_raw_data`` + ``build_features`` + inference).
 
 Skill positions only (QB/RB/WR/TE). K/DST use separate pipelines and land in a
 follow-up.
