@@ -1222,12 +1222,15 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     pts_allowed = pd.concat([away_pts, home_pts], ignore_index=True)
     pts_allowed.sort_values(["team", "season", "week"], inplace=True)
 
-    # Grouped by ``team`` alone (not per-season) so points-allowed form carries
-    # across the offseason — same season-opener fix as the opp-defense rolling
-    # block above. Sorted by (team, season, week), so shift(1) stays leakage-safe.
-    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby("team")["points_allowed"].transform(
-        lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
-    )
+    # Grouped per-season (``[team, season]``) so the trailing points-allowed mean
+    # resets at the season boundary — matching the opp-defense rolling block above
+    # (grouped by ``[opponent_team, season]``) and ``opp_*_pts_allowed_to_pos``.
+    # PR #1137 reverted #1109's cross-season carry (it regressed season openers);
+    # this single line was the site that revert missed. Sorted by (team, season,
+    # week), so shift(1) stays leakage-safe.
+    pts_allowed["opp_def_pts_allowed_L5"] = pts_allowed.groupby(["team", "season"])[
+        "points_allowed"
+    ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
 
     pts_merge = pts_allowed[["team", "season", "week", "opp_def_pts_allowed_L5"]].drop_duplicates()
     n_before = len(df)

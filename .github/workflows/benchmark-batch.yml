@@ -76,7 +76,11 @@ jobs:
       - name: Install launch + benchmark deps
         # requirements-dev.txt mirrors train-batch.yml — src/batch/benchmark.py's
         # import chain pulls torch; launch.py needs boto3 (in requirements.txt).
-        run: uv pip install --system -r requirements-dev.txt
+        # --index-strategy unsafe-best-match: requirements-dev.txt adds the
+        # pytorch CPU --extra-index-url, and uv's default first-index strategy
+        # otherwise resolves numpy there (where the pinned 2.4.6 is absent) and
+        # fails; consider all indexes so numpy comes from PyPI.
+        run: uv pip install --system --index-strategy unsafe-best-match -r requirements-dev.txt
 
       - name: Resolve image SHA + experiment prefix
         id: ctx
@@ -100,18 +104,33 @@ jobs:
           REVISION=$(aws s3 cp \
             "s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" - \
             --region "$AWS_REGION" --no-cli-pager 2>/dev/null || true)
-          if [ -z "$REVISION" ]; then
-            echo "ERROR: no job-def revision at s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" >&2
-            echo "Dispatch batch-image.yml on this branch first so the image under test exists." >&2
-            exit 1
+          if [ -n "$REVISION" ]; then
+            # Production image: batch-image.yml stashed a prod ff-training-job
+            # revision under the merge SHA. Pin to it.
+            echo "Pinning job submissions to ff-training-job:${REVISION}"
+            echo "job_def=ff-training-job" >> "$GITHUB_OUTPUT"
+            echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+          else
+            # Branch image: batch-image.yml only registers/stashes a prod job-def
+            # revision on main, so a workflow_dispatch branch build has none. Clone
+            # ff-ab-job onto ff-training:${HEAD_SHA} via the shared ADR-0020
+            # primitive (same path ab-batch.yml uses), so production job-def names
+            # never reference a branch image.
+            echo "No prod revision for ${HEAD_SHA}; cloning ff-ab-job onto ff-training:${HEAD_SHA}"
+            # resolve_job_definition logs "[ab] registered ..." to stdout before
+            # returning the name:revision, so take only the final line.
+            JD=$(python -c "import boto3; from src.tuning.launch_ab import resolve_job_definition; print(resolve_job_definition('${HEAD_SHA}', boto3.client('batch', region_name='${AWS_REGION}')))" | tail -n1)
+            echo "Resolved job definition ${JD}"
+            echo "job_def=${JD%%:*}" >> "$GITHUB_OUTPUT"
+            echo "revision=${JD##*:}" >> "$GITHUB_OUTPUT"
           fi
-          echo "Pinning job submissions to revision ${REVISION}"
-          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
 
       - name: Submit Batch jobs and wait (isolated experiment prefix)
         env:
           POSITIONS: ${{ github.event.inputs.positions }}
           SEED: ${{ github.event.inputs.seed }}
+          # ff-training-job for a main image, ff-ab-job for a cloned branch image.
+          FF_JOB_DEFINITION: ${{ steps.revision.outputs.job_def }}
           FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
           FF_TRAIN_GIT_SHA: ${{ steps.ctx.outputs.sha }}
           # The isolation lever: train.py uploads its tarball + manifest here
