@@ -8,6 +8,12 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 
 ## Open
 
+### [TOOLING] Cross-model agent parity — audit + remediation backlog
+- **Audit doc:** [todo/cross-model-parity-audit.md](todo/cross-model-parity-audit.md) — full parity matrix + findings across Claude / Codex / Gemini-Antigravity over the shared `AGENTS.md` + `agent-workflows/*` + `routines/*` brain.
+- **Verdict:** the wrapper/shared-instructions design is genuinely model-agnostic; skill/routine parity is complete. Gaps concentrate in Gemini deterministic enforcement (zero hooks), Gemini memory not S3-synced, no cross-provider parity test, and minor Claude-leaning leaks in shared instruction files + stale "Gemini = CI-only" docs.
+- **Backlog:** P0 parity drift test → P1 shared-file neutrality + Antigravity doc reframe → P2 Gemini `BeforeTool`/`AfterTool`/`SessionStart`/`SessionEnd` hooks → P3 Gemini memory sync → P4 (optional) de-triplicate the hook libs. Each ships tier-by-risk; none touch `src/` (no retrain).
+- **Status:** audit complete (2026-06-20); remediation in flight — see the doc's "Remediation status" checklist.
+
 ### [PRIORITY] Shared parallel A/B / ablation harness (device-autodetect)
 - **Plan doc:** [todo/ab_harness_priority.md](todo/ab_harness_priority.md) — read first (now has a "What shipped" summary).
 - **What:** `src/tuning/ab_harness.py` — one reusable harness that runs the position×variant×seed A/B grid **in parallel** (gated on `detect_platform()`: GPU-launch-bound fan-out on the 5080, 16-physical-core pool with capped BLAS on the 9950X3D; `FF_AB_JOBS` override, CPU-considerate), **artifact-isolated** (chdir+symlink `data/` so it never clobbers served `{pos}/outputs`), with a `Variant=(cfg-mutator, frame-injector)` / `metric=fn(result)` abstraction and mean±std + Ridge-invariance aggregation. Composes `parallel_train`/`core_pool`/`detect_platform`.
