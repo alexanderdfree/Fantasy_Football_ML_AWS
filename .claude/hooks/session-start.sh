@@ -5,6 +5,11 @@ repo_root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || 
 
 if [ -x "$repo_root/scripts/agent-memory-sync.sh" ]; then
   (cd "$repo_root" && bash scripts/agent-memory-sync.sh claude pull) || true
+  # Rebuild MEMORY.md from the just-pulled topic files. The index is a GENERATED, machine-local
+  # projection (excluded from sync) — that's what makes it non-racy. Per Claude Code's load order
+  # (memory loads BEFORE SessionStart hooks) the rebuild is picked up NEXT session; combined with
+  # exclude-from-sync it keeps the index complete + orphan-free without being shared mutable state.
+  (cd "$repo_root" && bash scripts/agent-memory-sync.sh claude generate) || true
 fi
 
 # Auto-link the parent checkout's gitignored data/{raw,splits} into this worktree
@@ -16,10 +21,10 @@ if [ -f "$repo_root/.claude/hooks/lib.sh" ]; then
   . "$repo_root/.claude/hooks/lib.sh"
   claude_link_worktree_data "$repo_root" || true
 
-  # After the pull, surface any memory file missing from the MEMORY.md index (an
-  # orphan from an index edit lost to the concurrent/cross-platform S3 sync — see
-  # claude_list_unindexed_memories in lib.sh). Warn only; never auto-edit the
-  # index (that would add another concurrent writer to the collision point).
+  # Canary: after the regenerate above, every topic file should be indexed. If this still warns,
+  # the generator no-op'd (e.g. python3 missing) and the index is a synced/stale copy — see
+  # claude_list_unindexed_memories in lib.sh. Warn only; never auto-edit the index (that would
+  # add another concurrent writer to the collision point).
   if [ -x "$repo_root/scripts/agent-memory-sync.sh" ]; then
     _ff_memdir="$(cd "$repo_root" && bash scripts/agent-memory-sync.sh claude path 2>/dev/null || true)"
     if [ -n "${_ff_memdir:-}" ]; then

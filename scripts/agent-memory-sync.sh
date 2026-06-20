@@ -12,7 +12,7 @@ set -euo pipefail
 log() { echo "[memory-sync] $*" >&2; }
 
 usage() {
-  log "usage: $(basename "$0") {claude|codex|all} {pull|push|status|path} [--prune] [--dry-run]"
+  log "usage: $(basename "$0") {claude|codex|all} {pull|push|status|path|generate} [--prune] [--dry-run]"
 }
 
 agent="${1:-}"
@@ -38,7 +38,7 @@ case "$agent" in
   *) log "unknown agent: $agent"; usage; exit 2 ;;
 esac
 case "$cmd" in
-  pull | push | status | path) ;;
+  pull | push | status | path | generate) ;;
   *) log "unknown command: $cmd"; usage; exit 2 ;;
 esac
 
@@ -115,7 +115,14 @@ sync_one() {
   local -a exclude_flags=()
 
   case "$one" in
-    claude) mem_dir="$(claude_memory_dir)" ;;
+    claude)
+      mem_dir="$(claude_memory_dir)"
+      # MEMORY.md is a GENERATED projection of the topic files (scripts/memory_index.py),
+      # rebuilt locally each SessionStart. Excluding it from sync keeps it machine-local — never
+      # shared mutable state — which is what makes the index non-racy: orphans came from
+      # concurrent sessions overwriting a SYNCED MEMORY.md. Topic files still sync (additive).
+      exclude_flags=(--exclude "MEMORY.md")
+      ;;
     codex)
       mem_dir="$(codex_memory_dir)"
       # .git: Codex's SQLite/runtime state. *.DS_Store: macOS cruft that would
@@ -178,6 +185,35 @@ if [ "$cmd" = "path" ]; then
       codex_memory_dir
       ;;
   esac
+  exit 0
+fi
+
+# `generate`: rebuild Claude's MEMORY.md (the auto-loaded index) as a deterministic projection of
+# the topic files via scripts/memory_index.py, so the index is a generated cache rather than
+# shared mutable state. Claude-only (Codex has no MEMORY.md index). Needs no S3, so it
+# short-circuits before preflight. Atomic write (temp + mv); fail-open (never breaks the hook).
+if [ "$cmd" = "generate" ]; then
+  if [ "$agent" != "claude" ]; then
+    log "generate: only the claude index is generated (no-op for '$agent')."
+    exit 0
+  fi
+  gen_py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  gen_script="$script_dir/memory_index.py"
+  if [ -z "$gen_py" ] || [ ! -f "$gen_script" ]; then
+    log "generate: python3 or memory_index.py missing; left MEMORY.md as-is (no-op)."
+    exit 0
+  fi
+  gen_dir="$(claude_memory_dir)"
+  mkdir -p "$gen_dir"
+  gen_tmp="$gen_dir/.MEMORY.md.tmp.$$"
+  if "$gen_py" "$gen_script" generate "$gen_dir" >"$gen_tmp" 2>"$gen_tmp.warn" && [ -s "$gen_tmp" ]; then
+    mv -f "$gen_tmp" "$gen_dir/MEMORY.md"
+    log "generate: rebuilt $gen_dir/MEMORY.md from topic files."
+    [ -s "$gen_tmp.warn" ] && sed 's/^/  /' "$gen_tmp.warn" >&2
+  else
+    log "generate: index build failed/empty; left MEMORY.md as-is (no-op)."
+  fi
+  rm -f "$gen_tmp" "$gen_tmp.warn"
   exit 0
 fi
 
