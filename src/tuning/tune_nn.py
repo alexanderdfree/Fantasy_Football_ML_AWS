@@ -41,10 +41,14 @@ Out of scope (v1)
 Scope (``--scope``)
 -------------------
 ``full`` (default) searches attention sizing + static backbone + scheduler
-(the historical scheduler_v2 space). ``history`` searches the attention
-game-history branch — ``attn_max_seq_len`` (sequence length) + an
-``attn_history_stats`` token-bundle subset — with the static backbone frozen
-at production; it lands in the separate ``history_v1`` study namespace and
+(the historical scheduler_v2 space). ``history`` (v2 isolation) searches ONLY
+the attention game-history branch — ``attn_max_seq_len`` (sequence length) +
+an ``attn_history_stats`` token-bundle subset — and FREEZES the entire
+production recipe (attention sizing, lr, batch, scheduler, AND the static
+backbone) at the position's POSITION_CONFIG. Isolating those two axes is
+deliberate: the history effects are small (~2-3%), and v1 — which co-tuned lr
++ sizing alongside them — let lr dominate the objective and swamp them
+(GH #1239). It lands in the separate ``history_v2`` study namespace and
 supports QB/RB/WR/TE only. The Batch route carries it via ``FF_TUNE_SCOPE``
 (the fixed ENTRYPOINT can't take ``--scope``), set by ``launch_tune --scope``.
 
@@ -247,28 +251,22 @@ _TUNED_OVERRIDE_KEYS: frozenset[str] = _BASE_TUNED_OVERRIDE_KEYS | frozenset().u
     *_SCHEDULER_PARAM_KEYS.values()
 )
 
-# ``--scope history`` search space: the attention sizing + scheduler knobs (shared
-# with full scope) PLUS the two game-history-branch axes (sequence length + the
-# resolved per-game token list), and it FREEZES the static backbone (no nn_*
-# keys — those stay at the position's production POSITION_CONFIG). The token
-# bundle booleans are Optuna trial params only; the cfg/override carries the
+# ``--scope history`` search space (v2 isolation): ONLY the two game-history-
+# branch axes — sequence length (``attn_max_seq_len``) + the resolved per-game
+# token list (``attn_history_stats``). The ENTIRE production recipe (attention
+# sizing, lr, batch, scheduler AND the static backbone) is FROZEN at the
+# position's POSITION_CONFIG, so the small (~2-3%) history effects aren't
+# swamped by the large lr/sizing nuisances that confounded v1 (GH #1239). The
+# token bundle booleans are Optuna trial params only; the override carries the
 # resolved ``attn_history_stats`` list, so validation never sees the booleans.
 _HISTORY_REQUIRED_KEYS: frozenset[str] = frozenset(
     {
-        "attn_d_model",
-        "attn_n_heads",
-        "attn_encoder_hidden_dim",
-        "attn_dropout",
-        "attn_lr",
-        "attn_batch_size",
-        "scheduler_type",
         "attn_max_seq_len",
         "attn_history_stats",
     }
 )
-_HISTORY_ALLOWED_KEYS: frozenset[str] = _HISTORY_REQUIRED_KEYS | frozenset().union(
-    *_SCHEDULER_PARAM_KEYS.values()
-)
+# History scope samples no scheduler/sizing knobs, so allowed == required.
+_HISTORY_ALLOWED_KEYS: frozenset[str] = _HISTORY_REQUIRED_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +344,7 @@ def _resolve_storage_version(
     """Storage namespace for this run, plus the capture decision it keys on.
 
     ``scope`` selects the search-space root (``scheduler_v2`` for full,
-    ``history_v1`` for ``--scope history``) so the two never share a study DB.
+    ``history_v2`` for ``--scope history``) so the two never share a study DB.
 
     Keyed on ``cuda_graph_enabled()`` — the same autodetect + force-off-override
     resolver the trainer consults at capture time — NOT on FF_CUDA_GRAPH
@@ -596,10 +594,11 @@ def _validate_overrides(overrides: dict, scope: str = _DEFAULT_SCOPE) -> None:
     selects the single-layer game encoder in ``_build_game_encoder``. Every real
     dimension, width, batch size, and optimizer scale must be positive.
 
-    ``scope == "history"`` validates the game-history-branch search space: the
-    attention sizing + scheduler knobs PLUS ``attn_max_seq_len`` +
-    ``attn_history_stats``, with the static backbone frozen (no nn_* keys
-    required or allowed — they stay at the production config).
+    ``scope == "history"`` (v2 isolation) validates only the two game-history
+    axes — ``attn_max_seq_len`` + ``attn_history_stats`` — because the entire
+    production recipe (sizing, lr, batch, scheduler, static backbone) is frozen
+    at POSITION_CONFIG and never sampled, so no recipe keys are required or
+    allowed in ``overrides``.
     """
     history = scope == _HISTORY_SCOPE
     required_keys = _HISTORY_REQUIRED_KEYS if history else _BASE_TUNED_OVERRIDE_KEYS
@@ -615,28 +614,31 @@ def _validate_overrides(overrides: dict, scope: str = _DEFAULT_SCOPE) -> None:
     if missing:
         errors.append(f"missing keys: {missing}")
 
-    d_model = overrides.get("attn_d_model")
-    n_heads = overrides.get("attn_n_heads")
-    if not _is_positive_int(d_model):
-        errors.append("attn_d_model must be a positive int")
-    if not _is_positive_int(n_heads):
-        errors.append("attn_n_heads must be a positive int")
-    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
-        errors.append("attn_d_model must be divisible by attn_n_heads")
-
-    encoder_hidden = overrides.get("attn_encoder_hidden_dim")
-    if (
-        not isinstance(encoder_hidden, int)
-        or isinstance(encoder_hidden, bool)
-        or encoder_hidden < 0
-    ):
-        errors.append(
-            "attn_encoder_hidden_dim must be 0 (single-layer encoder sentinel) or a positive int"
-        )
-
-    # Static-backbone (nn_*) knobs are sampled only in full scope; history scope
-    # freezes them at the production config, so they're absent from `overrides`.
+    # History scope (v2) FREEZES the whole production recipe — attention sizing,
+    # lr, batch, scheduler AND the static backbone — at POSITION_CONFIG and
+    # searches only the two history axes (validated below), so none of those
+    # recipe keys appear in `overrides`. Full scope validates the recipe it
+    # sampled.
     if not history:
+        d_model = overrides.get("attn_d_model")
+        n_heads = overrides.get("attn_n_heads")
+        if not _is_positive_int(d_model):
+            errors.append("attn_d_model must be a positive int")
+        if not _is_positive_int(n_heads):
+            errors.append("attn_n_heads must be a positive int")
+        if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
+            errors.append("attn_d_model must be divisible by attn_n_heads")
+
+        encoder_hidden = overrides.get("attn_encoder_hidden_dim")
+        if (
+            not isinstance(encoder_hidden, int)
+            or isinstance(encoder_hidden, bool)
+            or encoder_hidden < 0
+        ):
+            errors.append(
+                "attn_encoder_hidden_dim must be 0 (single-layer encoder sentinel) or a positive int"
+            )
+
         backbone_layers = overrides.get("nn_backbone_layers")
         if not isinstance(backbone_layers, list) or not backbone_layers:
             errors.append("nn_backbone_layers must be a non-empty list of positive ints")
@@ -646,60 +648,66 @@ def _validate_overrides(overrides: dict, scope: str = _DEFAULT_SCOPE) -> None:
         if not _is_positive_int(overrides.get("nn_head_hidden")):
             errors.append("nn_head_hidden must be a positive int")
 
-    dropout_keys = ("attn_dropout",) if history else ("attn_dropout", "nn_dropout")
-    for key in dropout_keys:
-        value = overrides.get(key)
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0.0 <= value < 1.0:
-            errors.append(f"{key} must be in [0, 1)")
-
-    lr_keys = ("attn_lr",) if history else ("attn_lr", "nn_lr", "nn_weight_decay")
-    for key in lr_keys:
-        if not _is_positive_number(overrides.get(key)):
-            errors.append(f"{key} must be positive")
-
-    batch_keys = ("attn_batch_size",) if history else ("attn_batch_size", "nn_batch_size")
-    for key in batch_keys:
-        if not _is_positive_int(overrides.get(key)):
-            errors.append(f"{key} must be a positive int")
-
-    sched_type = overrides.get("scheduler_type")
-    if sched_type not in _SCHEDULER_PARAM_KEYS:
-        errors.append(
-            f"scheduler_type must be one of {sorted(_SCHEDULER_PARAM_KEYS)}, got {sched_type!r}"
-        )
-    else:
-        required = _SCHEDULER_PARAM_KEYS[sched_type]
-        missing_sched = sorted(required - overrides.keys())
-        if missing_sched:
-            errors.append(f"{sched_type} missing scheduler keys: {missing_sched}")
-        irrelevant = sorted(
-            (set().union(*_SCHEDULER_PARAM_KEYS.values()) - required) & overrides.keys()
-        )
-        if irrelevant:
-            errors.append(f"{sched_type} overrides include irrelevant scheduler keys: {irrelevant}")
-
-        if sched_type == "cosine_warm_restarts":
-            for key in ("cosine_t0", "cosine_t_mult"):
-                if not _is_positive_int(overrides.get(key)):
-                    errors.append(f"{key} must be a positive int")
-            eta_min = overrides.get("cosine_eta_min")
-            if not _is_positive_number(eta_min):
-                errors.append("cosine_eta_min must be positive")
-            elif _is_positive_number(overrides.get("attn_lr")) and eta_min >= overrides["attn_lr"]:
-                errors.append("cosine_eta_min must be less than attn_lr")
-            elif _is_positive_number(overrides.get("nn_lr")) and eta_min >= overrides["nn_lr"]:
-                errors.append("cosine_eta_min must be less than nn_lr")
-        elif sched_type == "onecycle":
-            max_lr = overrides.get("onecycle_max_lr")
-            pct_start = overrides.get("onecycle_pct_start")
-            if not _is_positive_number(max_lr):
-                errors.append("onecycle_max_lr must be positive")
+        for key in ("attn_dropout", "nn_dropout"):
+            value = overrides.get(key)
             if (
-                not isinstance(pct_start, (int, float))
-                or isinstance(pct_start, bool)
-                or not 0.0 < pct_start < 1.0
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not 0.0 <= value < 1.0
             ):
-                errors.append("onecycle_pct_start must be in (0, 1)")
+                errors.append(f"{key} must be in [0, 1)")
+
+        for key in ("attn_lr", "nn_lr", "nn_weight_decay"):
+            if not _is_positive_number(overrides.get(key)):
+                errors.append(f"{key} must be positive")
+
+        for key in ("attn_batch_size", "nn_batch_size"):
+            if not _is_positive_int(overrides.get(key)):
+                errors.append(f"{key} must be a positive int")
+
+        sched_type = overrides.get("scheduler_type")
+        if sched_type not in _SCHEDULER_PARAM_KEYS:
+            errors.append(
+                f"scheduler_type must be one of {sorted(_SCHEDULER_PARAM_KEYS)}, got {sched_type!r}"
+            )
+        else:
+            required = _SCHEDULER_PARAM_KEYS[sched_type]
+            missing_sched = sorted(required - overrides.keys())
+            if missing_sched:
+                errors.append(f"{sched_type} missing scheduler keys: {missing_sched}")
+            irrelevant = sorted(
+                (set().union(*_SCHEDULER_PARAM_KEYS.values()) - required) & overrides.keys()
+            )
+            if irrelevant:
+                errors.append(
+                    f"{sched_type} overrides include irrelevant scheduler keys: {irrelevant}"
+                )
+
+            if sched_type == "cosine_warm_restarts":
+                for key in ("cosine_t0", "cosine_t_mult"):
+                    if not _is_positive_int(overrides.get(key)):
+                        errors.append(f"{key} must be a positive int")
+                eta_min = overrides.get("cosine_eta_min")
+                if not _is_positive_number(eta_min):
+                    errors.append("cosine_eta_min must be positive")
+                elif (
+                    _is_positive_number(overrides.get("attn_lr"))
+                    and eta_min >= overrides["attn_lr"]
+                ):
+                    errors.append("cosine_eta_min must be less than attn_lr")
+                elif _is_positive_number(overrides.get("nn_lr")) and eta_min >= overrides["nn_lr"]:
+                    errors.append("cosine_eta_min must be less than nn_lr")
+            elif sched_type == "onecycle":
+                max_lr = overrides.get("onecycle_max_lr")
+                pct_start = overrides.get("onecycle_pct_start")
+                if not _is_positive_number(max_lr):
+                    errors.append("onecycle_max_lr must be positive")
+                if (
+                    not isinstance(pct_start, (int, float))
+                    or isinstance(pct_start, bool)
+                    or not 0.0 < pct_start < 1.0
+                ):
+                    errors.append("onecycle_pct_start must be in (0, 1)")
 
     if history:
         if not _is_positive_int(overrides.get("attn_max_seq_len")):
@@ -750,26 +758,19 @@ def _sample_overrides(
     """Sample one trial's cfg overrides. Raises ``optuna.TrialPruned`` for
     invalid combinations (e.g. ``n_heads`` not dividing ``d_model``).
 
-    ``scope == "history"`` samples the game-history-branch space: attention
-    sizing + scheduler (shared) PLUS ``attn_max_seq_len`` and a per-game token
-    subset (one boolean per optional bundle, resolved to ``attn_history_stats``),
-    with the static backbone FROZEN at production (no nn_* params sampled).
+    ``scope == "history"`` (v2 isolation) samples ONLY the two game-history-
+    branch axes — ``attn_max_seq_len`` (sequence length) and a per-game token
+    subset (one boolean per optional bundle, resolved to ``attn_history_stats``)
+    — and freezes the ENTIRE production recipe (attention sizing, lr, batch,
+    scheduler, and the static backbone) at the position's POSITION_CONFIG. No
+    sizing/scheduler/nn_* params are sampled, so those large nuisances can't
+    swamp the small history effects (the v1 lr confound, GH #1239).
     """
-    d_model = trial.suggest_categorical("attn_d_model", [16, 24, 32, 48, 64])
-    n_heads = trial.suggest_categorical("attn_n_heads", [1, 2, 4])
-    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
-        raise optuna.TrialPruned()
-
     if scope == _HISTORY_SCOPE:
         if position is None:
             raise ValueError("history scope requires a position (for token bundles)")
-        # Shared attention sizing + scheduler (no nn_* — backbone frozen).
-        attn_encoder = trial.suggest_categorical("attn_encoder_hidden_dim", [0, 16, 32, 64])
-        attn_dropout = trial.suggest_float("attn_dropout", 0.0, 0.3)
-        attn_lr = trial.suggest_float("attn_lr", 1e-4, 5e-3, log=True)
-        attn_batch = trial.suggest_categorical("attn_batch_size", [128, 256, 512])
-        scheduler_type, scheduler_overrides = _sample_scheduler(trial)
-        # Game-history-branch axes: sequence length + per-game token subset.
+        # The ONLY two sampled axes: sequence length + per-game token subset.
+        # Everything else stays at the production POSITION_CONFIG (frozen).
         seq_len = trial.suggest_categorical("attn_max_seq_len", _attn_hist.SEQ_LEN_CHOICES)
         enabled = [
             bundle
@@ -782,17 +783,14 @@ def _sample_overrides(
         trial.set_user_attr("attn_history_stats", stats)
         trial.set_user_attr("attn_history_bundles", enabled)
         return {
-            "attn_d_model": d_model,
-            "attn_n_heads": n_heads,
-            "attn_encoder_hidden_dim": attn_encoder,
-            "attn_dropout": attn_dropout,
-            "attn_lr": attn_lr,
-            "attn_batch_size": attn_batch,
-            "scheduler_type": scheduler_type,
-            **scheduler_overrides,
             "attn_max_seq_len": seq_len,
             "attn_history_stats": stats,
         }
+
+    d_model = trial.suggest_categorical("attn_d_model", [16, 24, 32, 48, 64])
+    n_heads = trial.suggest_categorical("attn_n_heads", [1, 2, 4])
+    if _is_positive_int(d_model) and _is_positive_int(n_heads) and d_model % n_heads != 0:
+        raise optuna.TrialPruned()
 
     backbone_idx = trial.suggest_categorical(
         "nn_backbone_layers_idx", list(range(len(_BACKBONE_PRESETS)))
@@ -1506,13 +1504,15 @@ def main():
         help=(
             "Search-space scope. 'full' (default) tunes attention sizing + static "
             "backbone + scheduler (the historical scheduler_v2 space). 'history' "
-            "tunes the attention GAME-HISTORY branch: attention sizing + scheduler "
-            "PLUS attn_max_seq_len (sequence length) and a per-game token subset "
-            "(attn_history_stats bundles), with the static backbone FROZEN at the "
-            "position's production config. History-scope studies live in the "
-            "separate history_v1 namespace and support QB/RB/WR/TE only (flat "
-            "history). Pairs with stacked seeds for cheap seed-robust evaluation. "
-            "Env default: FF_TUNE_SCOPE (the Batch route)."
+            "(v2 isolation) tunes ONLY the attention GAME-HISTORY branch — "
+            "attn_max_seq_len (sequence length) + a per-game token subset "
+            "(attn_history_stats bundles) — and FREEZES the entire production "
+            "recipe (attention sizing, lr, batch, scheduler, and the static "
+            "backbone) at the position's config, so the small history effects "
+            "aren't swamped by the lr/sizing nuisances that confounded v1. "
+            "History-scope studies live in the separate history_v2 namespace and "
+            "support QB/RB/WR/TE only (flat history). Pairs with stacked seeds for "
+            "cheap seed-robust evaluation. Env default: FF_TUNE_SCOPE (the Batch route)."
         ),
     )
     parser.add_argument(

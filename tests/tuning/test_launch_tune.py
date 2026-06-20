@@ -120,8 +120,8 @@ def test_submit_tune_job_stacked_default_per_position():
 
 def test_submit_tune_job_history_scope_sets_env_and_namespace():
     """--scope history rides FF_TUNE_SCOPE (fixed ENTRYPOINT can't take --scope)
-    and lands in the separate history_v1 root; with the default stacked width
-    that's history_v1_mps_ens24x30."""
+    and lands in the separate history_v2 root; with the default stacked width
+    that's history_v2_mps_ens24x30."""
     from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS
 
     batch = MagicMock()
@@ -134,7 +134,7 @@ def test_submit_tune_job_history_scope_sets_env_and_namespace():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_TUNE_SCOPE"] == "history"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v1_mps_ens24x30"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v2_mps_ens24x30"
 
 
 def test_submit_tune_job_full_scope_omits_scope_env():
@@ -151,7 +151,7 @@ def test_submit_tune_job_full_scope_omits_scope_env():
 
 def test_submit_tune_job_history_root_applies_when_eager():
     """The history root applies regardless of stacking — eager lands in
-    history_v1_mps_graphfull (graphs on)."""
+    history_v2_mps_graphfull (graphs on)."""
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "j"}
     launch_tune.submit_tune_job(
@@ -162,7 +162,7 @@ def test_submit_tune_job_history_root_applies_when_eager():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_TUNE_SCOPE"] == "history"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v1_mps_graphfull"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v2_mps_graphfull"
 
 
 def test_submit_tune_job_history_scope_rejects_non_flat_position():

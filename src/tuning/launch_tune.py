@@ -206,7 +206,7 @@ def submit_tune_job(
         # namespace resolves — predict the same graph-less base here.
         cuda_graph=cuda_graph and not stacked,
         full_graph=cuda_graph_full and not stacked,
-        # --scope history lands in the history_v1 root (separate study DB).
+        # --scope history lands in the history_v2 root (separate study DB).
         root=SCOPE_ROOTS.get(scope, SEARCH_SPACE_VERSION),
     ) + _stacked_suffix(stacked_seeds, stacked_epochs)
     response = batch.submit_job(
@@ -406,10 +406,10 @@ def main():
         default=SCOPE_FULL,
         help=(
             "tune_nn search-space scope. 'full' (default) tunes attention sizing "
-            "+ static backbone + scheduler. 'history' tunes the attention "
-            "game-history branch (attn_max_seq_len + per-game token bundles, "
-            "static backbone frozen); rides FF_TUNE_SCOPE into the container, "
-            "lands in the history_v1 namespace, QB/RB/WR/TE only."
+            "+ static backbone + scheduler. 'history' (v2 isolation) tunes ONLY "
+            "the attention game-history branch (attn_max_seq_len + per-game token "
+            "bundles), freezing the entire production recipe; rides FF_TUNE_SCOPE "
+            "into the container, lands in the history_v2 namespace, QB/RB/WR/TE only."
         ),
     )
     parser.add_argument(

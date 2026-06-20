@@ -8,12 +8,15 @@ and pulling in Optuna.
 SEARCH_SPACE_VERSION = "scheduler_v2"
 
 # Root namespace for the attention game-history-branch tuner (``tune_nn
-# --scope history``): it adds attn_max_seq_len + per-game token bundles to the
-# search space and freezes the static backbone, so its trials must NOT mix with
-# the default ``scheduler_v2`` study (Optuna rejects a param-space mismatch in
-# one study). The graph/mps/full suffixing below applies to this root too — a
-# graphed history tune is still a different trajectory from an eager one.
-HISTORY_SEARCH_SPACE_VERSION = "history_v1"
+# --scope history``). v2 (isolation) searches ONLY attn_max_seq_len + the
+# per-game token bundles and freezes the entire production recipe (sizing, lr,
+# batch, scheduler, static backbone), so its trials must NOT mix with the
+# default ``scheduler_v2`` study OR the v1 history studies (Optuna rejects a
+# param-space mismatch in one study; v1 also co-sampled lr/sizing, which
+# confounded its objective — GH #1239). The graph/mps/full suffixing below
+# applies to this root too — a graphed history tune is still a different
+# trajectory from an eager one.
+HISTORY_SEARCH_SPACE_VERSION = "history_v2"
 
 # Search-space roots selectable by ``--scope``. ``resolve_search_space_version``
 # applies the execution-profile (mps/graph/full) suffixes to whichever root.
@@ -33,7 +36,7 @@ def resolve_search_space_version(
     """Storage namespace for the execution profile.
 
     ``root`` selects the sampled search space (``scheduler_v2`` for the default
-    full scope, ``history_v1`` for ``--scope history``); the mps/graph/full
+    full scope, ``history_v2`` for ``--scope history``); the mps/graph/full
     suffixes below are applied to it. The sampled search space is otherwise
     scheduler_v2, but CUDA-graph/MPS tuning follows a different training
     trajectory from the eager local default. Keep those studies separate so
