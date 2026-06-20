@@ -17,16 +17,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.shared import model_sync
-
-
-def _make_tarball(members: dict[str, bytes]) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, data in members.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
+from tests.shared._helpers import FakeBody as _FakeBody
+from tests.shared._helpers import make_tarball as _make_tarball
 
 
 def _manifest_bytes(
@@ -79,14 +71,6 @@ def _manifest_bytes(
             }
         body["stable"] = stable
     return json.dumps(body).encode("utf-8")
-
-
-class _FakeBody:
-    def __init__(self, data: bytes):
-        self._data = data
-
-    def read(self) -> bytes:
-        return self._data
 
 
 class _FakePaginator:
