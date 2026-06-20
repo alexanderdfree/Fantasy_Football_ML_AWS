@@ -165,7 +165,7 @@ Rows are reduced to ~30-35K after the min-games filter in the per-position pipel
 
 | Split | Seasons | Expected Rows |
 |-------|---------|---------------|
-| Train | 2012-2023 | ~12 seasons of data |
+| Train | 2013-2023 | ~11 seasons of data |
 | Val | 2024 | ~1 season |
 | Test | 2025 | ~1 season |
 
@@ -494,6 +494,8 @@ K and DST bypass the general feature pipeline entirely and use custom features.
 
 #### `get_feature_columns() -> list[str]`
 
+Defined **per-position** in `src/{pos}/features.py` (moved out of
+`src/features/engineer.py` in #323 — there is no `engineer.py::get_feature_columns`).
 **Dynamically generates** the ordered list of all feature column names based on
 config constants. Do NOT hardcode the list — it must stay in sync with
 `build_features()` automatically.
@@ -585,21 +587,6 @@ class SeasonAverageBaseline:
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         # For each row, compute the mean of fantasy_points for that player
         # in that season, using only PRIOR weeks (shift + expanding mean).
-        # Sort is handled internally; predictions are returned in the caller's
-        # row order.
-        # Returns: array of predictions, same length as df
-        pass
-```
-
-#### `class LastWeekBaseline`
-
-```python
-class LastWeekBaseline:
-    """Predict each player scored the same as last week."""
-
-    def predict(self, df: pd.DataFrame) -> np.ndarray:
-        # For each row, return the player's fantasy_points from the previous week.
-        # Handle week 1 / first appearance: use season average or 0.
         # Sort is handled internally; predictions are returned in the caller's
         # row order.
         # Returns: array of predictions, same length as df
@@ -771,7 +758,7 @@ criterion = MultiTargetLoss(
 class MultiTargetLoss(nn.Module):
     """Per-head dispatchable loss for a multi-head network.
     Each target is assigned a loss family via head_losses[name]; supported values are
-    in SUPPORTED_HEAD_LOSSES = ("huber", "poisson_nll", "hurdle_negbin", "hurdle_poisson").
+    in SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson").
     Loss = sum(weight[t] * loss_fn[t](pred[t], target[t]))
          + sum(gate_weight * BCE(gate_logit_t, (target_t > 0)) for t in gated_targets)
     """
@@ -857,7 +844,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 ```
 
 (Per-position aggregation is no longer a standalone helper — it's inlined into
-`src/serving/app.py::_compute_metrics_locked`, which loops `POSITIONS` and
+`src/serving/core.py::_compute_metrics_locked`, which loops `POSITIONS` and
 calls `compute_metrics` directly. The old `compute_positional_metrics(df, …)`
 helper was deleted to avoid an intermediate DataFrame round-trip.)
 
@@ -975,7 +962,7 @@ SCORING_PPR      = {**_BASE_SCORING, "receptions": 1.0}
 SCORING = SCORING_PPR  # Default (full PPR)
 
 # === Split ===
-TRAIN_SEASONS = list(range(2012, 2024))  # 2012-2023
+TRAIN_SEASONS = list(range(2013, 2024))  # 2013-2023
 VAL_SEASONS = [2024]
 TEST_SEASONS = [2025]
 

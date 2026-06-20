@@ -263,8 +263,8 @@ def api_predictions_breakdown():
     scoring-format-invariant, so this endpoint takes no ``scoring`` param and the
     sub-table is identical across PPR / half / standard. Columns are persisted by
     ``_apply_position_models`` (``pred_{model}_{t}`` / ``actual_{t}``); a model
-    with no value for any target (e.g. lgbm for K/DST) is reported in
-    ``unavailable_models``. A stale on-disk snapshot predating these columns
+    with no value for any target (a position whose model failed to load) is
+    reported in ``unavailable_models``. A stale on-disk snapshot predating these columns
     degrades to ``{"components": [], "unavailable": true}`` rather than erroring.
     """
     player_id = request.args.get("player_id", "")
@@ -328,8 +328,8 @@ def api_predictions_breakdown():
             comp[prefix] = _safe_num(r.get(pcol)) if pcol in cols else None
         components.append(comp)
 
-    # A model is unavailable if it has no value for any target (lgbm on K/DST, or
-    # a position whose model failed to load).
+    # A model is unavailable if it has no value for any target (a position whose
+    # model failed to load).
     unavailable = [
         prefix for prefix in _MODEL_PRED_PREFIXES if all(c.get(prefix) is None for c in components)
     ]
@@ -351,8 +351,8 @@ def api_weekly_accuracy():
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
     results, _ = core._get_data(scoring)
     actual = results[_actual_col(scoring)].values
-    # Per-row abs error; NaN where a model has no prediction (K/DST for lgbm,
-    # plus any position whose model failed to load) so groupby.mean() excludes
+    # Per-row abs error; NaN where a model has no prediction (a position whose
+    # model failed to load) so groupby.mean() excludes
     # those rows from that model's weekly MAE. attn_nn is trained for all six
     # positions, so K/DST attn_nn rows carry real preds and are not NaN.
     err_df = results.assign(
@@ -793,8 +793,8 @@ def warm():
     traffic, so subsequent containers hydrate instantly (D14).
 
     Idempotent and cheap once warm: ``_ensure_metrics`` early-returns when the
-    aggregate is cached and no position sentinel advanced (see app.py around
-    its first line), so repeated probes are dict reads. Strictly lighter than
+    aggregate is cached and no position sentinel advanced (see
+    ``src/serving/core.py::_ensure_metrics``), so repeated probes are dict reads. Strictly lighter than
     the already-public ``/api/predictions?position=ALL`` — no new abuse surface.
     Mirrors that endpoint's fail-loud contract: if every position fails to
     load, ``_ensure_metrics`` raises and this returns 500, same as a real

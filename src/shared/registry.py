@@ -93,7 +93,7 @@ def _flat_attn_kwargs_static(pc: PositionConfig) -> dict:
         # Architecture knob (adds an nn.Parameter when on) — must be in the
         # served kwargs so app.py / smoke_test rebuild the matching state_dict.
         no_history_embedding=pc.attn_no_history_embedding,
-        # Context-conditioned queries (#121, RB) — adds the cond_proj layer when
+        # Context-conditioned queries (#121; RB + WR + TE per #1198) — adds the cond_proj layer when
         # on, so it MUST be in the served kwargs too, else serving rebuilds a
         # condq-off model and can't load the condq-on RB checkpoint (shape
         # mismatch → NaN, the 2026-06-15 staleness trap).

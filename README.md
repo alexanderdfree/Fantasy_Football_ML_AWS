@@ -200,7 +200,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 
 - **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six Spot GPU hosts via AWS Batch (g6.xlarge preferred, g5.xlarge fallback; one position per host; ~15 min wall-clock). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
-- **Serving** — ECS Fargate (arm64, 1 vCPU / 2 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
+- **Serving** — ECS Fargate (arm64, 2 vCPU / 8 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
 - **Rollback symmetry** — flipping `BATCH_ACTIVE` is a one-command operation either direction. Both training paths stay provisioned indefinitely; `workflow_dispatch` on either workflow bypasses the gate as a break-glass.
 
@@ -208,7 +208,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 - Always-stable serving + smoke-test gate + S3 bucket versioning (PR #130, `c7fa2d7`)
 - Versioned history + manifest-driven rollback (PR #104, `1b20e9e`)
 - Operational rollback CLI [src/scripts/promote.py](src/scripts/promote.py) (PR #122, `e8bf2a7`)
-- ECS force-rollover after training (EC2 rollback path only; the default Batch path now relies on the serving container's in-flight manifest poller, PR #330) so promoted artifacts get picked up (PR #179, `8c42e88`)
+- ECS force-rollover after training (the default Batch path force-rolls ECS via the separate `ecs_rollout` job — removed in PR #330 on the in-flight-poller theory, then re-added after the 2026-06-15 attn-NN staleness incident because an architecture-changing retrain needs a clean boot-time reload the poller can't provide) so promoted artifacts get picked up (PR #179, `8c42e88`)
 - PPR / Half-PPR / Standard scoring switch wired end-to-end through the dashboard (PR #153, `a533990`)
 - Wiki tab renders repo markdown docs in-app (PR #138, `ce4543e`)
 - Benchmark History tab — per-PR rows fetched from S3 at boot, auto-updates after every training run without a redeploy (PR #201, `056423b`)

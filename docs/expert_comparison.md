@@ -5,7 +5,7 @@
 This document compares our model's weekly fantasy point predictions against published accuracy benchmarks from industry expert sources and academic ML research.
 
 **Our evaluation setup:**
-- **Training data:** 2012-2023 NFL seasons (~12 seasons of weekly player data)
+- **Training data:** 2013-2023 NFL seasons (~11 seasons of weekly player data; 2012 is loaded for prior-season context only, not trained on)
 - **Validation set:** 2024 NFL season (for hyperparameter tuning and early stopping)
 - **Test set:** 2025 NFL season (held out entirely from training and validation)
 - **Scoring format:** Full PPR (1 point per reception)

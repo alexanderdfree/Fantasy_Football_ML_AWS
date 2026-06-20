@@ -229,9 +229,10 @@ def test_flat_attn_kwargs_static_threads_non_negative_targets():
 # (``MultiHeadNetWithHistory`` / ``MultiHeadNetWithNestedHistory`` — the
 # classes the ``build_multihead_net*`` factories forward to) accept knobs like
 # ``learn_attn_temperature``/``history_dropout``/``use_swiglu_encoder``/
-# ``attn_entropy_coeff``/``use_alibi_bias``/``self_attn_*``/
-# ``condition_queries_on_static`` that are currently latent (no PositionConfig
-# field drives them, so they sit at their constructor defaults).
+# ``attn_entropy_coeff``/``use_alibi_bias``/``self_attn_*`` that are currently
+# latent (no PositionConfig field drives them, so they sit at their constructor
+# defaults). ``condition_queries_on_static`` is no longer latent — #1198 added
+# the ``attn_condition_queries_on_static`` field (enabled for RB/WR/TE).
 #
 # The drift these tests guard: someone promotes one of those latent knobs to a
 # PositionConfig field but forgets to forward it through the registry builder,
