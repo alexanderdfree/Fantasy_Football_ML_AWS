@@ -4,6 +4,8 @@ Audit of the repo's three-agent automation machinery — **Claude Code** (`.clau
 
 This is the audit deliverable; the prioritized remediation backlog at the bottom is being worked (see "Remediation status").
 
+> **Update (2026-06-20, follow-up):** backlog P0–P3 have since shipped (#1260, #1281, #1283). The **parity matrix** and findings **F1/F2/F4/F5** below are the *pre-remediation* snapshot — the Gemini ❌ cells for `ruff-format`, `guard-worktree-path`, `pre-pr`, `session-start`, memory-sync, and the cross-provider parity test are now ✅. For current state read "Remediation status", not the matrix. A re-sweep after the Gemini hooks landed found one second-order miss, recorded as **F6** below.
+
 ## Local runtimes (what actually reads this config)
 
 - **Claude Code** — `.claude/settings.json` hooks, `.claude/skills/`, `.claude/routines/`; project-scoped memory synced to S3 `claude-memory/`.
@@ -54,6 +56,9 @@ Every deterministic guardrail (worktree-guard, pre-PR ruff/pytest/freshness gate
 ### F5 — Gemini memory is not synced
 Claude and Codex sync incidental memory to per-agent S3 prefixes; Gemini keeps local-only Markdown that never reaches the shared cross-machine store. `scripts/agent-memory-sync.sh` already dispatches `claude`/`codex`/`all` — a `gemini` mode + prefix closes it.
 
+### F6 — Audit routines never updated to scan the new `.gemini/hooks/` (found on re-sweep)
+P2 created `.gemini/hooks/` (guard-worktree-path, pre-pr, ruff-format, session-start, session-end), but the shared audit routines that enumerate provider hook dirs as scan scope were not updated to include it: `routines/audit/instructions.md` (ci area-map, Batch+CI auditor, L5 tooling-parity lens) and `routines/infrastructure-audit/instructions.md` (ci area-map, position-scope+hooks auditor) listed only `.claude/hooks` + `.codex/hooks`. A scheduled `audit`/`infrastructure-audit` run would lint Claude's and Codex's deterministic guardrails but silently skip Gemini's. The P0 parity test did not catch it — it asserts each provider's hook *files* exist, not that the routines' scan *scope* names all three dirs. (`tests-audit` names no hook dir and is correctly exempt.) Classic second-order miss: the artifact landed, the consumer that should pick it up didn't.
+
 ### Correctly out of scope
 - **`worktree-cleanup`** is a plugin/global Claude skill, not project-authored (no file in-repo) and has no shared instructions — stays Claude-only.
 - **Codex `session-start` env-persist** is a documented architectural limit of Codex hooks (cannot write `VIRTUAL_ENV`/`PATH`); memory-pull + data context still work. Leave as-is.
@@ -67,6 +72,7 @@ Ordered by risk-adjusted value; each ships as its own PR (tier-by-risk).
 - **P2 — Gemini/Antigravity deterministic hooks** (`.gemini/hooks/*` + `.gemini/settings.json` `hooks` + `tests/scripts/test_gemini_hooks.py`). `BeforeTool` → guard-worktree-path (on `write_file|replace`) + pre-pr gate (on `run_shell_command`, delegating to the single-source `.claude/hooks/pre-pr.sh` exactly as Codex does); `AfterTool` → ruff-format; `SessionStart`/`SessionEnd` → memory pull/push. Mirrors the Codex adapter pattern; pinned by synthetic-stdin tests. Fixes F1.
 - **P3 — Gemini/Antigravity memory S3 sync.** Extend `scripts/agent-memory-sync.sh` with a `gemini` mode + `gemini-memory/` prefix; add `scripts/gemini-memory-sync.sh`; wire into P2's `SessionStart`/`SessionEnd`. Fixes F5.
 - **P4 — (optional, last) De-triplicate hook libs.** After P2 there are three near-identical `lib.sh` copies; extract neutral helpers (gh-pr tokenizer, worktree detection, parent-main ff, splits promotion, venv resolution) into one `scripts/agent-hooks-lib.sh` sourced by thin per-provider shims. Touches the destructive-action gate surface → behind P0+P2 green, backstopped by the per-provider hook tests; warrants an ADR.
+- **P5 — Audit-routine scope covers `.gemini/hooks/`** (`routines/audit/instructions.md`, `routines/infrastructure-audit/instructions.md`) + a parity-test guard (`test_routine_hook_scope_covers_all_providers` in `tests/scripts/test_cross_model_parity.py`) asserting any routine that scans `.claude/hooks` + `.codex/hooks` also scans `.gemini/hooks`. Docs/instructions + one test; no retrain. Fixes F6.
 
 ## Remediation status
 
@@ -75,6 +81,7 @@ Ordered by risk-adjusted value; each ships as its own PR (tier-by-risk).
 - [x] P2 — Gemini hooks (`.gemini/hooks/` guard-worktree-path + pre-pr + ruff-format; `tests/scripts/test_gemini_hooks.py`)
 - [x] P3 — Gemini memory sync (`agent-memory-sync.sh gemini` + `gemini-memory-sync.sh` + `.gemini/` SessionStart/SessionEnd hooks)
 - [x] P4 — hook-lib consolidation (see note below)
+- [x] P5 — audit-routine scope covers `.gemini/hooks/` + parity-test guard (`test_routine_hook_scope_covers_all_providers`)
 
 ### P4 decision — what was consolidated
 

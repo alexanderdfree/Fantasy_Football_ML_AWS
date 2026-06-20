@@ -90,7 +90,7 @@ Each surviving finding becomes one GitHub issue:
 - **Labels**: `<AUDIT_LABEL>`, exactly one severity label, exactly one
   regress-risk label, and the area label when the area label exists.
 - **Area mapping** (infra paths reuse the existing area set — no new area label):
-  - `.github/workflows/*`, `.claude/hooks/*`, `.codex/hooks/*`,
+  - `.github/workflows/*`, `.claude/hooks/*`, `.codex/hooks/*`, `.gemini/hooks/*`,
     `src/scripts/*` (e.g. `scope_positions.py`), `requirements*.txt` -> `ci`.
   - `src/batch/*` (Dockerfile.train, launch.py, train.py, benchmark.py,
     build_and_push.sh), `infra/batch/*`, `infra/ec2/*` -> `batch`.
@@ -280,8 +280,8 @@ Layer A location-auditor scopes:
    that belongs to the general audit / tests-audit.
 5. Position-scope + hooks auditor: `src/scripts/scope_positions.py` and its
    contract test `tests/scripts/test_scope_positions.py`,
-   `.github/workflows/_detect-positions.yml`, `.claude/hooks/` and `.codex/hooks/`
-   (the pre-pr / post-pr / freshness gates that gate merges and training)
+   `.github/workflows/_detect-positions.yml`, `.claude/hooks/`, `.codex/hooks/`, and
+   `.gemini/hooks/` (the pre-pr / post-pr / freshness gates that gate merges and training)
 
 Layer B standing infra cross-cutting lenses:
 

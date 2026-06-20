@@ -71,8 +71,8 @@ Each surviving finding becomes one GitHub issue:
   - `src/data/*` and `src/features/*` -> `data`.
   - `src/serving/*` -> `serving`.
   - `src/batch/*`, `src/tuning/*`, and `src/benchmarking/*` -> `batch`.
-  - `src/scripts/*`, `.github/workflows/*`, `.claude/hooks/*`, and
-    `.codex/hooks/*` -> `ci`.
+  - `src/scripts/*`, `.github/workflows/*`, `.claude/hooks/*`,
+    `.codex/hooks/*`, and `.gemini/hooks/*` -> `ci`.
   - `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `README.md`, `SETUP.md`, `TODO.md`,
     `docs/*`, `agent-workflows/*`, `.claude/skills/*`, `.codex/prompts/*`, `.agents/skills/*`,
     `.claude/routines/audit/*`, `.codex/automations/audit/*`, `.agents/routines/*`,
@@ -230,7 +230,7 @@ Layer A location-auditor scopes:
 8. Data+features auditor: `src/data/`, `src/features/`
 9. Serving auditor: `src/serving/`, `tests/test_app*.py`
 10. Batch+CI auditor: `src/batch/`, `.github/workflows/`, `.claude/hooks/`,
-    `.codex/hooks/`
+    `.codex/hooks/`, `.gemini/hooks/`
 11. Docs/tooling consistency auditor: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`,
     `README.md`, `SETUP.md`, `TODO.md`, `docs/`, `agent-workflows/`,
     `.claude/skills/`, `.codex/prompts/`, `.agents/skills/`, `.claude/routines/audit/`,
@@ -254,10 +254,10 @@ Layer B standing cross-cutting lenses:
   `.claude/settings.json`, `.claude/hooks/`, `.claude/skills/`,
   `.claude/routines/audit/`, `.codex/hooks.json`, `.codex/hooks/`,
   `.codex/prompts/`, `.codex/automations/audit/`, `.agents/skills/`,
-  `.agents/routines/`, `routines/audit/`,
+  `.agents/routines/`, `.gemini/settings.json`, `.gemini/hooks/`, `routines/audit/`,
   `agent-workflows/`, `scripts/bootstrap-codex-local.sh`, `scripts/bootstrap-claude-wsl.sh`,
   `scripts/claude-memory-sync.sh`, `scripts/codex-memory-sync.sh`,
-  `scripts/agent-memory-sync.sh`, and `SETUP.md`. Report substantive provider
+  `scripts/gemini-memory-sync.sh`, `scripts/agent-memory-sync.sh`, and `SETUP.md`. Report substantive provider
   parity breaks promised by docs; do not report intentional provider differences.
 
 Budget is soft pacing only; the 2-hour run wall-clock is the only hard limit.
