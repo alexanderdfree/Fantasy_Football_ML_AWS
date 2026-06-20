@@ -23,7 +23,11 @@ jq_bin=""
 for _c in jq /usr/bin/jq /usr/local/bin/jq /opt/homebrew/bin/jq /home/linuxbrew/.linuxbrew/bin/jq; do
   if command -v "$_c" >/dev/null 2>&1; then jq_bin="$_c"; break; fi
 done
-[ -n "$jq_bin" ] || exit 0  # no jq → cannot parse path; fail open (matches prior behavior)
+# Do NOT exit when jq is absent: this guard is the deterministic backstop for the
+# parent-checkout-write footgun (#284/#354/#370/#378), and a bare exit here would
+# silently DISARM it. We fall back to python3's JSON parser below (this is a Python
+# project, so python3 is ~always present). The guard only truly disarms — with a
+# WARNING, never silently — if neither jq nor python3 exists.
 
 input=$(cat)
 
@@ -35,7 +39,25 @@ esac
 parent="${proj%%/.claude/worktrees/*}"
 
 # Edit/Write/MultiEdit carry file_path; NotebookEdit carries notebook_path.
-fp=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
+# Use jq when present (fast); else fall back to python3's JSON parser (robust — a
+# regex over the raw JSON would mis-extract on edits whose new_string itself
+# contains the text "file_path"). Warn rather than silently disarm if neither
+# exists. This runs only inside a worktree session (the case above already
+# exited a parent/normal checkout), so the warning fires only when the guard
+# would otherwise be active.
+if [ -n "$jq_bin" ]; then
+  fp=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
+elif command -v python3 >/dev/null 2>&1; then
+  fp=$(printf '%s' "$input" | python3 -c 'import json, sys
+try:
+    ti = json.load(sys.stdin).get("tool_input") or {}
+except Exception:
+    sys.exit(0)
+print(ti.get("file_path") or ti.get("notebook_path") or "")' 2>/dev/null || true)
+else
+  echo "guard-worktree-path: neither jq nor python3 found; cannot validate file_path (guard disarmed for this edit)" >&2
+  fp=""
+fi
 [ -n "$fp" ] || exit 0
 
 case "$fp" in

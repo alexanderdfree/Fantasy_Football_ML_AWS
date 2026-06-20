@@ -1,6 +1,6 @@
 ---
 name: pre-pr-judge
-description: Before `gh pr create`, vet the change against the original task — spawn a worker subagent that diffs the branch against `origin/main` and flags scope creep ("the agent did more than I asked"). Lightweight, agent-triggered companion to the user-triggered `/review`. Use after [.claude/hooks/pre-pr.sh](.claude/hooks/pre-pr.sh) passes but before opening the PR. Skip for trivial changes.
+description: Before `gh pr create`, vet the change against the original task — spawn a worker subagent that diffs the branch against `origin/main` and flags scope creep ("the agent did more than I asked"). Lightweight, agent-triggered companion to the user-triggered `/review`. Use after the pre-PR hook (.claude/hooks/pre-pr.sh) passes but before opening the PR. Skip for trivial changes.
 ---
 
 # Pre-PR judge wrapper

@@ -19,6 +19,12 @@ jq_bin="$(claude_find_jq)" || exit 0  # no jq → cannot emit context; skip
 input=$(cat)
 cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
 
+# Cheap pre-filter: this hook fires on EVERY Bash call, and the per-character
+# tokenizer below is the expensive part. Any real `gh pr ...` invocation contains
+# the substring `gh`, so skip the O(n) tokenizer for the ~all commands that don't.
+# Behavior is unchanged — the tokenizer still decides every command that survives.
+case "$cmd" in *gh*) ;; *) exit 0 ;; esac
+
 # Only fire on an ACTUAL `gh pr merge` invocation. The shell-parser-aware matcher
 # strips quotes/heredocs/comments and splits on ; | & before testing, so quoting
 # the literal text 'gh pr merge' (a log grep, an echo, a `#` comment) no longer

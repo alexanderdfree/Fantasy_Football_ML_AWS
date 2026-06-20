@@ -22,6 +22,13 @@ jq_bin="$(claude_find_jq)" || exit 0
 input=$(cat)
 cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
 
+# Cheap pre-filter: this hook fires on EVERY Bash call, and the per-character
+# tokenizer below is the expensive part. Any real `gh pr ...` invocation contains
+# the substring `gh`, so skip the O(n) tokenizer for the ~all commands that don't
+# (ls, git, python, …). Behavior is unchanged — every command that survives this
+# gate is still decided by the tokenizer.
+case "$cmd" in *gh*) ;; *) exit 0 ;; esac
+
 # Only fire on an ACTUAL `gh pr create` invocation. The shell-parser-aware
 # matcher strips quotes/heredocs/comments and splits on ; | & before testing,
 # so quoting the literal text 'gh pr create' (a log grep, echoed release notes,
