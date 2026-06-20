@@ -94,7 +94,7 @@ jobs:
           CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
           ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
         run: |
-          set -eu
+          set -euo pipefail
           # Validate every dispatch input before it is spliced unquoted into the
           # ARGS string below (same hardening as retune-lgbm.yml / ablate-scheduler.yml).
           if ! printf '%s' "$SPEC" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$'; then

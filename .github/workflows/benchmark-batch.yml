@@ -150,6 +150,7 @@ jobs:
       - name: Collect benchmark metrics from the experiment prefix
         env:
           POSITIONS: ${{ github.event.inputs.positions }}
+          NOTE: ${{ github.event.inputs.note }}
           FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
           # No FF_MODEL_S3_BUCKET -> benchmark.py does NOT mirror to the website
           # History tab; the artifact below is the only output.
@@ -159,7 +160,7 @@ jobs:
             --positions $POSITIONS \
             --backend batch \
             --git-hash "${{ steps.ctx.outputs.sha }}" \
-            --note "${{ github.event.inputs.note }}"
+            --note "$NOTE"
 
       - name: Upload benchmark results artifact
         if: always()

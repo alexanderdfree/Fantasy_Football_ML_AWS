@@ -474,7 +474,16 @@ def _depth_chart_ranks(seasons: list[int], schedules: pd.DataFrame) -> pd.DataFr
     new = [s for s in seasons if s >= 2025]
     parts = []
     if old:
-        parts.append(nfl_source.depth_charts(old)[_DEPTH_CANONICAL_COLS])
+        # Mirror the production loader's legacy (<=2024) path
+        # (src/data/loader.py): REG-only + week-=1 realignment. The legacy
+        # nflverse chart labeled "week W" actually reflects week W-1's lineup;
+        # without this the diagnostic over-counts and mis-aligns vs production.
+        legacy = nfl_source.depth_charts(old).copy()
+        legacy = legacy[legacy["game_type"] == "REG"].copy()
+        legacy["week"] = pd.to_numeric(legacy["week"], errors="coerce") - 1
+        legacy = legacy.dropna(subset=["week"])
+        legacy["week"] = legacy["week"].astype(int)
+        parts.append(legacy[_DEPTH_CANONICAL_COLS])
     for s in new:
         url = (
             "https://github.com/nflverse/nflverse-data/releases/download/"

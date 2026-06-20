@@ -262,7 +262,7 @@ def build_summary(
         "top12_n": int(top12_n),
         "rank_basis": "actual_ppr_fantasy_points",
         "experts_meta": {
-            "model": {"train": "2012-2023", "val": "2024", "test": "2025"},
+            "model": {"train": "2013-2023", "val": "2024", "test": "2025"},
             "nflcom": {"label": "NFL.com", "note": _NFLCOM_NOTE, "seasons": "2025"},
             "rotowire": {"label": "RotoWire", "note": _ROTOWIRE_NOTE, "seasons": "2025"},
         },
