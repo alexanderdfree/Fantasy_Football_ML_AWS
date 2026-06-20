@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import json
 import sys
-import tarfile
 from pathlib import Path
 from unittest import mock
 

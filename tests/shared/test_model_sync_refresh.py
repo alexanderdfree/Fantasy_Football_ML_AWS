@@ -7,11 +7,9 @@ The boot-time sync path is exercised by test_model_sync.py.
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import sys
-import tarfile
 import threading
 import time
 from pathlib import Path
