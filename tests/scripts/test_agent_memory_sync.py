@@ -55,7 +55,9 @@ def test_agent_memory_sync_uses_separate_remote_prefixes(tmp_path: Path) -> None
         call for call in calls if "s3://test-bucket/claude-memory/test-repo/memory" in call
     ]
     assert claude_calls
-    # Claude memory is synced verbatim - the excludes above are codex-scoped only.
+    # Claude excludes MEMORY.md (a generated, machine-local index — never shared mutable state),
+    # but NOT .git / .DS_Store (those are codex-scoped); topic files still sync verbatim.
+    assert all("--exclude MEMORY.md" in call for call in claude_calls)
     assert all("--exclude .git" not in call for call in claude_calls)
     assert all("--exclude *.DS_Store" not in call for call in claude_calls)
 
@@ -90,3 +92,52 @@ def test_path_command_prints_local_memory_dirs(tmp_path: Path) -> None:
         text=True,
     )
     assert codex.stdout.strip() == str(tmp_path / "codex-home" / "memories")
+
+
+def test_generate_rebuilds_claude_index_from_topic_files(tmp_path: Path) -> None:
+    # `generate` rebuilds MEMORY.md from the topic files' index_line, needs no S3 (short-circuits
+    # before preflight), and writes atomically. This is the SessionStart regeneration step.
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+    }
+    memdir = subprocess.run(
+        ["bash", "scripts/agent-memory-sync.sh", "claude", "path"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    Path(memdir).mkdir(parents=True, exist_ok=True)
+    (Path(memdir) / "alpha.md").write_text(
+        "---\nname: A\nindex_line: |-\n  [A](alpha.md) — hook\n---\nbody\n", encoding="utf-8"
+    )
+
+    subprocess.run(
+        ["bash", "scripts/agent-memory-sync.sh", "claude", "generate"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert (Path(memdir) / "MEMORY.md").read_text(encoding="utf-8") == "- [A](alpha.md) — hook\n"
+
+
+def test_generate_is_noop_for_codex(tmp_path: Path) -> None:
+    # Codex has no MEMORY.md index; `codex generate` must be a clean no-op, not an error.
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+    }
+    result = subprocess.run(
+        ["bash", "scripts/agent-memory-sync.sh", "codex", "generate"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0

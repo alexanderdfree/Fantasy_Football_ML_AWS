@@ -320,7 +320,7 @@ scripts/agent-memory-sync.sh all push         # local -> S3 for both local trees
 scripts/agent-memory-sync.sh all push --prune # mirror-delete, opt-in only
 ```
 
-- **Discipline:** pull at session start, push at session stop. You work one machine at a time, so this keeps the conflict hotspots (`MEMORY.md` / `memory_summary.md`) clean.
+- **Discipline:** pull at session start, push at session stop. Claude's `MEMORY.md` is no longer a conflict hotspot — it is a **generated, machine-local index** (rebuilt each SessionStart from the topic files' `index_line` by `scripts/memory_index.py`, and **excluded from sync**); only the additive per-file topic memories sync, so concurrent sessions can't clobber the index. See CLAUDE.md § Auto-memory.
 - **Separate remotes:** Claude and Codex never share an S3 folder. Override with `FF_CLAUDE_MEMORY_S3_PREFIX` or `FF_CODEX_MEMORY_S3_PREFIX`; the legacy `FF_MEMORY_S3_PREFIX` remains a Claude-only alias. `FF_MEMORY_S3_BUCKET` overrides the bucket for both.
 - **Additive by default:** a memory created on the other box is never silently dropped; `--prune` opts into mirror-delete (the bucket has versioning enabled as the recovery net).
 - **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook.
