@@ -50,7 +50,7 @@ if [ -n "$jq_bin" ]; then
 elif command -v python3 >/dev/null 2>&1; then
   fp=$(printf '%s' "$input" | python3 -c 'import json, sys
 try:
-    ti = json.load(sys.stdin).get("tool_input", {})
+    ti = json.load(sys.stdin).get("tool_input") or {}
 except Exception:
     sys.exit(0)
 print(ti.get("file_path") or ti.get("notebook_path") or "")' 2>/dev/null || true)
