@@ -14,5 +14,44 @@
         }
       }
     ]
+  },
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "name": "guard-worktree-path",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/guard-worktree-path.sh",
+            "timeout": 5000
+          }
+        ]
+      },
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "name": "pre-pr-gate",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/pre-pr.sh",
+            "timeout": 600000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [
+          {
+            "name": "ruff-format",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/ruff-format.sh",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
   }
 }

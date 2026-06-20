@@ -50,6 +50,12 @@ REQUIRED_WORKFLOW_KEYS = (
 REQUIRED_ROUTINE_KEYS = ("AUDIT_PROVIDER", "AUDIT_LABEL")
 ALLOWED_AUDIT_LABELS = {"claude-audit", "codex-audit"}
 
+# Provider -> hooks dir. Each provider wires the same deterministic guardrails as
+# parallel per-provider adapter scripts (audit P2); the runtime contract of each
+# is pinned by its own tests/scripts/test_{provider}_hooks.py.
+HOOK_DIRS = {"claude": ".claude/hooks", "codex": ".codex/hooks", "gemini": ".gemini/hooks"}
+GUARDRAIL_HOOKS = ("guard-worktree-path", "pre-pr", "ruff-format")
+
 # Provider-specific authority pointers that must NOT appear in the shared,
 # provider-neutral instruction files (finding F3). The neutral home for the
 # tier-by-risk consolidation pattern and the pre-PR rule is AGENTS.md; the worker
@@ -66,6 +72,7 @@ WORKFLOW_NAMES = _names("agent-workflows")
 ROUTINE_NAMES = _names("routines")
 
 # (provider, name) pairs for parametrization.
+HOOK_CELLS = [(prov, h) for h in GUARDRAIL_HOOKS for prov in HOOK_DIRS]
 WORKFLOW_CELLS = [(prov, n) for n in WORKFLOW_NAMES for prov in WORKFLOW_WRAPPERS]
 ROUTINE_CELLS = [(prov, n) for n in ROUTINE_NAMES for prov in ROUTINE_WRAPPERS]
 
@@ -156,6 +163,18 @@ def test_routine_wrapper_has_audit_keys(provider: str, name: str) -> None:
     assert not missing, f"{rel} missing AUDIT_* keys: {missing}"
     assert any(f"AUDIT_LABEL={lbl}" in text for lbl in ALLOWED_AUDIT_LABELS), (
         f"{rel} AUDIT_LABEL is not one of {sorted(ALLOWED_AUDIT_LABELS)}"
+    )
+
+
+# --- every provider wires the same deterministic guardrail hooks (P2) ---------
+
+
+@pytest.mark.parametrize(("provider", "hook"), HOOK_CELLS)
+def test_guardrail_hook_exists(provider: str, hook: str) -> None:
+    rel = f"{HOOK_DIRS[provider]}/{hook}.sh"
+    assert (PROJECT_ROOT / rel).is_file(), (
+        f"{provider} is missing the '{hook}' guardrail hook (expected {rel}). "
+        "All three providers wire guard-worktree-path + pre-pr + ruff-format."
     )
 
 
