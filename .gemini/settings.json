@@ -1,0 +1,18 @@
+{
+  "modelConfigs": {
+    "overrides": [
+      {
+        "match": {
+          "model": "gemini-3.1-pro-preview"
+        },
+        "modelConfig": {
+          "generateContentConfig": {
+            "thinkingConfig": {
+              "thinkingLevel": "HIGH"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -9,7 +9,8 @@ Gemini has access to specialized project skills located in `.agents/skills/`. To
 - **`solve-issues`**: Triage the `claude-audit` open issue backlog into file-disjoint tier-by-risk PRs for user approval.
 - **`pre-pr-judge`**: Spawn a worker to diff the active branch against `origin/main` and flag scope creep before opening a PR.
 - **`post-session-critique`**: Capture prompt lessons after a non-routine session to update `AGENTS.md` or memory.
-- **`worktree-cleanup`**: Produce a per-worktree FLAG/DELETE/KEEP plan for stale `.Codex/worktrees/` and offer to execute it.
+
+Each is a thin wrapper that reads the shared, provider-neutral `agent-workflows/<name>/instructions.md` (the same source the Claude skills and Codex prompts use). (`worktree-cleanup` is Claude-only — it has no shared instructions file, so Gemini does not wrap it.)
 
 ## Auto-Memory & State
 Unlike Claude and Codex, which maintain local SQL/JSON memory databases and sync them across machines via `scripts/agent-memory-sync.sh` to S3, Gemini CLI manages state through plain Markdown files:
@@ -19,6 +20,14 @@ Unlike Claude and Codex, which maintain local SQL/JSON memory databases and sync
 
 ## Hooks and Workflows
 Currently, Gemini CLI relies on standard system hooks and manual invocation of the scripts in `scripts/` where appropriate. While Claude and Codex have dedicated guardrail hooks (e.g., `.claude/hooks/guard-worktree-path.sh`), Gemini's core behavioral constraints and context filtering are defined natively by its overarching system prompt and its adherence to `AGENTS.md`.
+
+## CI Workflows (`.github/workflows/gemini-*.yml`)
+The [`run-gemini-cli`](https://github.com/google-github-actions/run-gemini-cli) GitHub-App integration lives in `.github/workflows/gemini-*.yml`, with command definitions in `.github/commands/gemini-*.toml` and model config in `.gemini/settings.json`. `gemini-dispatch.yml` routes events to the reusable `gemini-{review,triage,invoke,plan-execute}.yml` workflows (`@gemini-cli` comments from OWNER/MEMBER/COLLABORATOR, auto-review on PR open, auto-triage on issue open); `gemini-scheduled-triage.yml` runs an hourly issue-triage cron.
+
+**Gated OFF by default.** The two entry points (`gemini-dispatch.yml`, `gemini-scheduled-triage.yml`) only run when the repo **variable** `GEMINI_ENABLED == 'true'`, so merging the workflows never auto-runs-and-fails (or spams error comments) before the backend is configured. To enable:
+1. Stand up the Google backend — a Gemini API key, **or** Vertex AI via Workload Identity Federation — and install the gemini-cli GitHub App.
+2. Configure repo **secrets** (`APP_PRIVATE_KEY`, `GEMINI_API_KEY` and/or `GOOGLE_API_KEY`) and **variables** (`APP_ID`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `SERVICE_ACCOUNT_EMAIL`, `GCP_WIF_PROVIDER`, `GEMINI_MODEL`, `GEMINI_CLI_VERSION`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GENAI_USE_GCA`, `UPLOAD_ARTIFACTS`) — see each workflow's `with:` block for the authoritative set.
+3. Set the repo variable `GEMINI_ENABLED=true`.
 
 ## Audit Routine Wrappers (`.agents/routines/`)
 Gemini-side wrappers for the shared, read-only audit routines live under `.agents/routines/<name>/prompt.md`. They set `AUDIT_PROVIDER=Gemini` and — because Gemini has no provider-specific audit label — file under the shared `claude-audit` label, deduping against both providers' pools (the project decision is to reuse the existing `claude-audit`/`codex-audit` labels and the `agent-audit/v1` schema, not mint new ones). Tracked today:

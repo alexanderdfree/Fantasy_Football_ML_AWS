@@ -81,6 +81,12 @@ infra/aws/.env.out
 !.claude/skills/
 !.claude/routines/
 
+# Codex local config (per-machine sandbox setting; never a committed repo default)
+.codex/config.toml
+
+# Gemini CLI runtime telemetry (written by the gemini-* workflows at runtime)
+.gemini/telemetry.log
+
 # Credentials (preventive)
 *.pem
 *.key
