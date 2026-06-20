@@ -50,6 +50,34 @@ python -m src.tuning.feature_selection report --spec src.tuning.ab_feature_scree
 python -m src.tuning.feature_selection apply --position RB --drop trend_targets target_share_L3 --pr
 ```
 
+## Stage-2 / Stage-3 orchestration ([feature_selection_stage2.py](../src/tuning/feature_selection_stage2.py))
+
+Four subcommands turn Stages 2-3 into a smooth workflow. They **only print the exact
+`launch_ab` commands** (and write a `plan.json`); they never submit a Batch job
+(`--exec` opts in). Always **smoke one real cell first** — the printed flow leads with
+the riskiest arm at one seed (`--max-cells 2`), because degenerate arms only crash live
+(`--list` / unit tests validate grid construction, not the pipeline; #1187 → #1212).
+
+```bash
+# Stage 2a — auto-select + print the sub-family screen commands from the Stage-1 reports.
+#   Comprehensive: zooms every decomposable family that is a drop-candidate/borderline OR
+#   large/heterogeneous (rolling/prior_season/specific + trend); skips atomic + clean KEEP.
+#   Skill stacks 24 seeds; K/DST eager 8 (their 3-seed Stage-1 mid-tier is noisy). Trim with
+#   --only-family / --skip-family / --max-families; cost preview is a rough ±2x gut-check.
+python -m src.tuning.feature_selection substage --positions RB WR TE QB K DST
+#   -> writes todo/feature_selection/stage2/plan.json (the report's source of truth)
+
+# Stage 2b — after the runs finish, consolidate them into one per-position report.
+python -m src.tuning.feature_selection substage-report --positions RB
+
+# Stage 3 — confirm the chosen drop-set TOGETHER on the production config (PCA-Ridge ON;
+#   the screen is skip-PCA). Skill stacked-24 by default (--eager for faithful attention);
+#   K/DST eager-8. PB assumes additivity — this catches interactions.
+python -m src.tuning.feature_selection confirm --position RB --from-stage2
+python -m src.tuning.feature_selection confirm-report --position RB
+#   -> todo/feature_selection/stage2/rb.confirm.{md,json}; then `apply` the cut you choose.
+```
+
 ## Decisions baked in
 
 - **Per-model analysis, no auto-drop rule.** The report shows each model

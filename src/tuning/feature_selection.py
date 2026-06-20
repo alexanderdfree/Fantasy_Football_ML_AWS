@@ -54,6 +54,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.tuning import feature_selection_stage2 as fs2  # noqa: E402
 from src.tuning.attn_knob_experiments import plackett_burman_design  # noqa: E402
 from src.tuning.feature_groups import (  # noqa: E402
     extract_variant_seed_metric,
@@ -628,16 +629,19 @@ def cmd_plan(args) -> int:
             f"  ~{cells} cells  python -m src.tuning.launch_ab --spec {spec} "
             f"--positions {' '.join(pos)}{stack_flag}{cap}"
         )
-    print("\nStage 2 — sub-family zoom (run per family Stage 1 flags; example):")
-    print("  python -m src.tuning.launch_ab --spec src.tuning.ab_feature_subscreen \\")
-    print("      --positions RB --env FF_SUBSCREEN_FAMILY=rolling --stacked-seeds")
-    print("\nStage 3 — confirm: re-run the chosen drop-set together at high seed count, then:")
+    print("\nStage 2 — sub-family zoom (auto-selected from the Stage-1 reports):")
+    print(f"  python -m src.tuning.feature_selection substage --positions {' '.join(want)}")
     print(
-        "  python -m src.tuning.feature_selection report --spec <spec> --run-id <id> --positions <pos>"
+        "  python -m src.tuning.feature_selection substage-report --positions <pos>  # after they finish"
+    )
+    print("\nStage 3 — confirm the chosen drop-set together on production PCA-Ridge:")
+    print("  python -m src.tuning.feature_selection confirm --position <pos> --from-stage2")
+    print(
+        "  python -m src.tuning.feature_selection confirm-report --position <pos>      # after it finishes"
     )
     print(
-        "\nNote: each launch fires real Spot jobs; --dry-run on launch_ab to preview, "
-        "--max-cells to cap. Stacked (skill) ≈ 24 seeds; K/DST eager ≈ 3."
+        "\nNote: substage/confirm only PRINT commands (--exec to submit). Each launch fires "
+        "real Spot jobs; --dry-run on launch_ab to preview. Stacked (skill) ≈ 24 seeds; K/DST eager."
     )
     return 0
 
@@ -685,6 +689,216 @@ def cmd_apply(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Stage-2 / Stage-3 orchestration (substage / substage-report / confirm /
+# confirm-report) — thin wiring over feature_selection_stage2.
+# --------------------------------------------------------------------------- #
+def _load_stage1(in_dir: str, position: str) -> dict:
+    path = Path(in_dir) / f"{position.lower()}.json"
+    if not path.is_file():
+        raise SystemExit(
+            f"[fs] Stage-1 report not found: {path}. Run Stage 1 first "
+            "(`feature_selection report ...`) or rebase on origin/main — the "
+            "todo/feature_selection/{pos}.json reports are tracked there."
+        )
+    return json.loads(path.read_text())
+
+
+def _exec_commands(commands: list[str]) -> None:
+    """``--exec``: actually submit the Batch jobs. Fires REAL Spot $ — opt-in only;
+    the default path prints the commands and touches no AWS."""
+    print("\n[fs] --exec: submitting REAL Spot Batch jobs (this costs money)...")
+    for cmd in commands:
+        print(f"[fs] $ {cmd}")
+        rc = subprocess.run(cmd.split(), check=False).returncode
+        if rc != 0:
+            raise SystemExit(f"[fs] command failed (rc={rc}): {cmd}")
+
+
+def _print_substage_plan(picks, skipped, *, image_sha) -> None:
+    total = round(sum(fs2.estimate_cost(p) for p in picks), 2)
+    print(
+        f"Stage-2 sub-family screen plan — {len(picks)} sub-screen(s), "
+        f"~${total:.2f} rough Spot $ (±2x; not a billing oracle).\n"
+    )
+    by_pos: dict[str, list] = {}
+    for p in picks:
+        by_pos.setdefault(p.position, []).append(p)
+    skip_by_pos: dict[str, list] = {}
+    for s in skipped:
+        skip_by_pos.setdefault(s["position"], []).append(s)
+    for pos in sorted(set(by_pos) | set(skip_by_pos)):
+        sel = by_pos.get(pos, [])
+        print(f"{pos} — {len(sel)} selected, {len(skip_by_pos.get(pos, []))} skipped:")
+        for p in sel:
+            mode = "stacked24" if p.stacked else f"eager{len(p.seeds)}"
+            print(
+                f"  zoom {p.family:<14} {p.n_variants:>2} var x {len(p.seeds):>2} seed "
+                f"= {p.cells:>4} cells  ~${fs2.estimate_cost(p):>5.2f}  [{mode}]  ({p.reason})"
+            )
+        for s in skip_by_pos.get(pos, []):
+            print(f"  skip {s['family']:<14} ({s['reason']})")
+        print()
+    print("Recommended flow (prints only — NEVER auto-fires Batch):")
+    if not picks:
+        print("  (nothing selected — adjust --only-family / --skip-family / --max-families)")
+        return
+    print("  1. SMOKE one real cell first — the riskiest arm at 1 seed. Degenerate arms")
+    print("     only crash live (--list / unit tests validate grid construction, #1187->#1212):")
+    print(f"       {fs2.smoke_command(picks[0], image_sha=image_sha)}")
+    print("     Confirm it lands a non-crash result in S3, THEN launch each sub-screen:")
+    for p in picks:
+        print(f"       {fs2.subscreen_launch_command(p, image_sha=image_sha)}")
+    rep = " ".join(sorted({p.position for p in picks}))
+    print("  2. After they finish, build the consolidated Stage-2 report:")
+    print(f"       python -m src.tuning.feature_selection substage-report --positions {rep}")
+
+
+def cmd_substage(args) -> int:
+    positions = [p.upper() for p in args.positions]
+    stamp = fs2._utc_stamp()
+    all_picks: list = []
+    all_skipped: list = []
+    for pos in positions:
+        payload = _load_stage1(args.in_dir, pos)
+        picks, skipped = fs2.select_subscreens(
+            pos,
+            payload,
+            stacked_n=args.stacked_n,
+            kdst_n=args.kdst_n,
+            only=args.only_family,
+            skip=args.skip_family,
+            max_families=args.max_families,
+        )
+        fs2.assign_run_ids(picks, image_sha=args.image_sha, stamp=stamp)
+        all_picks.extend(picks)
+        all_skipped.extend(skipped)
+    _print_substage_plan(all_picks, all_skipped, image_sha=args.image_sha)
+    out_plan = args.out_plan or os.path.join(fs2.STAGE2_DIR, fs2.PLAN_FILE)
+    fs2.write_plan(all_picks, all_skipped, out_path=out_plan, image_sha=args.image_sha, stamp=stamp)
+    print(f"\n[fs] plan -> {out_plan}  ({len(all_picks)} sub-screens recorded)")
+    if args.execute:
+        _exec_commands(
+            [fs2.subscreen_launch_command(p, image_sha=args.image_sha) for p in all_picks]
+        )
+    return 0
+
+
+def cmd_substage_report(args) -> int:
+    plan_path = args.plan or os.path.join(fs2.STAGE2_DIR, fs2.PLAN_FILE)
+    plan = fs2.load_plan(plan_path)
+    want = {p.upper() for p in args.positions} if args.positions else None
+    by_pos: dict[str, list] = {}
+    for pick in plan["picks"]:
+        if want and pick["position"] not in want:
+            continue
+        by_pos.setdefault(pick["position"], []).append(pick)
+    if not by_pos:
+        raise SystemExit(f"[fs] no matching picks in {plan_path} (positions={args.positions})")
+    written = []
+    for pos, picks in by_pos.items():
+        family_reports = []
+        for pick in picks:
+            spec, group_cols, row_drops = fs2.build_subscreen_spec(
+                pos, pick["family"], pick["seeds"]
+            )
+            effects = fs2.collect_effects(
+                spec, pos, list(group_cols), row_drops, pick["run_id"], s3_prefix=args.s3_prefix
+            )
+            family_reports.append(
+                {
+                    "family": pick["family"],
+                    "effects": effects,
+                    "group_cols": group_cols,
+                    "run_id": pick["run_id"],
+                    "seeds": pick["seeds"],
+                }
+            )
+        md, js = fs2.write_stage2_report(pos, family_reports, out_dir=args.out_dir)
+        written.append(md)
+        print(f"[fs] {pos}: wrote {md} + {js}")
+    print(f"[fs] {len(written)} Stage-2 report(s) under {args.out_dir}/")
+    return 0
+
+
+def cmd_confirm(args) -> int:
+    pos = args.position.upper()
+    if args.from_stage2:
+        path = Path(args.stage2_dir) / f"{pos.lower()}.json"
+        if not path.is_file():
+            raise SystemExit(
+                f"[fs] no Stage-2 report at {path}; run substage-report first or pass --drop."
+            )
+        drop_cols = json.loads(path.read_text()).get("combined_suggested_drop_cols", [])
+    else:
+        drop_cols = args.drop or []
+    if not drop_cols:
+        raise SystemExit(
+            "[fs] nothing to confirm: pass --drop col ... or --from-stage2 (with a "
+            "non-empty combined cut)."
+        )
+    stamp = fs2._utc_stamp()
+    sha7 = (args.image_sha or "local")[:7]
+    run_id = args.run_id or f"confirm-{pos.lower()}-{stamp}-{sha7}"
+    stacked, seeds = fs2.confirm_regime(pos, eager=args.eager)
+    cmd = fs2.confirm_launch_command(
+        pos, drop_cols, eager=args.eager, image_sha=args.image_sha, run_id=run_id
+    )
+    smoke = fs2.confirm_smoke_command(pos, drop_cols, image_sha=args.image_sha, run_id=run_id)
+    mode = "stacked24" if stacked else f"eager{len(seeds)}"
+    print(
+        f"Stage-3 confirm — {pos}: drop {len(drop_cols)} columns TOGETHER on the "
+        f"PRODUCTION PCA-Ridge config ({mode}, {2 * len(seeds)} cells)."
+    )
+    print(f"  columns: {', '.join(drop_cols)}\n")
+    print("Recommended flow (prints only — NEVER auto-fires Batch):")
+    print("  1. SMOKE the drop arm first (a drop below ridge_pca_components crashes PCA live):")
+    print(f"       {smoke}")
+    print("  2. Run the confirm:")
+    print(f"       {cmd}")
+    print("  3. Report it (production PCA-Ridge, per-model MAE+RMSE):")
+    print(f"       python -m src.tuning.feature_selection confirm-report --position {pos}")
+    fs2.write_confirm_plan(
+        pos,
+        drop_cols,
+        run_id,
+        seeds,
+        stacked,
+        eager=args.eager,
+        out_dir=args.stage2_dir,
+        image_sha=args.image_sha,
+    )
+    if args.execute:
+        _exec_commands([cmd])
+    return 0
+
+
+def cmd_confirm_report(args) -> int:
+    pos = args.position.upper()
+    entry = fs2.load_confirm_plan(pos, out_dir=args.stage2_dir) or {}
+    run_id = args.run_id or entry.get("run_id")
+    if args.drop:
+        drop_cols = args.drop
+    elif args.from_stage2:
+        data = json.loads((Path(args.stage2_dir) / f"{pos.lower()}.json").read_text())
+        drop_cols = data.get("combined_suggested_drop_cols", [])
+    else:
+        drop_cols = entry.get("drop_cols")
+    seeds = args.seeds or entry.get("seeds")
+    if not (run_id and drop_cols and seeds):
+        raise SystemExit(
+            "[fs] confirm-report needs a run-id + drop-set + seeds. Run `confirm` first "
+            "(it records confirm_plan.json) or pass --run-id --drop ... --seeds ..."
+        )
+    spec, group_names, row_drops = fs2.build_confirm_spec(pos, drop_cols, seeds)
+    effects = fs2.collect_effects(
+        spec, pos, group_names, row_drops, run_id, s3_prefix=args.s3_prefix
+    )
+    md, js = fs2.write_confirm_report(pos, drop_cols, run_id, seeds, effects, out_dir=args.out_dir)
+    print(f"[fs] {pos}: wrote {md} + {js}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -719,6 +933,82 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--drop", nargs="+", required=True, help="Column names to drop")
     ap.add_argument("--pr", action="store_true", help="Open a DRAFT PR (else just edit + verify)")
     ap.set_defaults(func=cmd_apply)
+
+    # --- Stage 2: sub-family zoom orchestration ---
+    ss = sub.add_parser(
+        "substage",
+        help="Stage 2: select + print the sub-family screen launch commands (no submit)",
+    )
+    ss.add_argument("--positions", nargs="+", required=True)
+    ss.add_argument("--in-dir", default=fs2.STAGE1_DIR, help="Where the Stage-1 {pos}.json live")
+    ss.add_argument("--out-plan", default=None, help=f"(default: {fs2.STAGE2_DIR}/{fs2.PLAN_FILE})")
+    ss.add_argument(
+        "--image-sha", default=None, help="ff-training image tag for the printed commands"
+    )
+    ss.add_argument("--only-family", nargs="+", default=None, help="Restrict to these families")
+    ss.add_argument("--skip-family", nargs="+", default=None, help="Exclude these families")
+    ss.add_argument("--max-families", type=int, default=None, help="Cap sub-screens per position")
+    ss.add_argument("--stacked-n", type=int, default=fs2.DEFAULT_STACKED_N)
+    ss.add_argument("--kdst-n", type=int, default=fs2.DEFAULT_KDST_N)
+    ss.add_argument(
+        "--exec",
+        dest="execute",
+        action="store_true",
+        help="Actually submit the Batch jobs (fires REAL Spot $; default just prints)",
+    )
+    ss.set_defaults(func=cmd_substage)
+
+    sr = sub.add_parser(
+        "substage-report",
+        help="Stage 2: collect the sub-screen runs into a consolidated per-position report",
+    )
+    sr.add_argument("--positions", nargs="+", help="(default: all positions in the plan)")
+    sr.add_argument("--plan", default=None, help=f"(default: {fs2.STAGE2_DIR}/{fs2.PLAN_FILE})")
+    sr.add_argument("--out-dir", default=fs2.STAGE2_DIR)
+    sr.add_argument("--s3-prefix", default="ab_runs")
+    sr.set_defaults(func=cmd_substage_report)
+
+    # --- Stage 3: confirm a chosen drop-set on the production PCA-Ridge config ---
+    cf = sub.add_parser(
+        "confirm",
+        help="Stage 3: print the combined drop-set confirm on production PCA-Ridge (no submit)",
+    )
+    cf.add_argument("--position", required=True)
+    cf.add_argument("--drop", nargs="+", default=None, help="Column names to drop together")
+    cf.add_argument(
+        "--from-stage2",
+        action="store_true",
+        help="Read the combined drop-set from the Stage-2 report instead of --drop",
+    )
+    cf.add_argument(
+        "--eager",
+        action="store_true",
+        help="Skill: eager (faithful attention) instead of the default stacked-24",
+    )
+    cf.add_argument("--stage2-dir", default=fs2.STAGE2_DIR)
+    cf.add_argument("--image-sha", default=None)
+    cf.add_argument("--run-id", default=None)
+    cf.add_argument(
+        "--exec",
+        dest="execute",
+        action="store_true",
+        help="Actually submit the confirm Batch job (fires REAL Spot $; default just prints)",
+    )
+    cf.set_defaults(func=cmd_confirm)
+
+    cr = sub.add_parser(
+        "confirm-report",
+        help="Stage 3: report a confirm run (production PCA-Ridge per-model MAE+RMSE)",
+    )
+    cr.add_argument("--position", required=True)
+    cr.add_argument("--run-id", default=None, help="(default: the recorded confirm_plan.json run)")
+    cr.add_argument("--drop", nargs="+", default=None)
+    cr.add_argument("--from-stage2", action="store_true")
+    cr.add_argument("--seeds", type=int, nargs="+", default=None)
+    cr.add_argument("--stage2-dir", default=fs2.STAGE2_DIR)
+    cr.add_argument("--out-dir", default=fs2.STAGE2_DIR)
+    cr.add_argument("--s3-prefix", default="ab_runs")
+    cr.set_defaults(func=cmd_confirm_report)
     return p
 
 

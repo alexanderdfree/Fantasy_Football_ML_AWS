@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import importlib
 import statistics
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 from src.tuning.ab_harness import Variant
 from src.tuning.attn_knob_experiments import plackett_burman_design
@@ -370,6 +370,42 @@ def build_drop_variants(
         )
         row_drops[vname] = dropped
     return variants, row_drops
+
+
+def build_confirm_variants(
+    drop_cols: Iterable[str],
+) -> tuple[list[Variant], dict[str, frozenset[str]]]:
+    """Stage-3 confirm: ``baseline`` vs ONE arm that drops the WHOLE chosen column
+    set together — on the **production** config (``disable_pca=False``).
+
+    Stages 1-2 screen with PCA OFF (raw-feature Ridge) for robust per-group
+    attribution; the FINAL confirm must instead run the production PCA-Ridge so the
+    decision is faithful (production RB/WR/DST ship PCA-Ridge). The ``baseline``
+    carries NO mutator (the true production config, PCA on) and the drop arm only
+    filters the columns, leaving ``ridge_pca_components`` at its production value —
+    so the contrast is purely the combined drop, not PCA-on/off. The drop arm keeps
+    ``expect_ridge_identical=False`` (the #1172 "a real drop MUST move Ridge"
+    sentinel).
+
+    Returns ``(variants, row_drops)`` with the whole drop treated as one synthetic
+    group ``confirmed_drop`` so :func:`main_effects` reports the combined effect (the
+    launcher's own ``aggregate`` Δ-vs-baseline is the same number). Unlike the screen
+    this is NOT a Plackett-Burman design — it is a single combined-drop A/B that
+    catches the interactions the additive PB main effects assume away.
+    """
+    cols = frozenset(drop_cols)
+    if not cols:
+        raise ValueError("build_confirm_variants needs >=1 column to drop")
+    variants = [
+        Variant("baseline", label="production config (PCA on), keep all features"),
+        Variant(
+            "drop_confirmed",
+            cfg_mutator=drop_columns_mutator(cols, disable_pca=False),
+            expect_ridge_identical=False,  # a real drop MUST move Ridge (#1172)
+            label=f"drop {len(cols)} columns together (production PCA-Ridge)",
+        ),
+    ]
+    return variants, {"drop_confirmed": frozenset({"confirmed_drop"})}
 
 
 # --------------------------------------------------------------------------- #
