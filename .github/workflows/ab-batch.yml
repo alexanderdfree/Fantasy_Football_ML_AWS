@@ -95,6 +95,35 @@ jobs:
           ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
         run: |
           set -eu
+          # Validate every dispatch input before it is spliced unquoted into the
+          # ARGS string below (same hardening as retune-lgbm.yml / ablate-scheduler.yml).
+          if ! printf '%s' "$SPEC" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$'; then
+            echo "Invalid spec: $SPEC (expected a dotted module path, e.g. src.tuning.ab_example)"; exit 1
+          fi
+          if [ -n "$IMAGE_SHA" ] && ! printf '%s' "$IMAGE_SHA" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
+            echo "Invalid image_sha: $IMAGE_SHA (expected a 7-40 char hex git SHA)"; exit 1
+          fi
+          case "$CUDA_GRAPH" in
+            auto|true|false) ;;
+            *) echo "Invalid cuda_graph: $CUDA_GRAPH (expected auto/true/false)"; exit 1 ;;
+          esac
+          if ! printf '%s' "$ATTEMPT_TIMEOUT_SECONDS" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid attempt_timeout_seconds: $ATTEMPT_TIMEOUT_SECONDS (expected a non-negative integer)"; exit 1
+          fi
+          for p in $POSITIONS; do
+            case "$p" in
+              QB|RB|WR|TE|K|DST) ;;
+              *) echo "Invalid position: $p (expected QB RB WR TE K DST)"; exit 1 ;;
+            esac
+          done
+          if [ -n "$SEEDS" ] && ! printf '%s' "$SEEDS" | grep -Eq '^[0-9]+( +[0-9]+)*$'; then
+            echo "Invalid seeds: $SEEDS (expected space-separated non-negative integers)"; exit 1
+          fi
+          for v in $ONLY; do
+            if ! printf '%s' "$v" | grep -Eq '^[A-Za-z0-9_]+$'; then
+              echo "Invalid variant name: $v (expected [A-Za-z0-9_]+)"; exit 1
+            fi
+          done
           # Default to the dispatched ref's head SHA — with checkout@v6 that
           # is exactly the code this runner is executing, so the grid the
           # launcher prints matches the spec baked into the image (assuming

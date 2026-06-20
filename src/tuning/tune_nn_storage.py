@@ -6,9 +6,6 @@ and pulling in Optuna.
 """
 
 SEARCH_SPACE_VERSION = "scheduler_v2"
-MPS_GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps_graph"
-MPS_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_mps"
-GRAPH_SEARCH_SPACE_VERSION = f"{SEARCH_SPACE_VERSION}_graph"
 
 # Root namespace for the attention game-history-branch tuner (``tune_nn
 # --scope history``): it adds attn_max_seq_len + per-game token bundles to the
