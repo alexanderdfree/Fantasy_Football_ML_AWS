@@ -72,6 +72,10 @@ def _pred_col(prefix, fmt):
     return f"{prefix}_pred_{fmt}"
 
 
+# Meta + bare-prediction + per-scoring-format prediction columns, derived from the
+# canonical prefix/scoring tuples so a new model or scoring format flows through
+# automatically (the projection in _records_to_player_rows keys by name, not
+# position, so the order here only affects the intermediate column selection).
 _PLAYER_ROW_COLS = [
     "player_id",
     "player_display_name",
@@ -81,30 +85,8 @@ _PLAYER_ROW_COLS = [
     "fantasy_points",
     "fantasy_points_half_ppr",
     "fantasy_points_standard",
-    "ridge_pred",
-    "nn_pred",
-    "attn_nn_pred",
-    "lgbm_pred",
-    "nflcom_pred",
-    "rotowire_pred",
-    "ridge_pred_ppr",
-    "ridge_pred_half_ppr",
-    "ridge_pred_standard",
-    "nn_pred_ppr",
-    "nn_pred_half_ppr",
-    "nn_pred_standard",
-    "attn_nn_pred_ppr",
-    "attn_nn_pred_half_ppr",
-    "attn_nn_pred_standard",
-    "lgbm_pred_ppr",
-    "lgbm_pred_half_ppr",
-    "lgbm_pred_standard",
-    "nflcom_pred_ppr",
-    "nflcom_pred_half_ppr",
-    "nflcom_pred_standard",
-    "rotowire_pred_ppr",
-    "rotowire_pred_half_ppr",
-    "rotowire_pred_standard",
+    *(f"{prefix}_pred" for prefix in _ROW_PRED_PREFIXES),
+    *(_pred_col(prefix, fmt) for prefix in _ROW_PRED_PREFIXES for fmt in _VALID_SCORING),
     "headshot_url",
 ]
 
@@ -134,12 +116,10 @@ def _records_to_player_rows(df, scoring="ppr"):
             "team": _safe_str(r.get("recent_team")),
             "week": int(r["week"]),
             "actual": _round_or_none(r.get(actual_key)),
-            "ridge_pred": _safe_num(r.get(pred_keys["ridge"])),
-            "nn_pred": _safe_num(r.get(pred_keys["nn"])),
-            "attn_nn_pred": _safe_num(r.get(pred_keys["attn_nn"])),
-            "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
-            "nflcom_pred": _safe_num(r.get(pred_keys["nflcom"])),
-            "rotowire_pred": _safe_num(r.get(pred_keys["rotowire"])),
+            **{
+                f"{prefix}_pred": _safe_num(r.get(pred_keys[prefix]))
+                for prefix in _ROW_PRED_PREFIXES
+            },
             "headshot": _safe_str(r.get("headshot_url", "")),
         }
         for r in df[cols].to_dict(orient="records")

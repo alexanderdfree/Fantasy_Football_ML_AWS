@@ -264,11 +264,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(new, indent=2, sort_keys=True))
             return 0
         old_cur_key = "null"
-        # Fetch-again just to report what the previous was — cheap + clearer log
-        # than threading it back through ``promote``.
-        latest = load_manifest(s3, args.bucket, args.prefix, args.position)
-        if latest and (latest.get("previous") or {}).get("key"):
-            old_cur_key = latest["previous"]["key"]
+        # ``promote`` already returns the freshly-written manifest, so read the
+        # demoted entry off it directly instead of re-fetching from S3.
+        if (new.get("previous") or {}).get("key"):
+            old_cur_key = new["previous"]["key"]
         print(f"Promoted {args.position}: current → {args.to}")
         print(f"  previous now: {old_cur_key}")
         return 0

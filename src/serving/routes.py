@@ -29,6 +29,7 @@ from src.serving.metadata import _ALL_POSITIONS, POSITION_INFO
 from src.serving.serialization import (
     _EXPERT_PRED_PREFIXES,
     _MODEL_PRED_PREFIXES,
+    _ROW_PRED_PREFIXES,
     _actual_col,
     _pred_col,
     _records_to_player_rows,
@@ -40,6 +41,11 @@ from src.serving.serialization import (
 from src.serving.wiki import WIKI_DOCS, _render_wiki_doc
 from src.shared.aggregate_targets import TARGET_UNITS
 from src.shared.weather_features import WEATHER_FEATURES_ALL
+
+# Sortable keys for /api/predictions: the realized total ("actual"), the week, and
+# every model/expert prediction column. Derived from the canonical prefix tuple so
+# a new model flows through without editing this whitelist (#498).
+_SORTABLE_PRED_KEYS = {"actual", "week", *(f"{prefix}_pred" for prefix in _ROW_PRED_PREFIXES)}
 
 
 @app.route("/")
@@ -116,16 +122,7 @@ def api_predictions():
     # whitelist no longer hides the default). (#498)
     if sort_by == "fantasy_points":
         sort_by = "actual"
-    if sort_by in (
-        "actual",
-        "ridge_pred",
-        "nn_pred",
-        "attn_nn_pred",
-        "lgbm_pred",
-        "nflcom_pred",
-        "rotowire_pred",
-        "week",
-    ):
+    if sort_by in _SORTABLE_PRED_KEYS:
         rows.sort(key=lambda x: x.get(sort_by) or 0, reverse=reverse)
     else:
         rows.sort(key=lambda x: x.get("actual") or 0, reverse=reverse)
@@ -225,16 +222,15 @@ def api_player(player_id):
     expert_cols = {prefix: _pred_col(prefix, scoring) for prefix in _EXPERT_PRED_PREFIXES}
     weekly_cols = ["week", actual_col, *pred_cols.values(), *expert_cols.values()]
     weekly_cols = [c for c in weekly_cols if c in df.columns]
+    all_pred_cols = {**pred_cols, **expert_cols}
     weekly = [
         {
             "week": int(r["week"]),
             "actual": _round_or_none(r.get(actual_col)),
-            "ridge_pred": _safe_num(r.get(pred_cols["ridge"])),
-            "nn_pred": _safe_num(r.get(pred_cols["nn"])),
-            "attn_nn_pred": _safe_num(r.get(pred_cols["attn_nn"])),
-            "lgbm_pred": _safe_num(r.get(pred_cols["lgbm"])),
-            "nflcom_pred": _safe_num(r.get(expert_cols["nflcom"])),
-            "rotowire_pred": _safe_num(r.get(expert_cols["rotowire"])),
+            **{
+                f"{prefix}_pred": _safe_num(r.get(all_pred_cols[prefix]))
+                for prefix in _ROW_PRED_PREFIXES
+            },
         }
         for r in df[weekly_cols].to_dict(orient="records")
     ]
@@ -395,7 +391,7 @@ def api_position_details():
     core._get_data(scoring)  # ensure cache is populated
     details = app_pkg._cache.get("position_details", {})
     result = {}
-    for pos in ["QB", "RB", "WR", "TE", "K", "DST"]:
+    for pos in _ALL_POSITIONS:
         info = dict(POSITION_INFO[pos])
         pos_details = dict(details.get(pos, {}))
         # Swap target_metrics["total"] for the format-specific cached row.
