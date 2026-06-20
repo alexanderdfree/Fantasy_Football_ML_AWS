@@ -47,28 +47,37 @@ def split_frontmatter(text):
 
 
 def read_key(fm_lines, key):
-    """Read a top-level frontmatter ``key``: handles ``|``/``|-`` block scalars and inline values.
+    """Read a frontmatter ``key`` at ANY indent. Returns the first match's value, or None.
 
-    Returns the value (str) or None if the key is absent.
+    The Claude Code harness normalizes memory frontmatter: it moves custom keys (e.g.
+    ``index_line``) into a nested ``metadata:`` block and inline-quotes them, so a top-level-only
+    read misses them and the generator falls back. We therefore match the key at any indent and
+    handle ``|``/``>`` block scalars (continuation bounded by the key's own indent, so a nested
+    block never swallows sibling keys) and inline single/double-quoted values (with basic YAML
+    unescaping). Top-level keys (name/description) still resolve first since they precede metadata.
     """
-    pat = re.compile(rf"^{re.escape(key)}:\s*(.*)$")
+    pat = re.compile(rf"^(\s*){re.escape(key)}:\s*(.*)$")
     for idx, line in enumerate(fm_lines):
         m = pat.match(line)
         if not m:
             continue
-        rest = m.group(1).strip()
-        if rest.startswith("|"):  # block scalar -> collect the indented continuation
+        key_indent = len(m.group(1))
+        rest = m.group(2).rstrip()
+        if rest[:1] in ("|", ">"):  # block scalar -> continuation more indented than the key
             cont = []
             for nxt in fm_lines[idx + 1 :]:
-                if nxt.strip() == "" or nxt[:1] in (" ", "\t"):
+                if nxt.strip() == "" or (len(nxt) - len(nxt.lstrip())) > key_indent:
                     cont.append(nxt)
                 else:
                     break
             indents = [len(c) - len(c.lstrip()) for c in cont if c.strip()]
             n = min(indents) if indents else 0
             return "\n".join(c[n:] for c in cont).strip()
-        if len(rest) >= 2 and rest[0] == rest[-1] and rest[0] in ("'", '"'):
-            return rest[1:-1]
+        rest = rest.strip()
+        if len(rest) >= 2 and rest[0] == rest[-1] == '"':
+            return rest[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        if len(rest) >= 2 and rest[0] == rest[-1] == "'":
+            return rest[1:-1].replace("''", "'")
         return rest
     return None
 
@@ -159,14 +168,17 @@ def generate_index(memdir):
 
 
 def _strip_index_line(fm_lines):
-    """Drop an existing ``index_line`` key + its block continuation (so backfill is idempotent)."""
-    out, skipping = [], False
+    """Drop an existing ``index_line`` key (top-level OR nested under ``metadata:``) + its block
+    continuation, so backfill is idempotent wherever the harness has moved the key."""
+    out, skipping, key_indent = [], False, 0
     for line in fm_lines:
-        if re.match(r"^index_line:\s*", line):
+        m = re.match(r"^(\s*)index_line:\s*", line)
+        if m:
             skipping = True
+            key_indent = len(m.group(1))
             continue
         if skipping:
-            if line.strip() == "" or line[:1] in (" ", "\t"):
+            if line.strip() == "" or (len(line) - len(line.lstrip())) > key_indent:
                 continue
             skipping = False
         out.append(line)
