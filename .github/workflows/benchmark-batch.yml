@@ -76,7 +76,11 @@ jobs:
       - name: Install launch + benchmark deps
         # requirements-dev.txt mirrors train-batch.yml — src/batch/benchmark.py's
         # import chain pulls torch; launch.py needs boto3 (in requirements.txt).
-        run: uv pip install --system -r requirements-dev.txt
+        # --index-strategy unsafe-best-match: requirements-dev.txt adds the
+        # pytorch CPU --extra-index-url, and uv's default first-index strategy
+        # otherwise resolves numpy there (where the pinned 2.4.6 is absent) and
+        # fails; consider all indexes so numpy comes from PyPI.
+        run: uv pip install --system --index-strategy unsafe-best-match -r requirements-dev.txt
 
       - name: Resolve image SHA + experiment prefix
         id: ctx
