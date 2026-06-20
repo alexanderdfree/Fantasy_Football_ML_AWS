@@ -27,6 +27,7 @@ stop before `gh pr create` on WARN.
 
 - Claude wrapper: `.claude/skills/pre-pr-judge/SKILL.md`.
 - Codex wrapper: `.codex/prompts/pre-pr-judge.md`.
+- Gemini/Antigravity wrapper: `.agents/skills/pre-pr-judge/SKILL.md`.
 
 The wrappers stay discoverable at those paths. This file is the behavioral source
 of truth.

@@ -12,7 +12,7 @@ The wrapper must define these values before executing the workflow:
 - `WORKFLOW_ENTRYPOINT`: the user-facing invocation, for example `post-session-critique` or `/prompts:post-session-critique`.
 - `WORKFLOW_WRAPPER`: the wrapper file that loaded this instruction file.
 - `WORKFLOW_SHARED_INSTRUCTIONS`: `agent-workflows/post-session-critique/instructions.md`.
-- `WORKFLOW_AGENT_DOC`: provider-specific repo doc to consider for provider-only rules, for example `CLAUDE.md` or `CODEX.md`.
+- `WORKFLOW_AGENT_DOC`: provider-specific repo doc to consider for provider-only rules, for example `CLAUDE.md`, `CODEX.md`, or `GEMINI.md`.
 - `WORKFLOW_MEMORY_DESTINATION`: provider memory location and write policy.
 - `WORKFLOW_WRITE_MEMORY`: whether this invocation may write provider memory automatically.
 
@@ -24,6 +24,7 @@ cross-agent lessons belong in `AGENTS.md`.
 
 - Claude wrapper: `.claude/skills/post-session-critique/SKILL.md`.
 - Codex wrapper: `.codex/prompts/post-session-critique.md`.
+- Gemini/Antigravity wrapper: `.agents/skills/post-session-critique/SKILL.md`.
 
 The wrappers stay discoverable at those paths. This file is the behavioral source
 of truth.
@@ -79,6 +80,7 @@ memory.
 
 - Claude wrapper: memory-worthy notes may be written under the provider's Claude project memory and indexed there when the skill has already filtered for a worthwhile lesson.
 - Codex wrapper: write memory only when `WORKFLOW_WRITE_MEMORY=1`. Otherwise propose the memory text without writing it. Codex memory notes go under `$CODEX_HOME/memories/extensions/ad_hoc/notes/`, falling back to `~/.codex/memories/extensions/ad_hoc/notes/` when `CODEX_HOME` is unset, and must follow the active Codex memory rules.
+- Gemini/Antigravity wrapper: memory is plain Markdown under `~/.gemini/` (project memory under `~/.gemini/tmp/<project>/memory/`); it is not authoritative. Propose the note and reserve durable cross-agent lessons for `AGENTS.md`.
 
 ## What to skip
 

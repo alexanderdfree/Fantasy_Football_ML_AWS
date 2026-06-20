@@ -1,8 +1,10 @@
 @AGENTS.md
 
-# GEMINI.md - Gemini CLI specifics
+# GEMINI.md — Gemini CLI / Antigravity specifics
 
-Everything above (imported from `AGENTS.md`) is the shared, provider-neutral project brain — read it first. **This file adds only the Gemini-CLI-specific machinery**: skills, auto-memory, and operational differences from Claude Code and Codex. Keep the shared disciplines in sync across `CLAUDE.md`, `CODEX.md`, and this file by updating `AGENTS.md`.
+Everything above (imported from `AGENTS.md`) is the shared, provider-neutral project brain — read it first. **This file adds only the Gemini-specific machinery**: skills, auto-memory, and operational differences from Claude Code and Codex. Keep the shared disciplines in sync across `CLAUDE.md`, `CODEX.md`, and this file by updating `AGENTS.md`.
+
+**Local runtime: Antigravity CLI (`agy`).** Locally this project's Gemini-family agent is run via Antigravity (`agy`), which is built on the Gemini-CLI lineage and reads the same config: root `AGENTS.md`, project skills in `.agents/skills/`, audit routines in `.agents/routines/`, and lifecycle hooks in `.gemini/settings.json` (under a `hooks` object — `BeforeTool`/`AfterTool`/`SessionStart`/`SessionEnd` events, regex `matcher` on `tool_name`). The CI surface (`run-gemini-cli` GitHub App, below) is the second runtime; both consume the same `.agents/` + `AGENTS.md` brain, so everything here applies to both unless noted.
 
 ## Agent Skills (`.agents/skills/`)
 Gemini has access to specialized project skills located in `.agents/skills/`. To invoke them, use the `activate_skill` tool (e.g., `activate_skill(name="solve-issues")`).
