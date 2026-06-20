@@ -88,5 +88,8 @@
         ]
       }
     ]
-  }
+  },
+  "showThinkingSummaries": true,
+  "precomputeCompactionEnabled": true,
+  "autoDreamEnabled": true
 }
