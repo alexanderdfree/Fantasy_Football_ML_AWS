@@ -1,0 +1,283 @@
+{
+  "position": "K",
+  "spec": "src.tuning.ab_feature_screen_k",
+  "run_id": "ab_feature_screen_k-20260619T234433Z-ff086c1",
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "noise_floor": 0.02,
+  "effects": {
+    "Ridge": {
+      "mae": {
+        "fg_volume": {
+          "mean_effect": 0.0031458360012450726,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": 0.010287336385138346,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": 0.006298420112823777,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": -0.003745264516812341,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.011838322072014407,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": 0.018367866028877522,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "fg_volume": {
+          "mean_effect": -0.006067120574492435,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": 0.014057662135908977,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": 0.016361414854879186,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": -0.01298788511027471,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.01637071171449378,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": 0.03251235105715011,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        }
+      }
+    },
+    "LightGBM": {
+      "mae": {
+        "fg_volume": {
+          "mean_effect": -0.00907814385321822,
+          "std_effect": 0.0067380775857784755,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": 0.02420737614757466,
+          "std_effect": 0.0037618505700668615,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": 0.01119769879210756,
+          "std_effect": 0.0017559897605539205,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": -0.009921036929498564,
+          "std_effect": 0.0017786012025070113,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.018514893435593354,
+          "std_effect": 0.002828262657491408,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": 0.02506965678874451,
+          "std_effect": 0.0012512569589648095,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "fg_volume": {
+          "mean_effect": -0.013619651461915497,
+          "std_effect": 0.0036325500825532568,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": 0.03353522376921614,
+          "std_effect": 0.0023490977909518106,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": 0.01887160723206301,
+          "std_effect": 0.0045997220897870715,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": -0.017983013464855684,
+          "std_effect": 0.006495868600310379,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.01788207843380274,
+          "std_effect": 0.001888422126288217,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": 0.04475454647829302,
+          "std_effect": 0.0026942668310891904,
+          "n_seeds": 3
+        }
+      }
+    },
+    "NN": {
+      "mae": {
+        "fg_volume": {
+          "mean_effect": -0.23130147418054806,
+          "std_effect": 0.36437409194038844,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": -0.2591829495983333,
+          "std_effect": 0.46051194639574955,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": 0.2162394677382015,
+          "std_effect": 0.36442553245351794,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": -0.20397642371067834,
+          "std_effect": 0.37727554264862173,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": -0.18372134869838921,
+          "std_effect": 0.2886772496451037,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.15825143765190072,
+          "std_effect": 0.31181330932877793,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "fg_volume": {
+          "mean_effect": -0.2657321400858734,
+          "std_effect": 0.4133979028571442,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": -0.3088273138166082,
+          "std_effect": 0.4981387471839704,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": 0.27295390210346177,
+          "std_effect": 0.39489627953386075,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": -0.2384758575835176,
+          "std_effect": 0.42309331281062057,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": -0.22059937031376808,
+          "std_effect": 0.30595768656179145,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.149071026576574,
+          "std_effect": 0.3435607038451412,
+          "n_seeds": 3
+        }
+      }
+    },
+    "Attention NN": {
+      "mae": {
+        "fg_volume": {
+          "mean_effect": 0.005401988287952501,
+          "std_effect": 0.009153005301852642,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": -0.005401988287952501,
+          "std_effect": 0.009153005301852642,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": -0.005401988287952501,
+          "std_effect": 0.009153005301852642,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": 0.005401988287952501,
+          "std_effect": 0.009153005301852642,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": -0.05614992333349841,
+          "std_effect": 0.007797387078717582,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": 0.03814329570698997,
+          "std_effect": 0.02361128854638489,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "fg_volume": {
+          "mean_effect": 0.0004998251634980022,
+          "std_effect": 0.011556044257617694,
+          "n_seeds": 3
+        },
+        "fg_accuracy": {
+          "mean_effect": -0.0004998251634980022,
+          "std_effect": 0.011556044257617694,
+          "n_seeds": 3
+        },
+        "fg_distance": {
+          "mean_effect": -0.0004998251634980022,
+          "std_effect": 0.011556044257617694,
+          "n_seeds": 3
+        },
+        "k_trend": {
+          "mean_effect": 0.0004998251634980022,
+          "std_effect": 0.011556044257617694,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": -0.0530813899820289,
+          "std_effect": 0.012913369953154386,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": 0.05141530610370252,
+          "std_effect": 0.027087753798513955,
+          "n_seeds": 3
+        }
+      }
+    }
+  },
+  "suggested_cut": [
+    "fg_volume",
+    "k_trend",
+    "game_context"
+  ],
+  "static_audit_flags": {}
+}

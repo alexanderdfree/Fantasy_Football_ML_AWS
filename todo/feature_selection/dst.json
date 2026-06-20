@@ -1,0 +1,406 @@
+{
+  "position": "DST",
+  "spec": "src.tuning.ab_feature_screen_dst",
+  "run_id": "ab_feature_screen_dst-20260620T013402Z-2e7455c",
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "noise_floor": 0.02,
+  "effects": {
+    "Ridge": {
+      "mae": {
+        "dst_production": {
+          "mean_effect": 0.025858614199302465,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.04479007493047149,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.06972779596553114,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": -0.0011350135592849142,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.030757449479663634,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": 0.007251233388395839,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.22873468492545346,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.08384911730593281,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.008613841060330252,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "dst_production": {
+          "mean_effect": 0.02743370850270921,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.03510339411812424,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.08808705300659803,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": -0.012772334569655541,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.03075594208077881,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": 0.018607393612619205,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.29628337191063014,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.09826202025715158,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.036155997983484234,
+          "std_effect": 0.0,
+          "n_seeds": 3
+        }
+      }
+    },
+    "LightGBM": {
+      "mae": {
+        "dst_production": {
+          "mean_effect": 0.04185488758014699,
+          "std_effect": 0.007393929716202636,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.033554531606664106,
+          "std_effect": 0.0008019447136070183,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.07888493431809025,
+          "std_effect": 0.012982418856996608,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": -0.021021026977707358,
+          "std_effect": 0.006402593001369007,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.03436408872895402,
+          "std_effect": 0.007787907793482253,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": -0.004178095795931351,
+          "std_effect": 0.0036824591788097187,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.19440742619458007,
+          "std_effect": 0.007183760967214026,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.05589681489451337,
+          "std_effect": 0.01299931589246735,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.003778837828667392,
+          "std_effect": 0.011860235494850336,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "dst_production": {
+          "mean_effect": 0.03560868414445947,
+          "std_effect": 0.007624839231545127,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.0395415019650717,
+          "std_effect": 0.003343368039053809,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.08586973545981695,
+          "std_effect": 0.014331516118888346,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": -0.019012230614274667,
+          "std_effect": 0.004235985564553057,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.03208484755923783,
+          "std_effect": 0.009240151608961408,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": 0.007235644386378581,
+          "std_effect": 0.00516238890137174,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.2695379148379529,
+          "std_effect": 0.010543809696786548,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.07198122088133758,
+          "std_effect": 0.01682307162271804,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.026492969353422602,
+          "std_effect": 0.013364398827275848,
+          "n_seeds": 3
+        }
+      }
+    },
+    "NN": {
+      "mae": {
+        "dst_production": {
+          "mean_effect": 0.005792502503769133,
+          "std_effect": 0.049963808975554004,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.008455941431662653,
+          "std_effect": 0.053569371496895175,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": 0.0029057300120009324,
+          "std_effect": 0.08295810791796973,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": 0.01999238630135854,
+          "std_effect": 0.03971441342357154,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.020841268990554163,
+          "std_effect": 0.02942559790841659,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": -0.03137748410888719,
+          "std_effect": 0.01058776845554791,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.1759911456869704,
+          "std_effect": 0.029570831250980468,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.09625690588666735,
+          "std_effect": 0.058801727127215604,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": 0.019167096104497478,
+          "std_effect": 0.016455113019491464,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "dst_production": {
+          "mean_effect": 0.010280010814873878,
+          "std_effect": 0.042664583817252584,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.0140301811269928,
+          "std_effect": 0.04332986161145735,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.029433996147738267,
+          "std_effect": 0.05077248882430849,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": -0.00666804490490384,
+          "std_effect": 0.017673581430517088,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.02403200660217575,
+          "std_effect": 0.02969492929510239,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": 0.0031521098862337857,
+          "std_effect": 0.002631479031050882,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.27127237292966794,
+          "std_effect": 0.02139022174629442,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.10145106033348601,
+          "std_effect": 0.04212172630843908,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.0014897538411068705,
+          "std_effect": 0.01656139555189167,
+          "n_seeds": 3
+        }
+      }
+    },
+    "Attention NN": {
+      "mae": {
+        "dst_production": {
+          "mean_effect": 0.006634442712746195,
+          "std_effect": 0.01315475866763563,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.006634442712746195,
+          "std_effect": 0.01315475866763563,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.08007525947261485,
+          "std_effect": 0.009395487821881354,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": -0.0002611914101769604,
+          "std_effect": 0.026089318930889494,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.012154018878936709,
+          "std_effect": 0.023633683412129035,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": 0.0002611914101769604,
+          "std_effect": 0.026089318930889494,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.2819568049040881,
+          "std_effect": 0.03823655812066276,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.05726527763542766,
+          "std_effect": 0.05164475542958902,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.0645410083234313,
+          "std_effect": 0.0023126330509172927,
+          "n_seeds": 3
+        }
+      },
+      "rmse": {
+        "dst_production": {
+          "mean_effect": 0.0085053210053155,
+          "std_effect": 0.009859945772490105,
+          "n_seeds": 3
+        },
+        "dst_points": {
+          "mean_effect": -0.0085053210053155,
+          "std_effect": 0.009859945772490105,
+          "n_seeds": 3
+        },
+        "pts_yds_allowed": {
+          "mean_effect": -0.09794375720578685,
+          "std_effect": 0.006139826733036072,
+          "n_seeds": 3
+        },
+        "dst_trend": {
+          "mean_effect": 0.009591576945379229,
+          "std_effect": 0.01995148432761667,
+          "n_seeds": 3
+        },
+        "opp_offense": {
+          "mean_effect": 0.010812545597582712,
+          "std_effect": 0.01795316370510324,
+          "n_seeds": 3
+        },
+        "opp_qb": {
+          "mean_effect": -0.009591576945379229,
+          "std_effect": 0.01995148432761667,
+          "n_seeds": 3
+        },
+        "game_context": {
+          "mean_effect": 0.3838081268276549,
+          "std_effect": 0.03140977812527184,
+          "n_seeds": 3
+        },
+        "weather": {
+          "mean_effect": -0.09144180476520554,
+          "std_effect": 0.03923400316950477,
+          "n_seeds": 3
+        },
+        "prior_season": {
+          "mean_effect": -0.09647880765087595,
+          "std_effect": 0.015642211094525238,
+          "n_seeds": 3
+        }
+      }
+    }
+  },
+  "suggested_cut": [
+    "dst_points",
+    "pts_yds_allowed",
+    "dst_trend",
+    "opp_qb",
+    "weather",
+    "prior_season"
+  ],
+  "static_audit_flags": {}
+}
