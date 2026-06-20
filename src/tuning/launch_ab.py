@@ -276,29 +276,45 @@ def load_run_manifest(s3, *, bucket: str, s3_prefix: str, run_id: str) -> dict |
     return json.loads(obj["Body"].read())
 
 
-def collect_results(spec, *, bucket: str, s3_prefix: str, run_id: str, s3_client) -> list[dict]:
+def collect_results(
+    spec, *, bucket: str, s3_prefix: str, run_id: str, s3_client, max_workers: int = 16
+) -> list[dict]:
     """Download every expected cell JSON; a missing one becomes a not-ok row so
-    ``aggregate`` surfaces it instead of silently shrinking the grid."""
-    results: list[dict] = []
-    for cell in build_cells(spec):
+    ``aggregate`` surfaces it instead of silently shrinking the grid.
+
+    One GET per cell is pure network latency, so the grid is fetched through a
+    thread pool (boto3 clients are thread-safe for API calls). A multi-family Stage-2
+    report is ~2000 cells: serial collection was ~10 min of round-trips; the pool cuts
+    it to seconds. ``pool.map`` preserves cell order, and ``aggregate`` /
+    ``position_effects`` key by the cell fields regardless. Effective concurrency is
+    capped by the client's ``max_pool_connections`` (default 10) — a big collect should
+    pass a client configured with a larger pool (see ``feature_selection_stage2``)."""
+
+    def _fetch(cell) -> dict:
         key = cell_result_key(s3_prefix, run_id, cell.key)
         try:
             obj = s3_client.get_object(Bucket=bucket, Key=key)
-            results.append(json.loads(obj["Body"].read()))
+            return json.loads(obj["Body"].read())
         except Exception as e:  # noqa: BLE001 — record the gap, keep collecting
-            results.append(
-                {
-                    "position": cell.position,
-                    "variant": cell.variant,
-                    "seed": cell.seed,
-                    "label": cell.variant,
-                    "ok": False,
-                    "metrics": {},
-                    "ridge_mae": None,
-                    "error": f"no result at s3://{bucket}/{key} ({type(e).__name__})",
-                }
-            )
-    return results
+            return {
+                "position": cell.position,
+                "variant": cell.variant,
+                "seed": cell.seed,
+                "label": cell.variant,
+                "ok": False,
+                "metrics": {},
+                "ridge_mae": None,
+                "error": f"no result at s3://{bucket}/{key} ({type(e).__name__})",
+            }
+
+    cells = build_cells(spec)
+    if not cells:
+        return []
+    workers = max(1, min(max_workers, len(cells)))
+    if workers == 1:
+        return [_fetch(c) for c in cells]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_fetch, cells))
 
 
 def _print_plan(spec, *, args, run_id: str, image_sha: str, cells: int) -> None:

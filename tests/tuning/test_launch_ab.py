@@ -194,6 +194,47 @@ def test_collect_results_synthesizes_missing_cells():
     assert "ab_runs/r/cells/RB-nn_dropout=0-42.json" in missing["error"]
 
 
+def test_collect_results_parallel_preserves_order():
+    """The parallel collector returns rows in build_cells order and is identical to
+    the serial (max_workers=1) path — aggregate keys by cell fields, but order-stable
+    output keeps the contract simple."""
+    from src.tuning.ab_harness import build_cells
+
+    spec = resolve_spec(SPEC, positions=["RB", "WR"], seeds=[42, 7])
+    cells = build_cells(spec)
+    assert len(cells) > 4  # a real grid, so the pool actually parallelizes
+
+    def _get(Bucket, Key):
+        for c in cells:
+            if Key.endswith(f"/{c.key}.json"):
+                body = MagicMock()
+                body.read.return_value = json.dumps(
+                    {
+                        "position": c.position,
+                        "variant": c.variant,
+                        "seed": c.seed,
+                        "ok": True,
+                        "metrics": {},
+                        "ridge_mae": None,
+                    }
+                ).encode()
+                return {"Body": body}
+        raise RuntimeError("NoSuchKey")
+
+    s3 = MagicMock()
+    s3.get_object.side_effect = _get
+
+    parallel = launch_ab.collect_results(
+        spec, bucket="b", s3_prefix="ab_runs", run_id="r", s3_client=s3, max_workers=8
+    )
+    serial = launch_ab.collect_results(
+        spec, bucket="b", s3_prefix="ab_runs", run_id="r", s3_client=s3, max_workers=1
+    )
+    expected = [(c.position, c.variant, c.seed) for c in cells]
+    assert [(r["position"], r["variant"], r["seed"]) for r in parallel] == expected
+    assert parallel == serial
+
+
 def test_main_max_cells_guard(monkeypatch):
     """The cost guard refuses an oversized grid before any AWS call."""
     monkeypatch.setattr(
