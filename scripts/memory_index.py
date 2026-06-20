@@ -73,49 +73,85 @@ def read_key(fm_lines, key):
     return None
 
 
-def index_line_for(path):
-    """Return (line_without_leading_dash, fell_back, warning_or_None) for one topic file."""
+def _line_parts(path):
+    """Return (prefix, hook, fell_back, warning); the rendered index line is ``prefix + hook``.
+
+    For an `index_line` file the whole curated line is the hook (prefix ``"- "``). For a fallback
+    the prefix is the ``"- [title](slug) — "`` scaffold and the hook is the *untruncated*
+    description (or first body line) — generate_index trims it to a cap-aware budget.
+    """
     with open(path, encoding="utf-8") as fh:
         fm, body = split_frontmatter(fh.read())
     val = read_key(fm, "index_line")
     if val:
-        return " ".join(val.split()), False, None
+        return "- ", " ".join(val.split()), False, None
     slug = os.path.basename(path)
+    title = read_key(fm, "name") or slug[:-3]
     desc = read_key(fm, "description")
     if desc:
-        d = " ".join(desc.split())
-        title = read_key(fm, "name") or slug[:-3]
-        budget = 180
-        if len(d) > budget:
-            d = d[: budget - 1].rstrip() + "…"
-        return f"[{title}]({slug}) — {d}", True, f"{slug}: no index_line, used description"
+        return (
+            f"- [{title}]({slug}) — ",
+            " ".join(desc.split()),
+            True,
+            f"{slug}: no index_line, used description",
+        )
     first = next((ln.strip() for ln in body if ln.strip()), slug[:-3])
-    first = " ".join(first.lstrip("# ").split())[:160]
-    return f"[{slug[:-3]}]({slug}) — {first}", True, f"{slug}: no index_line/description, used body"
+    return (
+        f"- [{title}]({slug}) — ",
+        " ".join(first.lstrip("# ").split()),
+        True,
+        f"{slug}: no index_line/description, used body",
+    )
+
+
+def _fit(prefix, hook, budget):
+    """Render ``prefix + hook`` truncated so its UTF-8 size is <= ``budget`` bytes (… if cut)."""
+    if len((prefix + hook).encode("utf-8")) <= budget:
+        return prefix + hook
+    avail = budget - len(prefix.encode("utf-8")) - len("…".encode())
+    if avail <= 0:
+        return f"{prefix}…"
+    cut = hook.encode("utf-8")[:avail].decode("utf-8", "ignore").rstrip()
+    return f"{prefix}{cut}…"
 
 
 def generate_index(memdir):
     """Rebuild the index text from every topic file. Returns (text, warnings).
 
-    Deterministic (slug-sorted) so it is idempotent. Warns (does not silently overflow) if the
-    result would exceed the auto-load cap.
+    Deterministic (slug-sorted) and idempotent. Curated `index_line` lines are emitted in full;
+    fallback (description/body) lines are trimmed to a DYNAMIC per-line budget so the total can
+    never exceed the auto-load cap. A bulk-fallback state (e.g. mid-migration, when a concurrent
+    pull has stripped `index_line` from many files) thus degrades to a short-but-complete index
+    instead of an over-cap one the loader would silently truncate. Still warns near/over the cap
+    (the over case means too many *curated* lines — those are never trimmed; prune instead).
     """
     files = sorted(
         f
         for f in os.listdir(memdir)
         if f.endswith(".md") and f != INDEX and os.path.isfile(os.path.join(memdir, f))
     )
-    lines, warnings = [], []
+    parts, warnings = [], []
     for f in files:
-        text, _fell_back, warn = index_line_for(os.path.join(memdir, f))
-        lines.append(f"- {text}")
+        prefix, hook, fell_back, warn = _line_parts(os.path.join(memdir, f))
+        parts.append((prefix, hook, fell_back))
         if warn:
             warnings.append(warn)
+
+    def nbytes(prefix, hook):
+        return len((prefix + hook + "\n").encode("utf-8"))
+
+    target = int(CAP_BYTES * 0.93)  # leave margin below the hard cap (newlines + safety)
+    fixed = sum(nbytes(p, h) for p, h, fb in parts if not fb)
+    fallback = [(p, h) for p, h, fb in parts if fb]
+    budget = ((target - fixed) // len(fallback)) if fallback else 0  # bytes per fallback line
+
+    lines = [(_fit(p, h, max(1, budget)) if fb else p + h) for p, h, fb in parts]
     out = "\n".join(lines) + ("\n" if lines else "")
+
     size = len(out.encode("utf-8"))
     if size >= CAP_BYTES:
         warnings.append(
-            f"index {size} B >= cap {CAP_BYTES} B -- it WILL be truncated on load; prune/consolidate"
+            f"index {size} B >= cap {CAP_BYTES} B -- too many curated entries; prune/consolidate"
         )
     elif size >= int(CAP_BYTES * 0.92):
         warnings.append(f"index {size} B is near the {CAP_BYTES} B cap ({CAP_BYTES - size} B left)")

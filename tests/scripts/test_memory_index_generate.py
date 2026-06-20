@@ -93,12 +93,25 @@ def test_fallback_to_description_emits_warning(tmp_path: Path) -> None:
     assert any("gamma.md" in w and "description" in w for w in warnings)
 
 
-def test_fallback_description_is_truncated(tmp_path: Path) -> None:
+def test_single_fallback_not_truncated_when_room(tmp_path: Path) -> None:
+    # One fallback file with plenty of cap headroom -> emitted in full (no needless truncation).
     _write(tmp_path, "big.md", description="x" * 500, name="Big")
     text, _ = memory_index.generate_index(str(tmp_path))
-    line = text.strip()
-    assert line.endswith("…")
-    assert len(line) < 220  # truncated, not 500 chars
+    assert "x" * 500 in text
+    assert "…" not in text
+
+
+def test_many_fallbacks_stay_under_cap(tmp_path: Path) -> None:
+    # A bulk-fallback state (e.g. mid-migration, when a concurrent pull stripped index_line from
+    # many files) must degrade to a COMPLETE, UNDER-cap index via dynamic per-line truncation —
+    # never an over-cap one the loader would silently truncate.
+    for i in range(200):
+        _write(tmp_path, f"m{i:03d}.md", description="y" * 400, name=f"M{i}")
+    text, warnings = memory_index.generate_index(str(tmp_path))
+    assert len(text.splitlines()) == 200  # every file still indexed
+    assert len(text.encode("utf-8")) < memory_index.CAP_BYTES  # fits the cap by construction
+    assert "…" in text  # lines were trimmed to fit
+    assert not any(">= cap" in w for w in warnings)  # not the over-cap (prune) warning
 
 
 def test_no_frontmatter_falls_back_to_body(tmp_path: Path) -> None:
