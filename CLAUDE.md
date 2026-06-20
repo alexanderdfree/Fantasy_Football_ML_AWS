@@ -2,7 +2,7 @@
 
 # CLAUDE.md — Claude Code specifics
 
-Everything above (imported from [AGENTS.md](AGENTS.md)) is the shared, provider-neutral project brain — read it first. **This file adds only the Claude-Code-specific machinery**: hooks, skills, the scheduled audit routine, sub-agent/Workflow contracts, and auto-memory. The Codex-side parity stub for the same disciplines is in [AGENTS.md](AGENTS.md) § "Codex specifics" — keep the two in sync when you change a shared discipline.
+Everything above (imported from [AGENTS.md](AGENTS.md)) is the shared, provider-neutral project brain — read it first. **This file adds only the Claude-Code-specific machinery**: hooks, skills, the scheduled audit routine, sub-agent/Workflow contracts, and auto-memory. The Codex- and Gemini-side parity for the same disciplines is in [AGENTS.md](AGENTS.md) §§ "Codex specifics" / "Gemini specifics" — keep CLAUDE.md, CODEX.md, and GEMINI.md in sync when you change a shared discipline.
 
 ## Hooks (`.claude/settings.json` → `.claude/hooks/`)
 - **`session-start.sh`** (SessionStart) — best-effort pull of Claude memory from S3 (always); then auto-links the parent checkout's gitignored `data/{raw,splits}` into the worktree (via `claude_link_worktree_data` in [.claude/hooks/lib.sh](.claude/hooks/lib.sh); idempotent, fail-open, no-op in the main checkout / remote single-clone) so the pre-PR full `pytest -m unit` (which reads `data/{raw,splits}/*.parquet`) works without the manual symlink-from-parent step; then, **only in remote/web sessions** (`CLAUDE_CODE_REMOTE=true`), bootstrap the venv, install deps (requirements + torch CPU + dev), and write `VIRTUAL_ENV`/`PATH`/`PYTHONPATH` to `$CLAUDE_ENV_FILE`. Local sessions stop after the memory pull + data-link (use SETUP.md for the venv).
