@@ -492,14 +492,18 @@ def collect_effects(
     """Download a run's per-cell JSONs from S3 and compute per-model MAE+RMSE effects
     (reuses ``launch_ab.collect_results`` + ``feature_selection.position_effects``)."""
     import boto3
+    from botocore.config import Config
 
     from src.batch.launch import AWS_REGION, S3_BUCKET
     from src.tuning import feature_selection as fs
     from src.tuning.launch_ab import collect_results
 
-    s3 = boto3.client("s3", region_name=AWS_REGION)
+    # A Stage-2 family is up to ~400 cells; give the parallel collector a pool wide
+    # enough that boto3's default max_pool_connections=10 isn't the bottleneck, and
+    # match the worker count to it so the GETs are 32-way concurrent.
+    s3 = boto3.client("s3", region_name=AWS_REGION, config=Config(max_pool_connections=32))
     results = collect_results(
-        spec, bucket=S3_BUCKET, s3_prefix=s3_prefix, run_id=run_id, s3_client=s3
+        spec, bucket=S3_BUCKET, s3_prefix=s3_prefix, run_id=run_id, s3_client=s3, max_workers=32
     )
     return fs.position_effects(results, position.upper(), group_names, row_drops)
 
