@@ -1824,9 +1824,9 @@ def _compute_metrics_locked():
                 per_format[name] = {"overall": None, "by_position": []}
                 continue
             pred_series = results[pred_col]
-            # Skip rows where this model has no prediction (K/DST for lgbm, or
-            # any position whose model failed to load). attn_nn IS trained for
-            # all six positions, so K/DST attn_nn rows are real, not skipped.
+            # Skip rows where this model has no prediction (a position whose
+            # model failed to load). LightGBM and attn_nn are both trained for
+            # all six positions, so K/DST rows are real, not skipped.
             available_mask = pred_series.notna().values
             if not available_mask.any():
                 per_format[name] = {"overall": None, "by_position": []}
