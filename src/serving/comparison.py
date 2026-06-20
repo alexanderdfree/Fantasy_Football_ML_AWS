@@ -94,14 +94,14 @@ def _model_residuals(sub, actual, prefix, scoring):
     return actual[mask], pred.to_numpy()[mask]
 
 
-def _model_blocks_from_results(results, scoring, pos, id_filter=None):
-    """Per-model ``{mae,rmse,r2,n}`` for one position from the cached predictions.
+def _per_model_from_results(results, scoring, pos, id_filter, stat_fn):
+    """Run ``stat_fn(actual_masked, pred_masked)`` per model prefix for one position.
 
-    Returns a dict keyed by every model prefix (``ridge``/``nn``/``attn_nn``/``lgbm``),
-    each value a metrics block or ``None`` (model not trained for this position / no
-    predictions / empty slice). ``id_filter`` (a set of ``player_id`` strings) restricts
-    to the top-30 subset; ``None`` = all rows. The frontend renders one column per model
-    and highlights the best cell, so no architecture is preselected here.
+    Shared scaffold for the block/reliability helpers below: slice the position
+    rows (``id_filter`` restricts to a subset, ``None`` = all), then for each model
+    prefix mask to rows where it has a prediction and call ``stat_fn``. Returns a
+    dict keyed by every model prefix, each value ``stat_fn``'s output or ``None``
+    (model untrained for this position / no predictions / empty slice).
     """
     out = {prefix: None for prefix in _MODEL_PRED_PREFIXES}
     sliced = _position_actuals(results, scoring, pos, id_filter)
@@ -112,7 +112,21 @@ def _model_blocks_from_results(results, scoring, pos, id_filter=None):
         arr = _model_residuals(sub, actual, prefix, scoring)
         if arr is None:
             continue
-        a, p = arr
+        out[prefix] = stat_fn(*arr)
+    return out
+
+
+def _model_blocks_from_results(results, scoring, pos, id_filter=None):
+    """Per-model ``{mae,rmse,r2,n}`` for one position from the cached predictions.
+
+    Returns a dict keyed by every model prefix (``ridge``/``nn``/``attn_nn``/``lgbm``),
+    each value a metrics block or ``None`` (model not trained for this position / no
+    predictions / empty slice). ``id_filter`` (a set of ``player_id`` strings) restricts
+    to the top-30 subset; ``None`` = all rows. The frontend renders one column per model
+    and highlights the best cell, so no architecture is preselected here.
+    """
+
+    def _block(a, p):
         m = compute_metrics(a, p)
         r2 = m["r2"]
         r2 = (
@@ -120,13 +134,14 @@ def _model_blocks_from_results(results, scoring, pos, id_filter=None):
             if (r2 is None or (isinstance(r2, float) and np.isnan(r2)))
             else round(float(r2), 4)
         )
-        out[prefix] = {
+        return {
             "mae": round(float(m["mae"]), 4),
             "rmse": round(float(m["rmse"]), 4),
             "r2": r2,
             "n": int(len(a)),
         }
-    return out
+
+    return _per_model_from_results(results, scoring, pos, id_filter, _block)
 
 
 def _model_reliabilities_from_results(results, scoring, pos):
@@ -141,22 +156,15 @@ def _model_reliabilities_from_results(results, scoring, pos):
     is leakage-free only on its test split, so this is 2025-only by design (the whole
     Comparison tab is the 2025 test season).
     """
-    out = {prefix: None for prefix in _MODEL_PRED_PREFIXES}
-    sliced = _position_actuals(results, scoring, pos)
-    if sliced is None:
-        return out
-    sub, actual = sliced
-    for prefix in _MODEL_PRED_PREFIXES:
-        arr = _model_residuals(sub, actual, prefix, scoring)
-        if arr is None:
-            continue
-        a, p = arr
+
+    def _rel(a, p):
         resid = p.astype(float) - a.astype(float)
         n = int(len(resid))
-        out[prefix] = {
+        return {
             "n": n,
             "mae": round(float(np.mean(np.abs(resid))), 4),
             "bias": round(float(np.mean(resid)), 4),
             "sigma": round(float(np.std(resid, ddof=1)) if n > 1 else 0.0, 4),
         }
-    return out
+
+    return _per_model_from_results(results, scoring, pos, None, _rel)
