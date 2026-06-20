@@ -183,6 +183,22 @@ def test_estimate_cost_positive_and_mode_dependent():
     assert fs2.estimate_cost(rb) > 0 and fs2.estimate_cost(k) > 0
 
 
+def test_split_env_prefixed_command_for_exec():
+    # the leading KEY=VAL env-prefix is split off (so --exec can run the command
+    # via subprocess argv); the --env flags stay in argv for launch_ab/the container.
+    cmd = fs2.subscreen_launch_command(_pick("RB", "trend", run_id="RID"))
+    env, argv = fs2.split_env_prefixed_command(cmd)
+    assert env == {"FF_SUBSCREEN_POSITION": "RB", "FF_SUBSCREEN_FAMILY": "trend"}
+    assert argv[:3] == ["python", "-m", "src.tuning.launch_ab"]
+    assert "--env" in argv and "FF_SUBSCREEN_FAMILY=trend" in argv
+
+    cenv, cargv = fs2.split_env_prefixed_command(
+        fs2.confirm_launch_command("K", ["a", "b"], run_id="r1")
+    )
+    assert cenv == {"FF_CONFIRM_POSITION": "K", "FF_CONFIRM_DROP_COLS": "a,b"}
+    assert cargv[0] == "python"
+
+
 # --------------------------------------------------------------------------- #
 # CONFIRM — production PCA-Ridge variant builder + command regimes
 # --------------------------------------------------------------------------- #

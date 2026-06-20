@@ -706,11 +706,18 @@ def _load_stage1(in_dir: str, position: str) -> dict:
 
 def _exec_commands(commands: list[str]) -> None:
     """``--exec``: actually submit the Batch jobs. Fires REAL Spot $ — opt-in only;
-    the default path prints the commands and touches no AWS."""
+    the default path prints the commands and touches no AWS.
+
+    The generated commands carry a leading ``KEY=VAL`` env-prefix (so launch_ab's own
+    resolve_spec sees the parametrized spec); split it back into ``env=`` and run the
+    rest as argv, with ``python`` resolved to this interpreter."""
     print("\n[fs] --exec: submitting REAL Spot Batch jobs (this costs money)...")
     for cmd in commands:
         print(f"[fs] $ {cmd}")
-        rc = subprocess.run(cmd.split(), check=False).returncode
+        overrides, argv = fs2.split_env_prefixed_command(cmd)
+        if argv and argv[0] == "python":
+            argv[0] = sys.executable
+        rc = subprocess.run(argv, env={**os.environ, **overrides}, check=False).returncode
         if rc != 0:
             raise SystemExit(f"[fs] command failed (rc={rc}): {cmd}")
 

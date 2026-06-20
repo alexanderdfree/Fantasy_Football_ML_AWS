@@ -278,6 +278,29 @@ def _cmd(parts: list[str]) -> str:
     return " ".join(p for p in parts if p)
 
 
+def split_env_prefixed_command(cmd: str) -> tuple[dict[str, str], list[str]]:
+    """Split a generated command's leading ``KEY=VAL`` env-prefix from its argv.
+
+    The printed commands start with a local env-prefix (``FF_SUBSCREEN_POSITION=RB
+    ... python -m ...``) that a shell interprets but ``subprocess.run(cmd.split())``
+    would not (it would try to exec ``FF_SUBSCREEN_POSITION=RB`` as the program). The
+    ``--exec`` path uses this to run them faithfully: leading ``KEY=VAL`` tokens (valid
+    identifier keys, not flags) become env overrides; the rest is the argv."""
+    tokens = cmd.split()
+    env: dict[str, str] = {}
+    i = 0
+    while (
+        i < len(tokens)
+        and not tokens[i].startswith("-")
+        and "=" in tokens[i]
+        and tokens[i].split("=", 1)[0].isidentifier()
+    ):
+        key, _, value = tokens[i].partition("=")
+        env[key] = value
+        i += 1
+    return env, tokens[i:]
+
+
 def subscreen_launch_command(pick: FamilyPick, *, image_sha: str | None = None) -> str:
     """The exact ``launch_ab`` command for one sub-screen (explicit seeds + stacked +
     its own run-id + a ``--max-cells`` cap matching the grid).
