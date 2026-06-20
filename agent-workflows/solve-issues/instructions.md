@@ -131,7 +131,7 @@ If the provider has an explicit plan mode, enter it first. Otherwise, produce th
 
 ### Phase 2 — Verify in parallel (file-disjoint workers, one per area)
 
-Group the parsed finding records **by their `area` label** (for a legacy multi-finding issue, by the body section / split-title area). Spawn **one `Explore` subagent per area with open findings** (typically 6–11 workers). Areas are file-disjoint by construction (each finding cites a `file:line` in its own position's tree or in `src/shared/`), so workers run truly parallel with no cross-talk.
+Group the parsed finding records **by their `area` label** (for a legacy multi-finding issue, by the body section / split-title area). Spawn **one `WORKFLOW_SUBAGENTS` verification worker per area with open findings** (typically 6–11 workers; serialize if the provider has no parallel workers). Areas are file-disjoint by construction (each finding cites a `file:line` in its own position's tree or in `src/shared/`), so workers run truly parallel with no cross-talk.
 
 Worker brief (template — fill the `{...}` slots, send all workers in one parallel batch):
 
@@ -208,7 +208,7 @@ Within each tier, partition findings into **file-disjoint bundles** (one worker 
 
 **PR count target: 2–3 PRs** (one per non-empty tier). If a tier must split, split and open PRs in regress-risk ascending order before using file area as the tiebreaker (for example, Tier C low/medium before Tier C high) — but **max 4 PRs total** to keep `tests.yml`'s 7-shard matrix CI load light. If a tier is empty after triage, skip it entirely.
 
-For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (CLAUDE.md "File-disjointness is for parallelism, not correctness"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (memory `feedback_tier_by_risk_pr_consolidation` — orchestrator-bridge pattern).
+For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (AGENTS.md "File-disjointness is for parallelism, not correctness"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (memory `feedback_tier_by_risk_pr_consolidation` — orchestrator-bridge pattern).
 
 ### Phase 5 — Write the plan + exit
 
@@ -228,9 +228,9 @@ Then exit the provider's planning/approval phase. If the provider has no explici
 
 Use this when Phase 1 selected Mode B: the findings are already claimed-remediated and the issue(s) are finite. The goal is **confirm, then close** — Phases 2–4's FIX bundling does not run unless verification turns up a gap.
 
-### Phase 2V — Verify in parallel (one `Explore` worker per area)
+### Phase 2V — Verify in parallel (one `WORKFLOW_SUBAGENTS` worker per area)
 
-Spawn **one `Explore` subagent per area / per split issue**, all in one parallel batch. Worker brief (fill the `{...}` slots):
+Spawn **one `WORKFLOW_SUBAGENTS` worker per area / per split issue**, all in one parallel batch (or sequentially if the provider has no parallel workers). Worker brief (fill the `{...}` slots):
 
 > You are VERIFYING already-claimed remediation of audit findings for area **{AREA}**, issue(s) **#{N}**. Working dir: `{worktree_path}` — confirm it is at `origin/main` HEAD; read files with **absolute paths** (memory `feedback_edit_tool_worktree_path`). Each issue body lists findings (id + `file:line` + what + why) and carries a remediation comment mapping each finding to a FIX (with PR #) or a LEAVE (category + reason); the fix PRs are already merged to `main`. CONFIRM the remediation is real and sound — do **not** re-fix, edit, commit, or push.
 >
