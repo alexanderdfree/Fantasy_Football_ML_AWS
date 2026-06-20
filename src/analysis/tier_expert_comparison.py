@@ -33,6 +33,7 @@ from src.analysis.analysis_expert_comparison import (
     _KEY_COLS,
     _build_experts,
 )
+from src.analysis.build_comparison_summary import _normalize_keys
 from src.analysis.cohort_analysis import (
     ACTUAL,
     TIER_BUCKET,
@@ -54,14 +55,6 @@ def _mae_bias(actual: np.ndarray, pred: np.ndarray) -> tuple[float, float, int]:
         return float("nan"), float("nan"), 0
     err = pred - actual
     return float(np.abs(err).mean()), float(err.mean()), int(len(actual))
-
-
-def _normalize_keys(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    out["player_id"] = out["player_id"].astype(str)
-    out["season"] = out["season"].astype(int)
-    out["week"] = out["week"].astype(int)
-    return out
 
 
 def compare_position(
