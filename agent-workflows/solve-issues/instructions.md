@@ -54,6 +54,17 @@ Codex wrapper (`.codex/prompts/solve-issues.md`):
 - `WORKFLOW_REVIEW_TOOL=scripts/codex-review-quiet.sh --base origin/main`.
 - `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus AGENTS.md for durable cross-agent lessons`.
 
+Gemini/Antigravity wrapper (`.agents/skills/solve-issues/SKILL.md`):
+
+- `WORKFLOW_PROVIDER=Gemini CLI`.
+- `WORKFLOW_ENTRYPOINT=activate_skill(name="solve-issues")`.
+- `WORKFLOW_PLAN_MODE=present the plan and stop for explicit user approval before any mutation`.
+- `WORKFLOW_SUBAGENTS=delegate implementation bundles to Gemini subagents if available; otherwise work them sequentially`.
+- `WORKFLOW_PRE_PR_GATE=the .gemini/ BeforeTool pre-PR hook when wired; otherwise run the checks manually — ruff check . && ruff format --check . && pytest -m unit`.
+- `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=activate_skill(name="pre-pr-judge")`.
+- `WORKFLOW_REVIEW_TOOL=the @gemini-cli /review PR workflow (.github/workflows/gemini-review.yml)`.
+- `WORKFLOW_MEMORY_DESTINATION=Gemini Markdown memory, plus AGENTS.md for durable cross-agent lessons`.
+
 The wrappers stay discoverable at their existing paths. This file is the
 behavioral source of truth.
 
@@ -76,7 +87,7 @@ dropped when editing this file:
 
 The scheduled audit routines file **one GitHub issue per finding**, each labeled with the producer label (`claude-audit` or `codex-audit`) + one severity label (`severity-docs`/`severity-low`/`severity-medium`/`severity-high`) + one model regress-risk label (`regress-risk-docs`/`regress-risk-low`/`regress-risk-medium`/`regress-risk-high`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues across both labels are the live backlog; a closed `[claude-audit] checkpoint …` or `[codex-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [AGENTS.md](../../AGENTS.md) "Stop rules").
 
-This shared workflow enters the provider's planning/approval phase, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (CLAUDE.md "Sub-agent contract — two shapes" + provider memory lessons where available). It produces a verdict + bundle plan for user approval — **no branches cut, no workers spawned for code changes, until the user approves**.
+This shared workflow enters the provider's planning/approval phase, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (AGENTS.md "Large (>10-item) parallel cleanups" + provider memory lessons where available). It produces a verdict + bundle plan for user approval — **no branches cut, no workers spawned for code changes, until the user approves**.
 
 ## Two modes
 
@@ -189,7 +200,7 @@ For each `LEAVE` verdict with `category: feature_drift`, cross-reference the cit
 
 ### Phase 4 — Bundle FIX set into tier-by-risk PRs
 
-Apply the project's tier definitions (CLAUDE.md "Sub-agent contract" + memory `feedback_tier_by_risk_pr_consolidation`):
+Apply the project's tier definitions (AGENTS.md "Large (>10-item) parallel cleanups" + memory `feedback_tier_by_risk_pr_consolidation`):
 
 - **Tier A** — tests, docstrings, dead-symbol cleanup, operator tools (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`), CLI scripts under `src/scripts/`. **No production behavior change.**
 - **Tier B** — behavior-equivalent fixes: refactors, dedup, in-place → return, mechanical wiring, new validators. **May touch training-adjacent files; no MAE delta.**
@@ -283,19 +294,19 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    git checkout -b audit-NNN/tier-X origin/main
    ```
    Use `audit-NNN/tier-X` only for an unsplit tier. If a tier is split by regress-risk, include the split key in the branch name, for example `audit-NNN/tier-C-low`, `audit-NNN/tier-C-medium`, or `audit-NNN/tier-C-high`, so each slice gets an isolated PR.
-2. **Spawn all bundle workers in parallel** using the provider worker mechanism when available (Claude `Agent` + `isolation: "worktree"`; Codex subagents when available). Each worker:
+2. **Spawn all bundle workers in parallel** using the provider worker mechanism described by the injected `WORKFLOW_SUBAGENTS` (each provider's wrapper supplies its own — e.g. Claude `Agent` workers in isolated worktrees, Codex subagents, or sequential tier-by-tier execution where no parallel worker exists). Each worker:
    - Symlinks data dirs in its worktree (memory `feedback_worktree_data_symlink`): `main_root="$(dirname "$(git rev-parse --git-common-dir)")"; ln -sf "$main_root/data/"{splits,raw} data/` (portable — derives the parent checkout from git, no hardcoded path)
    - Applies its bundle's fixes
    - For bundles whose max regress-risk is `high`: runs `python -m src.{pos}.run_pipeline` for the affected position(s) and diffs `benchmark_history/` (or `{pos}/outputs/`) against `origin/main` baseline
    - Runs `pytest -m unit -q` + `ruff check . && ruff format --check .` (**foreground** — memory `feedback_background_pytest_terminates_agents`)
-   - Commits to its worktree branch, **does NOT push, does NOT open a PR** (CLAUDE.md "Sub-agent contract — >10 items shape")
+   - Commits to its worktree branch, **does NOT push, does NOT open a PR** (AGENTS.md "Large (>10-item) parallel cleanups")
    - Reports back: commit SHA, branch name, files modified, findings skipped + why, any cross-bundle test-contract gaps flagged
 3. **Verify worker output**: `git worktree list | grep agent-` should show one worktree per spawned worker (memory `feedback_agent_isolation_with_background` — async returns can lag). For any worker that did NOT report a commit SHA, take over the worktree directly (memory `feedback_take_over_interrupted_agent`).
 4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (memory `feedback_verify_no_conflict_markers`).
 5. **Orchestrator-bridge commit (if any)** for cross-bundle test-contract gaps. Subject: `fix(audit-NNN, orchestrator, <tier>): <short summary>`.
 6. **Run the provider pre-PR gate** locally (`WORKFLOW_PRE_PR_GATE`; Codex uses `/prompts:pre-pr-gate`, not `.codex/hooks/pre-pr.sh` directly). If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — memory `feedback_surface_gate_friction`. Do not `--no-verify`.
 7. **Rebase** to ensure clean against `origin/main`: `git fetch origin main && git rebase origin/main` (memory `feedback_rebase_before_pre_pr_judge`).
-8. **Invoke the provider pre-pr judge entrypoint (`WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT`)** (mandatory — see [CLAUDE.md](../../CLAUDE.md) "Before `gh pr create`").
+8. **Invoke the provider pre-pr judge entrypoint (`WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT`)** (mandatory — see [AGENTS.md](../../AGENTS.md) "When making changes").
 9. **Open the tier PR** with body following the PR [#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325) / [#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326) structure:
    - **Summary** — tier name, max regress-risk, bundle count, finding count, cherry-pick method
    - **Closes** — `Closes #N` for every finding-issue fixed in this tier (so merge auto-closes them)
