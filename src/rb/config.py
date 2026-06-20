@@ -402,8 +402,9 @@ POSITION_CONFIG = PositionConfig(
     # RMSE −0.051±0.028 (better on 24/24 seeds) with MAE flat (−0.002): condq
     # trims the boom/bust tail by retrieving matchup/game-script-similar past
     # games — a signal that is strongly conditional for RB (workload/run-D/
-    # script) but not for QB/WR (which regress), so it is RB-specific. See
-    # ADR-0004 + todo/fixed-archive.md.
+    # script). Also enabled for WR+TE (TE tail gain; WR a forward bet pending
+    # CB-level matchup features — issue #1210); QB/K/DST stay OFF (QB overfit,
+    # K/DST noise). See ADR-0004 + todo/fixed-archive.md.
     attn_condition_queries_on_static=True,
     # === LightGBM (Optuna retune, 50 trials, CV MAE 4.5244) ===
     # Switched "huber" → "regression" (L2/MSE) to chase the elite tail; was

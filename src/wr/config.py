@@ -313,6 +313,16 @@ POSITION_CONFIG = PositionConfig(
     attn_gated=True,
     attn_gate_hidden=16,
     attn_gate_weight=1.0,
+    # condq (#121) ENABLED as a forward-looking bet, not a measured win: the
+    # 2026-06-20 RMSE screen REGRESSED WR (MAE +0.027, RMSE +0.030, ~23/24) —
+    # but that is a DATA GAP, not a broken mechanism. WR boom/bust is driven by
+    # CB-level/coverage matchup (shadow corners, slot vs perimeter), absent from
+    # our features (team-level pass-D only), so cond_proj has no real matchup
+    # axis to retrieve along and fits noise. Wired in now so the architecture is
+    # ready when those features land (issue #1210); the post-merge eager
+    # benchmark_history is the real test — revert if WR regresses materially on
+    # the production path. See ADR-0004.
+    attn_condition_queries_on_static=True,
     # opp-defense attention branch disabled 2026-06-15: a 24-seed stacked Batch
     # A/B (src.tuning.ab_opp_def) showed it does not improve the attention NN
     # (hurts QB/RB/TE, WR within noise) — see ADR-0004 changelog. Empty ⇒ no opp

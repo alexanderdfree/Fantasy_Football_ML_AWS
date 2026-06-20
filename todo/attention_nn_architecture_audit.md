@@ -125,8 +125,9 @@ ablation-harness item in TODO.md; this audit just makes the live/dormant boundar
    8-seed for the vmap-incompatible `selfattn` via the new `launch_ablate` Batch path, #1180): no
    flag beats baseline beyond the 0.02 FP-MAE noise floor, and `selfattn` regresses on both RB
    (≈15K) and the small-sample QB (RB Δ +0.116 / QB +0.076, worse on 14/16 seeds). A later **RMSE**
-   re-screen found `condq` (#121) MAE-flat but tail-trimming → **ENABLED for RB only** (RB RMSE
-   −0.051, 24/24; RB-specific — QB/WR regress, TE tradeoff, K/DST noise; see ADR-0004). The other
+   re-screen found `condq` (#121) MAE-flat but tail-trimming → **ENABLED for RB + WR + TE** (PR
+   #1198; RB RMSE −0.051, 24/24 clean win, TE tail gain, **WR a forward-bet** pending CB-level
+   matchup features — #1210; QB/K/DST OFF; see ADR-0004). The other
    six stay default-OFF; scaffolding retained (owner decision — not deleted). Full tables +
    lesson in [fixed-archive.md](fixed-archive.md).
 2. **Optional `log_alpha` clamp** (§3.B) — low-risk hardening; only worthwhile bundled with
