@@ -212,7 +212,34 @@ def test_build_confirm_variants_keeps_production_pca():
     drop.cfg_mutator(cfg)
     assert cfg["get_feature_columns_fn"]() == ["c"]  # a, b dropped together
     assert cfg["ridge_pca_components"] == 80  # PCA PRESERVED (production-faithful)
-    assert row_drops == {"drop_confirmed": frozenset({"confirmed_drop"})}
+    # row_drops MUST include the baseline (empty drop) so main_effects has a kept arm
+    # for the degenerate 1-group confirm design (else confirm-report renders empty).
+    assert row_drops == {
+        "baseline": frozenset(),
+        "drop_confirmed": frozenset({"confirmed_drop"}),
+    }
+
+
+def test_confirm_effect_is_drop_minus_baseline():
+    """Regression: the confirm's 1-group design must yield a per-model effect equal to
+    (drop_confirmed - baseline). main_effects needs the baseline arm in row_drops; the
+    earlier omission silently produced an empty confirm-report table."""
+    _, group_names, row_drops = fs2.build_confirm_spec("RB", ["a", "b"], [42, 43])
+    results = []
+    for variant, mae in (("baseline", 4.10), ("drop_confirmed", 4.13)):
+        for seed in (42, 43):
+            results.append(
+                {
+                    "ok": True,
+                    "position": "RB",
+                    "variant": variant,
+                    "seed": seed,
+                    "metrics": {"Ridge": {"mae": mae, "rmse": mae + 1.0}},
+                }
+            )
+    eff = fs.position_effects(results, "RB", group_names, row_drops)
+    assert eff["Ridge"]["mae"]["confirmed_drop"]["mean_effect"] == pytest.approx(0.03)
+    assert eff["Ridge"]["rmse"]["confirmed_drop"]["mean_effect"] == pytest.approx(0.03)
 
 
 def test_build_confirm_variants_empty_raises():
@@ -260,7 +287,8 @@ def test_build_confirm_spec():
     spec, names, rd = fs2.build_confirm_spec("RB", ["a", "b"], [42, 43, 44])
     assert spec.dotted == fs2.CONFIRM_SPEC and spec.seeds == [42, 43, 44]
     assert list(spec.variants) == ["baseline", "drop_confirmed"]
-    assert names == ["confirmed_drop"] and rd == {"drop_confirmed": frozenset({"confirmed_drop"})}
+    assert names == ["confirmed_drop"]
+    assert rd == {"baseline": frozenset(), "drop_confirmed": frozenset({"confirmed_drop"})}
 
 
 def test_collect_effects_reuses_collector(monkeypatch):

@@ -392,6 +392,13 @@ def build_confirm_variants(
     launcher's own ``aggregate`` Δ-vs-baseline is the same number). Unlike the screen
     this is NOT a Plackett-Burman design — it is a single combined-drop A/B that
     catches the interactions the additive PB main effects assume away.
+
+    ``row_drops`` includes ``baseline`` with an empty drop-set. In a PB/leave-one-out
+    screen each group is dropped in some rows and kept in others, so ``main_effects``
+    forms its high-minus-low contrast from the non-baseline rows alone. This degenerate
+    1-group design has only ONE drop arm, so the baseline IS the kept arm — without it
+    in ``row_drops`` the estimator finds no "kept" value and silently returns no effect
+    (the empty ``confirm-report`` table bug).
     """
     cols = frozenset(drop_cols)
     if not cols:
@@ -405,7 +412,7 @@ def build_confirm_variants(
             label=f"drop {len(cols)} columns together (production PCA-Ridge)",
         ),
     ]
-    return variants, {"drop_confirmed": frozenset({"confirmed_drop"})}
+    return variants, {"baseline": frozenset(), "drop_confirmed": frozenset({"confirmed_drop"})}
 
 
 # --------------------------------------------------------------------------- #
