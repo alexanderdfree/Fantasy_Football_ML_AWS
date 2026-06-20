@@ -258,7 +258,7 @@ Hard-won lessons from prior sessions. One line each; provider-neutral. (Claude C
 
 ## Tool capabilities differ between agents
 
-Neither agent should assume the other's tools. **Claude Code** has claude.ai account connectors (Canva, AWS, Gmail, GitHub, …), browser-preview tools, and sub-agent / Workflow orchestration. **Codex** has the OpenAI plugin set (github, browser, data-viz, codex-security, …) and a `node_repl` MCP server. No local MCP-server config is shared. Name a capability concretely so the other agent knows whether it applies.
+Neither agent should assume the other's tools. **Claude Code** has claude.ai account connectors (Canva, AWS, Gmail, GitHub, …), browser-preview tools, and sub-agent / Workflow orchestration. **Codex** has the OpenAI plugin set (github, browser, data-viz, codex-security, …) and a `node_repl` MCP server. No local MCP-server config is shared. Name a capability concretely so the other agent knows whether it applies. **One such Claude capability is *not* repo-configurable:** the `claude-code-remote` cloud server (`send_later` scheduled self-check-ins, `list_repos`/`add_repo`) is platform-injected per cloud session — it can't be enabled via `.mcp.json`, the web *environment* config (network policy / env vars / setup scripts only), or a routine's `mcp_connections` (claude.ai *account connectors* only, not built-in session servers). Availability is Anthropic-controlled (client/notification surface + plan/rollout); don't re-chase a repo-side enable — raise it via `/feedback`.
 
 ## Codex specifics
 
