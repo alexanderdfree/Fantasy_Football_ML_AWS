@@ -193,6 +193,22 @@ def test_memory_sync_wrapper_exists(provider: str) -> None:
     )
 
 
+def test_shared_hook_lib_exists() -> None:
+    # The gh-pr tokenizer + find_jq/main_worktree/abs_path/tool_command live once
+    # in this shared lib (audit P4); the per-provider lib.sh files source it.
+    assert (PROJECT_ROOT / "scripts/agent-hooks-lib.sh").is_file()
+
+
+@pytest.mark.parametrize("provider", sorted(HOOK_DIRS))
+def test_provider_lib_sources_shared_hook_lib(provider: str) -> None:
+    lib = PROJECT_ROOT / HOOK_DIRS[provider] / "lib.sh"
+    assert lib.is_file(), f"{provider} has no hooks/lib.sh"
+    assert "scripts/agent-hooks-lib.sh" in lib.read_text(encoding="utf-8"), (
+        f"{provider} hooks/lib.sh must source the shared scripts/agent-hooks-lib.sh "
+        "(don't re-triplicate the gh-pr tokenizer)."
+    )
+
+
 # --- the shared instruction files stay provider-neutral (F3) -----------------
 
 
