@@ -356,3 +356,95 @@ class TestClaudePromoteSplits:
         assert result.returncode == 0
         assert self._parent_splits(main) == {"STALE"}  # untouched
         assert "splits promote: copied" not in result.stdout
+
+
+def _run_link_worktree_data(worktree: Path) -> subprocess.CompletedProcess[str]:
+    """Source lib.sh and call claude_link_worktree_data <worktree> directly."""
+    script = f'. "{LIB}"; claude_link_worktree_data "$1"'
+    return subprocess.run(
+        [_bash(), "-c", script, "claude-hook-test", str(worktree)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _setup_link_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """A main checkout holding prebuilt (gitignored) data/{raw,splits} + a fresh
+    feature worktree whose data/ has only the tracked README (no raw/splits) — the
+    exact fresh-worktree state session-start.sh's auto-link targets."""
+    main = tmp_path / "main"
+    subprocess.run(["git", "init", "-b", "main", str(main)], check=True, capture_output=True)
+    _git(main, "config", "user.email", "claude-hooks@example.test")
+    _git(main, "config", "user.name", "Claude Hooks")
+    _git(main, "config", "commit.gpgsign", "false")
+    (main / ".gitignore").write_text("data/raw/\ndata/splits/\n")
+    (main / "data").mkdir()
+    (main / "data" / "README.md").write_text("data dir\n")
+    _git(main, "add", "-A")
+    _git(main, "commit", "-m", "init")
+    # parent's prebuilt gitignored data (what we link into worktrees)
+    (main / "data" / "raw").mkdir()
+    (main / "data" / "raw" / "weekly.parquet").write_text("RAW")
+    (main / "data" / "splits").mkdir()
+    for name in ("train", "val", "test"):
+        (main / "data" / "splits" / f"{name}.parquet").write_text("SPLIT")
+    worktree = tmp_path / "feature"
+    _git(main, "worktree", "add", "-b", "feature", str(worktree), "main")
+    return main, worktree
+
+
+class TestClaudeLinkWorktreeData:
+    def test_links_both_data_dirs(self, tmp_path: Path):
+        main, worktree = _setup_link_repo(tmp_path)
+        # fresh worktree starts without raw/splits (gitignored, not checked out)
+        assert not (worktree / "data" / "raw").exists()
+        assert not (worktree / "data" / "splits").exists()
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0, result.stderr
+        for d in ("raw", "splits"):
+            link = worktree / "data" / d
+            assert link.is_symlink(), f"{d} not symlinked"
+            assert link.resolve() == (main / "data" / d).resolve()
+        assert "linked raw splits" in result.stdout
+
+    def test_idempotent_second_call(self, tmp_path: Path):
+        main, worktree = _setup_link_repo(tmp_path)
+        _run_link_worktree_data(worktree)
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0
+        assert result.stdout == ""  # already linked → nothing new, no output
+        for d in ("raw", "splits"):
+            assert (worktree / "data" / d).is_symlink()
+
+    def test_noop_in_main_checkout(self, tmp_path: Path):
+        main, _ = _setup_link_repo(tmp_path)
+        result = _run_link_worktree_data(main)
+        assert result.returncode == 0
+        assert result.stdout == ""
+        # main's real data dirs must stay real dirs (never self-linked)
+        assert (main / "data" / "raw").is_dir()
+        assert not (main / "data" / "raw").is_symlink()
+        assert not (main / "data" / "splits").is_symlink()
+
+    def test_leaves_local_real_dir_alone(self, tmp_path: Path):
+        main, worktree = _setup_link_repo(tmp_path)
+        # worktree built its OWN splits locally (a real dir) — must not be shadowed
+        (worktree / "data" / "splits").mkdir(parents=True)
+        (worktree / "data" / "splits" / "train.parquet").write_text("LOCAL")
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0
+        assert not (worktree / "data" / "splits").is_symlink()  # local real dir kept
+        assert (worktree / "data" / "splits" / "train.parquet").read_text() == "LOCAL"
+        assert (worktree / "data" / "raw").is_symlink()  # raw still linked
+        assert "linked raw from" in result.stdout
+
+    def test_replaces_dangling_symlink(self, tmp_path: Path):
+        main, worktree = _setup_link_repo(tmp_path)
+        dangling = worktree / "data" / "raw"
+        dangling.symlink_to(tmp_path / "does-not-exist")
+        assert dangling.is_symlink() and not dangling.exists()  # dangling
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0
+        assert (worktree / "data" / "raw").is_symlink()
+        assert (worktree / "data" / "raw").resolve() == (main / "data" / "raw").resolve()
