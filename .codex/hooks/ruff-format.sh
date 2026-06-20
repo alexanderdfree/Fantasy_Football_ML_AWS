@@ -10,16 +10,21 @@ jq_bin="$(codex_find_jq)" || exit 0
 input="$(cat)"
 root="$(codex_project_root "$input" "$jq_bin")"
 
+# Resolve ruff from a venv, then PATH. Probe the local .venv AND the MAIN
+# worktree's .venv (worktrees don't symlink .venv), each in the Unix bin/ and the
+# Windows Scripts/ layout — mirrors .claude/hooks/ruff-format.sh.
+venv_roots=("$root/.venv")
+main_worktree="$(codex_main_worktree "$root")"
+if [ -n "$main_worktree" ] && [ "$main_worktree" != "$root" ]; then
+  venv_roots+=("$main_worktree/.venv")
+fi
 ruff=""
-if [ -x "$root/.venv/bin/ruff" ]; then
-  ruff="$root/.venv/bin/ruff"
-else
-  main_worktree="$(codex_main_worktree "$root")"
-  if [ -n "$main_worktree" ] && [ -x "$main_worktree/.venv/bin/ruff" ]; then
-    ruff="$main_worktree/.venv/bin/ruff"
-  elif command -v ruff >/dev/null 2>&1; then
-    ruff="ruff"
-  fi
+for vr in "${venv_roots[@]}"; do
+  if [ -x "$vr/bin/ruff" ]; then ruff="$vr/bin/ruff"; break; fi
+  if [ -x "$vr/Scripts/ruff.exe" ]; then ruff="$vr/Scripts/ruff.exe"; break; fi
+done
+if [ -z "$ruff" ] && command -v ruff >/dev/null 2>&1; then
+  ruff="ruff"
 fi
 [ -n "$ruff" ] || exit 0
 

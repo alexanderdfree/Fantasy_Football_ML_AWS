@@ -7,8 +7,17 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.codex/hooks/lib.sh
 . "$script_dir/lib.sh"
 
-jq_bin="$(codex_find_jq)" || exit 0
+# Resolve jq, but do NOT exit when it is absent: this guard is the deterministic
+# backstop for the parent-checkout-write footgun (parity with
+# .claude/hooks/guard-worktree-path.sh). The codex_* extractors fall back to
+# python3's JSON parser when jq_bin is empty, so the guard stays ARMED. It only
+# truly disarms — with a WARNING, never silently — if neither jq nor python3 exists.
+jq_bin="$(codex_find_jq || true)"
 input="$(cat)"
+if [ -z "$jq_bin" ] && ! command -v python3 >/dev/null 2>&1; then
+  echo "guard-worktree-path: neither jq nor python3 found; cannot validate paths (guard disarmed for this edit)" >&2
+  exit 0
+fi
 root="$(codex_project_root "$input" "$jq_bin")"
 main_worktree="$(codex_main_worktree "$root")"
 

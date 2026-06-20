@@ -20,6 +20,10 @@ done
 input=$(cat)
 cmd=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty')
 
+# Cheap pre-filter: any real `gh pr create` contains `gh`, so skip the O(n)
+# tokenizer for the ~all Bash commands that don't (parity with the post-pr hooks).
+case "$cmd" in *gh*) ;; *) exit 0 ;; esac
+
 # Only gate an ACTUAL `gh pr create` invocation. The shell-parser-aware matcher
 # strips quotes/heredocs/comments and splits on ; | & before testing each
 # segment, so the literal token sequence inside a quoted string or another

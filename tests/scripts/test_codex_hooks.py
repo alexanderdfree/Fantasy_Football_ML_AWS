@@ -333,6 +333,51 @@ def test_codex_json_context_uses_resolved_jq_path(tmp_path: Path):
     }
 
 
+def _call_codex_lib(func_call: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Source .codex/hooks/lib.sh and run one function call, passing args as bash
+    positionals ($1=lib path, $2.. = args) so payloads are never re-quoted."""
+    lib = PROJECT_ROOT / ".codex/hooks/lib.sh"
+    return subprocess.run(
+        [_bash(), "-c", f'source "$1"; {func_call}', "_", str(lib), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+# The Codex worktree-guard must stay armed on a box without jq (parity with the
+# Claude guard's python3 fallback, #1232). These exercise the no-jq branch of the
+# extraction helpers directly (empty jq_bin -> python3), so they run even where jq
+# IS installed — codex_find_jq probes absolute paths that a PATH strip can't hide.
+@pytest.mark.skipif(shutil.which("python3") is None, reason="no-jq fallback needs python3")
+def test_codex_tool_paths_file_path_python3_fallback_without_jq():
+    payload = json.dumps(
+        {"tool_input": {"file_path": "/repo/src/x.py", "new_string": '{"file_path": "/evil"}'}}
+    )
+    # "" = empty jq_bin -> python3 branch; the JSON parse also resists a new_string
+    # that itself contains the text "file_path".
+    result = _call_codex_lib('codex_tool_paths "$2" ""', payload)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "/repo/src/x.py"
+
+
+@pytest.mark.skipif(shutil.which("python3") is None, reason="no-jq fallback needs python3")
+def test_codex_tool_paths_apply_patch_python3_fallback_without_jq():
+    patch = "*** Begin Patch\n*** Update File: /repo/src/x.py\n@@\n test\n*** End Patch\n"
+    payload = json.dumps({"tool_input": {"command": patch}})
+    result = _call_codex_lib('codex_tool_paths "$2" ""', payload)
+    assert result.returncode == 0, result.stderr
+    assert "/repo/src/x.py" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(shutil.which("python3") is None, reason="no-jq fallback needs python3")
+def test_codex_hook_command_python3_fallback_without_jq():
+    payload = json.dumps({"tool_input": {"command": "gh pr create --fill"}})
+    result = _call_codex_lib('codex_hook_command "$2" ""', payload)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "gh pr create --fill"
+
+
 @pytest.mark.skipif(not _jq_available(), reason="Codex hooks need jq to parse hook JSON")
 class TestCodexHooks:
     def test_guard_blocks_parent_checkout_file_path(self, git_worktree_pair: tuple[Path, Path]):
