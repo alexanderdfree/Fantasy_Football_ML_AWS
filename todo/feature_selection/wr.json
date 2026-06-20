@@ -1,0 +1,427 @@
+{
+  "position": "WR",
+  "spec": "src.tuning.ab_feature_screen_extended",
+  "run_id": "ab_feature_screen_extended-20260620T013357Z-2e7455c",
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65
+  ],
+  "noise_floor": 0.02,
+  "effects": {
+    "Ridge": {
+      "mae": {
+        "rolling": {
+          "mean_effect": 0.07444464528335715,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.036432533026584224,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.09334033448160639,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": -0.004244160647875361,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.09490781743521826,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.09329303110711873,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": 0.324253206609062,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": -0.016889791586735647,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": -0.02890064882072796,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "rolling": {
+          "mean_effect": 0.13658371235435052,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.056725403097358296,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.12141776600287457,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": 0.09460174956705636,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.08276979810446594,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.10481823867541173,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": -0.10142522190308867,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.09754279278477362,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": 0.05702547008942904,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      }
+    },
+    "LightGBM": {
+      "mae": {
+        "rolling": {
+          "mean_effect": 0.06381143477692763,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.048536790891811066,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.07215293478167872,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": 0.01080963275963498,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.04949659964900732,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.03451895936155136,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": 0.12671410761307111,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.0067634546055144185,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": -0.037797271782277875,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "rolling": {
+          "mean_effect": 0.06806466143861911,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.08876934829078742,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.06551311893052514,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": 0.03087494574561145,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.07146091543762711,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.04824320566961493,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": 0.02119150773494738,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.04713329442169645,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": -0.020229838105880305,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      }
+    },
+    "NN": {
+      "mae": {
+        "rolling": {
+          "mean_effect": 0.08127865423035541,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.10419920390534188,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.031729994367751146,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": 0.0060029409916850796,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.0342136955540111,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.04773276519644831,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": 0.06286825527023776,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.00800915456231266,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": -0.051878037044392755,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "rolling": {
+          "mean_effect": 0.09764634532590666,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.08786658457054752,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.07435323049611942,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": 0.05288463229313223,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.06925840949707052,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.06843302813434526,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": -0.03488552058650285,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.05837325938581106,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": 0.008881606837864986,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      }
+    },
+    "Attention NN": {
+      "mae": {
+        "rolling": {
+          "mean_effect": -0.00699509509028351,
+          "std_effect": 0.008115314219176393,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.048454257465341856,
+          "std_effect": 0.015215584688457436,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.05401808930318316,
+          "std_effect": 0.006301778514427341,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": -0.0025377632364593414,
+          "std_effect": 0.005573657245931201,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.04348171111680436,
+          "std_effect": 0.01375221703934691,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.0079006760346223,
+          "std_effect": 0.006845380574696846,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": 0.14180563471309834,
+          "std_effect": 0.014056683276279678,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.011005694252888554,
+          "std_effect": 0.00843710621521561,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": -0.056785387863129776,
+          "std_effect": 0.007938244901455201,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "rolling": {
+          "mean_effect": 0.0036876877890291335,
+          "std_effect": 0.008861097686896965,
+          "n_seeds": 24
+        },
+        "prior_season": {
+          "mean_effect": 0.07138200508200616,
+          "std_effect": 0.06338600618796651,
+          "n_seeds": 24
+        },
+        "trend": {
+          "mean_effect": -0.023055824322927226,
+          "std_effect": 0.009480415059391926,
+          "n_seeds": 24
+        },
+        "share": {
+          "mean_effect": -0.005373312999024882,
+          "std_effect": 0.00931939033924197,
+          "n_seeds": 24
+        },
+        "matchup": {
+          "mean_effect": -0.028297828711753126,
+          "std_effect": 0.07378191464820896,
+          "n_seeds": 24
+        },
+        "defense": {
+          "mean_effect": -0.004283873017754014,
+          "std_effect": 0.009730906568409246,
+          "n_seeds": 24
+        },
+        "contextual": {
+          "mean_effect": 0.019065186522881434,
+          "std_effect": 0.07107860834021663,
+          "n_seeds": 24
+        },
+        "weather_vegas": {
+          "mean_effect": 0.017869472079299675,
+          "std_effect": 0.06025718019167166,
+          "n_seeds": 24
+        },
+        "specific": {
+          "mean_effect": -0.030864946271820976,
+          "std_effect": 0.00848470054175476,
+          "n_seeds": 24
+        }
+      }
+    }
+  },
+  "suggested_cut": [
+    "trend",
+    "share",
+    "matchup",
+    "defense",
+    "weather_vegas",
+    "specific"
+  ],
+  "static_audit_flags": {}
+}
