@@ -1,0 +1,13 @@
+{
+  "trigger_id": "",
+  "dashboard_url": "",
+  "model": "claude-fable-5",
+  "environment_id": "env_01WCEhA61gYJ8u7K8aZ3AyVU",
+  "cron_expression": "",
+  "enabled": false,
+  "allowed_tools": ["Bash", "Read", "Write", "Glob", "Grep", "Agent", "TodoWrite"],
+  "sources": [
+    {"git_repository": {"url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS"}}
+  ],
+  "name": "Tests audit"
+}
