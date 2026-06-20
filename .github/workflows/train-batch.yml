@@ -764,23 +764,58 @@ jobs:
         # Boot-time sync_models_from_s3 / sync_benchmark_history_from_s3 only run
         # when an ECS task starts, so freshly promoted stable pointers in S3 are
         # invisible to a long-running task until it recycles. force-new-deployment
-        # re-runs both syncs on a clean boot (same image, new task);
-        # services-stable waits for the new task to pass health checks and the
-        # old to drain, so a task that fails to load the new artifacts surfaces
-        # here instead of silently serving NaN preds. Idempotent when no stable
-        # advanced. Only smoke-passed artifacts ever become stable
-        # (artifact_gc.py), so the rollover can't promote a broken model.
+        # re-runs both syncs on a clean boot (same image, new task). We then poll
+        # the PRIMARY deployment until it settles (running==desired, single
+        # deployment) so a task that fails to load the new artifacts surfaces here
+        # (rolloutState=FAILED → loud red) instead of silently serving NaN preds.
+        # This REPLACES `aws ecs wait services-stable`, whose hardcoded 40×15s =
+        # 10-min ceiling false-RED a healthy-but-slow roll (8 GB task + 6-position
+        # model load + post_fork warm routinely exceeds 10 min; e.g. the condq
+        # retrain ac3686f, #1234) — a false red trains operators to ignore the very
+        # signal this job exists to make loud. Longer ceiling + FAILED-fast keeps
+        # real bad reloads loud; a /health fallback on timeout keeps a slow-but-
+        # serving roll green. Idempotent when no stable advanced. Only smoke-passed
+        # artifacts ever become stable (artifact_gc.py), so the rollover can't
+        # promote a broken model.
         run: |
+          set -euo pipefail
           aws ecs update-service \
             --cluster "$ECS_CLUSTER" \
             --service "$ECS_SERVICE" \
             --region "$AWS_REGION" \
             --force-new-deployment \
             --no-cli-pager > /dev/null
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
+          roll_timeout=1500   # 25 min; services-stable's built-in 10 min was too short
+          deadline=$(( $(date +%s) + roll_timeout ))
+          while :; do
+            out=$(aws ecs describe-services \
+                    --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region "$AWS_REGION" \
+                    --query "services[0].[deployments[?status=='PRIMARY'].rolloutState | [0], deployments[?status=='PRIMARY'].runningCount | [0], deployments[?status=='PRIMARY'].desiredCount | [0], deployments[?status=='PRIMARY'].pendingCount | [0], length(deployments)]" \
+                    --output text 2>/dev/null || true)
+            read -r rollout running desired pending ndeploy <<<"$out" || true
+            echo "[roll] rolloutState=${rollout:-?} running=${running:-?}/${desired:-?} pending=${pending:-?} active_deployments=${ndeploy:-?}"
+            if [ "${rollout:-}" = "FAILED" ]; then
+              echo "::error::ECS deployment rolloutState=FAILED — serving did not reload the new artifacts cleanly."
+              exit 1
+            fi
+            # services-stable's own definition: only the PRIMARY deployment remains,
+            # all tasks running, none pending.
+            if [ "${ndeploy:-}" = "1" ] && [ -n "${running:-}" ] && [ "${running}" != "None" ] \
+               && [ "${running}" = "${desired:-}" ] && [ "${pending:-}" = "0" ]; then
+              echo "[roll] settled — single PRIMARY deployment, running=${running}/${desired}, pending=0."
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SERVICE_URL/health" || echo 000)
+              if [ "$code" = "200" ]; then
+                echo "::warning::Rollout slow (rolloutState=${rollout:-?}, running=${running:-?}/${desired:-?}) after ${roll_timeout}s, but ${SERVICE_URL}/health=200 — treating as healthy. Investigate if this recurs."
+                break
+              fi
+              echo "::error::Rollout did not settle within ${roll_timeout}s and ${SERVICE_URL}/health=${code}."
+              exit 1
+            fi
+            sleep 15
+          done
 
   # Post-train serving-cache warm — split out of the `train` job (was its
   # next-to-last step) so its up-to-180s fingerprint poll no longer sits on
