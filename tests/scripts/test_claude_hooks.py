@@ -508,3 +508,13 @@ def test_worktree_guard_noop_outside_worktree():
     result = _run_guard(_FAKE_PARENT, {"file_path": f"{_FAKE_PARENT}/src/qb/config.py"})
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+def test_worktree_guard_allows_out_of_tree_path():
+    # In an active worktree session, a path outside BOTH the worktree and the
+    # parent (e.g. ~/.claude memory, /tmp) is allowed — the branch that lets
+    # legitimate out-of-tree writes through (and why editing the global guard
+    # itself is never blocked).
+    result = _run_guard(_FAKE_WORKTREE, {"file_path": "/tmp/scratch/notes.md"})
+    assert result.returncode == 0
+    assert result.stderr == ""
