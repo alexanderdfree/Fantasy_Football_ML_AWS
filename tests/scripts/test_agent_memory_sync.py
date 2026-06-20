@@ -58,3 +58,35 @@ def test_agent_memory_sync_uses_separate_remote_prefixes(tmp_path: Path) -> None
     # Claude memory is synced verbatim - the excludes above are codex-scoped only.
     assert all("--exclude .git" not in call for call in claude_calls)
     assert all("--exclude *.DS_Store" not in call for call in claude_calls)
+
+
+def test_path_command_prints_local_memory_dirs(tmp_path: Path) -> None:
+    # `path` resolves the local memory dir without S3/credentials (it short-circuits
+    # before preflight); session-start.sh consumes it for the orphan-index check.
+    env = {
+        **os.environ,
+        "CODEX_HOME": str(tmp_path / "codex-home"),
+        "HOME": str(tmp_path / "home"),
+    }
+
+    claude = subprocess.run(
+        ["bash", "scripts/agent-memory-sync.sh", "claude", "path"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    # ~/.claude/projects/<slug>/memory under the overridden HOME.
+    assert claude.stdout.strip().endswith("/memory")
+    assert str(tmp_path / "home") in claude.stdout
+
+    codex = subprocess.run(
+        ["bash", "scripts/agent-memory-sync.sh", "codex", "path"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert codex.stdout.strip() == str(tmp_path / "codex-home" / "memories")
