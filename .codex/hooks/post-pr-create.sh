@@ -10,6 +10,11 @@ jq_bin="$(codex_find_jq)" || exit 0
 input="$(cat)"
 cmd="$(codex_hook_command "$input" "$jq_bin")"
 
+# Cheap pre-filter: this hook fires on every Bash call; any real `gh pr ...`
+# invocation contains `gh`, so skip the O(n) tokenizer for the ~all commands that
+# don't. Behavior-preserving (parity with .claude/hooks/post-pr-create.sh).
+case "$cmd" in *gh*) ;; *) exit 0 ;; esac
+
 if ! codex_command_invokes_gh_pr_create "$cmd"; then
   exit 0
 fi

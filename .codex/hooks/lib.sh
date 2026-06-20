@@ -16,8 +16,14 @@ codex_project_root() {
   local jq_bin="$2"
   local candidate="${CODEX_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-}}"
 
-  if [ -z "$candidate" ]; then
+  if [ -z "$candidate" ] && [ -n "$jq_bin" ]; then
     candidate=$(printf '%s' "$input" | "$jq_bin" -r '.cwd // empty' 2>/dev/null || true)
+  elif [ -z "$candidate" ] && command -v python3 >/dev/null 2>&1; then
+    candidate=$(printf '%s' "$input" | python3 -c 'import json, sys
+try:
+    print(json.load(sys.stdin).get("cwd") or "")
+except Exception:
+    sys.exit(0)' 2>/dev/null || true)
   fi
   if [ -z "$candidate" ]; then
     candidate="$PWD"
@@ -157,7 +163,17 @@ codex_is_clean_codex_worktree() {
 codex_hook_command() {
   local input="$1"
   local jq_bin="$2"
-  printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty' 2>/dev/null || true
+  if [ -n "$jq_bin" ]; then
+    printf '%s' "$input" | "$jq_bin" -r '.tool_input.command // empty' 2>/dev/null || true
+  elif command -v python3 >/dev/null 2>&1; then
+    # python3 fallback (robust JSON parse) so jq-less boxes keep the guard armed.
+    printf '%s' "$input" | python3 -c 'import json, sys
+try:
+    ti = json.load(sys.stdin).get("tool_input") or {}
+except Exception:
+    sys.exit(0)
+print(ti.get("command") or "")' 2>/dev/null || true
+  fi
 }
 
 codex_is_env_assignment() {
@@ -356,8 +372,17 @@ codex_patch_paths() {
 codex_tool_paths() {
   local input="$1"
   local jq_bin="$2"
-  local direct
-  direct=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
+  local direct=""
+  if [ -n "$jq_bin" ]; then
+    direct=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
+  elif command -v python3 >/dev/null 2>&1; then
+    direct=$(printf '%s' "$input" | python3 -c 'import json, sys
+try:
+    ti = json.load(sys.stdin).get("tool_input") or {}
+except Exception:
+    sys.exit(0)
+print(ti.get("file_path") or ti.get("notebook_path") or "")' 2>/dev/null || true)
+  fi
   if [ -n "$direct" ]; then
     printf '%s\n' "$direct"
   fi

@@ -24,7 +24,14 @@ fi
 cd "$repo_root"
 
 if [ ! -d .venv ]; then
-  python3.12 -m venv .venv
+  # Prefer uv (it fetches the right interpreter); fall back so a missing
+  # python3.12 binary doesn't abort the whole bootstrap under `set -euo pipefail`.
+  # Matches SETUP.md's `uv venv --python 3.12`.
+  if command -v uv >/dev/null 2>&1; then
+    uv venv --python 3.12 .venv
+  else
+    python3.12 -m venv .venv 2>/dev/null || python3 -m venv .venv
+  fi
 fi
 
 # shellcheck disable=SC1091
