@@ -9,6 +9,7 @@ so a single -2 pts penalty applies regardless of how the fumble occurred.
 
 import pandas as pd
 
+from src.config import SCORING
 from src.qb.config import POSITION_CONFIG
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
@@ -41,10 +42,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     preds_truth = {t: df[t].to_numpy() for t in POSITION_CONFIG.targets}
     fantasy_points_check = predictions_to_fantasy_points("QB", preds_truth, "ppr")
+    # Decomposition uses src.config.SCORING so a single source of truth governs
+    # the scoring weights (mirrors src/rb/targets.py and src/wr/targets.py).
     receiving_component = (
-        df["receptions"].fillna(0) * 1.0
-        + df["receiving_yards"].fillna(0) * 0.1
-        + df["receiving_tds"].fillna(0) * 6
+        df["receptions"].fillna(0) * SCORING["receptions"]
+        + df["receiving_yards"].fillna(0) * SCORING["receiving_yards"]
+        + df["receiving_tds"].fillna(0) * SCORING["receiving_tds"]
     )
     discrepancy = (df["fantasy_points"] - fantasy_points_check - receiving_component).abs()
     if (discrepancy > 0.01).any():
