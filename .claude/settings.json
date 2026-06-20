@@ -91,5 +91,6 @@
   },
   "showThinkingSummaries": true,
   "precomputeCompactionEnabled": true,
-  "autoDreamEnabled": true
+  "autoDreamEnabled": true,
+  "fallbackModel": ["sonnet", "haiku"]
 }
