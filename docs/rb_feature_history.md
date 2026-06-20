@@ -127,7 +127,7 @@ Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py:28):
 
 Local same-environment benchmark (origin/main vs this PR): **Attention NN −0.096 MAE** (the model the audit was aimed at), LightGBM unchanged, Ridge / base NN within run-to-run noise. Top-12 +0.005. Test fixtures and contract tests updated.
 
-Deferred follow-ups: drop #10 (`rolling_mean_snap_pct_L8`, r=0.957 — under threshold) and the parallel `OPP_ATTN_HISTORY_STATS` branch mirroring QB/WR/TE.
+Deferred follow-ups: drop #10 (`rolling_mean_snap_pct_L8`, r=0.957 — under threshold). (The `OPP_ATTN_HISTORY_STATS` branch follow-up is **RESOLVED — do not re-add**: it was added in #214, then disabled for QB/RB/WR/TE in #1175; see the line-298 RESOLVED note.)
 
 ### 2026-04 — `7318c72` chore: explicit `non_negative_targets` and `aggregate_fn`
 Made the per-head non-negativity clamp explicit in the RB config (`NN_NON_NEGATIVE_TARGETS = set(TARGETS)`) instead of relying on the `MultiHeadNet` default (which clamps every head if the kwarg is `None`). Same effect, written out for clarity. Important for future refactors where a head might want to allow negative outputs (e.g., a bonus that can subtract).

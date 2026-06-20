@@ -1,7 +1,7 @@
 """Feature contract tests for src.te.features.add_specific_features.
 
 Asserts:
-  - the 8 TE-specific engineered columns are present on every split,
+  - the 11 TE-specific engineered columns are present on every split,
   - outputs are numeric (float-compatible) and finite after nan-fill,
   - NaN ceilings are enforced (no column allowed to go all-NaN on non-empty input),
   - `get_feature_columns()` is the source of truth for the flattened whitelist,
@@ -32,7 +32,7 @@ from src.te.features import (
 pytestmark = pytest.mark.unit
 
 
-# The exact 8 columns documented in src.te.config.SPECIFIC_FEATURES.
+# The exact 11 columns documented in src.te.config.SPECIFIC_FEATURES.
 # If a feature is added/removed, both the config and this contract must move together.
 EXPECTED_TE_SPECIFIC = [
     "yards_per_reception_L3",
