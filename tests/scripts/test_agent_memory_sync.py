@@ -48,10 +48,13 @@ def test_agent_memory_sync_uses_separate_remote_prefixes(tmp_path: Path) -> None
 
     assert "s3://test-bucket/claude-memory/test-repo/memory" in joined
     assert "s3://test-bucket/codex-memory/test-repo/memories" in joined
-    assert "--exclude .git --exclude .git/*" in joined
+    # Codex syncs exclude .git (SQLite/runtime state) and *.DS_Store (macOS cruft).
+    assert "--exclude .git --exclude .git/* --exclude *.DS_Store" in joined
 
     claude_calls = [
         call for call in calls if "s3://test-bucket/claude-memory/test-repo/memory" in call
     ]
     assert claude_calls
+    # Claude memory is synced verbatim - the excludes above are codex-scoped only.
     assert all("--exclude .git" not in call for call in claude_calls)
+    assert all("--exclude *.DS_Store" not in call for call in claude_calls)

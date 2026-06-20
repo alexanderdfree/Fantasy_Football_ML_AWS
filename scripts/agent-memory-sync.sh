@@ -118,7 +118,9 @@ sync_one() {
     claude) mem_dir="$(claude_memory_dir)" ;;
     codex)
       mem_dir="$(codex_memory_dir)"
-      exclude_flags=(--exclude ".git" --exclude ".git/*")
+      # .git: Codex's SQLite/runtime state. *.DS_Store: macOS cruft that would
+      # otherwise be pushed to S3 (it was, until #697 follow-up cleanup).
+      exclude_flags=(--exclude ".git" --exclude ".git/*" --exclude "*.DS_Store")
       ;;
     *) return 2 ;;
   esac
