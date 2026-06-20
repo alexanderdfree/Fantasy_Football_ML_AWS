@@ -292,6 +292,13 @@ POSITION_CONFIG = PositionConfig(
     attn_gated=True,
     attn_gate_hidden=16,
     attn_gate_weight=1.0,
+    # condq (#121) ENABLED for the tail: the 2026-06-20 RMSE screen showed a
+    # tail gain (RMSE −0.073±0.033, 24/24) at a small median cost (MAE +0.029) —
+    # a worthwhile trade for boom/bust TEs. condq retrieves matchup/game-script-
+    # similar past games via a static-conditioned query delta (cond_proj). See
+    # ADR-0004 + todo/fixed-archive.md (issue #1210 tracks WR/QB once granular
+    # matchup features exist).
+    attn_condition_queries_on_static=True,
     # opp-defense attention branch disabled 2026-06-15: a 24-seed stacked Batch
     # A/B (src.tuning.ab_opp_def) showed it does not improve the attention NN
     # (hurts QB/RB/TE, WR within noise) — see ADR-0004 changelog. Empty ⇒ no opp

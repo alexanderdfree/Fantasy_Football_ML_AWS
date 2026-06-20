@@ -202,6 +202,10 @@ def build_pipeline_config(
         "attn_positional_encoding": pc.attn_positional_encoding,
         "attn_dropout": pc.attn_dropout,
         "attn_static_features": pc.attn_static_features,
+        # Context-conditioned queries (#121) — read by both attention factories
+        # (flat + nested). Default False is byte-identical to baseline; only RB
+        # sets it True today.
+        "attn_condition_queries_on_static": pc.attn_condition_queries_on_static,
         # === ElasticNet ===
         "train_elasticnet": pc.train_elasticnet,
         "enet_l1_ratios": pc.enet_l1_ratios,
