@@ -2,7 +2,7 @@
 
 A per-position machine learning system that predicts weekly NFL fantasy points for QBs, RBs, WRs, TEs, Kickers, and D/STs — comparing a Ridge baseline, a custom PyTorch multi-head neural network (with an attention variant at every position), and LightGBM across the 2012–2025 seasons. Served as a Flask dashboard at [alexfree.me](https://alexfree.me).
 
-Personal project. Solo, ongoing.
+Personal project, ongoing.
 
 ## What it Does
 
@@ -83,10 +83,6 @@ Coverage is tracked on [Codecov](https://app.codecov.io/gh/alexanderdfree/Fantas
 
 Full training on GPU runs in CI: by default a push to `main` fans out six Spot GPU hosts via AWS Batch, preferring g6.xlarge and falling back to g5.xlarge for capacity ([docs/batch_design.md](docs/batch_design.md), [infra/batch/README.md](infra/batch/README.md)). Setting `BATCH_ACTIVE=false` falls back to the warm-EC2 trainer ([docs/ec2_design.md](docs/ec2_design.md), [infra/ec2/README.md](infra/ec2/README.md)).
 
-## Video Links
-
-- Technical walkthrough (YouTube): https://youtu.be/eyuTnk3qLk8
-
 ## Evaluation
 
 Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_history/2026-05-29T11-00-49_9de4d84.json](benchmark_history/2026-05-29T11-00-49_9de4d84.json) — the latest full six-position Batch (Spot) run (commit `9de4d84`, PR #367) after the K nested attention (`801b61a`), DST raw-stat migration (`cc0c627`), RB feature audit cycle (PRs #190–#192), and the K/DST aggregate-metric fix (`0c66171`).
@@ -162,10 +158,6 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 - [infra/ec2/README.md](infra/ec2/README.md), [infra/aws/README.md](infra/aws/README.md) — operator runbooks
 - [TODO.md](TODO.md) — issue log and open items; the **Fixed** archive (a lessons-learned catalog) lives in [todo/fixed-archive.md](todo/fixed-archive.md)
 - [ATTRIBUTION.md](ATTRIBUTION.md) — data, libraries, and AI tool usage
-
-## Individual Contributions
-
-This project was built individually (no partner).
 
 ## Full-Stack Engineering
 

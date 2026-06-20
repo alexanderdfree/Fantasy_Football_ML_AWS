@@ -31,7 +31,7 @@ target-version = "py311"
 extend-exclude = [
     "data", "outputs", "analysis_output", "infra",
     "docs", "src/serving/static", "src/serving/templates",
-    "models", "notebooks", "videos", "*.ipynb",
+    "models", "notebooks", "*.ipynb",
 ]
 
 [tool.ruff.lint]

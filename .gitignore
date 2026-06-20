@@ -10,6 +10,10 @@ data/splits/
 # Serving prediction cache (see src/serving/app.py::_persist_cache_to_disk)
 data/serving_cache/
 
+# Demo media (host externally, never commit — see AGENTS.md)
+*.mov
+*.mp4
+
 # Model artifacts (all positions)
 **/outputs/models/
 **/outputs/figures/
@@ -52,6 +56,9 @@ venv/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# Ruff
+.ruff_cache/
 
 # IDE
 .idea/
