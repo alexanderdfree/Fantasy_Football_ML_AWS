@@ -448,3 +448,73 @@ class TestClaudeLinkWorktreeData:
         assert result.returncode == 0
         assert (worktree / "data" / "raw").is_symlink()
         assert (worktree / "data" / "raw").resolve() == (main / "data" / "raw").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Worktree parent-write guard (`.claude/hooks/guard-worktree-path.sh`)
+#
+# Blocks an Edit/Write/MultiEdit/NotebookEdit whose target path is in the PARENT
+# checkout while the session runs inside a `.claude/worktrees/<name>` worktree —
+# the parent-checkout-write footgun that bit PRs #284/#354/#370/#378. The guard is
+# pure env + path-string logic (it never stats the path), so these drive it with a
+# synthetic CLAUDE_PROJECT_DIR — no real git worktree needed. It carries a python3
+# fallback for path extraction, so (unlike the jq-only Codex twin) these need no
+# jq-skip marker.
+# ---------------------------------------------------------------------------
+
+GUARD = PROJECT_ROOT / ".claude/hooks/guard-worktree-path.sh"
+_FAKE_WORKTREE = "/fake/repo/.claude/worktrees/wt1"
+_FAKE_PARENT = "/fake/repo"
+
+
+def _run_guard(project_dir: str, tool_input: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [_bash(), str(GUARD)],
+        input=json.dumps({"tool_input": tool_input}),
+        env={**os.environ, "CLAUDE_PROJECT_DIR": project_dir},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_worktree_guard_blocks_parent_checkout_file_path():
+    parent_path = f"{_FAKE_PARENT}/src/qb/config.py"
+    result = _run_guard(_FAKE_WORKTREE, {"file_path": parent_path})
+    assert result.returncode == 2
+    assert "PARENT checkout" in result.stderr
+    assert parent_path in result.stderr
+    # stderr suggests the re-prefixed worktree path to retry.
+    assert f"{_FAKE_WORKTREE}/src/qb/config.py" in result.stderr
+
+
+def test_worktree_guard_allows_in_worktree_file_path():
+    result = _run_guard(_FAKE_WORKTREE, {"file_path": f"{_FAKE_WORKTREE}/src/qb/config.py"})
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+def test_worktree_guard_blocks_parent_checkout_notebook_path():
+    # NotebookEdit carries notebook_path; the global precursor guard never covered
+    # it, so this pins the superset behavior that justifies keeping this guard.
+    nb_path = f"{_FAKE_PARENT}/notebooks/explore.ipynb"
+    result = _run_guard(_FAKE_WORKTREE, {"notebook_path": nb_path})
+    assert result.returncode == 2
+    assert nb_path in result.stderr
+
+
+def test_worktree_guard_noop_outside_worktree():
+    # Not a worktree session → guard is a strict no-op even for a "parent" path.
+    result = _run_guard(_FAKE_PARENT, {"file_path": f"{_FAKE_PARENT}/src/qb/config.py"})
+    assert result.returncode == 0
+    assert result.stderr == ""
+
+
+def test_worktree_guard_allows_out_of_tree_path():
+    # In an active worktree session, a path outside BOTH the worktree and the
+    # parent (e.g. ~/.claude memory, /tmp) is allowed — the branch that lets
+    # legitimate out-of-tree writes through (and why editing the global guard
+    # itself is never blocked).
+    result = _run_guard(_FAKE_WORKTREE, {"file_path": "/tmp/scratch/notes.md"})
+    assert result.returncode == 0
+    assert result.stderr == ""
