@@ -156,6 +156,43 @@ def test_cap_enforcement_warns_when_over(tmp_path: Path) -> None:
     assert any("cap" in w.lower() for w in warnings)  # loud, not silent
 
 
+def test_reads_nested_metadata_index_line(tmp_path: Path) -> None:
+    # The harness moves index_line into a nested `metadata:` block as an inline-quoted string;
+    # the generator must read it there, not fall back to the description.
+    (tmp_path / "n.md").write_text(
+        "---\nname: N\ndescription: verbose desc\nmetadata:\n"
+        '  node_type: memory\n  index_line: "[N](n.md) — curated hook"\n  type: feedback\n'
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    text, warnings = memory_index.generate_index(str(tmp_path))
+    assert text == "- [N](n.md) — curated hook\n"
+    assert warnings == []  # used the nested index_line, did NOT fall back
+
+
+def test_reads_nested_index_line_with_escaped_quotes(tmp_path: Path) -> None:
+    (tmp_path / "q.md").write_text(
+        '---\nname: Q\nmetadata:\n  index_line: "[Q](q.md) — a \\"quoted\\" hook"\n---\nbody\n',
+        encoding="utf-8",
+    )
+    text, _ = memory_index.generate_index(str(tmp_path))
+    assert text == '- [Q](q.md) — a "quoted" hook\n'
+
+
+def test_backfill_replaces_nested_index_line_without_duplicating(tmp_path: Path) -> None:
+    (tmp_path / "x.md").write_text(
+        '---\nname: X\nmetadata:\n  index_line: "[X](x.md) — old"\n  type: feedback\n---\nbody\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "MEMORY.md").write_text("- [X](x.md) — new\n", encoding="utf-8")
+    memory_index.backfill(str(tmp_path))
+    raw = (tmp_path / "x.md").read_text(encoding="utf-8")
+    assert raw.count("index_line:") == 1  # replaced, not duplicated
+    assert "  type: feedback" in raw  # sibling metadata key preserved
+    text, _ = memory_index.generate_index(str(tmp_path))
+    assert text == "- [X](x.md) — new\n"
+
+
 def test_backfill_is_idempotent(tmp_path: Path) -> None:
     _write(tmp_path, "alpha.md", description="d", name="A")
     (tmp_path / "MEMORY.md").write_text("- [A](alpha.md) — hook\n", encoding="utf-8")
