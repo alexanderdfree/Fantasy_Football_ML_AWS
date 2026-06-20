@@ -3,7 +3,9 @@ Compatibility wrapper for the Claude audit routine.
 This path intentionally remains tracked because an already-deployed Claude
 dashboard shim may still read `.claude/routines/audit/prompt.md`. The shared
 source of truth has moved to `routines/audit/instructions.md`; do not add shared
-audit logic here.
+audit logic here. Keep the runtime values + execution steps below identical to
+`shim.md` (the canonical wrapper) until the deployed dashboard is confirmed to
+read `shim.md` rather than this path — then delete this file.
 
 Claude runtime values:
 

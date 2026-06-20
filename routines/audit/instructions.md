@@ -164,7 +164,7 @@ gh label create regress-risk-high --color D93F0B --description "Audit fix: model
 ```bash
 : > /tmp/known_issues.tsv
 for label in $DEDUPE_AUDIT_LABELS; do
-  gh issue list --label "$label" --state all --limit 400 --json number,title,labels \
+  gh issue list --label "$label" --state all --limit 800 --json number,title,labels \
     --jq '.[] | select(any(.labels[]; .name | test("^severity-(docs|low|medium|high)$"))) | "\(.number)\t\(.title)"' \
     >> /tmp/known_issues.tsv
 done
@@ -180,6 +180,13 @@ cut -f1 /tmp/known_issues.tsv | while read -r N; do
   printf '%s\t%s\n' "$N" "$F" >> /tmp/known_files.tsv
 done
 ```
+
+The `--limit 800` cap bounds each label's dedupe pool (matching the closed-issue
+yield query below). `gh issue list` paginates internally up to the limit, so this
+is not the `gh api` ~30/page trap — but if a label ever approaches 800
+(`gh issue list --label <l> --state all | wc -l`), the pool is truncated and
+duplicate findings can slip through. Raise the cap (or narrow with `--search`)
+before trusting the dedupe in that case.
 
 Dedupe key: area + cited file path + at least two distinctive title keywords.
 Area comes from the title prefix (`[claude-audit] <area>:` or

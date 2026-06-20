@@ -25,12 +25,26 @@ case "$file" in
   *) exit 0 ;;
 esac
 
-if [ -x "$CLAUDE_PROJECT_DIR/.venv/bin/ruff" ]; then
-  ruff="$CLAUDE_PROJECT_DIR/.venv/bin/ruff"
-elif command -v ruff >/dev/null 2>&1; then
-  ruff="ruff"
-else
-  exit 0
+# Resolve ruff from a venv, then PATH. Worktrees usually symlink data/ but NOT
+# .venv (symlinking it breaks sys.path — AGENTS.md), so also probe the MAIN
+# worktree's .venv (git lists it first). Otherwise a worktree with no local .venv
+# and no ruff on PATH silently skips formatting, and pre-pr.sh's
+# `ruff format --check` fails later. Mirrors the venv resolution in pre-pr.sh
+# (incl. the Windows Scripts/ layout).
+venv_roots=("$CLAUDE_PROJECT_DIR/.venv")
+main_wt=$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null \
+  | awk 'NR==1 && /^worktree /{print substr($0, 10); exit}' | tr -d '\r')
+if [ -n "$main_wt" ] && [ -d "$main_wt/.venv" ]; then
+  venv_roots+=("$main_wt/.venv")
 fi
+ruff=""
+for vr in "${venv_roots[@]}"; do
+  if [ -x "$vr/bin/ruff" ]; then ruff="$vr/bin/ruff"; break; fi
+  if [ -x "$vr/Scripts/ruff.exe" ]; then ruff="$vr/Scripts/ruff.exe"; break; fi
+done
+if [ -z "$ruff" ] && command -v ruff >/dev/null 2>&1; then
+  ruff="ruff"
+fi
+[ -n "$ruff" ] || exit 0
 
 "$ruff" format "$file" >/dev/null 2>&1 || true
