@@ -277,7 +277,7 @@ def load_run_manifest(s3, *, bucket: str, s3_prefix: str, run_id: str) -> dict |
 
 
 def collect_results(
-    spec, *, bucket: str, s3_prefix: str, run_id: str, s3_client, max_workers: int = 16
+    spec, *, bucket: str, s3_prefix: str, run_id: str, s3_client, max_workers: int = 10
 ) -> list[dict]:
     """Download every expected cell JSON; a missing one becomes a not-ok row so
     ``aggregate`` surfaces it instead of silently shrinking the grid.
@@ -286,9 +286,10 @@ def collect_results(
     thread pool (boto3 clients are thread-safe for API calls). A multi-family Stage-2
     report is ~2000 cells: serial collection was ~10 min of round-trips; the pool cuts
     it to seconds. ``pool.map`` preserves cell order, and ``aggregate`` /
-    ``position_effects`` key by the cell fields regardless. Effective concurrency is
-    capped by the client's ``max_pool_connections`` (default 10) — a big collect should
-    pass a client configured with a larger pool (see ``feature_selection_stage2``)."""
+    ``position_effects`` key by the cell fields regardless. The default ``max_workers``
+    matches boto3's default ``max_pool_connections`` (10) so a stock client never warns
+    on a full pool; a big collect should pass a wider-pool client AND a matching
+    ``max_workers`` (see ``feature_selection_stage2.collect_effects``, which uses 32)."""
 
     def _fetch(cell) -> dict:
         key = cell_result_key(s3_prefix, run_id, cell.key)
