@@ -50,7 +50,9 @@ POSITIONS = ["RB"]  # lead; run QB/WR/TE via --positions (all carry include_feat
 SCREENED_FAMILIES: list[str] = screenable_skill_families(EXTENDED_FAMILIES, SKILL_POSITIONS)
 _GROUP_COLS = skill_family_columns(SCREENED_FAMILIES, SKILL_POSITIONS, drop_empty=True)
 
-VARIANTS, ROW_DROPS = build_drop_variants(_GROUP_COLS)
+# full_feature_set=True: the screened families ARE RB/QB/WR/TE's whole
+# include_features set, so the all-drop PB arm would leave 0 features — skip it.
+VARIANTS, ROW_DROPS = build_drop_variants(_GROUP_COLS, full_feature_set=True)
 BASELINE = "baseline"
 
 

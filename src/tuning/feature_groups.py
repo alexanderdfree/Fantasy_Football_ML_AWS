@@ -279,17 +279,31 @@ def design_for_groups(group_names: Sequence[str]) -> list[tuple[str, frozenset[s
     return [(f"drop_{g}", frozenset({g})) for g in names]
 
 
-def drop_columns_mutator(cols: frozenset[str]) -> Callable[[dict], dict]:
+def drop_columns_mutator(
+    cols: frozenset[str], *, disable_pca: bool = True
+) -> Callable[[dict], dict]:
     """A cfg mutator that filters ``cols`` out of BOTH model paths.
 
     Filters ``get_feature_columns_fn`` (Ridge / LightGBM / base-NN, and K/DST
     whose callable reads ``POSITION_CONFIG.all_features``) and
     ``attn_static_features`` (the attention NN's static branch). Mirrors
     ``ab_feature_screen._drop_families`` at the column level.
+
+    ``disable_pca`` (default True) sets ``ridge_pca_components=None`` so the
+    screen's Ridge runs on raw features. This is deliberate: the screen is a
+    feature-ranking tool, and (a) a drop can take the feature count below the
+    production ``n_components`` and crash ``PCA`` (the RB failure mode), (b) PCA
+    re-bases the remaining features, muddying per-group attribution, and (c) raw
+    Ridge shares the feature basis with LightGBM/NN. The whole grid — baseline
+    included (see :func:`build_drop_variants`) — must share this setting or the
+    contrast conflates PCA-on/off with the drop. Production RB/WR/DST still ship
+    PCA-Ridge, so confirm a final cut on the production config, not this screen.
     """
     frozen = frozenset(cols)
 
     def _mut(cfg: dict, _cols: frozenset[str] = frozen) -> dict:
+        if disable_pca:
+            cfg["ridge_pca_components"] = None
         base_get = cfg.get("get_feature_columns_fn")
         if base_get is not None:
             cfg["get_feature_columns_fn"] = lambda _b=base_get: [c for c in _b() if c not in _cols]
@@ -303,24 +317,47 @@ def drop_columns_mutator(cols: frozenset[str]) -> Callable[[dict], dict]:
 
 def build_drop_variants(
     group_cols: dict[str, frozenset[str]],
+    *,
+    full_feature_set: bool = False,
 ) -> tuple[list[Variant], dict[str, frozenset[str]]]:
     """``baseline`` + one drop variant per design row.
 
     Returns ``(variants, row_drops)`` where ``row_drops`` maps each non-baseline
     variant name to the set of GROUP names it drops — the contrast matrix the
     :func:`main_effects` estimator reconstructs the per-group effect from.
-    Empty groups are dropped first (a no-op variant would false-trip the Ridge
-    sentinel).
+
+    The ``baseline`` carries a drop-nothing mutator (not the identity) so it
+    shares the screen's PCA-off Ridge config with every drop arm — otherwise the
+    per-arm contrast would conflate PCA-on/off with the feature drop.
+
+    Two degenerate design rows are skipped: one that drops no columns
+    (baseline-identical), and — when ``full_feature_set`` (the screened groups
+    ARE the position's whole feature set, i.e. extended skill / K / DST) — the
+    all-``-1`` PB row that drops EVERY group, which leaves a 0-feature matrix and
+    crashes ``StandardScaler``. The sub-screen leaves ``full_feature_set=False``:
+    dropping a whole family there still leaves the other families' columns.
     """
     group_cols = {g: c for g, c in group_cols.items() if c}
     names = list(group_cols)
-    variants = [Variant("baseline", label="keep all groups (production)")]
+    all_groups = frozenset(names)
+    # Baseline shares the PCA-off config (drops nothing) so the contrast is clean.
+    variants = [
+        Variant(
+            "baseline",
+            cfg_mutator=drop_columns_mutator(frozenset()),
+            label="keep all groups (production features, PCA off)",
+        )
+    ]
     row_drops: dict[str, frozenset[str]] = {}
     for vname, dropped in design_for_groups(names):
         cols = frozenset(c for g in dropped for c in group_cols[g])
         if not cols:
             # A design row that drops no columns is baseline-identical and would
             # false-trip the expect_ridge_identical=False sentinel — skip it.
+            continue
+        if full_feature_set and dropped == all_groups:
+            # Drops EVERY screened group; when the screened set is the whole
+            # feature set this leaves 0 features -> StandardScaler crashes.
             continue
         kept = [g for g in names if g not in dropped]
         variants.append(
