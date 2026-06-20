@@ -31,7 +31,8 @@ The [`run-gemini-cli`](https://github.com/google-github-actions/run-gemini-cli) 
 
 ## Audit Routine Wrappers (`.agents/routines/`)
 Gemini-side wrappers for the shared, read-only audit routines live under `.agents/routines/<name>/prompt.md`. They set `AUDIT_PROVIDER=Gemini` and — because Gemini has no provider-specific audit label — file under the shared `claude-audit` label, deduping against both providers' pools (the project decision is to reuse the existing `claude-audit`/`codex-audit` labels and the `agent-audit/v1` schema, not mint new ones). Tracked today:
+- **audit** (general code audit): [`.agents/routines/audit/prompt.md`](.agents/routines/audit/prompt.md) → shared [`routines/audit/instructions.md`](routines/audit/instructions.md) (the general per-area + cross-cutting codebase audit; findings feed the `solve-issues` backlog).
 - **tests-audit**: [`.agents/routines/tests-audit/prompt.md`](.agents/routines/tests-audit/prompt.md) → shared [`routines/tests-audit/instructions.md`](routines/tests-audit/instructions.md) (deep-audits the test suite).
 - **infrastructure-audit**: [`.agents/routines/infrastructure-audit/prompt.md`](.agents/routines/infrastructure-audit/prompt.md) → shared [`routines/infrastructure-audit/instructions.md`](routines/infrastructure-audit/instructions.md) (deep-audits CI/CD, Batch/EC2, Docker, serving/ECS, IAM, artifact lifecycle).
 
-These are tracked prompt templates; a Gemini run is pointed at one to execute it (no active automation is created here). The general code audit's shared instructions live at [`routines/audit/instructions.md`](routines/audit/instructions.md), consumed downstream by the `solve-issues` backlog.
+These are tracked prompt templates; a Gemini run is pointed at one to execute it (no active automation is created here).

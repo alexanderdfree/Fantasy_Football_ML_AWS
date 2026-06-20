@@ -73,9 +73,9 @@ Each surviving finding becomes one GitHub issue:
   - `src/batch/*`, `src/tuning/*`, and `src/benchmarking/*` -> `batch`.
   - `src/scripts/*`, `.github/workflows/*`, `.claude/hooks/*`, and
     `.codex/hooks/*` -> `ci`.
-  - `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `README.md`, `SETUP.md`, `TODO.md`,
-    `docs/*`, `agent-workflows/*`, `.claude/skills/*`, `.codex/prompts/*`,
-    `.claude/routines/audit/*`, `.codex/automations/audit/*`,
+  - `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `README.md`, `SETUP.md`, `TODO.md`,
+    `docs/*`, `agent-workflows/*`, `.claude/skills/*`, `.codex/prompts/*`, `.agents/skills/*`,
+    `.claude/routines/audit/*`, `.codex/automations/audit/*`, `.agents/routines/*`,
     `routines/audit/*`, and `scripts/bootstrap-codex-local.sh` -> `docs`.
   - Config-invariant/broken-reference lens findings take the area of the
     position they pertain to.
@@ -231,10 +231,10 @@ Layer A location-auditor scopes:
 9. Serving auditor: `src/serving/`, `tests/test_app*.py`
 10. Batch+CI auditor: `src/batch/`, `.github/workflows/`, `.claude/hooks/`,
     `.codex/hooks/`
-11. Docs/tooling consistency auditor: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
+11. Docs/tooling consistency auditor: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`,
     `README.md`, `SETUP.md`, `TODO.md`, `docs/`, `agent-workflows/`,
-    `.claude/skills/`, `.codex/prompts/`, `.claude/routines/audit/`,
-    `.codex/automations/audit/`, `routines/audit/`,
+    `.claude/skills/`, `.codex/prompts/`, `.agents/skills/`, `.claude/routines/audit/`,
+    `.codex/automations/audit/`, `.agents/routines/`, `routines/audit/`,
     `scripts/bootstrap-codex-local.sh`
 
 Layer B standing cross-cutting lenses:
@@ -250,10 +250,11 @@ Layer B standing cross-cutting lenses:
 - L4 Config-invariant + broken-reference: all six `src/{pos}/config.py` files
   and their consumers. Focus on within-position invariant violations and
   broken references to keys/values absent from that same position config.
-- L5 Agent tooling parity: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`,
+- L5 Agent tooling parity: `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, `GEMINI.md`,
   `.claude/settings.json`, `.claude/hooks/`, `.claude/skills/`,
   `.claude/routines/audit/`, `.codex/hooks.json`, `.codex/hooks/`,
-  `.codex/prompts/`, `.codex/automations/audit/`, `routines/audit/`,
+  `.codex/prompts/`, `.codex/automations/audit/`, `.agents/skills/`,
+  `.agents/routines/`, `routines/audit/`,
   `agent-workflows/`, `scripts/bootstrap-codex-local.sh`, `scripts/bootstrap-claude-wsl.sh`,
   `scripts/claude-memory-sync.sh`, `scripts/codex-memory-sync.sh`,
   `scripts/agent-memory-sync.sh`, and `SETUP.md`. Report substantive provider
@@ -370,8 +371,9 @@ For each new worker finding, the orchestrator re-verifies as a backstop:
    keywords. Drop if matched.
 3. Dedupe against `/tmp/known_issues.tsv` and `/tmp/known_files.tsv`: duplicate
    when an existing issue has the same area, same cited file, and at least two
-   shared distinctive title keywords. The pool spans open and closed
-   `claude-audit` and `codex-audit` per-finding issues.
+   shared distinctive title keywords. The pool spans open and closed per-finding
+   issues across every label in `DEDUPE_AUDIT_LABELS` (`claude-audit codex-audit`
+   today).
 4. For unfinished-PR or semantic-merge-conflict claims, run
    `git log -p -n 20 -- <file>` and confirm consistency. Drop if completed
    elsewhere.
@@ -495,8 +497,9 @@ write failed, print the unsent bodies to stdout.
 - Area is both the title prefix and an area label where that label exists.
 - First seen is the SHA/date of the run that first files the finding.
 - Existing issues are left untouched.
-- Dedup spans open and closed severity-labeled `claude-audit` and `codex-audit`
-  issues, so triaged-closed or fixed findings are not re-filed.
+- Dedup spans open and closed severity-labeled issues across every label in
+  `DEDUPE_AUDIT_LABELS` (`claude-audit codex-audit` today), so triaged-closed or
+  fixed findings are not re-filed.
 - Never re-flag anything in AGENTS.md stop rules or `todo/fixed-archive.md`.
 - Never propose cross-position harmonization; that is feature engineering.
 - Never file design, tuning, or accuracy-judgment changes unless they are clear,
