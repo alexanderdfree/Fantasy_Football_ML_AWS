@@ -386,13 +386,27 @@ vs 1.0 s/seed at N=24), stacking is now the GPU default at the per-seed optimum.
 
 **Local 5080 (sm_120) head-to-head — stacking wins EARLIER and HARDER than on the L4**
 (measured 2026-06-22, RB, 30 fixed epochs, `ab_ensemble_seeds --compare`, single lane, 1 core):
-crossover is **below N=8** — stacked per-seed speedup **1.28× at N=8, 2.58× at N=16, 3.51× at
-N=24** (vs the L4's ~9-seed crossover / 2.68× at N=24). eager-FP16+full-graph holds a ~1.7 s/seed
-launch-bound floor (the 5080's FP16 tensor cores don't help a launch-bound model); stacked s/seed
-drops 1.38 → 0.68 → 0.47. The intuition that a faster GPU would favour the FP16-graph arm is
-**backwards** — a faster GPU is *more* launch-bound, so it favours the launch-amortizing stacked
-arm even more (L4→5080 speeds eager ~1.6× but stacked@24 ~2.1×). So the N=24 default is even
-better-placed on the 5080 than on the L4 it was decided on; no per-arch retune needed.
+the **crossover sits at N≈6** — a sub-8 width sweep pins it. Stacked total wall is **flat ~11 s at
+every width** (fixed launch+capture, ~0 marginal/seed), so stacked s/seed ≈ 11/N against an
+eager-FP16+full-graph **~1.75 s/seed launch-bound floor** (the 5080's FP16 tensor cores don't help a
+launch-bound model — `full_step_graph_active=True, amp=float16` confirmed in every report). Stacked
+per-seed speedup by width:
+
+| N | eager s/seed | stacked s/seed | speedup |
+|---|---|---|---|
+| 2 | 1.90 | 5.51 | 0.34× |
+| 4 | 1.78 | 2.78 | 0.64× |
+| 6 | 1.75 | 1.80 | 0.97× (≈ tie) |
+| 8 | 1.75 | 1.35 | 1.29× |
+| 16 | ~1.75 | 0.68 | 2.58× |
+| 24 | ~1.65 | 0.47 | 3.51× |
+
+— eager wins ≤6 seeds, stacking wins ≥7 (vs the L4's ~9-seed crossover / 2.68× at N=24). The
+intuition that a faster GPU would favour the FP16-graph arm is **backwards** — a faster GPU is *more*
+launch-bound, so it favours the launch-amortizing stacked arm even more (L4→5080 speeds eager ~1.6×
+but stacked@24 ~2.1×). So the N=24 default is even better-placed on the 5080 than on the L4 it was
+decided on; no per-arch retune needed (and the *useful* A/B width stays 8–16 by σ/√N returns, well
+above the N≈6 crossover — the default is never in the eager-wins zone).
 
 **Scope:
 tune + every `ab_*.py` spec (and any `ab_harness`-based ablation) — NOT the legacy
