@@ -32,6 +32,10 @@ _CUDA_GRAPH_ENV = "FF_CUDA_GRAPH"
 # eager path) gating on top of ``cuda_graph_enabled()`` — see
 # ``cuda_graph_full_enabled``.
 _CUDA_GRAPH_FULL_ENV = "FF_CUDA_GRAPH_FULL"
+# Optimizer-tail capture (Lever A3) autodetects ON for CUDA sm_80+ on top of
+# full-step capture; this env var is a force-off override gating above
+# ``cuda_graph_full_enabled()`` — see ``cuda_graph_opt_enabled``.
+_CUDA_GRAPH_OPT_ENV = "FF_CUDA_GRAPH_OPT"
 
 
 def requested_device() -> str:
@@ -232,6 +236,38 @@ def cuda_graph_full_enabled() -> bool:
     }:
         return False
     return cuda_graph_enabled()
+
+
+def cuda_graph_opt_enabled() -> bool:
+    """Whether OPTIMIZER-TAIL CUDA graph capture (Lever A3) is active.
+
+    Extends :func:`cuda_graph_full_enabled`'s {gather + forward + backward +
+    combined-loss} graph to also bake the per-step eager tail —
+    ``zero_grad`` -> ``clip_grad_norm_`` -> ``AdamW.step`` -> loss accumulate —
+    into one manual ``torch.cuda.CUDAGraph`` over the whole iteration (see
+    ``_GraphedFullStep`` in ``src/shared/training.py``). The eager tail is
+    8.6% (RB) / 12.7% (WR) / 24.2% (QB) of attn-NN step time; capturing it
+    removes those launches on the launch-bound host path.
+
+    **Autodetect-ON for CUDA sm_80+**, ``FF_CUDA_GRAPH_OPT`` a **force-off
+    override** (``0``/``false``/``no``/``off``) — mirroring the two graphs it
+    builds upon. Unlike full-step capture, this path is **strictly inert**
+    (bit-identical to the A2-only path; no rebaseline): the FP32 production
+    default (#1311) removed ``GradScaler`` so the optimizer has no inf/NaN skip
+    branch, ``AdamW(capturable=True)`` is a math-no-op over identical grads, and
+    a graph replay of the optimizer step is bitwise-exact (both verified, local
+    Δ=0 gate). Requires ``cuda_graph_full_enabled()`` (A3 ⊆ A2 ⊆ base gate), so
+    ``FF_CUDA_GRAPH=0`` or ``FF_CUDA_GRAPH_FULL=0`` cascades it off; K's nested
+    trainer no-ops capture.
+    """
+    if os.environ.get(_CUDA_GRAPH_OPT_ENV, "").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return False
+    return cuda_graph_full_enabled()
 
 
 def seed_everything(seed: int) -> None:
