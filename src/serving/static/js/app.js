@@ -2063,6 +2063,27 @@ function renderHistoryIdCell(repoSlug, row) {
     return "—";
 }
 
+// Lazily-built, reused across rows/renders: constructing an Intl.DateTimeFormat
+// is comparatively expensive and renderHistory() formats one timestamp per row
+// on every (re)render. Built on first use rather than at module load so a
+// (theoretical) missing-IANA-zone throw stays contained to a single cell render
+// instead of breaking all of app.js's init.
+let _historyTsFormatter = null;
+function historyTsFormatter() {
+    if (!_historyTsFormatter) {
+        _historyTsFormatter = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/New_York",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+        });
+    }
+    return _historyTsFormatter;
+}
+
 function formatHistoryTimestamp(ts) {
     if (!ts) return "--";
     // Stored as "2026-05-19T22:47:20" (no tz marker, always UTC per
@@ -2083,15 +2104,7 @@ function formatHistoryTimestamp(ts) {
     // Rebuild from parts (en-CA + America/New_York would emit a comma between
     // date and time); hourCycle h23 keeps midnight as "00", not "24".
     const parts = {};
-    for (const p of new Intl.DateTimeFormat("en-CA", {
-        timeZone: "America/New_York",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-    }).formatToParts(d)) {
+    for (const p of historyTsFormatter().formatToParts(d)) {
         parts[p.type] = p.value;
     }
     return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
