@@ -528,9 +528,12 @@ jobs:
         # before/after cold-start win has a durable queue_provision_s baseline
         # to diff against — as shipped the ledger is otherwise log-only and
         # vanishes with the run's CloudWatch logs. if: always() because the
-        # ledger is written best-effort even when the wait expires on partial
-        # jobs (and because the train step exits non-zero on a Spot timeout);
-        # no-ops cleanly when launch.py failed before writing any ledger.
+        # train step exits non-zero on a Spot timeout, yet launch.py still
+        # writes a ledger for every job that reached a terminal state
+        # (SUCCEEDED/FAILED) — so a partial fan-out is still captured. A run
+        # where NO job terminated (pure Spot starvation / all TIMED_OUT) or
+        # where launch.py died before submitting writes nothing, and the
+        # file-existence guard below skips cleanly.
         if: always()
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
