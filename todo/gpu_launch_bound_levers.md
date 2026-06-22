@@ -27,7 +27,7 @@ Measured on the WSL2 / 9950X3D / RTX 5080 box, all 6 positions, pool ON:
 ### Stop-rule (don't relitigate without a benchmark)
 - **`torch.compile` is measured-rejected** (`#641`, **+169% on the 5080**) — dynamic-shape recompiles. A hand-rolled CUDA graph sidesteps that (train shapes are static via `drop_last`), but anything touching this area must clear a per-position A/B.
 
-## Precision & quantization levers (FP16 / TF32 / AMP / quant) — ASSESSED, no easy wins (2026-06-22)
+## Precision & quantization levers (FP16 / TF32 / AMP / quant) — ASSESSED, no easy wins (2026-06-22; precision-path speedup measured + reasoning corrected — see UPDATE below)
 
 Asked whether fp16-vs-tf32, mixed precision, or quantization offer an easy win. They don't:
 the model is **launch-bound** (above), so any lever that targets math throughput or memory
@@ -38,7 +38,8 @@ can't move wall-clock. Current state, for the record so it isn't re-investigated
   in `_nn_device()` ([src/shared/pipeline.py](../src/shared/pipeline.py)), sm_80+-effective,
   `not deterministic`-gated, across all 4 NN training paths + the CV path — not the legacy
   `allow_tf32` booleans. Nothing to tune; `"medium"` would alter the deliberately-frozen
-  FP32-GEMM metric path.
+  FP32-GEMM metric path. (But see the UPDATE below: the measured speed lever is *removing*
+  autocast, not tuning the TF32 `set_float32_matmul_precision` setting.)
 - **Mixed precision (AMP) — textbook, mature.** FP16 default on every CUDA GPU (`amp_dtype`,
   [src/shared/utils.py](../src/shared/utils.py)); GradScaler FP16-only, CUDA-only, kept OUTSIDE the
   CUDA graph; autocast wraps train + val forward; inference (`predict_numpy`,
@@ -51,8 +52,9 @@ can't move wall-clock. Current state, for the record so it isn't re-investigated
   job; serving only downloads the S3 artifact, ADR-0018), not the ~276 KB NN forward. Calibration +
   accuracy risk for zero measurable gain.
 
-The real un-shipped GPU headroom is a **launch** lever, not a precision one — Lever B/B′ (CUDA
-streams), below.
+**UPDATE (2026-06-22, measured — the "precision can't move wall-clock" framing above was too strong).** An owner-requested A/B (QB + RB + WR, 5080/sm_120, via an `ab_harness` spec toggling `nn_use_amp=False`, i.e. `FF_AMP_DTYPE=fp32`) found that **dropping FP16 autocast entirely** — FP32 storage + TF32 matmuls instead of FP16 + autocast + GradScaler — **moves wall-clock**: NN-wall **−27% QB / −11% RB / −13% WR**, and is **accuracy-neutral on the served attention NN** (n=8, graphs-off / per-step bit-exact; every |Δ|/SE < 1; no high-magnitude-head regression, opposite of BF16; Ridge+LGBM bit-identical → clean NN-only change). This does **not** contradict "launch-bound" — it *confirms* it: the win is a **launch** lever, not a throughput one. Autocast inserts per-op FP16↔FP32 **cast kernels**; on this tiny launch-bound model those extra launches cost more than FP16's tensor-core throughput saves, while TF32 keeps a single dtype (FP32 storage, matmul uses TF32 internally) and launches fewer kernels. A 3-arm attribution isolated the cause: **GradScaler is NOT it** — FP16-without-GradScaler is **−3.5% (slightly *slower*)** and the scaler is near-inert (dynamic scale settles to 4.0, 1.43% inf-skips confined to warmup, removing it leaves served-model accuracy unchanged); the entire win is the `fp16-no-scaler → tf32` (autocast-removal) step. **Still not an *easy* win:** FP16 is today's default, so a switch is a **metric-path change** (6-position rebaseline + ADR-0017 update + owner sign-off); the absolute seconds are tiny (~1–2.4 s/position) and near-invisible on the orchestration-bound Batch critical path; and the local magnitude is contended/position-dependent — a clean per-arch read wants the production L4. **Net: the conclusion ("don't switch for speed alone") stands; the stated reason ("precision can't move wall-clock") was wrong** — removing the autocast machinery does.
+
+The largest *dedicated* un-shipped GPU lever is still **launch**-side — Lever B/B′ (CUDA streams), below — but "launch, not precision" is a false dichotomy: the precision-*path* change in the UPDATE above is itself a launch lever (autocast cast-kernel removal).
 
 ## Why not MPS locally (researched 2026-05-31, rejected on both OSes)
 NVIDIA MPS would give true multi-process kernel co-residency — but it is **Linux/QNX-only**. MPS Overview r590 (Dec 2025), verbatim: *"MPS is only supported on the Linux and QNX operating systems. The MPS server will fail to start when launched on an operating system other than Linux."*
