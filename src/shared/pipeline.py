@@ -150,10 +150,14 @@ def _nn_device() -> torch.device:
         }
         deterministic = force_deterministic or torch.are_deterministic_algorithms_enabled()
         torch.backends.cudnn.benchmark = not deterministic
-        # TF32 for FP32 matmuls on Ampere+ (sm_80+). This is a hardware no-op on
-        # Turing (T4, sm_75) and on CPU, so the T4/Mac/CI numerics are unchanged;
-        # it only speeds up residual FP32 GEMMs on Blackwell (RTX 5080). Skipped
-        # under deterministic mode, where full-precision FP32 is the contract.
+        # TF32 for FP32 matmuls on Ampere+ (sm_80+: A10G sm_86, L4 sm_89, RTX
+        # 5080 sm_120). Hardware no-op on Turing (T4, sm_75) and CPU, so the
+        # T4/Mac/CI numerics are unchanged. Since the 2026-06-22 FP16->FP32 flip
+        # (amp_dtype() returns None by default, AMP off) the whole training
+        # fwd/bwd runs in FP32, so TF32 now accelerates the *primary* GEMM path,
+        # not just the residual FP32 GEMMs left over under the old FP16-autocast
+        # default. Skipped under deterministic mode, where full-precision FP32 is
+        # the contract.
         if not deterministic:
             torch.set_float32_matmul_precision("high")
         return torch.device("cuda")
