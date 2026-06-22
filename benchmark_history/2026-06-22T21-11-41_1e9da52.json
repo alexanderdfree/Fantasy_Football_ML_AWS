@@ -1,0 +1,10 @@
+{
+  "run_id": "2026-06-22T21:11:41_1e9da52",
+  "timestamp": "2026-06-22T21:11:41",
+  "git_hash": "1e9da52",
+  "note": "Training skipped — provably-inert src/shared cleanup (retire FP16-era CUDA-graph GradScaler diagnostics, PR #1331); retrain cancelled per owner decision (env-gated default-off removal, 2 clean reviews + full CI)",
+  "results": [],
+  "positions": [],
+  "training_skipped": true,
+  "pr_number": 1331
+}
