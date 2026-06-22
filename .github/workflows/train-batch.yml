@@ -368,6 +368,13 @@ jobs:
           # turned into a completed run (append + marker) instead of a
           # silently missing benchmark row.
           FF_BATCH_JOB_IDS_FILE: batch_job_ids.json
+          # Makes launch.py's _emit_batch_lifecycle_ledger write the W0
+          # orchestration-vs-run breakdown (per-job queue_provision_s / run_s)
+          # to the workspace; the "Persist Batch lifecycle ledger" step below
+          # mirrors it to S3 so a warm-AMI before/after cold-start comparison
+          # has a durable baseline. Otherwise the ledger is log-only/ephemeral
+          # (only the [timing] phase=batch_lifecycle CloudWatch lines survive).
+          FF_BATCH_LIFECYCLE_FILE: batch_lifecycle.json
           # Empty when workflow_dispatch (no upstream image build to pin to);
           # launch.py treats empty as "no revision" and falls back to name-only
           # resolution (current behavior).
@@ -513,6 +520,34 @@ jobs:
               "The wait + recovery grace poll expired before every Batch job reached SUCCEEDED, so the benchmark_history append, push, and train-success marker were skipped. If the jobs later SUCCEEDED on their own (Spot starvation outlasting the wait), backfill the row from models/{POS}/history/ metrics or re-dispatch train-batch.yml with image_sha=${HEAD_SHA}. No dedup marker was written, so the next workflow_run delivery for this SHA (if any) retrains from scratch.")" \
             || echo "::warning::could not file tracking issue (continuing)"
           exit 0
+
+      - name: Persist Batch lifecycle ledger
+        # Mirror the W0 orchestration-vs-run ledger (written by launch.py to
+        # batch_lifecycle.json via FF_BATCH_LIFECYCLE_FILE on the train step) to
+        # s3://{bucket}/batch_lifecycle/{sha}-{run}.json so a warm-AMI cutover's
+        # before/after cold-start win has a durable queue_provision_s baseline
+        # to diff against — as shipped the ledger is otherwise log-only and
+        # vanishes with the run's CloudWatch logs. if: always() because the
+        # train step exits non-zero on a Spot timeout, yet launch.py still
+        # writes a ledger for every job that reached a terminal state
+        # (SUCCEEDED/FAILED) — so a partial fan-out is still captured. A run
+        # where NO job terminated (pure Spot starvation / all TIMED_OUT) or
+        # where launch.py died before submitting writes nothing, and the
+        # file-existence guard below skips cleanly.
+        if: always()
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+        run: |
+          if [ ! -f batch_lifecycle.json ]; then
+            echo "No batch_lifecycle.json — launch.py wrote no ledger (no jobs reached terminal state); skipping."
+            exit 0
+          fi
+          key="batch_lifecycle/${HEAD_SHA}-${GITHUB_RUN_ID}.json"
+          if aws s3 cp batch_lifecycle.json "s3://${S3_BUCKET}/${key}" --region "$AWS_REGION"; then
+            echo "Persisted Batch lifecycle ledger to s3://${S3_BUCKET}/${key}"
+          else
+            echo "::warning::could not upload batch_lifecycle.json to S3 (instrumentation only — continuing)"
+          fi
 
       - name: Verify model artifact freshness
         # Anchor on when training STARTED, not "now" — Spot parallelism makes
