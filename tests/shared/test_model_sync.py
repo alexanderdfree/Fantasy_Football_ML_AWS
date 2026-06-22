@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -937,7 +939,7 @@ def test_benchmark_history_sync_empty_prefix_is_not_an_error(monkeypatch, tmp_pa
     fake_s3 = _FakeS3(objects={})
     with mock.patch("boto3.client", return_value=fake_s3):
         summary = model_sync.sync_benchmark_history_from_s3()
-    assert summary == {"total_secs": 0.0, "total_bytes": 0, "files": 0, "failed": []}
+    assert summary == {"total_secs": 0.0, "total_bytes": 0, "files": 0, "skipped": 0, "failed": []}
 
 
 @pytest.mark.unit
@@ -1032,6 +1034,102 @@ def test_benchmark_history_sync_isolates_per_file_failures(monkeypatch, tmp_path
     assert (tmp_path / "benchmark_history" / "good.json").read_bytes() == good_bytes
     assert not (tmp_path / "benchmark_history" / "broken.json").exists()
     assert "PARTIAL" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_benchmark_history_sync_skips_files_already_on_disk(monkeypatch, tmp_path):
+    """New-file guard: benchmark_history JSONs are immutable, so a filename
+    already on disk (the Docker-COPY'd floor or a prior poll) is never
+    re-fetched — only genuinely-new run_ids are downloaded. This is what keeps
+    the poller's steady state to a single ListBucket and zero GETs."""
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+
+    dest_dir = tmp_path / "benchmark_history"
+    dest_dir.mkdir()
+    present_key = "models/benchmark_history/2026-05-01T10-00-00_abc.json"
+    present = dest_dir / "2026-05-01T10-00-00_abc.json"
+    present.write_bytes(b'{"floor": true}')  # already on disk (e.g. image floor)
+
+    new_key = "models/benchmark_history/2026-05-19T22-47-20_new.json"
+    objects = {
+        # Same run_id as the on-disk file — must be skipped, not re-fetched.
+        present_key: b'{"floor": "S3-VERSION-SHOULD-NOT-LAND"}',
+        new_key: b'{"new": 1}',
+    }
+    fake_s3 = _FakeS3(objects)
+    with mock.patch("boto3.client", return_value=fake_s3):
+        summary = model_sync.sync_benchmark_history_from_s3()
+
+    assert summary["files"] == 1
+    assert summary["skipped"] == 1
+    # Only the NEW key was GET'd; the already-present one was not.
+    fetched = [key for (_bucket, key) in fake_s3.calls]
+    assert fetched == [new_key]
+    # The on-disk file is left byte-untouched (immutable; not overwritten).
+    assert present.read_bytes() == b'{"floor": true}'
+    assert (dest_dir / "2026-05-19T22-47-20_new.json").read_bytes() == b'{"new": 1}'
+    # Atomic download leaves no temp turds behind.
+    assert not list(dest_dir.glob("*.tmp"))
+
+
+@pytest.mark.unit
+def test_start_benchmark_history_poller_calls_sync_each_cycle(monkeypatch):
+    """The poller thread must re-call sync_benchmark_history_from_s3 each cycle
+    so a run uploaded after boot surfaces without a restart."""
+    calls: list[int] = []
+    barrier = threading.Event()
+
+    def fake_sync():
+        calls.append(1)
+        if len(calls) >= 2:
+            barrier.set()
+        return None
+
+    monkeypatch.setattr(model_sync, "sync_benchmark_history_from_s3", fake_sync)
+
+    stop = threading.Event()
+    thread = model_sync.start_benchmark_history_poller(interval_s=0, stop_event=stop)
+    try:
+        assert thread.daemon is True
+        assert barrier.wait(timeout=2.0), f"poller did not cycle twice; calls={len(calls)}"
+    finally:
+        # Stop + join BEFORE monkeypatch restores the real sync, so the daemon
+        # never calls real boto3 and leaks into other tests' mocks.
+        stop.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive(), "benchmark history poller thread did not stop"
+
+
+@pytest.mark.unit
+def test_start_benchmark_history_poller_survives_sync_exception(monkeypatch):
+    """If the sync raises (unexpected bug), the daemon must not die — it logs
+    and continues on the next cycle."""
+    calls: list[int] = []
+    raised_once = [False]
+
+    def fake_sync():
+        calls.append(1)
+        if not raised_once[0]:
+            raised_once[0] = True
+            raise RuntimeError("simulated boom")
+        return None
+
+    monkeypatch.setattr(model_sync, "sync_benchmark_history_from_s3", fake_sync)
+
+    stop = threading.Event()
+    thread = model_sync.start_benchmark_history_poller(interval_s=0, stop_event=stop)
+    try:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if len(calls) >= 3:
+                break
+            time.sleep(0.05)
+        assert len(calls) >= 3, f"poller died after exception; calls={len(calls)}"
+    finally:
+        stop.set()
+        thread.join(timeout=2.0)
+        assert not thread.is_alive(), "benchmark history poller thread did not stop"
 
 
 # ---------------------------------------------------------------------------

@@ -35,9 +35,18 @@ import threading
 # harmless outside ECS.
 _DEFAULT_REFRESH_INTERVAL_S = 30
 
+# Benchmark History tab re-sync cadence. Like the model poller above, the boot
+# sync is one-shot, so a run uploaded to S3 after boot stays invisible until
+# the next restart. Poll it (default 30s; FF_BENCHMARK_SYNC_INTERVAL_S=0
+# disables) so new benchmark_history runs surface without a redeploy. Cheap:
+# sync_benchmark_history_from_s3's new-file guard makes the steady state one
+# ListBucket and zero downloads.
+_DEFAULT_BENCHMARK_SYNC_INTERVAL_S = 30
+
 
 def on_starting(server):
     from src.shared.model_sync import (
+        start_benchmark_history_poller,
         start_refresh_poller,
         sync_benchmark_history_from_s3,
         sync_data_from_s3,
@@ -63,6 +72,21 @@ def on_starting(server):
         print(f"[model_sync] in-flight refresh poller started (interval={interval_s}s)")
     else:
         print("[model_sync] in-flight refresh poller disabled (FF_MODEL_REFRESH_INTERVAL_S=0)")
+
+    # Benchmark History tab: in-flight re-sync so runs uploaded to S3 after boot
+    # appear without a restart (the boot sync above is one-shot). The new-file
+    # guard keeps each poll to a single ListBucket in the steady state.
+    try:
+        bench_interval_s = int(
+            os.environ.get("FF_BENCHMARK_SYNC_INTERVAL_S", _DEFAULT_BENCHMARK_SYNC_INTERVAL_S)
+        )
+    except ValueError:
+        bench_interval_s = _DEFAULT_BENCHMARK_SYNC_INTERVAL_S
+    if bench_interval_s > 0:
+        start_benchmark_history_poller(bench_interval_s)
+        print(f"[benchmark_sync] history poller started (interval={bench_interval_s}s)")
+    else:
+        print("[benchmark_sync] history poller disabled (FF_BENCHMARK_SYNC_INTERVAL_S=0)")
 
     # Upcoming-week projections: the artifact is built OUT of serving (a scheduled
     # CI job) and uploaded to S3 — running the full data+feature build in this
