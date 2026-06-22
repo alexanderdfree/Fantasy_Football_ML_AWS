@@ -406,10 +406,8 @@ The largest chunk of per-job wall time on a cold Spot instance is pulling the
 training image (decompress + extract to overlayfs), re-paid on every fresh Spot
 host. With SOCI dead on Batch (§2a) and the ~120 s Spot-provisioning half a fixed
 G-family floor, the live levers are **shrinking the image** (2d, below) and a
-**warm pre-pulled custom AMI** (deferred Stage 2 — not yet built; would reuse
-`infra/batch/setup.sh`'s `DISABLE → update-compute-environment → ENABLE` reconcile
-to host an AMI with the base layers pre-seeded into containerd). The stacking
-build-time optimizations:
+**warm pre-pulled custom AMI** (§2e, below — built 2026-06-22, opt-in). The
+stacking build-time optimizations:
 
 ### 2d. Slim CUDA base + pip torch (primary image-size lever, 2026-06-07)
 
@@ -431,6 +429,47 @@ push-to-`main`/dispatch (not PRs), so the new image is first built on merge** (o
 a `workflow_dispatch` branch build) — there is no PR-time or local build gate.
 Targets the image-pull half of cold-start; actual pull-window drop measured
 post-merge via `aws ecs describe-tasks` `pullStartedAt`/`pullStoppedAt`.
+
+### 2e. Warm pre-pulled custom AMI (cold-start lever, opt-in, 2026-06-22)
+
+A custom AMI built **from** the latest ECS-GPU-optimized AMI (same NVIDIA driver
++ ECS agent + Docker lineage) with the training image's layers already in the
+container store, so a fresh Spot host boots with the layers cached and the ECS
+agent's pull finds them — skipping the ~122 s pull. This is **not** SOCI (§2a):
+no snapshotter, no UserData daemon (the layers are baked into the AMI), so it
+sidesteps both the Fargate-only ECS-agent limitation and the UserData-MIME
+`CE-INVALID` footgun. The kernel step is launch-bound, but production wall-clock
+is orchestration-bound, so killing this pull is the highest-leverage
+training-time lever — see the W0 `[timing] phase=batch_lifecycle` ledger
+(`src/batch/launch.py`) for the live `queue_provision` vs `run` split this is
+measured against.
+
+- **Build:** `infra/batch/build-warm-ami.sh <ecr-image-uri[:tag]>` resolves the
+  latest ECS-GPU AMI from SSM, boots a builder, `docker pull`s the image via SSM
+  Run Command, snapshots the AMI, and prints its id. `--dry-run` prints the plan
+  without touching AWS. The builder instance profile needs ECR pull **and**
+  `AmazonSSMManagedInstanceCore`.
+- **Rebuild cadence:** only when the image's **base** layers change (the torch /
+  CUDA pin or `requirements.txt`). The app-code layer drifts every `src/**` push,
+  but a stale app layer costs only the small app-delta pull — the heavy base
+  layers stay cached on the AMI. So this is a rare manual rebuild, not per-push.
+- **Activate:** `FF_BATCH_AMI_ID=<ami-id> bash infra/batch/setup.sh` attaches the
+  AMI to the **GPU CE only** (the c8a CPU fleet keeps the default AMI) via a
+  version-pinned `ff-warm-ami-lt` launch template, reusing the existing
+  `DISABLE → update-compute-environment → ENABLE` reconcile. **Unset
+  `FF_BATCH_AMI_ID` is the default and changes nothing** — the CE keeps whatever
+  AMI it has, so a plain `setup.sh` run is a no-op for this feature.
+- **Rollback:** detach the launch template (re-running `setup.sh` with the var
+  unset does **not** detach it — `setup.sh` never auto-removes a launch
+  template). Run:
+  ```bash
+  aws batch update-compute-environment --compute-environment ff-gpu-spot --state DISABLED
+  aws batch update-compute-environment --compute-environment ff-gpu-spot \
+    --compute-resources 'launchTemplate={}'
+  aws batch update-compute-environment --compute-environment ff-gpu-spot --state ENABLED
+  ```
+  The next Spot host uses the default ECS-GPU AMI again; pull window returns to
+  ~122 s.
 
 ### 2b. Explicit COPYs in Dockerfile.train
 

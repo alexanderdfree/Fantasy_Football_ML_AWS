@@ -84,6 +84,41 @@ ecr:GetDownloadUrlForLayer
 ecr:BatchGetImage
 ```
 
+### Warm pre-pulled AMI (opt-in — the active cold-start lever, ADR-0022)
+
+Bakes the training image's layers into a custom AMI (built **from** the latest
+ECS-GPU AMI) so a fresh Spot host skips the ~122 s pull. Not SOCI: no
+snapshotter, no UserData — just baked layers. See
+[batch_design.md §2e](../../docs/batch_design.md) / ADR-0022.
+
+```bash
+# 1. Build (rebuild only when torch/CUDA pin or requirements.txt change — a
+#    stale app-code layer only costs the small app-delta pull). Prints the AMI id.
+#    --dry-run prints the AWS plan without touching anything.
+infra/batch/build-warm-ami.sh <acct>.dkr.ecr.us-east-1.amazonaws.com/ff-training:latest
+
+# 2. Activate: attach to the GPU CE (c8a CPU fleet untouched). Default-unset is a
+#    no-op, so a plain setup.sh run never changes this.
+FF_BATCH_AMI_ID=ami-0123... bash infra/batch/setup.sh
+
+# 3. Verify the pull window dropped on the next cold host:
+aws ecs describe-tasks ... --query 'tasks[0].[pullStartedAt,pullStoppedAt]'
+# and the W0 ledger: grep '[timing] phase=batch_lifecycle' in the job logs.
+```
+
+The builder instance profile (default `ecsInstanceRole`) needs ECR pull **and**
+`AmazonSSMManagedInstanceCore` (the build drives `docker pull` via SSM).
+
+**Rollback** — re-running `setup.sh` with `FF_BATCH_AMI_ID` unset does **not**
+detach it (`setup.sh` never auto-removes a launch template). Detach explicitly:
+
+```bash
+aws batch update-compute-environment --compute-environment ff-gpu-spot --state DISABLED
+aws batch update-compute-environment --compute-environment ff-gpu-spot \
+  --compute-resources 'launchTemplate={}'
+aws batch update-compute-environment --compute-environment ff-gpu-spot --state ENABLED
+```
+
 ### SOCI snapshotter — ⚠️ REMOVED 2026-06-07 (did not work on Batch)
 
 > **SOCI lazy-loading was removed.** It cannot work on AWS Batch: Batch runs on
@@ -221,7 +256,8 @@ manually if you want a complete wipe.
 
 | File | Purpose |
 |---|---|
-| `setup.sh` | Idempotent provisioning: IAM, SG, CE (`ff-gpu-spot`, diversified `g6.xlarge` + `g5.xlarge` Spot pool), JQ, JD seed revision. Re-runs skip anything that already exists. |
+| `setup.sh` | Idempotent provisioning: IAM, SG, CE (`ff-gpu-spot`, diversified `g6.xlarge` + `g5.xlarge` Spot pool), JQ, JD seed revision. Re-runs skip anything that already exists. Opt-in `FF_BATCH_AMI_ID` attaches a warm AMI via the `ff-warm-ami-lt` launch template (default-unset no-op). |
+| `build-warm-ami.sh` | Build a warm pre-pulled GPU AMI (training image baked onto the latest ECS-GPU AMI) to skip the ~122 s cold-start pull (ADR-0022). `--dry-run` prints the plan. |
 | `teardown.sh` | Reverse-order tear down (JQ → CE → SG → IAM roles + profile); idempotent. |
 | `iam-trust-policy-job.json` | `ecs-tasks.amazonaws.com` trust (job + execution roles). |
 | `iam-trust-policy-instance.json` | `ec2.amazonaws.com` trust (EC2 instance role). |
