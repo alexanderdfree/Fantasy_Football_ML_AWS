@@ -11,6 +11,18 @@ all 6 positions on per-position ``torch.cuda.Stream``s, so their kernels co-resi
 single CUDA context and fill each other's idle gaps (the substitute for NVIDIA MPS,
 which is unavailable on the WSL2/Windows 5080 this targets).
 
+**RESULT — MEASURED-NEGATIVE (2026-06-22, RTX 5080 / sm_120).** Graphed full-step A/B
+(QB/RB/WR/TE, seeds 42/1337/2024, ``--fixed-epochs 30``, all four captured ``full``):
+**seq→streams = 1.033 ± 0.005×, i.e. NO overlap** (an earlier graphed run gave
+1.010 ± 0.008× — both ≈1.0×; eager sanity also 1.00×). The single
+thread can't fill the GPU's idle gaps — in eager mode the GIL serialises the host
+launches (the bottleneck), and in graphed mode the launch storm is already collapsed so
+there's nothing left to overlap. **Lever B is CLOSED** — the ``parallel_train -j6``
+subprocess model stays. Limitation: K/DST were excluded (their targets are computed from
+raw PBP downstream of ``data/splits``, so they don't build in this harness); the 4 skill
+positions share the same launch-bound attn arch and are representative. Full write-up in
+[todo/gpu_launch_bound_levers.md](../../todo/gpu_launch_bound_levers.md) (Lever B).
+
 **The crux (why one thread, not six):** Python's GIL serialises host-side launches
 across threads — the very thing that's the bottleneck — so this drives a **single
 thread that round-robins one training step per position per round onto each position's
