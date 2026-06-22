@@ -806,6 +806,7 @@ def _train_attention_nn(
     opp_mask_val=None,
     opp_hist_test=None,
     opp_mask_test=None,
+    init_state_dict=None,
 ):
     """Train a MultiHeadNetWithHistory and return (model, scaler, test_preds, metrics, history).
 
@@ -886,6 +887,15 @@ def _train_attention_nn(
         opp_game_dim=(opp_hist_train.shape[2] if use_opp else None),
     ).to(device)
 
+    # Warm-start hook (default-off, numerically inert when None): seed this
+    # fold's weights from a prior fold's trained state instead of the fresh
+    # random init above. Used ONLY by the walk-forward experiment in
+    # src/tuning/warmstart_walkforward.py; production passes None, so this path
+    # is byte-identical to the from-scratch fit. Load onto the raw model before
+    # _maybe_compile so the (optional) compile wrapper sees the warm weights.
+    if init_state_dict is not None:
+        model.load_state_dict(init_state_dict)
+
     history = _run_nn_training(
         model=_maybe_compile(model),
         train_loader=train_loader,
@@ -942,6 +952,7 @@ def _train_nested_attention_nn(
     game_hist_train=None,
     game_hist_val=None,
     game_hist_test=None,
+    init_state_dict=None,
 ):
     """Train a MultiHeadNetWithNestedHistory on pre-padded nested history.
 
@@ -988,6 +999,11 @@ def _train_nested_attention_nn(
         targets=targets,
         game_dim=game_dim,
     ).to(device)
+
+    # Warm-start hook (default-off, numerically inert when None) — see the twin
+    # in _train_attention_nn. Production passes None (byte-identical fit).
+    if init_state_dict is not None:
+        model.load_state_dict(init_state_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
@@ -1055,6 +1071,7 @@ def _train_attention_holdout(
     pos_test,
     feature_cols,
     opp_source_frames,
+    init_state_dict=None,
 ):
     """Build attention static/history/opp tensors and train the attention NN.
 
@@ -1139,6 +1156,7 @@ def _train_attention_holdout(
                 game_hist_train=game_hist_train,
                 game_hist_val=game_hist_val,
                 game_hist_test=game_hist_test,
+                init_state_dict=init_state_dict,
             ),
             attn_feature_cols,
         )
@@ -1202,6 +1220,7 @@ def _train_attention_holdout(
                 opp_mask_val=opp_mask_val,
                 opp_hist_test=opp_hist_test,
                 opp_mask_test=opp_mask_test,
+                init_state_dict=init_state_dict,
             ),
             attn_feature_cols,
         )
@@ -1300,6 +1319,7 @@ def _train_attention_holdout(
             opp_mask_val=opp_mask_val,
             opp_hist_test=opp_hist_test,
             opp_mask_test=opp_mask_test,
+            init_state_dict=init_state_dict,
         ),
         attn_feature_cols,
     )
