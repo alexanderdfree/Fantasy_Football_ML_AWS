@@ -92,36 +92,51 @@ def amp_dtype() -> torch.dtype | None:
 
     - **Non-CUDA (CPU/MPS — local Mac dev, CI):** ``None``. AMP is off, so those
       runs stay byte-identical to the FP32 path.
-    - **CUDA, default (``auto``/``fp16``):** ``torch.float16`` on *all* CUDA
-      (T4 and Blackwell alike). A deterministic 5080 A/B showed BF16 *regresses*
-      high-magnitude heads — QB ``passing_yards`` +2.2–3.1% — because BF16 trades
-      mantissa bits (7 vs FP16's 10) the model uses for exponent range it does
-      not need (``GradScaler`` already covers FP16 gradient underflow). FP16 also
-      runs full-throughput Tensor Cores on Blackwell, so there is no speed reason
-      to switch. Hence BF16 is never auto-selected.
+    - **CUDA, default (``auto``):** ``None`` — AMP is *off*. The NN trains in
+      FP32 storage with TF32 matmuls (``set_float32_matmul_precision("high")``
+      auto-enabled on sm_80+ in ``_nn_device``). Flipped from the old FP16
+      autocast default 2026-06-22 (owner-approved metric-path change): on this
+      launch-bound model FP16 autocast's per-op cast kernels cost more wall-time
+      than TF32 saves, and TF32 keeps FP16's 10-bit matmul mantissa plus the
+      full FP32 exponent so accuracy is neutral (QB/RB/WR/K/DST A/B, n=8,
+      graphs-off). With AMP off there is no ``GradScaler``, so the graphed path
+      is per-step bit-exact.
 
     ``$FF_AMP_DTYPE`` overrides the default for experimentation:
 
+    - ``fp16`` — opt into the old FP16 autocast + ``GradScaler`` path on every
+      CUDA device (T4 and Blackwell alike). This was the default before the
+      2026-06-22 flip; it remains the proven mixed-precision path.
     - ``bf16`` — opt into BF16, but **only on sm_80+** (Ampere/Ada/Blackwell).
       On Turing (Tesla T4 ``sm_75``) BF16 autocast hung production (PRs
       #293/#301), so this falls back to FP16 there rather than reintroduce the
-      hang — the opt-in cannot footgun a T4.
-    - ``fp16`` — force FP16 (same as the default; explicit for symmetry).
-    - ``fp32`` — disable AMP entirely (e.g. to measure the TF32 FP32 path).
+      hang — the opt-in cannot footgun a T4. A deterministic 5080 A/B also showed
+      BF16 *regresses* high-magnitude heads (QB ``passing_yards`` +2.2–3.1%),
+      so it is never auto-selected.
+    - ``fp32`` — disable AMP entirely (same as the ``auto`` default now; explicit
+      for symmetry).
     """
     if not cuda_enabled():
         return None
     req = requested_amp_dtype()
     if req == "fp32":
         return None
+    if req == "fp16":
+        return torch.float16
     if req == "bf16":
         # Opt-in BF16 is SAFE only on sm_80+. T4 (sm_75) has no BF16 Tensor
         # Cores — BF16 autocast hung it (#293/#301) — so degrade to FP16.
         if torch.cuda.get_device_capability()[0] >= 8:
             return torch.bfloat16
         return torch.float16
-    # auto / fp16: FP16 is the proven default on every CUDA device.
-    return torch.float16
+    # auto (default): AMP OFF -> FP32 storage + TF32 matmuls (sm_80+, via
+    # set_float32_matmul_precision("high") in _nn_device). Flipped from FP16
+    # default 2026-06-22 (owner-approved metric-path change): on this
+    # launch-bound model FP16 autocast's per-op cast kernels cost more than
+    # TF32 saves, and TF32 keeps FP16's 10-bit matmul mantissa + full FP32
+    # exponent so accuracy is neutral (QB/RB/WR/K/DST A/B, n=8 graphs-off).
+    # FP16 remains available via FF_AMP_DTYPE=fp16.
+    return None
 
 
 def mps_enabled() -> bool:
