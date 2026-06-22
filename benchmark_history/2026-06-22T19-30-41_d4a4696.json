@@ -1,0 +1,289 @@
+{
+  "run_id": "2026-06-22T19:30:41_d4a4696",
+  "timestamp": "2026-06-22T19:30:41",
+  "git_hash": "d4a4696",
+  "note": "Batch Spot auto-run (d4a4696)",
+  "backend": "batch",
+  "instance_type": "g5.xlarge (A10G, Spot, CUDA-graph)",
+  "positions": [
+    "WR",
+    "TE"
+  ],
+  "results": [
+    {
+      "position": "WR",
+      "ridge_mae": 4.107,
+      "ridge_r2": 0.371,
+      "nn_mae": 4.031,
+      "nn_r2": 0.386,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.29,
+          "r2": 0.096,
+          "rmse": 0.427
+        },
+        "receiving_yards": {
+          "mae": 19.43,
+          "r2": 0.374,
+          "rmse": 27.113
+        },
+        "receptions": {
+          "mae": 1.286,
+          "r2": 0.442,
+          "rmse": 1.777
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011,
+          "rmse": 0.106
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.283,
+          "r2": 0.093,
+          "rmse": 0.428
+        },
+        "receiving_yards": {
+          "mae": 19.855,
+          "r2": 0.355,
+          "rmse": 27.51
+        },
+        "receptions": {
+          "mae": 1.3,
+          "r2": 0.446,
+          "rmse": 1.77
+        },
+        "fumbles_lost": {
+          "mae": 0.026,
+          "r2": 0.002,
+          "rmse": 0.105
+        }
+      },
+      "ridge_top12": 0,
+      "nn_top12": 0,
+      "ridge_rmse": 5.749,
+      "nn_rmse": 5.682,
+      "attn_nn_mae": 3.968,
+      "attn_nn_r2": 0.356,
+      "attn_nn_rmse": 5.816,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.267,
+          "r2": 0.087,
+          "rmse": 0.429
+        },
+        "receiving_yards": {
+          "mae": 19.214,
+          "r2": 0.355,
+          "rmse": 27.512
+        },
+        "receptions": {
+          "mae": 1.323,
+          "r2": 0.378,
+          "rmse": 1.876
+        },
+        "fumbles_lost": {
+          "mae": 0.011,
+          "r2": -0.011,
+          "rmse": 0.106
+        }
+      },
+      "attn_nn_top12": 0,
+      "lgbm_mae": 4.131,
+      "lgbm_r2": 0.386,
+      "lgbm_rmse": 5.681,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.287,
+          "r2": 0.082,
+          "rmse": 0.43
+        },
+        "receiving_yards": {
+          "mae": 19.985,
+          "r2": 0.379,
+          "rmse": 27.011
+        },
+        "receptions": {
+          "mae": 1.292,
+          "r2": 0.47,
+          "rmse": 1.732
+        },
+        "fumbles_lost": {
+          "mae": 0.027,
+          "r2": 0.002,
+          "rmse": 0.105
+        }
+      },
+      "lgbm_top12": 0,
+      "elapsed_sec": 0.4,
+      "phase_seconds": {
+        "assert_gpu": 0.0,
+        "split.nn.assert_gpu": 0.4,
+        "split.nn.sync_raw_data": 1.7,
+        "split.nn.download_data": 0.4,
+        "split.nn.read_parquets": 0.7,
+        "split.nn.run_pipeline": 37.6,
+        "split.nn.copy_artifacts": 0.0,
+        "split.nn.pipeline.prepare_data": 28.8,
+        "split.nn.pipeline.nn_train": 5.3,
+        "split.nn.pipeline.attn_nn_train": 3.3,
+        "split.nn.pipeline.train_models_total": 8.7,
+        "split.nn.pipeline.save_artifacts": 0.0,
+        "split.nn.elapsed_sec": 42.1,
+        "split.cpu.assert_gpu": 0.0,
+        "split.cpu.sync_raw_data": 2.9,
+        "split.cpu.download_data": 0.6,
+        "split.cpu.read_parquets": 0.4,
+        "split.cpu.run_pipeline": 15.6,
+        "split.cpu.copy_artifacts": 0.0,
+        "split.cpu.pipeline.prepare_data": 12.4,
+        "split.cpu.pipeline.ridge_tune": 2.1,
+        "split.cpu.pipeline.ridge_fit": 0.1,
+        "split.cpu.pipeline.lgbm_train": 0.7,
+        "split.cpu.pipeline.train_models_total": 2.9,
+        "split.cpu.pipeline.save_artifacts": 0.0,
+        "split.cpu.elapsed_sec": 20.1
+      }
+    },
+    {
+      "position": "TE",
+      "ridge_mae": 3.387,
+      "ridge_r2": 0.355,
+      "nn_mae": 3.327,
+      "nn_r2": 0.334,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.265,
+          "r2": 0.071,
+          "rmse": 0.423
+        },
+        "receiving_yards": {
+          "mae": 14.068,
+          "r2": 0.35,
+          "rmse": 20.409
+        },
+        "receptions": {
+          "mae": 1.21,
+          "r2": 0.353,
+          "rmse": 1.721
+        },
+        "fumbles_lost": {
+          "mae": 0.013,
+          "r2": -0.013,
+          "rmse": 0.112
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.273,
+          "r2": 0.079,
+          "rmse": 0.422
+        },
+        "receiving_yards": {
+          "mae": 14.187,
+          "r2": 0.356,
+          "rmse": 20.312
+        },
+        "receptions": {
+          "mae": 1.17,
+          "r2": 0.424,
+          "rmse": 1.624
+        },
+        "fumbles_lost": {
+          "mae": 0.026,
+          "r2": -0.001,
+          "rmse": 0.111
+        }
+      },
+      "ridge_top12": 0,
+      "nn_top12": 0,
+      "ridge_rmse": 4.9,
+      "nn_rmse": 4.977,
+      "attn_nn_mae": 3.372,
+      "attn_nn_r2": 0.34,
+      "attn_nn_rmse": 4.955,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.269,
+          "r2": 0.065,
+          "rmse": 0.425
+        },
+        "receiving_yards": {
+          "mae": 14.504,
+          "r2": 0.348,
+          "rmse": 20.428
+        },
+        "receptions": {
+          "mae": 1.208,
+          "r2": 0.374,
+          "rmse": 1.694
+        },
+        "fumbles_lost": {
+          "mae": 0.013,
+          "r2": -0.013,
+          "rmse": 0.112
+        }
+      },
+      "attn_nn_top12": 0,
+      "lgbm_mae": 3.438,
+      "lgbm_r2": 0.358,
+      "lgbm_rmse": 4.887,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.281,
+          "r2": 0.071,
+          "rmse": 0.423
+        },
+        "receiving_yards": {
+          "mae": 14.638,
+          "r2": 0.351,
+          "rmse": 20.385
+        },
+        "receptions": {
+          "mae": 1.191,
+          "r2": 0.417,
+          "rmse": 1.633
+        },
+        "fumbles_lost": {
+          "mae": 0.027,
+          "r2": 0.001,
+          "rmse": 0.111
+        }
+      },
+      "lgbm_top12": 0,
+      "elapsed_sec": 0.5,
+      "phase_seconds": {
+        "assert_gpu": 0.0,
+        "split.nn.assert_gpu": 0.4,
+        "split.nn.sync_raw_data": 2.3,
+        "split.nn.download_data": 0.3,
+        "split.nn.read_parquets": 0.8,
+        "split.nn.run_pipeline": 33.0,
+        "split.nn.copy_artifacts": 0.0,
+        "split.nn.pipeline.prepare_data": 17.5,
+        "split.nn.pipeline.nn_train": 9.9,
+        "split.nn.pipeline.attn_nn_train": 5.6,
+        "split.nn.pipeline.train_models_total": 15.5,
+        "split.nn.pipeline.save_artifacts": 0.0,
+        "split.nn.elapsed_sec": 38.2,
+        "split.cpu.assert_gpu": 0.0,
+        "split.cpu.sync_raw_data": 3.6,
+        "split.cpu.download_data": 0.5,
+        "split.cpu.read_parquets": 0.5,
+        "split.cpu.run_pipeline": 8.8,
+        "split.cpu.copy_artifacts": 0.0,
+        "split.cpu.pipeline.prepare_data": 7.2,
+        "split.cpu.pipeline.ridge_tune": 1.0,
+        "split.cpu.pipeline.ridge_fit": 0.0,
+        "split.cpu.pipeline.lgbm_train": 0.4,
+        "split.cpu.pipeline.train_models_total": 1.5,
+        "split.cpu.pipeline.save_artifacts": 0.0,
+        "split.cpu.elapsed_sec": 14.1
+      }
+    }
+  ],
+  "pr_number": 1320
+}
