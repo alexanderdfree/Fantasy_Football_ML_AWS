@@ -118,7 +118,7 @@ def _platform_info(
         sm=f"sm_{compute_capability[0]}{compute_capability[1]}" if compute_capability else None,
         supports_bf16=bool(compute_capability and compute_capability >= (8, 0)),
         cpu_count=4,
-        recommended_cuda_wheel="cu126" if compute_capability else None,
+        recommended_cuda_wheel="cu130" if compute_capability else None,
     )
 
 

@@ -1,6 +1,6 @@
 # EC2 24/7 Training Design Doc
 
-_Last verified: 2026-05-20._
+_Last verified: 2026-06-22._
 
 > **Status: Active when `BATCH_ACTIVE != 'true'` (rollback path).** The push-to-`main` training default is now Spot fan-out via [docs/batch_design.md](batch_design.md) when `BATCH_ACTIVE=true`. This warm-EC2 path remains the fallback: one flip back (`gh variable set BATCH_ACTIVE --body "false"`) restores it on the next push. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md). The warm host stays provisioned indefinitely; idle cost is ~$8/mo of EBS while stopped.
 
@@ -32,7 +32,7 @@ GITHUB ACTIONS (push to main)                AWS
           otherwise only the src/{POS}/ dirs that changed)
 
     train job  (skipped if detect.positions is empty)
-    ├─ aws ec2 start-instances ────> EC2 g4dn.xlarge
+    ├─ aws ec2 start-instances ────> EC2 g6.xlarge
     │                                  (stopped if idle > 4h,
     │                                   else already running)
     │
@@ -42,7 +42,7 @@ GITHUB ACTIONS (push to main)                AWS
     ├─ aws ssm send-command ───────> /usr/local/bin/ff-train QB
     │   single cmd wrapping             │
     │   for POS in $POSITIONS           ├─ docker pull (credsStore auth)
-    │     (sequential — T4)             ├─ docker run --gpus all
+    │     (sequential — L4)             ├─ docker run --gpus all
     │                                   │    python -m src.batch.train
     │                                   │      --position $POS
     │                                   │      (reads s3://ff-predictor-training/data/)
@@ -85,7 +85,7 @@ Reused as-is from Batch path. `src/batch/Dockerfile.train` produces the image, C
 ## Instance Spec
 
 - **AMI**: Deep Learning AMI GPU PyTorch (Ubuntu 22.04), resolved at launch to the latest. Brings NVIDIA driver, Docker, nvidia-container-toolkit, SSM agent, `amazon-ecr-credential-helper`.
-- **Type**: `g4dn.xlarge` (4 vCPU, 16 GB, 1× T4, 125 GB NVMe).
+- **Type**: `g6.xlarge` (4 vCPU, 16 GB, 1× L4 (24 GB), 250 GB NVMe). Swapped from the retired `g4dn.xlarge`/T4 on 2026-06-22 — the rollback host now matches the Batch L4 fleet and the cu130 image.
 - **Root EBS**: 100 GB gp3 encrypted, DeleteOnTermination.
 - **Scratch**: NVMe instance store mounted at `/opt/ff/scratch` (ephemeral; wiped on stop/start, re-mounted by cloud-init).
 - **Security group**: egress all, no ingress — SSM is the only management channel.
@@ -123,20 +123,20 @@ Steps (train job, after `detect` scopes positions):
 4. `aws ec2 start-instances` + `aws ec2 wait instance-running` (no-op if already running).
 5. Poll `aws ssm describe-instance-information` until `PingStatus=Online` (30 × 10s).
 6. Verify `/opt/ff/config/bootstrap-complete` exists via an SSM `test -f` probe.
-7. `aws ssm send-command` with a single command wrapping a sequential `for POS in …; do /usr/local/bin/ff-train $POS $SEED; done` (T4 can't fit concurrent NN runs; one command ID keeps polling simple).
+7. `aws ssm send-command` with a single command wrapping a sequential `for POS in …; do /usr/local/bin/ff-train $POS $SEED; done` (rollback stays sequential — one command ID keeps polling simple; the g6/L4 has memory headroom but predictability wins).
 8. Manual poll of `get-command-invocation` (30-min deadline — `aws ssm wait command-executed` caps at ~100 s and doesn't honor `AWS_MAX_ATTEMPTS`, so long runs would otherwise be mis-reported as failures).
 9. Stream stdout/stderr into the Actions log via `get-command-invocation --query` (`if: always()`).
 10. `aws s3api head-object` per position → summary table to `$GITHUB_STEP_SUMMARY`; fail if any artifact is missing or was last modified more than 20 min before training started (anchoring on train start, not "now", so a long sequential run doesn't false-trip the first position's artifact).
-11. Write a per-run JSON file under `benchmark_history/` via `python -m src.batch.benchmark --download-only --backend ec2 --instance-type "g4dn.xlarge (On-Demand)" --positions $POSITIONS --note "EC2 auto-run (${sha::7})"`, then commit + push (retry-rebase up to 3×).
+11. Write a per-run JSON file under `benchmark_history/` via `python -m src.batch.benchmark --download-only --backend ec2 --instance-type "g6.xlarge (On-Demand)" --positions $POSITIONS --note "EC2 auto-run (${sha::7})"`, then commit + push (retry-rebase up to 3×).
 
 Concurrency: `group: train-ec2, cancel-in-progress: true` — rapid-iteration pushes supersede in-flight runs.
 
 ## Cost
 
-~$50/mo active weeks (on-demand while running + EBS + logs), ~$8/mo idle (EBS only). Auto-shutdown after 4h idle is the knob — raise to reduce wake-ups, lower to save more.
+~$78/mo active weeks (on-demand while running + EBS + logs), ~$8/mo idle (EBS only). Auto-shutdown after 4h idle is the knob — raise to reduce wake-ups, lower to save more.
 
 Detailed line items:
-- g4dn.xlarge on-demand us-east-1: $0.526/hr → $383/mo at 24/7, ~$42/mo at 4h/day active 5 days/week.
+- g6.xlarge on-demand us-east-1: $0.8048/hr → ~$587/mo at 24/7, ~$70/mo at 4h/day active 5 days/week.
 - Root EBS 100 GB gp3: ~$8/mo.
 - CloudWatch Logs (7-day retention): ~$0.03/mo.
 - SSM / IAM: ~$0.40/mo.

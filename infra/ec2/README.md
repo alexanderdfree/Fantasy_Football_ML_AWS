@@ -1,10 +1,10 @@
 # ff-training EC2 trainer
 
-_Last verified: 2026-05-19._
+_Last verified: 2026-06-22._
 
 > **Status: rollback path.** Since 2026-05-20 the push-driven default is Batch + Spot fan-out ([infra/batch/](../batch/)). This warm-EC2 trainer stays provisioned indefinitely (~$8/mo of EBS while stopped); one flip — `gh variable set BATCH_ACTIVE --body "false"` — restores it on the next push to `main`.
 
-An on-demand `g4dn.xlarge` that runs `src/batch/train.py` on GPU, driven by `.github/workflows/train-ec2.yml`. Stays warm for 4h after each training run, then stops; CI wakes it on the next push (adds ~30-60s cold-start latency to the first push after idle).
+An on-demand `g6.xlarge` (NVIDIA L4) that runs `src/batch/train.py` on GPU, driven by `.github/workflows/train-ec2.yml`. Stays warm for 4h after each training run, then stops; CI wakes it on the next push (adds ~30-60s cold-start latency to the first push after idle). (Swapped from the retired `g4dn.xlarge`/T4 on 2026-06-22 — the rollback host now matches the Batch L4 fleet.)
 
 ## First-time setup
 

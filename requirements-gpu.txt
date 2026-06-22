@@ -3,14 +3,16 @@
 # build (Blackwell / sm_120, e.g. RTX 5080) instead of the CPU wheel.
 # Use ONLY on a CUDA box. macOS/CPU dev and CI keep using requirements-dev.txt.
 # Keep the tool pins below in sync with requirements-dev.txt.
-# NOTE: torch 2.12.0 dropped the cu128 wheel; cu130 (CUDA 13.0) is its
-# Blackwell-capable successor (sm_120), so the index + local label move cu128 -> cu130.
+# NOTE: torch 2.12.x dropped the cu128 wheel; cu130 (CUDA 13.0) is its
+# Blackwell-capable successor (sm_120). cu130 also covers Turing->Blackwell
+# (sm_75->sm_120), so since 2026-06-22 it is ALSO the AWS Batch training wheel
+# (src/batch/requirements.txt) — local dev and Batch now share the cu130 build.
 -r requirements.txt
 --extra-index-url https://download.pytorch.org/whl/cu130
-torch==2.12.0+cu130
-pytest==9.1.0
+torch==2.12.1+cu130
+pytest==9.1.1
 pytest-timeout>=2.4.0
 pytest-cov>=7.1.0
 pytest-xdist>=3.8.0
-ruff==0.15.17
+ruff==0.15.18
 optuna==4.9.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches requirements-dev.txt

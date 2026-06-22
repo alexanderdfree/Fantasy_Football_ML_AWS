@@ -51,8 +51,8 @@ full per-platform matrix and rationale.
 
 The block above installs the **CPU** PyTorch wheel. To train/tune locally on an NVIDIA GPU —
 Windows 11 with an RTX 5080 (or any Blackwell `sm_120` card), or Linux + NVIDIA — use the
-**CUDA 13.0** build instead. It's `torch==2.12.0`, just the `cu130` wheel (the `cu126`
-wheel the AWS Tesla-T4 path uses tops out at `sm_90`, so Blackwell needs `cu130` specifically).
+**CUDA 13.0** build instead. It's `torch==2.12.1`, just the `cu130` wheel (CUDA 13.0;
+cu130 covers `sm_75`→`sm_120`, so it is also the AWS Batch training wheel as of 2026-06-22).
 
 **Prerequisites**
 
@@ -183,7 +183,7 @@ don't need a system `python3.12`:
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -r requirements.txt
-# Blackwell sm_120 needs the cu130 wheel (the AWS cu126 path tops out at sm_90):
+# cu130 wheel (CUDA 13.0; covers sm_75→sm_120, same as the AWS Batch image):
 UV_INDEX_STRATEGY=unsafe-best-match uv pip install -r requirements-gpu.txt
 uv pip install -r requirements-dev.txt
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
@@ -299,7 +299,7 @@ Config is in `[tool.ruff]` in [pyproject.toml](pyproject.toml).
 Pushes to `main` trigger one of two training workflows, selected by the `BATCH_ACTIVE` repo variable. The default since 2026-05-20 is `true` — Spot fan-out via AWS Batch.
 
 - **`BATCH_ACTIVE=true`** (default) → [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml): fans out six Spot GPU hosts via AWS Batch, preferring g6.xlarge and falling back to g5.xlarge when g6 capacity is unavailable (one position per host, parallel; ~15 min wall-clock; g6 estimate ~$0.35/run at the measured ~10 min Batch wait). One-time provisioning via [infra/batch/setup.sh](infra/batch/setup.sh); operator runbook in [infra/batch/README.md](infra/batch/README.md); full design in [docs/batch_design.md](docs/batch_design.md).
-- **`BATCH_ACTIVE=false`** (rollback) → [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml): starts the warm g4dn.xlarge OD instance, runs the six position pipelines sequentially via SSM (~120 min wall-clock; one T4 can't fit concurrent NN runs). See [infra/ec2/README.md](infra/ec2/README.md) and [docs/ec2_design.md](docs/ec2_design.md).
+- **`BATCH_ACTIVE=false`** (rollback) → [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml): starts the warm g6.xlarge (L4) OD instance, runs the six position pipelines sequentially via SSM (~120 min wall-clock; sequential by design on one host). See [infra/ec2/README.md](infra/ec2/README.md) and [docs/ec2_design.md](docs/ec2_design.md).
 
 Flip with `gh variable set BATCH_ACTIVE --body "true"` or `--body "false"`; the new value takes effect on the next push. `workflow_dispatch` on either workflow bypasses the gate for smoke-testing the inactive path. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 

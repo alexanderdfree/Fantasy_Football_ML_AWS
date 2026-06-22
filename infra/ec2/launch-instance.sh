@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap the ff-training EC2 g4dn.xlarge: quota check, IAM, SG, instance.
+# Bootstrap the ff-training EC2 g6.xlarge: quota check, IAM, SG, instance.
 # Idempotent — reruns skip anything that already exists.
 #
 # Prereqs:
@@ -14,7 +14,7 @@ set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 INFRA_PREFIX="infra/ec2"
-INSTANCE_TYPE="g4dn.xlarge"
+INSTANCE_TYPE="g6.xlarge"
 ROLE_NAME="ff-training-ec2-role"
 PROFILE_NAME="ff-training-ec2-profile"
 SG_NAME="ff-training-ec2-sg"
@@ -37,7 +37,7 @@ QUOTA=$(aws service-quotas get-service-quota \
   --output text)
 QUOTA_INT=${QUOTA%.*}
 if [ "$QUOTA_INT" -lt 4 ]; then
-  log "ERROR: G-instance quota is $QUOTA; need >= 4 (g4dn.xlarge uses 4 vCPU)."
+  log "ERROR: G-instance quota is $QUOTA; need >= 4 (g6.xlarge uses 4 vCPU)."
   log "Your quota increase may not be approved yet. Check:"
   log "  aws service-quotas list-requested-service-quota-change-history --service-code ec2 --region $REGION"
   exit 1
@@ -134,7 +134,7 @@ aws logs put-retention-policy --log-group-name "$LOG_GROUP" --retention-in-days 
 # --- 7. Resolve latest DLAMI GPU PyTorch (Ubuntu 22.04) -----------------
 # AMI name format (2026): "Deep Learning OSS Nvidia Driver AMI GPU PyTorch
 # 2.7 (Ubuntu 22.04) 20260417". Filter explicitly excludes the ARM64 images,
-# which have "ARM64" in the name and x86_64-only g4dn can't boot them.
+# which have "ARM64" in the name and x86_64-only g6 can't boot them.
 log "Resolving latest Deep Learning AMI..."
 AMI_ID=$(aws ec2 describe-images \
   --owners 898082745236 \

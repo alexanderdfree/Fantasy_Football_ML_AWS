@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cloud-init for the ff-training g4dn.xlarge. Runs once as root on first boot.
+# Cloud-init for the ff-training g6.xlarge. Runs once as root on first boot.
 # Companion files (CW agent config, auto-shutdown units) are fetched from
 # s3://ff-predictor-training/infra/ec2/ using the instance profile.
 #
