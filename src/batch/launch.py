@@ -18,6 +18,8 @@ Config (environment variables, all optional):
     FF_JOB_DEFINITION_REVISION       (optional)             GPU job-def revision pin
     FF_JOB_DEFINITION_CPU_REVISION   (optional)             CPU job-def revision pin
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
+    FF_BATCH_LIFECYCLE_FILE  (optional)   write per-job orchestration-vs-run
+                                          timing ledger JSON to this path
 """
 
 import argparse
@@ -366,6 +368,97 @@ def _submit_split_for_position(position: str, seed: int, split_run_id: str, batc
     }
 
 
+def _job_lifecycle(label, status, created_at, started_at, stopped_at):
+    """Decompose a terminal Batch job's wall-clock into orchestration vs run.
+
+    Batch exposes three epoch-ms timestamps on a job: ``createdAt`` (job
+    submitted), ``startedAt`` (container reached RUNNING — i.e. AFTER Spot
+    provision + image pull) and ``stoppedAt`` (container finished). So:
+
+        queue_provision = startedAt - createdAt   # queue + provision + image-pull
+        run             = stoppedAt - startedAt   # actual training
+
+    Image pull has no distinct Batch timestamp — it happens between RUNNABLE
+    and RUNNING, so it's folded into the queue+provision span. That's exactly
+    the span a warm pre-pulled AMI shrinks, so this split is the baseline a
+    before/after AMI comparison measures against (production training is
+    orchestration-bound, not GPU-bound). Emits a ``[timing] phase=batch_lifecycle``
+    line read from CloudWatch / Actions logs and returns the breakdown dict. The
+    line shares the ``[timing] phase=`` anchor of ``src.shared.utils.timed`` but
+    deliberately carries structured fields (queue_provision_s/run_s/total_s)
+    instead of that helper's single ``seconds=`` — no automated scraper parses
+    ``seconds=`` (``src/batch/train.py`` already emits non-conforming ``[timing]``
+    lines), so the richer shape breaks no consumer. None-safe: a job that never
+    started a container leaves ``startedAt`` unset.
+    """
+
+    def _span(a, b):
+        if a is None or b is None:
+            return None
+        return round((b - a) / 1000.0, 1)
+
+    queue_provision_s = _span(created_at, started_at)
+    run_s = _span(started_at, stopped_at)
+    total_s = _span(created_at, stopped_at)
+    print(
+        f"[timing] phase=batch_lifecycle job={label} status={status} "
+        f"queue_provision_s={queue_provision_s} run_s={run_s} total_s={total_s}",
+        flush=True,
+    )
+    return {
+        "status": status,
+        "created_at_ms": created_at,
+        "started_at_ms": started_at,
+        "stopped_at_ms": stopped_at,
+        "queue_provision_s": queue_provision_s,
+        "run_s": run_s,
+        "total_s": total_s,
+    }
+
+
+def _emit_batch_lifecycle_ledger(lifecycle):
+    """Print the aggregate orchestration-vs-run summary and best-effort write
+    the per-job ledger JSON if ``FF_BATCH_LIFECYCLE_FILE`` is set.
+
+    The fan-out runs all jobs concurrently, so the wall-clock of each span is
+    gated by the slowest single job, not the sum — the summary reports the
+    per-span maxima and the orchestration share of the (max-orchestration +
+    max-run) critical path. Never raises: instrumentation must not break the
+    wait loop.
+    """
+    if not lifecycle:
+        return
+    runs = [v["run_s"] for v in lifecycle.values() if v.get("run_s") is not None]
+    orch = [
+        v["queue_provision_s"] for v in lifecycle.values() if v.get("queue_provision_s") is not None
+    ]
+    if runs and orch:
+        max_orch = max(orch)
+        max_run = max(runs)
+        denom = max_orch + max_run
+        pct = (100.0 * max_orch / denom) if denom > 0 else 0.0
+        print(
+            f"[timing] phase=batch_lifecycle_summary jobs={len(lifecycle)} "
+            f"max_queue_provision_s={max_orch:.1f} max_run_s={max_run:.1f} "
+            f"orchestration_pct={pct:.0f}",
+            flush=True,
+        )
+    path = os.environ.get("FF_BATCH_LIFECYCLE_FILE", "").strip()
+    if not path:
+        return
+    try:
+        with open(path, "w") as f:
+            json.dump(
+                {_job_label(pos): entry for pos, entry in lifecycle.items()},
+                f,
+                indent=2,
+                default=str,
+            )
+        print(f"[batch-lifecycle] wrote {path}")
+    except Exception as e:  # instrumentation must never break the wait loop
+        print(f"[batch-lifecycle] could not write {path}: {e!r}")
+
+
 def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
     """Poll Batch until all jobs reach a terminal state (or timeout).
 
@@ -388,6 +481,7 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     remaining = dict(job_ids)  # position -> job_id
     results = {}  # position -> (status, stopped_at_ms)
+    lifecycle = {}  # position -> orchestration-vs-run breakdown (instrumentation)
     last_status = {}  # job_id -> last printed status
     deadline = time.monotonic() + timeout_seconds
 
@@ -415,6 +509,13 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
             if status in TERMINAL_STATES:
                 stopped_at = job.get("stoppedAt")  # ms since epoch or None
                 results[pos] = (status, stopped_at)
+                lifecycle[pos] = _job_lifecycle(
+                    label,
+                    status,
+                    job.get("createdAt"),  # ms; job submitted
+                    job.get("startedAt"),  # ms; container RUNNING (post provision+pull)
+                    stopped_at,
+                )
                 if status == "FAILED":
                     reason = job.get("statusReason") or ""
                     container = job.get("container") or {}
@@ -435,6 +536,7 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
         if remaining:
             time.sleep(POLL_INTERVAL_SECONDS)
 
+    _emit_batch_lifecycle_ledger(lifecycle)
     return results
 
 
