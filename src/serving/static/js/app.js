@@ -2063,14 +2063,51 @@ function renderHistoryIdCell(repoSlug, row) {
     return "—";
 }
 
+// Lazily-built, reused across rows/renders: constructing an Intl.DateTimeFormat
+// is comparatively expensive and renderHistory() formats one timestamp per row
+// on every (re)render. Built on first use rather than at module load so a
+// (theoretical) missing-IANA-zone throw stays contained to a single cell render
+// instead of breaking all of app.js's init.
+let _historyTsFormatter = null;
+function historyTsFormatter() {
+    if (!_historyTsFormatter) {
+        _historyTsFormatter = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/New_York",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+        });
+    }
+    return _historyTsFormatter;
+}
+
 function formatHistoryTimestamp(ts) {
     if (!ts) return "--";
     // Stored as "2026-05-19T22:47:20" (no tz marker, always UTC per
-    // utc_now_iso). Replace the T with a space and trim seconds for a
-    // compact display; keep minute resolution so same-PR reruns are
+    // utc_now_iso) — the canonical value stays UTC behind the scenes. For
+    // display we convert to US Eastern (ET, auto EST/EDT via the IANA zone)
+    // since that's the operator's locale. Keep the compact 24-hour
+    // "YYYY-MM-DD HH:MM" shape at minute resolution so same-PR reruns stay
     // distinguishable.
-    const match = String(ts).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
-    return match ? `${match[1]} ${match[2]}` : escapeHtml(String(ts));
+    const raw = String(ts);
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+    if (!match) return escapeHtml(raw);
+    // Parse the naive timestamp as UTC: strip any sub-second / tz suffix the
+    // source might carry, then append "Z" so Date interprets it as UTC rather
+    // than the viewer's local zone.
+    const isoUtc = raw.replace(/(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/, "") + "Z";
+    const d = new Date(isoUtc);
+    if (Number.isNaN(d.getTime())) return `${match[1]} ${match[2]}`;
+    // Rebuild from parts (en-CA + America/New_York would emit a comma between
+    // date and time); hourCycle h23 keeps midnight as "00", not "24".
+    const parts = {};
+    for (const p of historyTsFormatter().formatToParts(d)) {
+        parts[p.type] = p.value;
+    }
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
 const HISTORY_DELTA_EPS = 0.005; // only color a change the 2-decimal display reflects
@@ -2174,7 +2211,7 @@ function renderHistory() {
 
     head.innerHTML = `<tr>
         <th class="col-history-pr">PR</th>
-        <th class="col-history-ts">Timestamp (UTC)</th>
+        <th class="col-history-ts">Timestamp (ET)</th>
         ${columns.map(c => `<th class="${c.cls}">${escapeHtml(c.label)}</th>`).join("")}
         <th class="col-history-time">Training time</th>
     </tr>`;
