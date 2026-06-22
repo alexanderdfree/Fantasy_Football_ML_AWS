@@ -104,6 +104,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D19 | [Split Batch training: GPU NN + c8a CPU Ridge/LightGBM](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md) | Accepted |
 | D20 | [Batch GPU execution path for the shared A/B harness](adr/0020-batch-gpu-execution-path-for-ab-harness.md) | Accepted |
 | D21 | [Systematic knob + feature-family screens as stacked A/B-harness specs](adr/0021-systematic-doe-screens-on-ab-harness.md) | Proposed |
+| D22 | [Warm pre-pulled GPU AMI for Batch cold-start](adr/0022-warm-prepulled-ami-cold-start.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 
