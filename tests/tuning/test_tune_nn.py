@@ -480,13 +480,19 @@ def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
 def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch):
     """The two post-cutover mislabel cases: FF_CUDA_GRAPH truthiness alone must
     not steer the namespace (the env is a force-OFF override, not the trigger)."""
+    # Pin _cuda_graph_full_enabled alongside _cuda_graph_enabled in BOTH cases
+    # (the live-capture template above does this): full-step graph autodetects ON
+    # on a local sm_80+ box (5080/g6/L4), so leaving it unpatched flips the
+    # namespace "graph" -> "graphfull" only on a CUDA host (green on CPU/CI).
     # T4 + FF_CUDA_GRAPH=1: the sm_80+ gate refuses capture -> eager namespace.
     monkeypatch.setenv("FF_CUDA_GRAPH", "1")
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
     assert tune_nn._resolve_storage_version("mps")[0] == "scheduler_v2_mps"
     # sm_80+ box + env unset: autodetect captures -> graph namespace.
     monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
+    monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
     assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v2_graph"
 
 
