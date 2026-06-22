@@ -541,7 +541,21 @@ def test_print_report_runs(capsys):
 
 
 def test_cli_list_mode(capsys):
-    rc = H.main(["--spec", "src.tuning.ab_example", "--positions", "K", "--seeds", "42", "--list"])
+    # --no-stacked-seeds forces the eager grid so the count line is device-
+    # independent: on a CUDA box the GPU-gated stacked default instead prints
+    # "0 stacked groups (...) + 3 eager cells" (no "3 cells" substring).
+    rc = H.main(
+        [
+            "--spec",
+            "src.tuning.ab_example",
+            "--positions",
+            "K",
+            "--seeds",
+            "42",
+            "--no-stacked-seeds",
+            "--list",
+        ]
+    )
     assert rc == 0
     out = capsys.readouterr().out
     assert "6 cells" not in out  # 1 pos × 3 variants × 1 seed = 3
@@ -566,11 +580,14 @@ def test_run_ab_sets_and_restores_cache_env(tmp_path, monkeypatch):
     monkeypatch.delenv("FF_FEATURE_CACHE_DISABLE", raising=False)
     mod = SimpleNamespace(VARIANTS=[Variant("baseline")], POSITIONS=["K"], SEEDS=[1])
 
-    H.run_ab(mod, sequential=True, data_dir=str(tmp_path))
+    # stacked_seeds=False forces the eager (run_sequential) path so the mocked
+    # run_sequential is exercised on a CUDA box too — the GPU-gated default
+    # (None) would take the vmap stacked path and never call it.
+    H.run_ab(mod, sequential=True, stacked_seeds=False, data_dir=str(tmp_path))
     assert captured["during"] == "1"  # disabled by default
     assert "FF_FEATURE_CACHE_DISABLE" not in os.environ  # restored (was unset)
 
-    H.run_ab(mod, sequential=True, feature_cache=True, data_dir=str(tmp_path))
+    H.run_ab(mod, sequential=True, feature_cache=True, stacked_seeds=False, data_dir=str(tmp_path))
     assert captured["during"] == "0"  # --feature-cache re-enables
     assert "FF_FEATURE_CACHE_DISABLE" not in os.environ
 
