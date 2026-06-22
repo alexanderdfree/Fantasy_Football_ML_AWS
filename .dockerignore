@@ -35,7 +35,6 @@ Thumbs.db
 *.md
 !README.md
 !SETUP.md
-!ATTRIBUTION.md
 !TODO.md
 !docs/**/*.md
 !infra/ec2/README.md
