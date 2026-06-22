@@ -36,6 +36,11 @@ _CUDA_GRAPH_FULL_ENV = "FF_CUDA_GRAPH_FULL"
 # full-step capture; this env var is a force-off override gating above
 # ``cuda_graph_full_enabled()`` — see ``cuda_graph_opt_enabled``.
 _CUDA_GRAPH_OPT_ENV = "FF_CUDA_GRAPH_OPT"
+# EXPERIMENTAL opt-in (Lever B′): overlap the base NN and attention NN training
+# within the GPU branch on separate CUDA streams instead of running them
+# sequentially. Default-OFF — production stays sequential and byte-identical.
+# See ``nn_overlap_enabled`` and ``_gpu_branch`` (src/shared/pipeline.py).
+_NN_OVERLAP_ENV = "FF_NN_OVERLAP"
 
 
 def requested_device() -> str:
@@ -276,6 +281,33 @@ def cuda_graph_opt_enabled() -> bool:
     }:
         return False
     return cuda_graph_full_enabled()
+
+
+def nn_overlap_enabled() -> bool:
+    """Whether to overlap base-NN ∥ attention-NN training (Lever B′, experimental).
+
+    The GPU branch trains the base ``MultiHeadNet`` and the attention NN
+    sequentially; they are independent (separate models/optimizers), so on a
+    launch-bound GPU there is *potentially* host-dispatch idle to reclaim by
+    running them concurrently on separate CUDA streams. **Default-OFF opt-in**
+    (``FF_NN_OVERLAP`` truthy): production and CI stay sequential and
+    byte-identical. CUDA-only — a no-op off CUDA (nothing to overlap on CPU).
+
+    Caveats this experiment measures: (1) the Python dispatch loops are
+    GIL-bound, the same reason Lever B (cross-position streams) measured ~1.03×;
+    (2) both trainers seed the *global* RNG, so concurrent execution is NOT
+    numerically identical to sequential — a real production blocker that an
+    eventual ship would have to fix with per-trainer generators. Run-to-a-verdict
+    only; see todo/gpu_launch_bound_levers.md (Lever B′).
+    """
+    if not cuda_enabled():
+        return False
+    return os.environ.get(_NN_OVERLAP_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def seed_everything(seed: int) -> None:

@@ -79,6 +79,7 @@ from src.shared.utils import (
     cuda_enabled,
     cuda_graph_opt_enabled,
     mps_enabled,
+    nn_overlap_enabled,
     seed_everything,
     timed,
 )
@@ -1463,6 +1464,37 @@ def _train_elasticnet(
     return model, test_preds, metrics
 
 
+def _overlap_nn_trainers(base_fn, attn_fn):
+    """Run the base-NN and attention-NN trainers concurrently on separate CUDA
+    streams (Lever B′, experimental). Returns ``(base_out, attn_out)`` — the same
+    tuples the callables would return sequentially.
+
+    Each trainer runs in its own thread with its own stream set current, so their
+    kernel launches queue independently; the device is synchronized before
+    returning so downstream consumers see completed work. The Python dispatch
+    loops are GIL-bound (the launch-bound bottleneck is host-side), so the
+    realizable overlap is what this experiment measures. NOT numerically
+    identical to the sequential path — both trainers seed the global RNG, so the
+    A/B reports the divergence; only reached under ``nn_overlap_enabled()`` (CUDA
+    + ``FF_NN_OVERLAP``), never on the production/CI path.
+    """
+    base_stream = torch.cuda.Stream()
+    attn_stream = torch.cuda.Stream()
+
+    def _on_stream(stream, fn):
+        with torch.cuda.stream(stream):
+            return fn()
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="nn-overlap") as ex:
+        f_base = ex.submit(_on_stream, base_stream, base_fn)
+        f_attn = ex.submit(_on_stream, attn_stream, attn_fn)
+        # .result() propagates worker exceptions; collect both before syncing.
+        base_out = f_base.result()
+        attn_out = f_attn.result()
+    torch.cuda.synchronize()
+    return base_out, attn_out
+
+
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
     """Run the full position model pipeline.
 
@@ -1731,16 +1763,16 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         }
 
     def _gpu_branch():
-        # --- Multi-head NN ---
-        model = None
-        nn_scaler = None
-        nn_test_preds = None
-        nn_metrics = None
-        history = None
-        if cfg.get("train_base_nn", True):
+        # The base NN and attention NN are independent trainers. Define each as
+        # a closure so they run either sequentially (default) or, under the
+        # experimental Lever B′ flag, concurrently on separate CUDA streams. Each
+        # returns the same tuple shape it always did (all-None when not trained).
+        def _run_base_nn():
+            if not cfg.get("train_base_nn", True):
+                return (None, None, None, None, None)
             print(f"\n=== {pos} Multi-Head Neural Net ===")
             with timed("nn_train", store=phase_seconds):
-                model, nn_scaler, nn_test_preds, nn_metrics, history = _train_nn(
+                return _train_nn(
                     X_train,
                     X_val,
                     X_test,
@@ -1752,24 +1784,12 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     seed,
                 )
 
-        # --- Attention NN (game history as variable-length sequences) ---
-        attn_nn_test_preds = None
-        attn_nn_metrics = None
-        attn_model = None
-        attn_nn_scaler = None
-        attn_history = None
-        attn_feature_cols = None
-        if cfg.get("train_attention_nn", False):
+        def _run_attn_nn():
+            if not cfg.get("train_attention_nn", False):
+                return (None, None, None, None, None, None)
             print(f"\n=== {pos} Attention Multi-Head Neural Net ===")
             with timed("attn_nn_train", store=phase_seconds):
-                (
-                    attn_model,
-                    attn_nn_scaler,
-                    attn_nn_test_preds,
-                    attn_nn_metrics,
-                    attn_history,
-                    attn_feature_cols,
-                ) = _train_attention_holdout(
+                return _train_attention_holdout(
                     position,
                     cfg,
                     targets,
@@ -1786,6 +1806,28 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     feature_cols,
                     opp_source_frames=(train_df, val_df, test_df),
                 )
+
+        # Lever B′ (experimental, default-off): overlap the two independent
+        # trainers on separate CUDA streams to reclaim host-dispatch idle on the
+        # launch-bound GPU. Off → sequential in the exact prior order, so the RNG
+        # stream and result are byte-identical. On → concurrent; NOT numerically
+        # identical (both seed the global RNG), so this is a run-to-a-verdict A/B,
+        # never shipped to production as-is. See nn_overlap_enabled().
+        if nn_overlap_enabled():
+            base_out, attn_out = _overlap_nn_trainers(_run_base_nn, _run_attn_nn)
+        else:
+            base_out = _run_base_nn()
+            attn_out = _run_attn_nn()
+
+        model, nn_scaler, nn_test_preds, nn_metrics, history = base_out
+        (
+            attn_model,
+            attn_nn_scaler,
+            attn_nn_test_preds,
+            attn_nn_metrics,
+            attn_history,
+            attn_feature_cols,
+        ) = attn_out
 
         return {
             "model": model,

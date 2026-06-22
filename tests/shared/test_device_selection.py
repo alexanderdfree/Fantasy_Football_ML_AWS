@@ -17,6 +17,7 @@ from src.shared.utils import (
     amp_dtype,
     cuda_enabled,
     mps_enabled,
+    nn_overlap_enabled,
     requested_amp_dtype,
     requested_device,
     seed_everything,
@@ -81,6 +82,34 @@ def test_cuda_enabled_cuda_raises_when_unavailable(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     with pytest.raises(RuntimeError, match="device cuda"):
         cuda_enabled()
+
+
+@pytest.mark.unit
+def test_nn_overlap_disabled_by_default(monkeypatch):
+    """Lever B′ is opt-in: unset FF_NN_OVERLAP keeps the sequential path, so the
+    production/CI default is byte-identical."""
+    monkeypatch.delenv("FF_NN_OVERLAP", raising=False)
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert nn_overlap_enabled() is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("raw", ["1", "true", "YES", "on"])
+def test_nn_overlap_enabled_when_opted_in_on_cuda(monkeypatch, raw):
+    monkeypatch.setenv("FF_NN_OVERLAP", raw)
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert nn_overlap_enabled() is True
+
+
+@pytest.mark.unit
+def test_nn_overlap_is_cuda_gated(monkeypatch):
+    """Even opted in, overlap is a no-op off CUDA — nothing to overlap on CPU."""
+    monkeypatch.setenv("FF_NN_OVERLAP", "1")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.delenv("FF_DEVICE", raising=False)
+    assert nn_overlap_enabled() is False
 
 
 @pytest.mark.unit
