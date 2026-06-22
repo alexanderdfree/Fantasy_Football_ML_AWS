@@ -34,9 +34,9 @@ def _make_trainer(device):
 @pytest.mark.parametrize(
     "ff_amp,capability,expected_dtype",
     [
-        (None, (12, 0), torch.float16),  # auto on Blackwell (5080) → FP16 default
-        (None, (8, 9), torch.float16),  # auto on Ada (L4 prod host) → FP16 default
-        (None, (7, 5), torch.float16),  # auto on Turing (T4) → FP16
+        (None, (12, 0), None),  # auto on Blackwell (5080) → FP32+TF32 (AMP off)
+        (None, (8, 9), None),  # auto on Ada (L4 prod host) → FP32+TF32 (AMP off)
+        (None, (7, 5), None),  # auto on Turing (T4) → FP32+TF32 (AMP off)
         ("bf16", (12, 0), torch.bfloat16),  # opt-in BF16 honoured on sm_80+
         ("bf16", (8, 9), torch.bfloat16),  # opt-in BF16 honoured on Ada (L4)
         ("bf16", (7, 5), torch.float16),  # opt-in BF16 REFUSED on T4 → FP16

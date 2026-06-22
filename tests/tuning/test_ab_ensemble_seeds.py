@@ -561,7 +561,7 @@ def test_apply_eager_graph_env_sets_fp16_fullgraph_and_holds_norm(monkeypatch):
     monkeypatch.setenv("FF_COMPILE", "1")  # must be cleared (incompatible)
     apply_eager_graph_env(30)
     assert os.environ["FF_NN_NORM"] == "layer"  # held constant with stacked arm
-    assert os.environ["FF_AMP_DTYPE"] == "auto"  # -> FP16 on CUDA
+    assert os.environ["FF_AMP_DTYPE"] == "auto"  # -> FP32+TF32 (AMP off) on CUDA
     assert os.environ["FF_CUDA_GRAPH"] == "1"
     assert os.environ["FF_CUDA_GRAPH_FULL"] == "1"
     assert os.environ["FF_NN_FIXED_EPOCHS"] == "30"

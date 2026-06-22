@@ -144,17 +144,18 @@ def test_amp_dtype_none_off_cuda(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("capability", [(7, 5), (8, 0), (8, 9), (12, 0)])
-def test_amp_dtype_auto_is_fp16_on_all_cuda(monkeypatch, capability):
-    """Default (auto): FP16 on every CUDA device — T4 and Blackwell alike.
+def test_amp_dtype_auto_is_off_on_all_cuda(monkeypatch, capability):
+    """Default (auto): AMP off -> FP32+TF32 on every CUDA device.
 
-    BF16 is never auto-selected; a 5080 A/B showed it regresses high-magnitude
-    heads, so FP16 is the proven default regardless of compute capability.
+    Flipped 2026-06-22 (owner-approved metric-path change): the default no longer
+    autocasts to FP16 — the NN trains in FP32 storage with TF32 matmuls. FP16
+    remains available via FF_AMP_DTYPE=fp16 (see test_amp_dtype_simple_overrides).
     """
     monkeypatch.delenv("FF_AMP_DTYPE", raising=False)
     monkeypatch.delenv("FF_DEVICE", raising=False)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda *a, **k: capability)
-    assert amp_dtype() is torch.float16
+    assert amp_dtype() is None
 
 
 @pytest.mark.unit
