@@ -1113,15 +1113,21 @@ class MultiHeadTrainer:
         # AMP dtype on the forward + loss path, chosen by ``amp_dtype()``
         # (src/shared/utils.py) — one source of truth for every host:
         #
-        #   - CUDA, default: float16 + GradScaler. FP16 is the proven default on
-        #     ALL CUDA (T4 sm_75 AND Blackwell sm_120). T4 has FP16 Tensor Cores
-        #     (~65 TFLOPS vs ~8 FP32); on the 5080 a deterministic A/B showed
-        #     BF16 *regresses* high-magnitude heads (QB passing_yards +2.2-3.1%)
-        #     and FP16 runs full-throughput there too, so FP16 wins on both.
+        #   - CUDA, default (auto): None → AMP OFF. The NN trains in FP32 storage
+        #     with TF32 matmuls (sm_80+); no GradScaler. Flipped from the old
+        #     FP16-autocast default 2026-06-22 (#1311) — TF32 keeps FP16's 10-bit
+        #     matmul mantissa + the full FP32 exponent so accuracy is neutral,
+        #     while dropping FP16 autocast's per-op cast kernels on this
+        #     launch-bound model.
+        #   - CUDA, FF_AMP_DTYPE=fp16 (opt-in): float16 + GradScaler. The proven
+        #     mixed-precision path and the pre-2026-06-22 default; still the speed
+        #     path on the T4 (sm_75 has FP16 Tensor Cores ~65 TFLOPS vs ~8 FP32,
+        #     and no TF32 to accelerate the FP32 default).
         #   - CUDA, FF_AMP_DTYPE=bf16 (opt-in, sm_80+ only): bfloat16, no
         #     GradScaler (BF16 keeps the FP32 exponent range). amp_dtype()
         #     refuses BF16 on T4 (degrades to FP16) so the opt-in can't
-        #     reintroduce the #293/#301 T4 hang.
+        #     reintroduce the #293/#301 T4 hang; a 5080 A/B also showed BF16
+        #     *regresses* high-magnitude heads (QB passing_yards +2.2-3.1%).
         #   - Non-CUDA (CPU/MPS — local Mac dev, CI) or FF_AMP_DTYPE=fp32:
         #     amp_dtype() is None → AMP off, byte-identical to the FP32 path.
         #
@@ -1618,12 +1624,13 @@ class MultiHeadTrainer:
                         entropy_term = entropy_fn()
                         if entropy_term is not None:
                             loss = loss + entropy_term
-                # Only the FP16 AMP path (T4) uses GradScaler, to keep gradients
-                # in representable range. In every other case — CPU / MPS,
-                # use_amp=False, AND the BF16 path on sm_80+ (BF16 keeps the FP32
-                # exponent range so no scaling is needed) — GradScaler is
-                # constructed with enabled=False and these scaler.* methods are
-                # pass-through no-ops, so the path is bit-identical to a plain
+                # GradScaler is enabled ONLY for the opt-in FP16 path
+                # (FF_AMP_DTYPE=fp16), to keep gradients in representable range.
+                # In every other case — the FP32+TF32 default (AMP off), CPU /
+                # MPS, AND the BF16 opt-in on sm_80+ (BF16 keeps the FP32 exponent
+                # range so no scaling is needed) — GradScaler is constructed with
+                # enabled=False and these scaler.* methods are pass-through
+                # no-ops, so the path is bit-identical to a plain
                 # loss.backward() + optimizer.step().
                 #
                 # scaler.unscale_() must run BEFORE clip_grad_norm_ so the
