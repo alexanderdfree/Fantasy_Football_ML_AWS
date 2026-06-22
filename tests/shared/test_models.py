@@ -8,6 +8,8 @@ from src.shared.models import (
     GatedOrdinalTDClassifier,
     LightGBMMultiTarget,
     OrdinalTDClassifier,
+    RidgeModel,
+    RidgeMultiTarget,
     TwoStageRidge,
 )
 
@@ -403,3 +405,61 @@ class TestLightGBMMultiTarget:
         loaded = LightGBMMultiTarget(target_names=TARGETS)  # default = clamp-all
         loaded.load(model_dir)
         assert loaded.non_negative_targets == subset
+
+
+@pytest.mark.unit
+class TestRidgeModelFloat64:
+    """RidgeModel runs the StandardScaler -> PCA -> Ridge path in float64
+    end-to-end, even though the incoming splits are float32 — no
+    float32->float64->float32 round-trip across the PCA SVD."""
+
+    @staticmethod
+    def _data(n=120, d=12):
+        rng = np.random.RandomState(0)
+        X = rng.randn(n, d).astype(np.float32)
+        y = (X @ rng.randn(d) + 0.5 * rng.randn(n)).astype(np.float32)
+        return X, y
+
+    def test_scaler_fit_in_float64_no_pca(self):
+        X, y = self._data()
+        m = RidgeModel(alpha=1.0)
+        m.fit(X, y)
+        # StandardScaler stores stats in its input dtype; float64 here proves
+        # the entry cast took effect (a float32 X would give float32 stats).
+        assert m.scaler.mean_.dtype == np.float64
+        assert m.pca is None
+
+    def test_pca_path_float64_and_predicts_on_float32(self):
+        X, y = self._data()
+        m = RidgeModel(alpha=1.0, pca_n_components=6)
+        m.fit(X, y)
+        assert m.scaler.mean_.dtype == np.float64
+        assert m.pca is not None
+        # predict() must accept the float32 splits and run float64 internally.
+        preds = m.predict(X)
+        assert np.isfinite(preds).all()
+        assert preds.shape == (len(X),)
+        # Sanity: the linear signal is recovered (positive correlation).
+        assert np.corrcoef(preds, y)[0, 1] > 0.5
+
+    def test_predict_dtype_invariant(self):
+        """float32 vs float64 input to predict() give the same result (both are
+        upcast to float64 at entry)."""
+        X, y = self._data()
+        m = RidgeModel(alpha=1.0, pca_n_components=6)
+        m.fit(X, y)
+        p32 = m.predict(X)
+        p64 = m.predict(X.astype(np.float64))
+        np.testing.assert_array_equal(p32, p64)
+
+    def test_multitarget_propagates_float64(self):
+        X, _ = self._data()
+        y_dict = {t: (X[:, i] * 3.0).astype(np.float32) for i, t in enumerate(TARGETS)}
+        m = RidgeMultiTarget(target_names=TARGETS, alpha=1.0, pca_n_components=6)
+        m.fit(X, y_dict)
+        # Each per-target RidgeModel inherits the float64 path.
+        for t in TARGETS:
+            assert m._models[t].scaler.mean_.dtype == np.float64
+        preds = m.predict(X)
+        for t in TARGETS:
+            assert np.isfinite(preds[t]).all()

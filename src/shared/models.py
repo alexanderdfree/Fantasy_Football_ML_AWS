@@ -62,6 +62,14 @@ class RidgeModel:
         self.pca = None
 
     def fit(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+        # Run StandardScaler -> PCA -> Ridge natively in float64. The incoming X
+        # is float32 (pipeline.py casts the splits to float32), but sklearn's
+        # PCA upcasts to float64 internally for the SVD and downcasts the
+        # transform back, so the linear path otherwise round-trips
+        # float32->float64->float32 on every fit/predict. Casting once at entry
+        # keeps a single dtype end-to-end — no per-call implicit upcast and no
+        # precision-losing downcast of the PCA scores fed to the Ridge solve.
+        X_train = np.asarray(X_train, dtype=np.float64)
         X_scaled = self.scaler.fit_transform(X_train)
         if self.pca_n_components:
             from sklearn.decomposition import PCA
@@ -75,6 +83,8 @@ class RidgeModel:
         self.model.fit(X_scaled, y_train)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
+        # Match fit(): float64 end-to-end through scaler -> PCA -> Ridge.
+        X = np.asarray(X, dtype=np.float64)
         X_scaled = self.scaler.transform(X)
         if self.pca is not None:
             X_scaled = self.pca.transform(X_scaled)
