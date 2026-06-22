@@ -46,7 +46,7 @@ def _force_os(monkeypatch, system, release="", machine="x86_64"):
     [
         ((7, 5), "Tesla T4", "sm_75", False, "cu126"),  # g4dn — no native BF16
         ((8, 9), "NVIDIA L4", "sm_89", True, "cu126"),  # g6 — BF16-capable
-        ((12, 0), "NVIDIA GeForce RTX 5080", "sm_120", True, "cu128"),  # Blackwell
+        ((12, 0), "NVIDIA GeForce RTX 5080", "sm_120", True, "cu130"),  # Blackwell
     ],
 )
 def test_cuda_backend_fields(monkeypatch, capability, name, sm, bf16, wheel):
@@ -135,7 +135,7 @@ def test_detect_platform_on_real_host_is_self_consistent():
     assert info.backend in {"cuda", "mps", "cpu"}
     if info.backend == "cuda":
         assert info.sm is not None and info.sm.startswith("sm_")
-        assert info.recommended_cuda_wheel in {"cu126", "cu128"}
+        assert info.recommended_cuda_wheel in {"cu126", "cu130"}
     else:
         # CUDA-only fields are cleared off-CUDA.
         assert info.compute_capability is None
