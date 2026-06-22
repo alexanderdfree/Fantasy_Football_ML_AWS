@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,22 @@ def test_main_entrypoint_serves_canonical_app(monkeypatch):
 
     monkeypatch.setattr(flask.Flask, "run", fake_run)
 
-    runpy.run_module("src.serving.app", run_name="__main__")
+    # ``run_module`` re-executes app.py as ``__main__`` while the canonical
+    # ``src.serving.app`` is already imported (by sibling serving tests, or by
+    # the __main__ branch's own ``from src.serving.app import app``). runpy's
+    # ``_get_module_details`` then emits a generic "<mod> found in sys.modules
+    # ... prior to execution ... may result in unpredictable behaviour"
+    # RuntimeWarning. That *is* the double-module scenario this test asserts we
+    # handle correctly, so the warning is expected here — suppress just that
+    # message to keep the CI warnings summary clean (any other RuntimeWarning
+    # still surfaces).
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*found in sys\.modules.*prior to execution.*",
+            category=RuntimeWarning,
+        )
+        runpy.run_module("src.serving.app", run_name="__main__")
 
     import src.serving.app as app_module
 
