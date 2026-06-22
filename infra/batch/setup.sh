@@ -60,6 +60,15 @@ ALL_GPU_INSTANCE_TYPES=("$PRIMARY_INSTANCE_TYPE" "$SECONDARY_INSTANCE_TYPE")
 CPU_PRIMARY_INSTANCE_TYPE="c8a.xlarge"
 CPU_FALLBACK_INSTANCE_TYPE="m8a.xlarge"
 CPU_INSTANCE_TYPES_JSON="[\"$CPU_PRIMARY_INSTANCE_TYPE\",\"$CPU_FALLBACK_INSTANCE_TYPE\"]"
+# Opt-in warm pre-pulled AMI (cold-start lever). UNSET by default => the GPU CE
+# uses the default ECS-GPU AMI exactly as before, so merging this changes
+# nothing live. Set FF_BATCH_AMI_ID=<ami> (built by infra/batch/build-warm-ami.sh)
+# to boot fresh GPU Spot hosts from a custom AMI with the training image's base
+# layers pre-pulled — skipping the ~122 s image pull that dominates the
+# orchestration-bound cold-start. Attached to the GPU CE *only* (the c8a CPU
+# fleet keeps the default AMI) via the ff-warm-ami-lt launch template.
+FF_BATCH_AMI_ID="${FF_BATCH_AMI_ID:-}"
+WARM_AMI_LT_NAME="${FF_WARM_AMI_LT_NAME:-ff-warm-ami-lt}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[batch-setup] $*"; }
@@ -309,6 +318,54 @@ wait_for_compute_environment_valid() {
   exit 1
 }
 
+# Ensure the warm-AMI launch template exists with ImageId=$1 and set globals
+# WARM_AMI_LT_ID + WARM_AMI_LT_VERSION (a concrete numeric version, so the CE
+# pins an exact version and a changed AMI deterministically triggers a CE
+# reconcile). Idempotent: reuses the latest version when its ImageId already
+# matches, else adds a new version. Only called when FF_BATCH_AMI_ID is set, so
+# the default (unset) path never touches launch templates.
+ensure_warm_ami_launch_template() {
+  local ami_id="$1"
+  local lt_id current_ami
+  lt_id="$(aws ec2 describe-launch-templates \
+    --launch-template-names "$WARM_AMI_LT_NAME" \
+    --region "$REGION" \
+    --query 'LaunchTemplates[0].LaunchTemplateId' \
+    --output text 2>/dev/null || echo None)"
+  if [ "$lt_id" = "None" ] || [ -z "$lt_id" ]; then
+    log "Creating launch template $WARM_AMI_LT_NAME (ImageId=$ami_id)..."
+    WARM_AMI_LT_ID="$(aws ec2 create-launch-template \
+      --launch-template-name "$WARM_AMI_LT_NAME" \
+      --launch-template-data "{\"ImageId\": \"$ami_id\"}" \
+      --region "$REGION" \
+      --query 'LaunchTemplate.LaunchTemplateId' \
+      --output text)"
+    WARM_AMI_LT_VERSION="1"
+    return
+  fi
+  current_ami="$(aws ec2 describe-launch-template-versions \
+    --launch-template-id "$lt_id" \
+    --versions '$Latest' \
+    --region "$REGION" \
+    --query 'LaunchTemplateVersions[0].LaunchTemplateData.ImageId' \
+    --output text 2>/dev/null || echo None)"
+  WARM_AMI_LT_ID="$lt_id"
+  if [ "$current_ami" = "$ami_id" ]; then
+    WARM_AMI_LT_VERSION="$(aws ec2 describe-launch-template-versions \
+      --launch-template-id "$lt_id" --versions '$Latest' --region "$REGION" \
+      --query 'LaunchTemplateVersions[0].VersionNumber' --output text)"
+    log "Launch template $WARM_AMI_LT_NAME already at ImageId=$ami_id (v$WARM_AMI_LT_VERSION)"
+    return
+  fi
+  log "Adding launch template version to $WARM_AMI_LT_NAME (ImageId=$ami_id)..."
+  WARM_AMI_LT_VERSION="$(aws ec2 create-launch-template-version \
+    --launch-template-id "$lt_id" \
+    --launch-template-data "{\"ImageId\": \"$ami_id\"}" \
+    --region "$REGION" \
+    --query 'LaunchTemplateVersion.VersionNumber' \
+    --output text)"
+}
+
 ensure_compute_environment() {
   local ce_name="$1"
   # Space-separated list of instance types (e.g. "g6.xlarge g5.xlarge"); all live
@@ -329,6 +386,17 @@ ensure_compute_environment() {
   local subnets_sorted="$RESOLVED_SUBNETS_SORTED"
   log "$ce_name: [$instance_types_str] offered in AZs ($RESOLVED_OFFERING_AZS_DISPLAY); using $RESOLVED_SUBNET_COUNT default subnets"
 
+  # Warm-AMI launch template (opt-in; see FF_BATCH_AMI_ID). When set, attach a
+  # version-pinned launch template so fresh Spot hosts boot from the pre-pulled
+  # AMI. Empty => no launchTemplate key anywhere => the exact prior behavior.
+  local lt_fragment="" lt_desired=""
+  if [ -n "$FF_BATCH_AMI_ID" ]; then
+    ensure_warm_ami_launch_template "$FF_BATCH_AMI_ID"
+    lt_fragment=", \"launchTemplate\": {\"launchTemplateId\": \"$WARM_AMI_LT_ID\", \"version\": \"$WARM_AMI_LT_VERSION\"}"
+    lt_desired="$WARM_AMI_LT_ID:$WARM_AMI_LT_VERSION"
+    log "$ce_name: attaching warm AMI $FF_BATCH_AMI_ID via $WARM_AMI_LT_NAME v$WARM_AMI_LT_VERSION"
+  fi
+
   CE_STATUS=$(aws batch describe-compute-environments \
     --compute-environments "$ce_name" \
     --region "$REGION" \
@@ -348,7 +416,7 @@ ensure_compute_environment() {
         \"instanceTypes\": $instance_types_json,
         \"subnets\": [$subnets_json],
         \"securityGroupIds\": [\"$SG_ID\"],
-        \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
+        \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"$lt_fragment
       }" \
       --region "$REGION"
     log "Waiting for $ce_name to reach VALID..."
@@ -379,8 +447,23 @@ ensure_compute_environment() {
       --region "$REGION" \
       --query 'computeEnvironments[0].computeResources.maxvCpus' \
       --output text 2>/dev/null || echo "None")
-    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$desired_types_sorted" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ] || [ "$CURRENT_MAX" != "$MAX_VCPUS" ]; then
-      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> [$instance_types_str]; maxVcpus ${CURRENT_MAX:-None} -> $MAX_VCPUS; subnets refreshed for $primary_type offerings"
+    # Warm-AMI launch-template diff — only when opted in via FF_BATCH_AMI_ID. An
+    # unset FF_BATCH_AMI_ID leaves lt_desired empty, so this never fires and the
+    # CE's launch template (whatever it is) is left untouched.
+    lt_needs_update=0
+    if [ -n "$lt_desired" ]; then
+      CURRENT_LT_ID=$(aws batch describe-compute-environments \
+        --compute-environments "$ce_name" --region "$REGION" \
+        --query 'computeEnvironments[0].computeResources.launchTemplate.launchTemplateId' \
+        --output text 2>/dev/null || echo "None")
+      CURRENT_LT_VER=$(aws batch describe-compute-environments \
+        --compute-environments "$ce_name" --region "$REGION" \
+        --query 'computeEnvironments[0].computeResources.launchTemplate.version' \
+        --output text 2>/dev/null || echo "None")
+      [ "$CURRENT_LT_ID:$CURRENT_LT_VER" != "$lt_desired" ] && lt_needs_update=1
+    fi
+    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$desired_types_sorted" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ] || [ "$CURRENT_MAX" != "$MAX_VCPUS" ] || [ "$lt_needs_update" = "1" ]; then
+      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> [$instance_types_str]; maxVcpus ${CURRENT_MAX:-None} -> $MAX_VCPUS; subnets refreshed for $primary_type offerings${lt_desired:+; launchTemplate -> $lt_desired}"
       log "  step 1/3: DISABLE"
       aws batch update-compute-environment \
         --compute-environment "$ce_name" \
@@ -390,7 +473,7 @@ ensure_compute_environment() {
       log "  step 2/3: UPDATE instanceTypes/subnets/maxvCpus"
       aws batch update-compute-environment \
         --compute-environment "$ce_name" \
-        --compute-resources "{\"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\", \"maxvCpus\": $MAX_VCPUS, \"instanceTypes\": $instance_types_json, \"subnets\": [$subnets_json]}" \
+        --compute-resources "{\"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\", \"maxvCpus\": $MAX_VCPUS, \"instanceTypes\": $instance_types_json, \"subnets\": [$subnets_json]$lt_fragment}" \
         --region "$REGION" >/dev/null
       wait_for_compute_environment_valid "$ce_name" 30
       log "  step 3/3: ENABLE"
