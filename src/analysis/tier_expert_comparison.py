@@ -133,8 +133,10 @@ def main(argv: list[str] | None = None) -> None:
     prior_fp = player_prior_season_fp([train_df, val_df, test_df_all])
 
     if args.from_artifacts and args.sync:
+        from src.analysis.artifact_eval import warn_if_sync_noop
         from src.shared.model_sync import sync_models_from_s3
 
+        warn_if_sync_noop()  # loud when FF_MODEL_S3_BUCKET unset (sync would silently no-op)
         print("Syncing latest model artifacts from S3 ...", flush=True)
         sync_models_from_s3()
 

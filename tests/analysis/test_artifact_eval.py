@@ -43,3 +43,46 @@ def test_attn_supported_for_flat_incl_opp_history_but_not_nested():
     assert ae._attn_is_supported({"opp_attn_history_stats": ["def_sacks"]}) is True
     # Nested per-kick variant (K) is not yet handled.
     assert ae._attn_is_supported({"attn_history_structure": "nested"}) is False
+
+
+def test_resolve_model_dir_prefers_served_then_falls_back_to_producer(tmp_path, monkeypatch):
+    """Served path wins when present; else the local producer path; else a LOUD raise.
+
+    Guards the served-vs-producer mismatch that silently produced "no models found":
+    reg["model_dir"] = src/{pos}/outputs/models (served, what serving + --sync read)
+    vs the local producer path {pos}/outputs/models (what a local run / Batch writes).
+    """
+    monkeypatch.chdir(tmp_path)
+    served = tmp_path / "src" / "wr" / "outputs" / "models"
+    producer = tmp_path / "wr" / "outputs" / "models"
+    reg = {"model_dir": str(served)}
+
+    # Neither exists -> raise loudly, naming BOTH paths (no silent empty result).
+    with pytest.raises(FileNotFoundError) as exc_info:
+        ae.resolve_model_dir("WR", reg)
+    msg = str(exc_info.value)
+    assert str(served) in msg and "wr/outputs/models" in msg
+
+    # Producer-only -> fall back to it (the local-run case this fix unblocks).
+    producer.mkdir(parents=True)
+    assert ae.resolve_model_dir("WR", reg) == ae._producer_model_dir("WR") == "wr/outputs/models"
+
+    # Served present -> preferred over the producer path.
+    served.mkdir(parents=True)
+    assert ae.resolve_model_dir("WR", reg) == str(served)
+
+
+def test_resolve_model_dir_override_takes_precedence(tmp_path):
+    reg = {"model_dir": "src/wr/outputs/models"}  # would not exist; override must win first
+    assert ae.resolve_model_dir("WR", reg, override="/custom/models") == "/custom/models"
+
+
+def test_warn_if_sync_noop_is_loud_only_when_bucket_unset(monkeypatch, capsys):
+    """--sync silently no-ops when FF_MODEL_S3_BUCKET is unset; that must be loud."""
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    assert ae.warn_if_sync_noop() is False
+    assert "FF_MODEL_S3_BUCKET is unset" in capsys.readouterr().out
+
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "some-bucket")
+    assert ae.warn_if_sync_noop() is True
+    assert capsys.readouterr().out == ""  # bucket set -> no warning
