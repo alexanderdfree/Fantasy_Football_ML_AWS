@@ -8,6 +8,9 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 
 ## Open
 
+### [DEFERRED] Multi-season rolling-origin eval report — data + report shipped, History-tab UI deferred
+- **Report:** [todo/rolling-origin-2season-eval.md](todo/rolling-origin-2season-eval.md) — leakage-free per-season (2023/2024/2025) + mean±std eval via `benchmark --rolling-origin`, served model + splits **unchanged**. Finding: the single-season (2025) headline is per-position biased both ways (WR/DST ~0.1–0.25 too good, QB/K ~0.1 too pessimistic); rankings unchanged. Data: `benchmark_history/2026-06-22T21-10-13_1e67be7.json` (`rolling_origin` block). **Deferred:** surface it on the History tab (`_benchmark_row()` backend + `app.js` frontend; optional `train-batch.yml --rolling-origin` + S3 sync).
+
 ### [TOOLING] Cross-model agent parity — audit + remediation backlog
 - **Audit doc:** [todo/cross-model-parity-audit.md](todo/cross-model-parity-audit.md) — full parity matrix + findings across Claude / Codex / Gemini-Antigravity over the shared `AGENTS.md` + `agent-workflows/*` + `routines/*` brain.
 - **Verdict:** the wrapper/shared-instructions design is genuinely model-agnostic; skill/routine parity is complete. Gaps concentrate in Gemini deterministic enforcement (zero hooks), Gemini memory not S3-synced, no cross-provider parity test, and minor Claude-leaning leaks in shared instruction files + stale "Gemini = CI-only" docs.
