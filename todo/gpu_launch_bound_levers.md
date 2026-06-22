@@ -437,10 +437,12 @@ per budget) as an explicit precision-over-breadth call. (The earlier note that t
 and the chosen objective width; 8-16 remains the statistical sweet spot if a leaner run is
 wanted via `--stacked-seeds N`.)
 
-**Latent bug surfaced (chip filed):** `launch_tune --n-jobs auto` (the #1119 default) dies in
-the container — `src/batch/train.py`'s `--n-jobs` is `type=int` and every prior submission
-happened to pass a number. Fix = env channel (`FF_TUNE_N_JOBS`) in src/tuning, NOT a
-train.py edit (6-position retrain); explicit `--n-jobs 4` is the interim.
+**Latent bug — RESOLVED:** `launch_tune --n-jobs auto` (the #1119 default) used to die in
+the container because `src/batch/train.py`'s `--n-jobs` is `type=int` and prior submissions
+happened to pass a number. Fixed via the env channel (not argv): `launch_tune` now routes
+`n_jobs` through `FF_TUNE_N_JOBS`, which `train.py` reads as the `--n-jobs` default, so the
+`auto` sentinel never hits `type=int`. No train.py edit was needed (it would have fired a
+6-position retrain); an explicit `--n-jobs N` still overrides.
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute)
 

@@ -386,6 +386,14 @@ jobs:
           # FF_BATCH_CUDA_GRAPH=0 to force the whole fan-out back to the eager
           # path. launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
+          # The FULL-STEP graph (gather+forward+loss+backward) also autodetects
+          # ON for sm_80+ via cuda_graph_full_enabled(). This SECOND optional
+          # fleet override degrades full-step → model-only across the fan-out
+          # (keeps the ~1.84x model-only win) WITHOUT going all-eager: leave it
+          # unset for the autodetect default, or set FF_BATCH_CUDA_GRAPH_FULL=0
+          # to drop to the model-only graph (use FF_BATCH_CUDA_GRAPH=0 above for
+          # full eager). launch.py forwards it to the container only when set.
+          FF_CUDA_GRAPH_FULL: ${{ vars.FF_BATCH_CUDA_GRAPH_FULL }}
           BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
           EVENT_NAME: ${{ github.event_name }}
           SEED: ${{ github.event.inputs.seed || '42' }}
@@ -580,6 +588,13 @@ jobs:
           # optional fleet override (FF_BATCH_CUDA_GRAPH=0) forces eager + the
           # plain label.
           FF_CUDA_GRAPH: ${{ vars.FF_BATCH_CUDA_GRAPH }}
+          # FF_BATCH_CUDA_GRAPH_FULL=0 degrades full-step → model-only (keeps the
+          # ~1.84x model-only win) rather than going all-eager; graphs stay ON,
+          # so the CUDA-graph label below is still honest (the case fallback only
+          # strips the suffix when FF_CUDA_GRAPH disables capture entirely). The
+          # runtime hardware label is derived from train.py's stamped
+          # gpu_name + cuda_graph_active fields, so it tracks the live scope.
+          FF_CUDA_GRAPH_FULL: ${{ vars.FF_BATCH_CUDA_GRAPH_FULL }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
           # is attacker-controllable (e.g. a fork that happens to share a
