@@ -25,9 +25,12 @@ pipeline's unconditional save block) and emits its metrics summary to a unique t
 — **no shared-file writes during the parallel phase**. The orchestrator then merges the
 summaries into one ``benchmark_results.json`` + one ``benchmark_history/{run_id}.json``
 entry and mirrors it to S3 (the website History tab), reusing ``benchmark.py``'s helpers.
-``--rolling-origin`` switches the worker summaries and history mode to the same
-walk-forward reporting path as ``benchmark --rolling-origin``; deprecated ``--cv`` is an
-alias for that reporting mode.
+``--rolling-origin`` flattens the run into a (position × origin) cell grid — each cell is
+one origin's train+score, dispatched to the SAME work-conserving core pool — so a single
+position's origins run concurrently and a full 6-position run stays GPU-saturated to the
+end (no single-position tail). The orchestrator merges each position's per-origin
+summaries via ``finalize_rolling_origin`` into one walk-forward history record, the same
+shape as ``benchmark --rolling-origin``; deprecated ``--cv`` is an alias for that mode.
 
 Usage::
 
@@ -64,8 +67,10 @@ from src.benchmarking.benchmark import (  # noqa: E402 — after sys.path bootst
     _significance_block,
     collect_global_config,
     collect_pos_config,
+    finalize_rolling_origin,
     run_one,
     run_rolling_origin,
+    score_one_origin,
 )
 from src.shared.benchmark_utils import (  # noqa: E402
     append_to_history,
@@ -200,13 +205,28 @@ def _default_jobs(n_positions: int) -> int:
 # ----------------------------------------------------------------------- worker
 
 
-def _run_worker(pos: str, summary_out: str, rolling_origin: bool, significance: bool) -> int:
-    """Train one position, write only its metrics summary to ``summary_out`` (JSON).
+def _run_worker(
+    pos: str,
+    summary_out: str,
+    rolling_origin: bool,
+    significance: bool,
+    origin: str | None = None,
+) -> int:
+    """Train one work unit, write only its metrics summary to ``summary_out`` (JSON).
+
+    The unit is ONE position for a single-split run; for a rolling-origin run it is
+    ONE (position × origin) cell when ``origin`` (a test season) is supplied — the
+    worker then scores just that origin and writes its single-origin summary, and the
+    orchestrator merges the per-position origins via ``finalize_rolling_origin``. A
+    rolling-origin worker WITHOUT an ``origin`` (the ``-j 1`` / non-CUDA fallback)
+    scores every origin in-process via ``run_rolling_origin``.
 
     No ``benchmark_results.json`` / history / S3 writes here — those are the
     orchestrator's single-threaded merge step, so concurrent workers never collide.
     """
-    if rolling_origin:
+    if rolling_origin and origin is not None:
+        _ts, summary = score_one_origin(pos, int(origin))
+    elif rolling_origin:
         summary = run_rolling_origin(pos)
     else:
         result = run_one(pos)
@@ -220,16 +240,31 @@ def _run_worker(pos: str, summary_out: str, rolling_origin: bool, significance: 
             summary["cohorts"] = cohorts
     with open(summary_out, "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"[{pos}] worker complete — summary -> {summary_out}")
+    tag = f"{pos}:{origin}" if origin is not None else pos
+    print(f"[{tag}] worker complete — summary -> {summary_out}")
     return 0
 
 
 # ------------------------------------------------------------------- orchestrator
 
 
-def _launch(pos, cores, tmpdir, logdir, passthrough, pool_addr):
-    summary_path = os.path.join(tmpdir, f"{pos}.json")
-    log_path = os.path.join(logdir, f"local-train-{pos}.log")
+def _cell_slug(cell_key: str) -> str:
+    """Filesystem-safe slug for a cell key (``"RB:2025"`` -> ``"RB-2025"``)."""
+    return cell_key.replace(":", "-")
+
+
+def _launch(cell_key, pos, origin, cores, tmpdir, logdir, passthrough, pool_addr):
+    """Launch one work-unit worker (a position, or a (position × origin) cell).
+
+    ``cell_key`` is the orchestrator's bookkeeping key (``"RB"`` for a single-split
+    position, ``"RB:2025"`` for a rolling-origin cell); it names the summary/log files
+    so concurrent cells of the SAME position never collide. ``pos`` is the real
+    position (passed to ``--worker`` and the core-pool label); ``origin`` (a test
+    season string or ``None``) becomes ``--origin`` so the worker scores one origin.
+    """
+    slug = _cell_slug(cell_key)
+    summary_path = os.path.join(tmpdir, f"{slug}.json")
+    log_path = os.path.join(logdir, f"local-train-{slug}.log")
     env = dict(os.environ)
     # Each CPU stage leases its thread count from the core pool at runtime (see
     # src/shared/core_pool.py), so we no longer freeze LGBM_N_JOBS/LOKY_MAX_CPU_COUNT per
@@ -237,7 +272,7 @@ def _launch(pos, cores, tmpdir, logdir, passthrough, pool_addr):
     # to all physical cores at launch (``cores``); the pool narrows affinity per CPU stage.
     # BLAS stays single-threaded so the leased joblib/LightGBM axis owns the fan-out.
     env[ENV_ADDR] = pool_addr
-    env[ENV_POS] = pos
+    env[ENV_POS] = cell_key
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         env.setdefault(k, "1")
     env.setdefault("FF_DEVICE", "cuda")
@@ -251,6 +286,8 @@ def _launch(pos, cores, tmpdir, logdir, passthrough, pool_addr):
         summary_path,
         *passthrough,
     ]
+    if origin is not None:
+        argv += ["--origin", str(origin)]
     # Kept open for the subprocess's lifetime (closed in the orchestrator on exit), so a
     # `with` block can't own it here.
     logf = open(log_path, "w")  # noqa: SIM115
@@ -258,7 +295,9 @@ def _launch(pos, cores, tmpdir, logdir, passthrough, pool_addr):
         argv, env=env, stdout=logf, stderr=subprocess.STDOUT, preexec_fn=_pin_self(cores)
     )
     return {
+        "cell_key": cell_key,
         "pos": pos,
+        "origin": origin,
         "proc": proc,
         "cores": cores,
         "summary_path": summary_path,
@@ -321,37 +360,67 @@ def _record_and_sync(
     print_history_comparison(HISTORY_DIR, summaries, exclude_path=written_path)
 
 
+def _build_cells(positions, rolling_origin):
+    """Flatten the run into ``[(cell_key, pos, origin), ...]`` work units, heaviest-first.
+
+    Single-split: one cell per position (``origin`` None, ``cell_key == pos``).
+    Rolling-origin: one cell per (position × origin) — for each position
+    (heaviest-first), its origins in reverse-chronological order so the latest year
+    (the heaviest origin, training on the most seasons) dispatches first. The cell key
+    is ``f"{pos}:{ts}"`` so concurrent cells of the same position never collide.
+    """
+    order = _sort_by_cost(positions)
+    if not rolling_origin:
+        return [(pos, pos, None) for pos in order]
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    return [
+        (f"{pos}:{ts}", pos, ts) for pos in order for ts in reversed(ROLLING_ORIGIN_TEST_SEASONS)
+    ]
+
+
 def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_origin=False) -> int:
     phys = physical_cores()
-    order = _sort_by_cost(positions)
-    jobs = max(1, min(jobs, len(positions)))
+    cells = _build_cells(positions, rolling_origin)
+    cell_keys = [ck for ck, _, _ in cells]
+    # Concurrency caps at the cell count: an active cell is one concurrent training run
+    # (the core pool's fair-share is over cells, since each is its own GPU+CPU workload).
+    jobs = max(1, min(jobs, len(cells)))
+    # "6 positions" for a single-split run (one cell per position); "6 positions, 18
+    # cells" for a rolling-origin run (each position × origin is its own cell).
+    cells_desc = (
+        f"{len(positions)} positions, {len(cells)} cells"
+        if rolling_origin
+        else f"{len(positions)} positions"
+    )
 
     if dry_run:
-        first = order[:jobs]
-        init_cap = _split_cores(phys, len(first))  # indicative initial per-position cap
+        first = cell_keys[:jobs]
+        init_cap = _split_cores(phys, len(first))  # indicative initial per-cell cap
         print(f"[dry-run] physical cores ({len(phys)}): {phys}")
-        print(f"[dry-run] -j {jobs}; {len(positions)} positions; dispatch order {order}")
+        print(f"[dry-run] -j {jobs}; {cells_desc}; dispatch order {cell_keys}")
         print(
             f"[dry-run] core pool: each CPU stage leases up to ceil({len(phys)}/active) cores; "
-            "the cap widens as positions finish"
+            "the cap widens as cells finish"
         )
-        for pos, chunk in zip(first, init_cap, strict=False):
-            print(f"[dry-run]   {pos:<4} ~{len(chunk)} cores initially")
-        if len(order) > jobs:
-            print(f"[dry-run] queued (dispatched as positions finish): {order[jobs:]}")
+        for ck, chunk in zip(first, init_cap, strict=False):
+            print(f"[dry-run]   {ck:<10} ~{len(chunk)} cores initially")
+        if len(cell_keys) > jobs:
+            print(f"[dry-run] queued (dispatched as cells finish): {cell_keys[jobs:]}")
         return 0
 
     logdir = "logs"
     os.makedirs(logdir, exist_ok=True)
     tmpdir = tempfile.mkdtemp(prefix="ff-parallel-")
     pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
-    queue = deque(order)
+    queue = deque(cells)
     active: OrderedDict = OrderedDict()
-    results: dict = {}
+    results: dict = {}  # cell_key -> summary | None
 
     print(
-        f"[parallel_train] {len(positions)} positions, -j {jobs}, {len(phys)} physical cores "
-        f"{phys}; core pool {pool_addr}; logs -> {logdir}/local-train-<POS>.log",
+        f"[parallel_train] {cells_desc}, -j {jobs}, "
+        f"{len(phys)} physical cores {phys}; core pool {pool_addr}; "
+        f"logs -> {logdir}/local-train-<CELL>.log",
         flush=True,
     )
 
@@ -360,48 +429,51 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_or
         while queue or active:
             if queue and len(active) < jobs:
                 while queue and len(active) < jobs:
-                    pos = queue.popleft()
-                    active[pos] = _launch(pos, phys, tmpdir, logdir, passthrough, pool_addr)
-                    print(f"[{pos}] launched (pid {active[pos]['proc'].pid})", flush=True)
-                # Tell the pool how many positions now contend so its per-stage fair-share
+                    cell_key, pos, origin = queue.popleft()
+                    active[cell_key] = _launch(
+                        cell_key, pos, origin, phys, tmpdir, logdir, passthrough, pool_addr
+                    )
+                    print(f"[{cell_key}] launched (pid {active[cell_key]['proc'].pid})", flush=True)
+                # Tell the pool how many cells now contend so its per-stage fair-share
                 # cap (ceil(cores / active)) is right.
                 set_active_count(len(active))
 
-            finished = [p for p, info in active.items() if info["proc"].poll() is not None]
+            finished = [ck for ck, info in active.items() if info["proc"].poll() is not None]
             if not finished:
                 time.sleep(0.5)
                 continue
 
-            for pos in finished:
-                info = active.pop(pos)
+            for cell_key in finished:
+                info = active.pop(cell_key)
                 info["logf"].close()
                 rc = info["proc"].returncode
                 elapsed = time.time() - info["t0"]
                 summary = _read_summary(info["summary_path"]) if rc == 0 else None
                 if summary is not None:
                     summary.setdefault("elapsed_sec", round(elapsed, 1))
-                results[pos] = summary
+                results[cell_key] = summary
                 tag = "ok" if summary is not None else f"FAILED (rc={rc})"
-                print(f"[{pos}] {tag} in {elapsed:.1f}s  (log: {info['log_path']})", flush=True)
-            # A finished position lowers the active count, so survivors' next CPU-stage
-            # leases widen — and the next queued position dispatches into the freed slot.
+                print(
+                    f"[{cell_key}] {tag} in {elapsed:.1f}s  (log: {info['log_path']})", flush=True
+                )
+            # A finished cell lowers the active count, so survivors' next CPU-stage
+            # leases widen — and the next queued cell dispatches into the freed slot.
             set_active_count(len(active))
     finally:
         pool_stop()
 
     total_wall_sec = round(time.time() - run_t0, 1)
     print(
-        f"[parallel_train] total wall-clock: {total_wall_sec}s ({len(positions)} positions, -j {jobs})",
+        f"[parallel_train] total wall-clock: {total_wall_sec}s ({cells_desc}, -j {jobs})",
         flush=True,
     )
 
-    ordered = [p for p in positions if results.get(p) is not None]
-    failed = [p for p in positions if results.get(p) is None]
+    summaries, ordered, failed = _merge_cell_results(positions, cells, results, rolling_origin)
     if not ordered:
         print("[parallel_train] all positions failed — nothing recorded.", file=sys.stderr)
         return 1
     _record_and_sync(
-        [results[p] for p in ordered],
+        summaries,
         ordered,
         note,
         no_sync,
@@ -411,9 +483,42 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_or
     if failed:
         print(f"\n[parallel_train] FAILED positions (not recorded): {failed}", file=sys.stderr)
         for p in failed:
-            print(f"  see logs/local-train-{p}.log", file=sys.stderr)
+            print(f"  see logs/local-train-{p}*.log", file=sys.stderr)
         return 2
     return 0
+
+
+def _merge_cell_results(positions, cells, results, rolling_origin):
+    """Fold per-cell summaries back into one summary per position.
+
+    Returns ``(summaries, ordered_positions, failed_positions)`` in the ORIGINAL
+    ``positions`` order. Single-split: each position is its own cell, so this is a
+    straight pass-through. Rolling-origin: gather a position's per-origin summaries
+    and call ``finalize_rolling_origin`` — but a position is "complete" (and recorded)
+    only when EVERY origin landed; one missing origin fails the whole position rather
+    than recording a partial mean±std.
+    """
+    if not rolling_origin:
+        ordered = [p for p in positions if results.get(p) is not None]
+        failed = [p for p in positions if results.get(p) is None]
+        return [results[p] for p in ordered], ordered, failed
+
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    by_cell = {(pos, origin): results.get(ck) for ck, pos, origin in cells}
+    summaries, ordered, failed = [], [], []
+    for pos in positions:
+        per_origin = [
+            (ts, by_cell[(pos, ts)])
+            for ts in ROLLING_ORIGIN_TEST_SEASONS
+            if (pos, ts) in by_cell and by_cell[(pos, ts)] is not None
+        ]
+        if len(per_origin) == len(ROLLING_ORIGIN_TEST_SEASONS):
+            summaries.append(finalize_rolling_origin(pos, per_origin))
+            ordered.append(pos)
+        else:
+            failed.append(pos)
+    return summaries, ordered, failed
 
 
 # -------------------------------------------------------------------------- cli
@@ -443,7 +548,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--rolling-origin",
         action="store_true",
-        help="Walk-forward multi-season TEST eval per position; reports rolling-origin history.",
+        help="Walk-forward multi-season TEST eval; fans each position's origins out as "
+        "(position × origin) cells and reports rolling-origin history.",
     )
     p.add_argument(
         "--significance", action="store_true", help="Attach paired-bootstrap CI (single-split only)"
@@ -457,6 +563,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Internal: a single-position worker invocation spawned by the orchestrator.
     p.add_argument("--worker", default=None, help=argparse.SUPPRESS)
     p.add_argument("--summary-out", default=None, help=argparse.SUPPRESS)
+    # Internal: when set, the worker scores ONE rolling origin (this test season)
+    # rather than looping every origin in-process — the (position × origin) cell.
+    p.add_argument("--origin", default=None, help=argparse.SUPPRESS)
     return p
 
 
@@ -475,6 +584,7 @@ def main(argv=None) -> int:
             args.summary_out,
             rolling_origin_mode,
             args.significance,
+            args.origin,
         )
 
     requested = [p.upper() for p in (args.positions or ALL_POSITIONS)]

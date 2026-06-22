@@ -102,10 +102,24 @@ def test_explicit_jobs_delegates_with_that_count(delegate):
 
 
 def test_single_position_never_spawns_even_with_explicit_jobs(delegate):
-    # One position can't benefit from a subprocess; the len>1 guard keeps it in-process.
+    # One SINGLE-SPLIT position is a single cell; the n_cells>1 guard keeps it in-process.
     rc = benchmark.main(["QB", "-j", "4", "--dry-run"])
     assert rc == 0
     assert delegate == []
+
+
+def test_single_position_rolling_origin_delegates_with_origin_cells(monkeypatch, delegate):
+    # A single-position --rolling-origin run is 3 cells (one per origin), so on a
+    # capable CUDA host it DELEGATES — sized at min(_default_jobs(6)=6, 3 cells)=3 —
+    # instead of staying in-process. This is the single-position-tail fix.
+    _patch_platform(monkeypatch, "cuda", 16)
+    rc = benchmark.main(["RB", "--rolling-origin", "--dry-run"])
+    assert rc == 0
+    assert len(delegate) == 1
+    assert delegate[0]["positions"] == ["RB"]
+    assert delegate[0]["jobs"] == 3  # min(6 GPU slots, 3 origin cells)
+    assert delegate[0]["rolling_origin"] is True
+    assert delegate[0]["passthrough"] == ["--rolling-origin"]
 
 
 def test_passthrough_flags_forwarded(monkeypatch, delegate):
@@ -118,5 +132,7 @@ def test_passthrough_flags_forwarded(monkeypatch, delegate):
     call = delegate[0]
     assert call["passthrough"] == ["--rolling-origin", "--significance"]
     assert call["rolling_origin"] is True
+    # Full-6 --rolling-origin = 18 cells capped at the GPU slot count: min(6, 18) = 6.
+    assert call["jobs"] == 6
     assert call["no_sync"] is True
     assert call["note"] == "x"

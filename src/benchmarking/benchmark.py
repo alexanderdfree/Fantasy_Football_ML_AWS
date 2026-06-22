@@ -427,6 +427,44 @@ def _aggregate_rolling_origin(per_origin):
     }
 
 
+def score_one_origin(position, test_season, seed=42):
+    """Train + score a SINGLE rolling origin; return ``(test_season, summary)``.
+
+    The (position × origin) unit the flattened parallel orchestrator dispatches:
+    it loads the position's folds, selects the origin whose test season ==
+    ``test_season``, and scores just that one. ``run_rolling_origin`` keeps the
+    in-process loop (loading the frame once); this is the per-cell entry point so
+    a single position's origins can fan out concurrently.
+    """
+    origins, cfg = _rolling_origin_inputs(position)
+    for ts, tr, va, te in origins:
+        if ts == test_season:
+            return ts, _score_origin(position, tr, va, te, cfg, seed)
+    available = [ts for ts, *_ in origins]
+    raise ValueError(
+        f"score_one_origin: test_season {test_season} is not a rolling origin for "
+        f"{position} (have {available})"
+    )
+
+
+def finalize_rolling_origin(position, per_origin):
+    """Assemble one position's per-origin summaries into its final benchmark record.
+
+    ``per_origin`` is ``[(test_season, summary), ...]``. Returns the production
+    origin's (test == ``TEST_SEASONS[0]``) flat summary augmented with a
+    ``rolling_origin`` mean±std block — so a rolling-origin run stays comparable
+    to a normal single-split run in the History tab. Same result as the tail of the
+    old ``run_rolling_origin``, factored out so the parallel merge can call it after
+    gathering per-cell summaries.
+    """
+    from src.config import TEST_SEASONS
+
+    prod_season = TEST_SEASONS[0]
+    final = next((dict(s) for ts, s in per_origin if ts == prod_season), dict(per_origin[-1][1]))
+    final["rolling_origin"] = _aggregate_rolling_origin(per_origin)
+    return final
+
+
 def run_rolling_origin(position):
     """Score all rolling origins for one position; return the production-origin summary
     augmented with a ``rolling_origin`` block.
@@ -435,19 +473,18 @@ def run_rolling_origin(position):
     origin (test == ``TEST_SEASONS[0]``), so a rolling-origin run is comparable to
     a normal single-split run in the History tab; the mean±std lives under
     ``summary["rolling_origin"]``.
-    """
-    from src.config import TEST_SEASONS
 
+    The in-process ``-j 1`` / non-CUDA fallback (and the path tests monkeypatch):
+    loads the position's frame ONCE via ``_rolling_origin_inputs`` and loops the
+    origins, then defers to ``finalize_rolling_origin`` for the production-origin
+    selection + aggregation.
+    """
     origins, cfg = _rolling_origin_inputs(position)
     per_origin = []
     for test_season, tr, va, te in origins:
         summary = _score_origin(position, tr, va, te, cfg)
         per_origin.append((test_season, summary))
-
-    prod_season = TEST_SEASONS[0]
-    final = next((dict(s) for ts, s in per_origin if ts == prod_season), dict(per_origin[-1][1]))
-    final["rolling_origin"] = _aggregate_rolling_origin(per_origin)
-    return final
+    return finalize_rolling_origin(position, per_origin)
 
 
 def _print_rolling_origin_table(summaries):
@@ -525,12 +562,24 @@ def main(argv=None):
 
     positions = args.positions
 
+    # Number of training runs this invocation dispatches: one per position for a
+    # single-split run, but ``len(ROLLING_ORIGIN_TEST_SEASONS)`` per position for a
+    # rolling-origin run (each origin is its own train+score). The orchestrator
+    # flattens rolling-origin work into a (position × origin) grid, so concurrency is
+    # sized on cells, not positions.
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    n_origins = len(ROLLING_ORIGIN_TEST_SEASONS) if rolling_origin_mode else 1
+    n_cells = len(positions) * n_origins
+
     # Concurrency dispatch. By default autodetect: on a many-core CUDA box the
-    # measured-optimal regime is every position in parallel (the GPU is launch-bound, so
-    # stacking processes fills its idle gaps — todo/gpu_launch_bound_levers.md), elsewhere
+    # measured-optimal regime is to saturate the GPU's idle gaps with parallel training
+    # runs (the GPU is launch-bound — todo/gpu_launch_bound_levers.md), elsewhere
     # sequential. ``--sequential``/``-j 1`` forces the in-process loop below. The parallel
     # engine lives in ``parallel_train`` (which imports from this module), so these imports
-    # are function-local to avoid a circular import at load time.
+    # are function-local to avoid a circular import at load time. For rolling-origin we cap
+    # at the GPU-saturating slot count (``_default_jobs(6)``), NOT the position count, so a
+    # single-position rolling-origin run still fans its origins out concurrently.
     if args.sequential:
         jobs = 1
     elif args.jobs is not None:
@@ -538,9 +587,13 @@ def main(argv=None):
     else:
         from src.benchmarking.parallel_train import _default_jobs
 
-        jobs = _default_jobs(len(positions))
+        if rolling_origin_mode:
+            slots = _default_jobs(6)  # 6 on a capable CUDA box, 1 off-CUDA
+            jobs = min(slots, n_cells) if slots > 1 else 1
+        else:
+            jobs = _default_jobs(len(positions))
 
-    if jobs > 1 and len(positions) > 1:
+    if jobs > 1 and n_cells > 1:
         from src.benchmarking import parallel_train
 
         passthrough = []
