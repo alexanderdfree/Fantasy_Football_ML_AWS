@@ -675,8 +675,32 @@ per-position worker entry.
 
 ---
 
+## Epoch-boundary host work (W3 — val-tail padding, host-sync batching, randperm) — GATE-EVALUATED → CLOSED (2026-06-22)
+
+W3 of the launch-bound effort was gated: *"only pursue the epoch-boundary levers if the profile shows they're material."* Evaluated 2026-06-22 (two Explore passes: lever characterization in `src/shared/training.py` + materiality from `benchmark_history`). **Gate FAILS — immaterial and metric-risky. No code; the three sub-levers are closed.**
+
+**Materiality — immaterial.** `attn_nn_train` is **1.5–5.7 s/position** on the production L4/A10G path (latest Batch run `1e67be7`, CUDA-graph ON) and is **off the orchestration-bound critical path** (~258 s cold-start; warm-AMI / Batch lifecycle is the production lever, not the GPU branch). Even eliminating **100 %** of epoch-boundary host work saves **<0.3 s/position → invisible**. The host work itself is **~<3–5 % of `attn_nn_train`**, inferred from converging evidence:
+- **Lever A3** optimizer-tail capture measured **~2 %** of the phase (see A3 section).
+- **D2** already graphs the *full* val pass (#1128); only a **0–1-batch ragged tail** stays eager (<0.1 %).
+- The **GPU-resident batcher** (#309) already removed the dominant per-epoch H2D + DataLoader-IPC overhead.
+- **Lever B's 1.03×** (above) proves the per-step launch storm is already collapsed by A2 — there is essentially no host-launch idle left to reclaim at the epoch boundary either.
+
+The remaining host syncs are **per-epoch, not per-step**: ~1 train-loss `.item()` (`training.py:1612-1613`) + ~5–10 per-target val syncs/epoch (`1694-1695`, `1711-1712`) × ~200–250 epochs = a few thousand μs-scale syncs across a whole run.
+
+**Correctness risk — high on the only non-trivial levers (so even the "win" isn't free):**
+- **Ragged val-tail padding** (`_GraphedValPass.tail_batches`, `training.py:672`; class at `584`) and the **val-MAE H2D** (`torch.cat(...).cpu().numpy()`, `training.py:1711-1712`) both feed `val_mae_weighted` → early-stopping / best-checkpoint selection (`training.py:1746-1754`). Padding the tail (dummy rows leak into MAE) or masking/deferring the sync **shifts the per-epoch MAE sequence → changes which epoch is selected as "best"**. A model-selection change, not a free speedup. **Keep them eager / unchanged.**
+- **Deferrable but negligible:** train-loss `.item()` (`1612-1613`, logging-only), per-target val-loss `.item()` (`1694-1695`, logging-only), and the per-epoch **`torch.randperm(N).to(device)`** shuffle (`509/539`, ~160 KB/epoch, deterministic, no correctness risk). The safe one (randperm) is the one the doc already says **"do not chase."**
+- **K/DST graphing** stays **structurally blocked** (the nested-attention trainer at `training.py:2079-2124` calls the model with the optional kwarg `x_game_history=` + a `None`-leaf, but `make_graphed_callables` only supports positional all-tensor args, so capture is an explicit no-op there — constraint at `2090-2093`); tiny train sets (K 5,746 rows) → never material even if unblocked.
+
+**Instrumentation note.** Per-epoch wall-clock already exists in `history["epoch_sec"]` (`training.py:1728`) but is **not decomposed** into train-pass / val-pass / boundary-overhead. A *measured* (vs inferred) boundary % would need that decomposition + a local `FF_CUDA_GRAPH=0 --fixed-epochs` A/B — deliberately **not** done: the inferred <3–5 % of a 1.5–5.7 s off-critical-path phase already answers the gate, and the only changes worth measuring are the metric-risky ones above.
+
+**Conclusion — CLOSED.** Don't pad the val tail, don't batch/defer the val-MAE sync, don't chase the randperm H2D, don't unblock K/DST graphing — none moves a material amount of an off-critical-path phase, and the non-trivial two carry model-selection risk. Re-propose only with a profile showing epoch-boundary overhead is materially large (it isn't, post-A2/A3/D2/#309).
+
+---
+
 ## Recommended sequencing
 1. ~~**Lever A first**~~ — **DONE** (shipped behind `FF_CUDA_GRAPH`, 1.84×, off by default; not bit-inert — see the Lever A result above).
-2. ~~**Lever B only if A is insufficient**~~ — **CLOSED, MEASURED-NEGATIVE** (2026-06-22, 5080): the single-process round-robin streams arm gave **1.03×** (1.033 ± 0.005×, no cross-stream overlap) even with full-step graphs engaged — the GIL serialises launches and graphs already collapsed the launch storm, so there's no idle to fill. The `-j6` subprocess model + core pool stay; A's per-position 1.84× remains the local-iteration win. (See the Lever B section for the measurement.)
+2. ~~**Lever B only if A is insufficient**~~ — **CLOSED, MEASURED-NEGATIVE** (2026-06-22, 5080): the single-process round-robin streams arm gave **1.03×** (1.033 ± 0.005×, no cross-stream overlap) even with full-step graphs engaged — the GIL serialises launches and graphs already collapsed the launch storm, so there's no idle to fill. The `-j6` subprocess model + core pool stay; A's per-position 1.84× remains the local-iteration win. (See the Lever B section for the measurement.) The within-position **Lever B′** in-process overlap is also **MEASURED-REJECTED** (graph-incompatible + dominated; see the B′ section).
+3. ~~**Epoch-boundary host work (W3)**~~ — **CLOSED, GATE-EVALUATED** (2026-06-22): immaterial (<3–5 % of a 1.5–5.7 s **off-critical-path** `attn_nn_train`) and the only non-trivial levers (val-tail padding, val-MAE sync) are model-selection-risky. See the "Epoch-boundary host work" section above.
 
-Both are **launch-overhead** levers (the measured bottleneck), not occupancy/FLOP levers (the 5080 has those to spare).
+Levers A and B are **launch-overhead** levers (the measured bottleneck), not occupancy/FLOP levers (the 5080 has those to spare); W3 (epoch-boundary) is a gate-fail close, not a pursued lever.
