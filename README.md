@@ -105,7 +105,7 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 
 ## Repo Layout
 
-The repository is organized with top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, and `docs/` directories alongside `README.md` / `SETUP.md` / `ATTRIBUTION.md`.
+The repository is organized with top-level `src/` (all source code), `data/`, `models/`, `notebooks/`, and `docs/` directories alongside `README.md` / `SETUP.md`.
 
 ```
 src/                                All Python source code
@@ -157,7 +157,6 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 - [docs/archive/](docs/archive/) — historical design docs folded into ADR-001 (LSTM proposal, XGBoost ensemble, weather/Vegas features)
 - [infra/ec2/README.md](infra/ec2/README.md), [infra/aws/README.md](infra/aws/README.md) — operator runbooks
 - [TODO.md](TODO.md) — issue log and open items; the **Fixed** archive (a lessons-learned catalog) lives in [todo/fixed-archive.md](todo/fixed-archive.md)
-- [ATTRIBUTION.md](ATTRIBUTION.md) — data, libraries, and AI tool usage
 
 ## Full-Stack Engineering
 

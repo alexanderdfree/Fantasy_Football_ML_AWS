@@ -25,11 +25,6 @@ import markdown
 WIKI_DOCS: dict[str, dict] = {
     "readme": {"name": "Project Overview", "group": "Overview", "path": "README.md"},
     "setup": {"name": "Setup & Local Run", "group": "Overview", "path": "SETUP.md"},
-    "attribution": {
-        "name": "Data & Tool Attribution",
-        "group": "Overview",
-        "path": "ATTRIBUTION.md",
-    },
     "todo": {"name": "TODO & Bug Archive", "group": "Overview", "path": "TODO.md"},
     "architecture": {
         "name": "ADR-001: System Architecture",
