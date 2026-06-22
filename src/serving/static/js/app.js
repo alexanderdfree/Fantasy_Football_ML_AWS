@@ -1961,33 +1961,84 @@ function formatTrainingTime(seconds) {
 }
 
 function formatHistoryDelta(delta) {
-    // Signed 2-decimal delta vs the prior run for the pill's title tooltip;
-    // U+2212 minus matches the displayed glyphs. Lower MAE is better.
+    // Signed 2-decimal delta vs the prior run, as plain tooltip text (the caller
+    // wraps it in the title attribute and may append an "all-time best" note);
+    // U+2212 minus matches the displayed glyphs. Lower MAE is better. Returns ""
+    // when there's no baseline (first appearance / metric absent on prior run).
     if (delta == null || !Number.isFinite(delta)) return "";
     const sign = delta < 0 ? "−" : "+";
-    return ` title="${sign}${fmt(Math.abs(delta), 2)} vs prev run"`;
+    return `${sign}${fmt(Math.abs(delta), 2)} vs prev run`;
+}
+
+// Magnitude→fill-intensity scaling for the History pills. A relative (percent)
+// change of HISTORY_INTENSITY_FULL_PCT or more saturates the green/red tint;
+// smaller changes fade toward HISTORY_PILL_MIN_ALPHA so a barely-over-threshold
+// delta is still faintly visible. Percent (not absolute) so positions sitting on
+// different fantasy-point scales weight comparably.
+const HISTORY_INTENSITY_FULL_PCT = 0.05;
+const HISTORY_PILL_MIN_ALPHA = 0.12;
+const HISTORY_PILL_MAX_ALPHA = 0.5;
+// Fixed fill for an all-time-best pill: a record is binary, so it gets one clear,
+// consistent blue regardless of the margin it won by.
+const HISTORY_RECORD_ALPHA = 0.32;
+
+function historyPillAlpha(intensity) {
+    const t = Math.min(1, Math.max(0, intensity || 0));
+    return (HISTORY_PILL_MIN_ALPHA + (HISTORY_PILL_MAX_ALPHA - HISTORY_PILL_MIN_ALPHA) * t).toFixed(3);
+}
+
+function historyPillTint(e) {
+    // Resolve a pill's fill class + inline background. An all-time best is solid
+    // blue and overrides the delta tint; otherwise green (improve) / red
+    // (regress) with alpha scaled by the change magnitude. The background is set
+    // inline (no CSP in this app; mirrors the band-fill pattern) so the class
+    // only carries the border color + legend hook.
+    if (e.value == null) return { cls: null, style: "" };
+    if (e.isRecord) {
+        return { cls: "history-pill-record", style: ` style="background-color:rgba(59,130,246,${HISTORY_RECORD_ALPHA})"` };
+    }
+    if (e.deltaClass === "history-pill-improve") {
+        return { cls: "history-pill-improve", style: ` style="background-color:rgba(34,197,94,${historyPillAlpha(e.intensity)})"` };
+    }
+    if (e.deltaClass === "history-pill-regress") {
+        return { cls: "history-pill-regress", style: ` style="background-color:rgba(239,68,68,${historyPillAlpha(e.intensity)})"` };
+    }
+    return { cls: null, style: "" };
+}
+
+function historyPillTitle(e) {
+    // Tooltip: signed delta vs prior run, plus an "all-time best" note on records.
+    const parts = [];
+    const d = formatHistoryDelta(e.delta);
+    if (d) parts.push(d);
+    if (e.isRecord) parts.push("all-time best");
+    return parts.length ? ` title="${parts.join(" · ")}"` : "";
 }
 
 function renderSummaryPills(entries) {
-    // Generic pill list: each entry is {label, value, deltaClass?, delta?, isBest?}.
+    // Generic pill list: each entry is
+    // {label, value, deltaClass?, delta?, intensity?, isRecord?, isBest?}.
     // `value` is the active metric (MAE or RMSE). label is a position
     // (group-by-model layout) or a model name (group-by-position). value=null
     // renders as "--" (that position-model pair didn't train in this run, or has
-    // no value for the active metric); empty list renders an em-dash. deltaClass
-    // tints the pill green/red vs the prior run for that pos+model; isBest bolds
-    // the best model in a group-by-position cell. The optional per_target field
-    // carried on pills is ignored here — it only drives the detailed-mode expansion.
+    // no value for the active metric); empty list renders an em-dash. The pill
+    // fill encodes change vs the prior run — green (improve) / red (regress) with
+    // a deeper tint for a larger relative change — or solid blue when the value
+    // is an all-time best (isRecord, which overrides the green/red tint). isBest
+    // bolds the best model in a group-by-position cell. The optional per_target
+    // field carried on pills is ignored here — it only drives detailed mode.
     if (!Array.isArray(entries) || entries.length === 0) return '<span class="history-empty">—</span>';
     return entries
         .map(e => {
             const display = e.value == null
                 ? '<span class="history-pill-skip">--</span>'
                 : fmt(e.value, 2);
-            const cls = ["history-pill", e.deltaClass, e.isBest ? "history-pill-best" : null]
+            const tint = historyPillTint(e);
+            const cls = ["history-pill", tint.cls, e.isBest ? "history-pill-best" : null]
                 .filter(Boolean)
                 .join(" ");
-            const title = e.value == null ? "" : formatHistoryDelta(e.delta);
-            return `<span class="${cls}"${title}><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${display}</span>`;
+            const title = e.value == null ? "" : historyPillTitle(e);
+            return `<span class="${cls}"${title}${tint.style}><span class="history-pill-pos">${escapeHtml(e.label)}</span> ${display}</span>`;
         })
         .join("");
 }
@@ -2020,6 +2071,8 @@ function historyCellEntries(row, columnKey, groupByPosition, metric) {
                 value: p ? (p[metric] ?? null) : null,
                 deltaClass: p ? p.deltaClass : null,
                 delta: p ? p.delta : null,
+                intensity: p ? p.intensity : 0,
+                isRecord: p ? !!p.isRecord : false,
             };
         });
         let bestIdx = -1;
@@ -2036,6 +2089,8 @@ function historyCellEntries(row, columnKey, groupByPosition, metric) {
         value: p[metric] ?? null,
         deltaClass: p.deltaClass,
         delta: p.delta,
+        intensity: p.intensity,
+        isRecord: !!p.isRecord,
     }));
 }
 
@@ -2113,17 +2168,35 @@ function formatHistoryTimestamp(ts) {
 const HISTORY_DELTA_EPS = 0.005; // only color a change the 2-decimal display reflects
 
 function annotateHistoryDeltas(rows, metric) {
-    // Tag each pill with a deltaClass (improve/regress) vs the most recent
-    // EARLIER run that trained the same position+model, on the active metric.
-    // Runs only retrain a subset of positions, so the baseline is not the
-    // adjacent table row — a lastSeen map keyed by `${position}|${model}` carries
-    // it across the gaps. Walk oldest→newest (rows arrive newest-first) so
-    // lastSeen is always the prior value. First appearance of a pos+model stays
-    // neutral (no baseline). Recomputed on every render so the tints track the
-    // toggle; pills with no value for the active metric (e.g. RMSE on a run that
-    // predates it) get their delta/deltaClass cleared so a prior metric's tint
-    // doesn't linger.
+    // Tag each pill on the active metric with (a) a deltaClass (improve/regress)
+    // + tint `intensity` vs the most recent EARLIER run that trained the same
+    // position+model, and (b) `isRecord` when its value is the all-time best
+    // (lowest) for that position+model across the whole history. Runs only
+    // retrain a subset of positions, so the delta baseline is not the adjacent
+    // table row — a lastSeen map keyed by `${position}|${model}` carries it
+    // across the gaps. Walk oldest→newest (rows arrive newest-first) so lastSeen
+    // is always the prior value. First appearance of a pos+model stays neutral
+    // (no baseline) but can still be a record. Recomputed on every render so the
+    // marks track the metric toggle; pills with no value for the active metric
+    // (e.g. RMSE on a run that predates it) get delta/deltaClass/intensity/
+    // isRecord cleared so a prior metric's mark doesn't linger.
     if (!Array.isArray(rows)) return;
+    // Pass 1: all-time minimum per pos+model on this metric. Records compare
+    // against the entire history, not just the rows walked so far, so this must
+    // precede the delta walk.
+    const minVal = {};
+    for (const row of rows) {
+        for (const m of HISTORY_MODELS) {
+            for (const p of row[m] || []) {
+                if (!p) continue;
+                const v = p[metric];
+                if (v == null) continue;
+                const key = `${p.position}|${m}`;
+                if (minVal[key] == null || v < minVal[key]) minVal[key] = v;
+            }
+        }
+    }
+    // Pass 2: per-run delta direction/magnitude + the record flag.
     const lastSeen = {};
     for (let i = rows.length - 1; i >= 0; i--) {
         const row = rows[i];
@@ -2134,6 +2207,8 @@ function annotateHistoryDeltas(rows, metric) {
                 if (cur == null) {
                     p.delta = null;
                     p.deltaClass = null;
+                    p.intensity = 0;
+                    p.isRecord = false;
                     continue;
                 }
                 const key = `${p.position}|${m}`;
@@ -2141,6 +2216,10 @@ function annotateHistoryDeltas(rows, metric) {
                 if (prev != null) {
                     const delta = cur - prev;
                     p.delta = delta;
+                    // Relative magnitude (guard a ~0 baseline → treat as full).
+                    const den = Math.abs(prev);
+                    const pct = den > 1e-9 ? Math.abs(delta) / den : 1;
+                    p.intensity = Math.min(1, pct / HISTORY_INTENSITY_FULL_PCT);
                     p.deltaClass =
                         delta <= -HISTORY_DELTA_EPS
                             ? "history-pill-improve"
@@ -2150,7 +2229,13 @@ function annotateHistoryDeltas(rows, metric) {
                 } else {
                     p.delta = null;
                     p.deltaClass = null;
+                    p.intensity = 0;
                 }
+                // All-time best for this pos+model on the active metric. minVal is
+                // an observed value, so the holder(s) match within a float
+                // epsilon; an exact tie flags both. A record overrides the
+                // green/red delta tint at render time.
+                p.isRecord = cur <= minVal[key] + 1e-9;
                 lastSeen[key] = cur;
             }
         }
