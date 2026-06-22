@@ -20,7 +20,6 @@ on:
       - "docs/**"
       - "README.md"
       - "SETUP.md"
-      - "ATTRIBUTION.md"
       - "TODO.md"
       - "infra/ec2/README.md"
       - "infra/aws/README.md"

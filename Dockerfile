@@ -45,7 +45,7 @@ COPY benchmark_history/ benchmark_history/
 # Only the .md files in src/serving/app.py:WIKI_DOCS — non-MD files in
 # infra/*/ (shell scripts, JSON policies) are intentionally excluded to keep
 # the slim image lean.
-COPY README.md SETUP.md ATTRIBUTION.md TODO.md ./
+COPY README.md SETUP.md TODO.md ./
 COPY docs/ docs/
 
 # Gunicorn config — post_fork pre-warm hook (see file for the why).
