@@ -28,6 +28,8 @@ for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
 import sys
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -80,9 +82,54 @@ def pytest_configure(config):
     for name, description in _MARKERS:
         config.addinivalue_line("markers", f"{name}: {description}")
 
+    # pytest-xdist registers this whenever it's loaded (always here — addopts
+    # carry ``-n auto``), but register it too so ``--strict-markers`` tolerates
+    # the dynamically-added group mark below even when xdist is disabled
+    # (``-p no:xdist``), where it is simply inert.
+    config.addinivalue_line(
+        "markers",
+        "xdist_group(name): assign tests to an xdist worker group (pytest-xdist).",
+    )
+
     try:
         import torch
 
         torch.set_num_threads(1)
     except ImportError:
         pass
+
+
+# Memory-heavy tests (the e2e / CV / regression suites) each build a feature
+# matrix and train Ridge+LightGBM+NN. Under xdist's per-file scheduling a
+# position shard's THREE heavy files (test_pipeline_e2e / test_run_cv_pipeline /
+# test_regression) land on DIFFERENT workers and their per-worker memory peaks
+# OVERLAP at the run tail, cumulatively crossing the ~15 GiB hosted-runner
+# ceiling -> a worker is OOM-SIGKILLed ("[gwN] node down", no faulthandler dump).
+# Tagging every such item into one ``xdist_group`` pins them onto a SINGLE worker
+# under ``--dist=loadgroup`` (the position shards, set in tests.yml) so at most
+# one pipeline is resident at a time (measured single-worker peak ~1.33 GiB)
+# while the light unit tests keep parallelizing on the other workers. The mark
+# is INERT under the other dist modes (loadfile / worksteal / load), so local
+# ``pytest -m unit``, the ``shared`` shard, and the ``serving`` shard are
+# unchanged.
+_TRAIN_GROUP_MARKERS = ("e2e", "regression", "integration")
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items):
+    """Serialize the memory-heavy training tests onto one xdist worker.
+
+    See the ``_TRAIN_GROUP_MARKERS`` comment. Only takes effect under
+    ``--dist=loadgroup``; a no-op under every other dist mode.
+
+    ``tryfirst=True`` is load-bearing: xdist's worker-side
+    ``pytest_collection_modifyitems`` (remote.py, a plain hookimpl) reads the
+    ``xdist_group`` mark and bakes it into each item's nodeid as an ``@group``
+    suffix — which is what LoadGroupScheduling keys on. We must add the mark
+    BEFORE that runs, or the grouping is silently inert and the heavy tests
+    scatter across workers (the exact OOM this fix targets — caught only on CI,
+    since a high-RAM box absorbs the scatter and still passes).
+    """
+    for item in items:
+        if any(item.get_closest_marker(marker) for marker in _TRAIN_GROUP_MARKERS):
+            item.add_marker(pytest.mark.xdist_group("train"))
