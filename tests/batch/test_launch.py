@@ -159,6 +159,7 @@ class TestEnvVarOverrides:
             {
                 "FF_JOB_DEFINITION": "ff-training-job",
                 "FF_JOB_DEFINITION_CPU": "ff-training-job-cpu",
+                "FF_JOB_QUEUE_CPU": "ff-cpu-queue",
                 "FF_JOB_DEFINITION_REVISION": "9",
             },
         ):
@@ -417,19 +418,35 @@ class TestSubmitJob:
         assert all(n.startswith("ff-rb-1700000000-") for n in names), names
 
     def test_routes_to_cpu_def_when_configured(self):
-        """If FF_JOB_DEFINITION_CPU is set, K/DST should use it."""
+        """If both CPU job-def + queue are set, K/DST should use the CPU def."""
         import src.batch.launch as mod
 
         mock_batch = mock.MagicMock()
         mock_batch.submit_job.return_value = {"jobId": "id"}
 
-        with mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"):
+        with (
+            mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
+            mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
+        ):
             mod.submit_job("K", batch_client=mock_batch)
             mod.submit_job("QB", batch_client=mock_batch)
 
         defs = [c.kwargs["jobDefinition"] for c in mock_batch.submit_job.call_args_list]
         assert defs[0] == "cpu-def"  # K routed to CPU
         assert defs[1] == mod.JOB_DEFINITION  # QB stays on GPU
+
+    def test_partial_cpu_config_falls_back_to_gpu(self):
+        """A partial CPU config (def set, queue unset) must NOT route a CPU
+        job-def to the GPU queue — full-mode CPU routing requires both vars, so
+        K/DST fall back to the GPU def+queue pair (audit #1289)."""
+        import src.batch.launch as mod
+
+        with (
+            mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
+            mock.patch.object(mod, "JOB_QUEUE_CPU", ""),
+        ):
+            assert mod._job_definition_for("K") == mod.JOB_DEFINITION
+            assert mod._job_queue_for("K") == mod.JOB_QUEUE
 
     def test_routes_to_cpu_queue_when_configured(self):
         """K/DST can use a CPU queue when both CPU def + queue are configured."""
