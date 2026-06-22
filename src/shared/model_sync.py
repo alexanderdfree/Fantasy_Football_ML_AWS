@@ -572,12 +572,34 @@ def sync_models_from_s3() -> dict | None:
     }
 
 
-def _download_file(s3_client, bucket: str, key: str, dest: Path) -> dict:
+def _download_file(s3_client, bucket: str, key: str, dest: Path, *, atomic: bool = False) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     data = obj["Body"].read()
-    dest.write_bytes(data)
+    if atomic:
+        # Write a sibling temp then os.replace (atomic on POSIX, same fs) so a
+        # concurrent reader never observes a half-written file. Used by the
+        # benchmark-history poller, which downloads while the Flask app is
+        # serving reads of the same directory — it honors the atomic-rename
+        # INVARIANT the row cache relies on (see
+        # src.serving.benchmark_history._load_benchmark_history_rows). The temp
+        # name is per-(pid, thread) unique so the 8-way download pool can't
+        # collide on it.
+        tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, dest)
+        except Exception:
+            # A mid-rename failure (ENOSPC, EACCES) or a partial temp write must
+            # not leave the sibling .tmp behind — the poller runs thousands of
+            # times over a container's life, so a persistent failure would
+            # otherwise accumulate turds. The download failure itself is recorded
+            # in the caller's ``failed`` list once this re-raises.
+            tmp.unlink(missing_ok=True)
+            raise
+    else:
+        dest.write_bytes(data)
     return {"key": key, "bytes": len(data), "secs": round(time.time() - t0, 2)}
 
 
@@ -598,6 +620,17 @@ def sync_benchmark_history_from_s3() -> dict | None:
     .dockerignore), so this sync is layering on any newer runs uploaded
     since the image was built — if every download fails, the History tab
     still renders the committed history.
+
+    New-file guard: benchmark_history JSONs are append-only and immutable
+    (uniquely-named ``{timestamp}_{sha}.json``, atomic-rename writes, never
+    edited in place — the same INVARIANT the serving row cache relies on), so
+    a filename already on disk is byte-identical to S3 and is skipped, not
+    re-fetched. That keeps each call cheap (one ListBucket + a GET only for
+    genuinely-new run_ids) — cheap enough to drive ``start_benchmark_history_poller``
+    on a short interval so newly-uploaded runs surface on the History tab
+    without a container restart. The downloads are atomic so a concurrent
+    request mid-poll never reads a half-written file. ``skipped`` in the
+    summary counts the already-present files.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
@@ -616,26 +649,45 @@ def sync_benchmark_history_from_s3() -> dict | None:
     s3 = boto3.client("s3")
 
     jobs: list[tuple[str, Path]] = []
+    skipped = 0
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             if not key.endswith(".json"):
                 continue
-            jobs.append((key, dest_dir / Path(key).name))
+            dest = dest_dir / Path(key).name
+            # New-file guard: immutable run_ids mean an on-disk filename is
+            # already byte-identical to S3 — skip the redundant GET (see the
+            # docstring). This is what makes the poller's steady state one
+            # ListBucket and zero GETs.
+            if dest.exists():
+                skipped += 1
+                continue
+            jobs.append((key, dest))
 
     if not jobs:
-        print(f"[benchmark_sync] no objects under s3://{bucket}/{s3_prefix}")
-        return {"total_secs": 0.0, "total_bytes": 0, "files": 0, "failed": []}
+        if skipped:
+            print(
+                f"[benchmark_sync] up to date — {skipped} files already present, "
+                f"no new runs under s3://{bucket}/{s3_prefix}"
+            )
+        else:
+            print(f"[benchmark_sync] no objects under s3://{bucket}/{s3_prefix}")
+        return {"total_secs": 0.0, "total_bytes": 0, "files": 0, "skipped": skipped, "failed": []}
 
     print(
-        f"[benchmark_sync] syncing {len(jobs)} files from s3://{bucket}/{s3_prefix} -> {dest_dir}"
+        f"[benchmark_sync] syncing {len(jobs)} new files ({skipped} already present) "
+        f"from s3://{bucket}/{s3_prefix} -> {dest_dir}"
     )
     t0 = time.time()
     results: list[dict] = []
     failed: list[dict] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
-        fut_to_key = {pool.submit(_download_file, s3, bucket, key, dest): key for key, dest in jobs}
+        fut_to_key = {
+            pool.submit(_download_file, s3, bucket, key, dest, atomic=True): key
+            for key, dest in jobs
+        }
         for f in concurrent.futures.as_completed(fut_to_key):
             key = fut_to_key[f]
             try:
@@ -652,14 +704,58 @@ def sync_benchmark_history_from_s3() -> dict | None:
             flush=True,
         )
     print(
-        f"[benchmark_sync] done in {total}s, {total_bytes / 1e3:.1f} KB across {len(results)} files"
+        f"[benchmark_sync] done in {total}s, {total_bytes / 1e3:.1f} KB across "
+        f"{len(results)} new files ({skipped} already present)"
     )
     return {
         "total_secs": total,
         "total_bytes": total_bytes,
         "files": len(results),
+        "skipped": skipped,
         "failed": failed,
     }
+
+
+def start_benchmark_history_poller(
+    interval_s: int, stop_event: threading.Event | None = None
+) -> threading.Thread:
+    """Spawn a daemon thread that re-syncs ``benchmark_history/`` from S3 every
+    ``interval_s`` seconds so a run uploaded after boot appears on the History
+    tab without a container restart. Returns the started thread.
+
+    The boot sync (``gunicorn.conf.py::on_starting``) is one-shot; this is its
+    in-flight counterpart, mirroring ``start_refresh_poller`` (models) and the
+    upcoming-week artifact poller. Cost is dominated by one ListBucket per
+    interval — ``sync_benchmark_history_from_s3``'s new-file guard means the
+    steady state downloads nothing, and a poll that *does* pull a new run
+    writes it atomically into the dir, bumping the directory mtime that the
+    serving row cache keys on (``_load_benchmark_history_rows``) so the tab
+    refreshes on the next request. A no-new-files poll leaves the mtime
+    untouched and the cache stays warm.
+
+    No-op-friendly: ``sync_benchmark_history_from_s3`` returns immediately when
+    ``FF_MODEL_S3_BUCKET`` is unset, so even a spinning thread is harmless.
+    ``on_starting`` gates on the interval (``FF_BENCHMARK_SYNC_INTERVAL_S=0``
+    disables) and only runs under gunicorn in production, where the bucket is
+    set. ``stop_event`` mirrors ``start_refresh_poller`` for test teardown — a
+    leaked spinning poller calls real boto3 and pollutes other tests' global
+    mocks.
+    """
+
+    def _loop() -> None:
+        while stop_event is None or not stop_event.is_set():
+            try:
+                sync_benchmark_history_from_s3()
+            except Exception as e:  # noqa: BLE001 — daemon must never die
+                print(f"[benchmark_sync] poll unexpected: {e!r}", flush=True)
+            if stop_event is None:
+                time.sleep(interval_s)
+            elif stop_event.wait(interval_s):
+                break
+
+    t = threading.Thread(target=_loop, daemon=True, name="benchmark-history-poll")
+    t.start()
+    return t
 
 
 def sync_data_from_s3() -> dict | None:
