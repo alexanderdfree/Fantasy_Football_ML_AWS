@@ -26,6 +26,8 @@ def test_module_exposes_api():
         "_history_cost_order",
         "_run_worker",
         "_record_and_sync",
+        "_build_cells",
+        "_merge_cell_results",
         "main",
     ):
         assert hasattr(pt, fn)
@@ -116,12 +118,18 @@ def test_launch_wires_pool_env_and_drops_frozen_thread_caps(tmp_path, monkeypatc
     class _FakeProc:
         pid = 4321
 
+    captured["argv"] = None
+
     def _fake_popen(argv, env=None, **kwargs):
         captured["env"] = env
+        captured["argv"] = argv
         return _FakeProc()
 
     monkeypatch.setattr(pt.subprocess, "Popen", _fake_popen)
-    info = pt._launch("QB", [0, 2, 4], str(tmp_path), str(tmp_path), [], pool_addr="/tmp/pool.sock")
+    # Single-split cell: cell_key == pos, origin None.
+    info = pt._launch(
+        "QB", "QB", None, [0, 2, 4], str(tmp_path), str(tmp_path), [], pool_addr="/tmp/pool.sock"
+    )
     info["logf"].close()
     env = captured["env"]
     assert env[pt.ENV_ADDR] == "/tmp/pool.sock"  # worker wired to the pool
@@ -129,6 +137,42 @@ def test_launch_wires_pool_env_and_drops_frozen_thread_caps(tmp_path, monkeypatc
     assert env["OMP_NUM_THREADS"] == "1"  # BLAS still capped to 1
     assert "LGBM_N_JOBS" not in env  # no longer frozen per slice
     assert "LOKY_MAX_CPU_COUNT" not in env
+    assert "--origin" not in captured["argv"]  # no origin flag for a single-split cell
+
+
+def test_launch_rolling_origin_cell_isolates_files_and_passes_origin(tmp_path, monkeypatch):
+    # A (position × origin) cell keys its summary/log on cell_key (e.g. "RB:2025" ->
+    # "RB-2025") so concurrent origins of one position never collide, and forwards
+    # --origin <ts> so the worker scores just that origin.
+    captured = {}
+
+    class _FakeProc:
+        pid = 99
+
+    def _fake_popen(argv, env=None, **kwargs):
+        captured["argv"] = argv
+        captured["env"] = env
+        return _FakeProc()
+
+    monkeypatch.setattr(pt.subprocess, "Popen", _fake_popen)
+    info = pt._launch(
+        "RB:2025",
+        "RB",
+        2025,
+        [0, 1],
+        str(tmp_path),
+        str(tmp_path),
+        ["--rolling-origin"],
+        pool_addr="/tmp/p.sock",
+    )
+    info["logf"].close()
+    argv = captured["argv"]
+    assert "--worker" in argv and argv[argv.index("--worker") + 1] == "RB"
+    assert "--origin" in argv and argv[argv.index("--origin") + 1] == "2025"
+    assert info["summary_path"].endswith("RB-2025.json")
+    assert info["log_path"].endswith("local-train-RB-2025.log")
+    assert info["cell_key"] == "RB:2025" and info["origin"] == 2025
+    assert captured["env"][pt.ENV_POS] == "RB:2025"
 
 
 # ------------------------------------------------------------------------- merge
@@ -199,7 +243,9 @@ def test_record_and_sync_no_sync_skips_s3(tmp_path, monkeypatch):
     assert called == []
 
 
-def test_run_worker_rolling_origin_uses_rolling_runner(tmp_path, monkeypatch):
+def test_run_worker_rolling_origin_no_origin_loops_all(tmp_path, monkeypatch):
+    """The in-process fallback (no --origin): the worker scores every origin via
+    ``run_rolling_origin`` and writes the production-origin summary + block."""
     calls = []
 
     def _fake_rolling_origin(pos):
@@ -212,6 +258,9 @@ def test_run_worker_rolling_origin_uses_rolling_runner(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pt, "run_rolling_origin", _fake_rolling_origin)
     monkeypatch.setattr(pt, "run_one", lambda *a, **k: pytest.fail("run_one must not handle --cv"))
+    monkeypatch.setattr(
+        pt, "score_one_origin", lambda *a, **k: pytest.fail("no --origin -> must loop in-process")
+    )
 
     out_path = tmp_path / "RB.json"
     rc = pt._run_worker("RB", str(out_path), rolling_origin=True, significance=True)
@@ -222,6 +271,35 @@ def test_run_worker_rolling_origin_uses_rolling_runner(tmp_path, monkeypatch):
         "position": "RB",
         "ridge_mae": 4.5,
         "rolling_origin": {"test_seasons": [2025], "n_origins": 1},
+    }
+
+
+def test_run_worker_rolling_origin_with_origin_scores_one_cell(tmp_path, monkeypatch):
+    """With --origin set, the worker scores ONLY that origin via ``score_one_origin``
+    (never loops every origin) and writes that single-origin summary."""
+    seen = {}
+
+    def _fake_score_one_origin(pos, test_season):
+        seen["args"] = (pos, test_season)
+        return test_season, {"position": pos, "ridge_mae": 4.4, "test_season": test_season}
+
+    monkeypatch.setattr(pt, "score_one_origin", _fake_score_one_origin)
+    monkeypatch.setattr(
+        pt,
+        "run_rolling_origin",
+        lambda pos: pytest.fail("with --origin the worker must score one origin only"),
+    )
+    monkeypatch.setattr(pt, "run_one", lambda *a, **k: pytest.fail("rolling-origin path"))
+
+    out_path = tmp_path / "RB-2024.json"
+    rc = pt._run_worker("RB", str(out_path), rolling_origin=True, significance=False, origin="2024")
+
+    assert rc == 0
+    assert seen["args"] == ("RB", 2024)  # --origin parsed to int
+    assert json.loads(out_path.read_text()) == {
+        "position": "RB",
+        "ridge_mae": 4.4,
+        "test_season": 2024,
     }
 
 
@@ -290,6 +368,176 @@ def test_record_and_sync_rolling_origin_marks_history(tmp_path, monkeypatch):
     assert printed_rolling == [[summary]]
     assert captured["entry"]["mode"] == "rolling_origin"
     assert captured["entry"]["results"] == [summary]
+
+
+# ------------------------------------------------------------ cell flattening / merge
+
+
+def test_build_cells_single_split_one_cell_per_position(monkeypatch):
+    monkeypatch.setattr(pt, "_sort_by_cost", lambda ps: ["WR", "QB"])
+    cells = pt._build_cells(["QB", "WR"], rolling_origin=False)
+    assert cells == [("WR", "WR", None), ("QB", "QB", None)]
+
+
+def test_build_cells_rolling_origin_position_times_origin_latest_first(monkeypatch):
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    monkeypatch.setattr(pt, "_sort_by_cost", lambda ps: ["RB", "QB"])
+    cells = pt._build_cells(["QB", "RB"], rolling_origin=True)
+    # heaviest position first (RB), and within each position the latest origin first
+    # (reversed(ROLLING_ORIGIN_TEST_SEASONS)) since the latest year trains on the most data.
+    latest_first = list(reversed(ROLLING_ORIGIN_TEST_SEASONS))
+    expected = [(f"{p}:{ts}", p, ts) for p in ("RB", "QB") for ts in latest_first]
+    assert cells == expected
+    assert len(cells) == 2 * len(ROLLING_ORIGIN_TEST_SEASONS)
+
+
+def test_merge_cell_results_single_split_passthrough():
+    cells = [("QB", "QB", None), ("K", "K", None)]
+    results = {"QB": {"position": "QB"}, "K": {"position": "K"}}
+    summaries, ordered, failed = pt._merge_cell_results(
+        ["QB", "K"], cells, results, rolling_origin=False
+    )
+    assert ordered == ["QB", "K"]
+    assert failed == []
+    assert summaries == [{"position": "QB"}, {"position": "K"}]
+
+
+def test_merge_cell_results_rolling_origin_finalizes_per_position(monkeypatch):
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    seasons = list(ROLLING_ORIGIN_TEST_SEASONS)
+    cells = [(f"RB:{ts}", "RB", ts) for ts in reversed(seasons)]
+    results = {f"RB:{ts}": {"position": "RB", "test_season": ts} for ts in seasons}
+
+    captured = {}
+
+    def _fake_finalize(pos, per_origin):
+        captured["pos"] = pos
+        captured["per_origin"] = per_origin
+        return {"position": pos, "finalized": True}
+
+    monkeypatch.setattr(pt, "finalize_rolling_origin", _fake_finalize)
+    summaries, ordered, failed = pt._merge_cell_results(["RB"], cells, results, rolling_origin=True)
+    assert ordered == ["RB"]
+    assert failed == []
+    assert summaries == [{"position": "RB", "finalized": True}]
+    # finalize is fed the origins in ROLLING_ORIGIN_TEST_SEASONS (chronological) order.
+    assert [ts for ts, _ in captured["per_origin"]] == seasons
+    assert captured["pos"] == "RB"
+
+
+def test_merge_cell_results_rolling_origin_partial_position_is_failed(monkeypatch):
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    seasons = list(ROLLING_ORIGIN_TEST_SEASONS)
+    cells = [(f"RB:{ts}", "RB", ts) for ts in reversed(seasons)]
+    # one origin failed (None) -> the whole position is FAILED, not a partial mean.
+    results = {f"RB:{ts}": {"position": "RB"} for ts in seasons}
+    results[f"RB:{seasons[0]}"] = None
+
+    monkeypatch.setattr(
+        pt,
+        "finalize_rolling_origin",
+        lambda *a, **k: pytest.fail("a position missing an origin must not be finalized"),
+    )
+    summaries, ordered, failed = pt._merge_cell_results(["RB"], cells, results, rolling_origin=True)
+    assert ordered == []
+    assert failed == ["RB"]
+    assert summaries == []
+
+
+class _DoneProc:
+    """A fake Popen that is immediately finished with returncode 0."""
+
+    def __init__(self, *a, **k):
+        self.pid = 1
+        self.returncode = 0
+
+    def poll(self):
+        return 0
+
+
+def test_orchestrate_rolling_origin_dispatches_cells_and_merges(tmp_path, monkeypatch):
+    """End-to-end (process-faked) orchestrate for --rolling-origin: it launches one
+    worker per (position × origin) cell, then merges each position's origins via
+    finalize_rolling_origin into ONE per-position summary."""
+    from src.config import ROLLING_ORIGIN_TEST_SEASONS
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pt, "physical_cores", lambda: list(range(4)))
+    monkeypatch.setattr(pt, "_sort_by_cost", lambda ps: ["RB", "QB"])
+    # Stub the core-pool coordinator so no socket is opened.
+    monkeypatch.setattr(
+        pt, "start_coordinator", lambda phys, tmp: ("/tmp/p.sock", lambda n: None, lambda: None)
+    )
+
+    launched = []
+
+    def _fake_launch(cell_key, pos, origin, cores, tmpdir, logdir, passthrough, pool_addr):
+        launched.append((cell_key, pos, origin))
+        # Write the per-cell summary the worker would have produced.
+        summary_path = tmp_path / f"{pt._cell_slug(cell_key)}.json"
+        summary_path.write_text(json.dumps({"position": pos, "test_season": origin}))
+        log_path = tmp_path / f"{pt._cell_slug(cell_key)}.log"
+        logf = open(log_path, "w")  # noqa: SIM115
+        return {
+            "cell_key": cell_key,
+            "pos": pos,
+            "origin": origin,
+            "proc": _DoneProc(),
+            "cores": cores,
+            "summary_path": str(summary_path),
+            "log_path": str(log_path),
+            "logf": logf,
+            "t0": 0.0,
+        }
+
+    monkeypatch.setattr(pt, "_launch", _fake_launch)
+
+    finalized = []
+
+    def _fake_finalize(pos, per_origin):
+        finalized.append((pos, [ts for ts, _ in per_origin]))
+        return {"position": pos, "finalized": True}
+
+    monkeypatch.setattr(pt, "finalize_rolling_origin", _fake_finalize)
+
+    recorded = {}
+
+    def _fake_record(summaries, positions, note, no_sync, total_wall_sec, rolling_origin=False):
+        recorded["summaries"] = summaries
+        recorded["positions"] = positions
+        recorded["rolling_origin"] = rolling_origin
+
+    monkeypatch.setattr(pt, "_record_and_sync", _fake_record)
+
+    rc = pt.orchestrate(
+        ["QB", "RB"],
+        jobs=4,
+        passthrough=["--rolling-origin"],
+        note="",
+        no_sync=True,
+        dry_run=False,
+        rolling_origin=True,
+    )
+
+    assert rc == 0
+    n = len(ROLLING_ORIGIN_TEST_SEASONS)
+    # 2 positions × n origins cells launched.
+    assert len(launched) == 2 * n
+    assert {pos for _, pos, _ in launched} == {"QB", "RB"}
+    # one finalized summary per position, each fed all origins (chronological).
+    assert sorted(p for p, _ in finalized) == ["QB", "RB"]
+    for _, season_order in finalized:
+        assert season_order == list(ROLLING_ORIGIN_TEST_SEASONS)
+    # records in the ORIGINAL positions order, one summary per position.
+    assert recorded["positions"] == ["QB", "RB"]
+    assert recorded["summaries"] == [
+        {"position": "QB", "finalized": True},
+        {"position": "RB", "finalized": True},
+    ]
+    assert recorded["rolling_origin"] is True
 
 
 # ----------------------------------------------------------------------- dry run
