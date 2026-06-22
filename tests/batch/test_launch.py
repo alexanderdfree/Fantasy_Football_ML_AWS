@@ -638,6 +638,79 @@ class TestWaitForJobs:
         assert mock_sleep.call_count == 1
 
 
+class TestBatchLifecycle:
+    """W0: decompose a terminal Batch job's wall-clock into orchestration vs run.
+
+    queue_provision = startedAt - createdAt (queue + provision + image-pull);
+    run = stoppedAt - startedAt. This is the baseline a warm pre-pulled AMI
+    (which shrinks the queue_provision span) is measured against.
+    """
+
+    def test_job_lifecycle_span_math(self):
+        from src.batch.launch import _job_lifecycle
+
+        # createdAt=1000ms; startedAt=121000ms -> 120s queue+provision+pull;
+        # stoppedAt=151000ms -> 30s run.
+        entry = _job_lifecycle("RB", "SUCCEEDED", 1000, 121000, 151000)
+        assert entry["queue_provision_s"] == 120.0
+        assert entry["run_s"] == 30.0
+        assert entry["total_s"] == 150.0
+        assert entry["status"] == "SUCCEEDED"
+
+    def test_job_lifecycle_none_safe(self):
+        from src.batch.launch import _job_lifecycle
+
+        # A job that never started a container (FAILED pre-run) has no startedAt.
+        entry = _job_lifecycle("WR", "FAILED", 1000, None, None)
+        assert entry["queue_provision_s"] is None
+        assert entry["run_s"] is None
+        assert entry["total_s"] is None
+        assert entry["status"] == "FAILED"
+
+    @mock.patch("src.batch.launch.time.sleep")
+    def test_wait_writes_lifecycle_ledger(self, mock_sleep, monkeypatch, tmp_path):
+        import json as _json
+
+        from src.batch.launch import wait_for_jobs
+
+        ledger = tmp_path / "batch_lifecycle.json"
+        monkeypatch.setenv("FF_BATCH_LIFECYCLE_FILE", str(ledger))
+
+        mock_batch = mock.MagicMock()
+        mock_batch.describe_jobs.return_value = {
+            "jobs": [
+                {
+                    "jobId": "job-1",
+                    "status": "SUCCEEDED",
+                    "createdAt": 1000,
+                    "startedAt": 121000,
+                    "stoppedAt": 151000,
+                },
+            ]
+        }
+
+        results = wait_for_jobs({"RB": "job-1"}, batch_client=mock_batch)
+        assert results["RB"][0] == "SUCCEEDED"
+        assert ledger.exists()
+        data = _json.loads(ledger.read_text())
+        assert data["RB"]["queue_provision_s"] == 120.0
+        assert data["RB"]["run_s"] == 30.0
+
+    @mock.patch("src.batch.launch.time.sleep")
+    def test_wait_no_ledger_file_when_env_unset(self, mock_sleep, monkeypatch, tmp_path):
+        from src.batch.launch import wait_for_jobs
+
+        monkeypatch.delenv("FF_BATCH_LIFECYCLE_FILE", raising=False)
+        mock_batch = mock.MagicMock()
+        mock_batch.describe_jobs.return_value = {
+            "jobs": [{"jobId": "job-1", "status": "SUCCEEDED", "stoppedAt": 2}]
+        }
+        # Env unset: no file written, no raise even though timestamps are absent.
+        results = wait_for_jobs({"RB": "job-1"}, batch_client=mock_batch)
+        assert results["RB"] == ("SUCCEEDED", 2)
+        assert list(tmp_path.iterdir()) == []
+
+
 # ---------------------------------------------------------------------------
 # Artifact download + stale-artifact guard
 # ---------------------------------------------------------------------------
