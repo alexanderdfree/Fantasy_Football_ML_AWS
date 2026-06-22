@@ -26,6 +26,33 @@ Measured on the WSL2 / 9950X3D / RTX 5080 box, all 6 positions, pool ON:
 ### Stop-rule (don't relitigate without a benchmark)
 - **`torch.compile` is measured-rejected** (`#641`, **+169% on the 5080**) — dynamic-shape recompiles. A hand-rolled CUDA graph sidesteps that (train shapes are static via `drop_last`), but anything touching this area must clear a per-position A/B.
 
+## Precision & quantization levers (FP16 / TF32 / AMP / quant) — ASSESSED, no easy wins (2026-06-22)
+
+Asked whether fp16-vs-tf32, mixed precision, or quantization offer an easy win. They don't:
+the model is **launch-bound** (above), so any lever that targets math throughput or memory
+can't move wall-clock. Current state, for the record so it isn't re-investigated:
+
+- **FP16 vs TF32 — already optimal, orthogonal, both on.** Autocast downcasts to FP16 tensor
+  cores; residual FP32 GEMMs use TF32 via the modern `torch.set_float32_matmul_precision("high")`
+  in `_nn_device()` ([src/shared/pipeline.py](../src/shared/pipeline.py)), sm_80+-effective,
+  `not deterministic`-gated, across all 4 NN training paths + the CV path — not the legacy
+  `allow_tf32` booleans. Nothing to tune; `"medium"` would alter the deliberately-frozen
+  FP32-GEMM metric path.
+- **Mixed precision (AMP) — textbook, mature.** FP16 default on every CUDA GPU (`amp_dtype`,
+  [src/shared/utils.py](../src/shared/utils.py)); GradScaler FP16-only, CUDA-only, kept OUTSIDE the
+  CUDA graph; autocast wraps train + val forward; inference (`predict_numpy`,
+  [src/shared/neural_net.py](../src/shared/neural_net.py)) is plain FP32 — the correct choice (eval
+  in higher precision; CPU serving is FP32 too, so no train→serve skew). BF16 is measured-rejected
+  (#640: QB passing_yards +2.2–3.1%) + T4 hang (#293/#301); a per-arch training-dtype default is an
+  AGENTS.md stop-rule.
+- **Quantization — none in the repo, not worth adding.** GPU INT8/FP8 can't help a launch-bound
+  model (no math saturation to relieve); the CPU serving bottleneck is feature-build (moved to a CI
+  job; serving only downloads the S3 artifact, ADR-0018), not the ~276 KB NN forward. Calibration +
+  accuracy risk for zero measurable gain.
+
+The real un-shipped GPU headroom is a **launch** lever, not a precision one — Lever B/B′ (CUDA
+streams), below.
+
 ## Why not MPS locally (researched 2026-05-31, rejected on both OSes)
 NVIDIA MPS would give true multi-process kernel co-residency — but it is **Linux/QNX-only**. MPS Overview r590 (Dec 2025), verbatim: *"MPS is only supported on the Linux and QNX operating systems. The MPS server will fail to start when launched on an operating system other than Linux."*
 - **WSL2:** binaries not shipped, `/dev/nvidiactl` absent (only `/dev/dxg` paravirt). NVIDIA moderator (Apr 2026) confirms WDDM blocks it.
