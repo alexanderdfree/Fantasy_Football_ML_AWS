@@ -99,3 +99,6 @@ credentials*
 secrets*
 .env.*
 !.env.example
+
+# Warm-start walk-forward experiment output (src/tuning/warmstart_walkforward.py)
+warmstart_runs/
