@@ -10,7 +10,7 @@
 # Dockerfile.train) lets PyPI serve the rest.
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.12.1+cu130
-numpy==2.5.0
+numpy==2.4.6  # held in sync with requirements.txt (numba lags numpy; 2.5.0 breaks the shap chain there)
 pandas==3.0.3
 pyarrow==24.0.0
 nflreadpy==0.1.5
