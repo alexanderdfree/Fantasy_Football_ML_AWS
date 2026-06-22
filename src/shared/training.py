@@ -1,7 +1,6 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import contextlib
-import json
 import os
 import time
 
@@ -21,10 +20,6 @@ from src.shared.utils import (
 
 SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 _TRUE_ENV = {"1", "true", "yes", "on"}
-_FIXED_SCALE_ENV = "FF_AMP_FIXED_SCALE"
-_INIT_SCALE_ENV = "FF_AMP_INIT_SCALE"
-_GRADSCALER_TRACE_PATH_ENV = "FF_GRADSCALER_TRACE_PATH"
-_GRADSCALER_TRACE_LABEL_ENV = "FF_GRADSCALER_TRACE_LABEL"
 _CUDA_GRAPH_RESTORE_BN_ENV = "FF_CUDA_GRAPH_RESTORE_BN"
 
 # DataLoader worker count is fixed at 0 (the PyTorch default). PR #309's
@@ -40,16 +35,6 @@ _CUDA_GRAPH_RESTORE_BN_ENV = "FF_CUDA_GRAPH_RESTORE_BN"
 
 def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUE_ENV
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
 
 
 def _snapshot_batchnorm_state(module: nn.Module) -> list[tuple[nn.Module, dict[str, torch.Tensor]]]:
@@ -1141,24 +1126,10 @@ class MultiHeadTrainer:
             amp_dtype() if (bool(use_amp) and getattr(device, "type", None) == "cuda") else None
         )
         self._use_amp = self._amp_dtype is not None
-        self._fixed_amp_scale = _env_truthy(_FIXED_SCALE_ENV)
-        scaler_kwargs = {}
-        if self._fixed_amp_scale:
-            scaler_kwargs = {
-                "init_scale": _env_float(_INIT_SCALE_ENV, 65536.0),
-                # Keep the normal initial scale but prevent growth. Any overflow
-                # is treated as an invalid diagnostic run below rather than
-                # silently changing the scale schedule.
-                "growth_interval": 2**31 - 1,
-            }
         self._scaler = torch.amp.GradScaler(
             "cuda",
             enabled=self._use_amp and self._amp_dtype is torch.float16,
-            **scaler_kwargs,
         )
-        self._scaler_trace_path = os.environ.get(_GRADSCALER_TRACE_PATH_ENV, "").strip()
-        self._scaler_trace_label = os.environ.get(_GRADSCALER_TRACE_LABEL_ENV, "").strip()
-        self._scaler_trace_fh = None
         # Flipped True once make_graphed_callables has wrapped self.model
         # (FF_CUDA_GRAPH path); guards _maybe_graph_model against re-capturing.
         self._graphed = False
@@ -1191,43 +1162,6 @@ class MultiHeadTrainer:
         if self._use_amp:
             return torch.amp.autocast(device_type="cuda", dtype=self._amp_dtype)
         return contextlib.nullcontext()
-
-    def _open_scaler_trace(self) -> None:
-        if not self._scaler_trace_path:
-            return
-        parent = os.path.dirname(self._scaler_trace_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        self._scaler_trace_fh = open(  # noqa: SIM115 - kept open across the batch loop
-            self._scaler_trace_path,
-            "w",
-            encoding="utf-8",
-            buffering=1,
-        )
-        self._write_scaler_trace(
-            {
-                "kind": "meta",
-                "label": self._scaler_trace_label,
-                "amp_dtype": str(self._amp_dtype),
-                "enabled": bool(self._scaler.is_enabled()),
-                "fixed_scale": bool(self._fixed_amp_scale),
-                "initial_scale": (
-                    float(self._scaler.get_scale()) if self._scaler.is_enabled() else None
-                ),
-                "graphed": bool(self._graphed),
-            }
-        )
-
-    def _close_scaler_trace(self) -> None:
-        if self._scaler_trace_fh is None:
-            return
-        self._scaler_trace_fh.close()
-        self._scaler_trace_fh = None
-
-    def _write_scaler_trace(self, row: dict) -> None:
-        if self._scaler_trace_fh is None:
-            return
-        self._scaler_trace_fh.write(json.dumps(row, sort_keys=True) + "\n")
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:
         """Unpack a DataLoader batch, move to device, and run the forward pass.
@@ -1393,8 +1327,8 @@ class MultiHeadTrainer:
           mutates the LR every step, which the baked single-LR-tensor graph
           can't track (the ``capturable`` wiring in ``_run_nn_training`` also
           disables it there, this is the defensive mirror);
-        - AMP off (``not self._use_amp``) and the GradScaler disabled / not
-          fixed-scale / not traced — A3 only covers the no-skip FP32 path;
+        - AMP off (``not self._use_amp``) and the GradScaler disabled — A3 only
+          covers the no-skip FP32 path;
         - the optimizer fused + capturable (so its step is graph-safe; a
           defensive precondition — ``_run_nn_training`` sets these together).
         Any capture failure logs, synchronizes, latches ``_graphed_opt_failed``,
@@ -1409,8 +1343,6 @@ class MultiHeadTrainer:
             or self.scheduler_per_batch
             or self._use_amp
             or self._scaler.is_enabled()
-            or self._fixed_amp_scale
-            or bool(self._scaler_trace_path)
             or not isinstance(train_loader, _GPUResidentBatcher)
             or not train_loader._drop_last
         ):
@@ -1560,10 +1492,11 @@ class MultiHeadTrainer:
         # method is a fixed attribute; only the *call* (which reads the latest
         # attention weights) needs to happen per batch.
         entropy_fn = getattr(self.model, "attention_entropy_loss", None)
-        trace_scaler = bool(self._scaler_trace_path)
-        need_scale_state = self.scheduler_per_batch or trace_scaler or self._fixed_amp_scale
+        # get_scale() forces a CPU-GPU sync, so only read the skip signal on the
+        # per-batch-scheduler path (OneCycleLR) that actually needs it; the
+        # disabled scaler (FP32 default / BF16 / CPU) reports a constant 1.0.
+        need_scale_state = self.scheduler_per_batch
         global_step = 0
-        self._open_scaler_trace()
 
         for epoch in range(n_epochs):
             if _cuda:
@@ -1660,32 +1593,6 @@ class MultiHeadTrainer:
                     if scale_before is not None and scale_after is not None
                     else False
                 )
-                if trace_scaler:
-                    self._write_scaler_trace(
-                        {
-                            "kind": "step",
-                            "label": self._scaler_trace_label,
-                            "epoch": epoch,
-                            "batch": n_train_batches,
-                            "step": global_step,
-                            "scale": float(scale_before) if scale_before is not None else None,
-                            "next_scale": float(scale_after) if scale_after is not None else None,
-                            "skipped": skipped_step,
-                            "scale_changed": (
-                                bool(scale_after != scale_before)
-                                if scale_before is not None and scale_after is not None
-                                else False
-                            ),
-                            "graphed": bool(self._graphed),
-                            "fixed_scale": bool(self._fixed_amp_scale),
-                        }
-                    )
-                if self._fixed_amp_scale and skipped_step:
-                    self._close_scaler_trace()
-                    raise RuntimeError(
-                        "FF_AMP_FIXED_SCALE detected an overflow/skip; fixed-scale "
-                        "diagnostic run is invalid."
-                    )
                 if self.scheduler_per_batch and not skipped_step:
                     self.scheduler.step()
                 global_step += 1
@@ -1877,7 +1784,6 @@ class MultiHeadTrainer:
             if not _fixed_epochs and self.best_model_state is not None:
                 self.model.load_state_dict(self.best_model_state)
 
-        self._close_scaler_trace()
         return history
 
 
