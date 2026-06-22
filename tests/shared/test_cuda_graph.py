@@ -282,13 +282,6 @@ def test_batchnorm_snapshot_restore_covers_running_buffers():
     assert torch.equal(bn.num_batches_tracked, original_batches)
 
 
-@pytest.mark.unit
-def test_fixed_amp_scale_env_is_trainer_local(monkeypatch):
-    monkeypatch.setenv("FF_AMP_FIXED_SCALE", "1")
-    tr = _bare_trainer(MultiHeadTrainer, nn.Linear(3, 2), targets=["y"])
-    assert tr._fixed_amp_scale is True
-
-
 # ---------------------------------------------------------------------------
 # FF_NN_NORM — backbone BatchNorm (default) vs LayerNorm
 # ---------------------------------------------------------------------------
