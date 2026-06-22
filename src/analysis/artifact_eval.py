@@ -38,6 +38,7 @@ prediction columns produced per position):
 from __future__ import annotations
 
 import argparse
+import os
 
 import joblib
 import numpy as np
@@ -100,6 +101,55 @@ def _attn_is_supported(reg: dict) -> bool:
     return reg.get("attn_history_structure", "flat") != "nested"
 
 
+def _producer_model_dir(pos: str) -> str:
+    """The staging path a LOCAL pipeline run / the Batch container writes to.
+
+    ``src/batch/train.py::upload_artifacts`` (``src_model_dir``) and
+    ``src/batch/launch.py`` (``local_model_dir``) both save to
+    ``{pos.lower()}/outputs/models`` BEFORE the tarball is uploaded to S3. This is
+    deliberately NOT the served/deploy path (``reg["model_dir"] =
+    src/{pos}/outputs/models``), where ``model_sync`` extracts the S3 tarball and
+    serving reads — the artifact travels producer → S3 → served. Keep this in sync
+    with those two producers if the staging path ever moves.
+    """
+    return os.path.join(pos.lower(), "outputs", "models")
+
+
+def resolve_model_dir(pos: str, reg: dict, override: str | None = None) -> str:
+    """Locate ``pos``'s artifacts on disk, preferring the served path.
+
+    Resolution order: explicit ``override`` → served/deploy path
+    (``reg["model_dir"]``, where ``--sync`` + serving read) → producer/staging path
+    (:func:`_producer_model_dir`, where a LOCAL ``run()`` / the Batch container
+    writes them). The fallback is what lets this module score a *local* pipeline
+    run's artifacts without an S3 ``--sync``.
+
+    Raise loudly when NEITHER exists. A missing artifact dir must not masquerade as
+    "no models found": that silent degradation hid a served-vs-producer path
+    mismatch (``reg["model_dir"]`` = ``src/{pos}/outputs/models`` vs. the local
+    producer path ``{pos}/outputs/models``) behind four cryptic per-model
+    ``FileNotFoundError`` warnings — the whole reason this resolver exists.
+    """
+    if override:
+        return override
+    served = reg["model_dir"]
+    if os.path.isdir(served):
+        return served
+    producer = _producer_model_dir(pos)
+    if os.path.isdir(producer):
+        print(
+            f"[artifact_eval] {pos}: served path {served!r} absent; scoring LOCAL "
+            f"producer-path artifacts {producer!r} (a local run's outputs, not "
+            "necessarily the S3-deployed set — pass --sync for the served artifacts)."
+        )
+        return producer
+    raise FileNotFoundError(
+        f"{pos}: no model artifacts at served path {served!r} or producer path "
+        f"{producer!r}. Run the position pipeline locally (it writes {producer!r}) "
+        "or pass --sync to pull the served set from S3."
+    )
+
+
 def build_test_df_from_artifacts(
     pos: str,
     train_df: pd.DataFrame,
@@ -112,16 +162,18 @@ def build_test_df_from_artifacts(
 ) -> pd.DataFrame:
     """Load ``pos``'s saved artifacts and return its test_df with per-row preds.
 
-    No retraining: each model is loaded from ``model_dir`` (default
-    ``src/{pos}/outputs/models``) and run over the test split. Per-model load
-    failures are warned and skipped (the column is omitted), matching serving's
-    graceful degradation; the diagnostics' ``available_models`` keys off column
-    presence.
+    No retraining: each model is loaded from ``model_dir`` (resolved by
+    :func:`resolve_model_dir` — served path ``src/{pos}/outputs/models``, falling
+    back to the local producer path ``{pos}/outputs/models``) and run over the test
+    split. A non-existent ``model_dir`` raises loudly; *per-model* load failures
+    (a single model's file missing / scaler mismatch) are warned and skipped (that
+    column is omitted), matching serving's graceful degradation, and the
+    diagnostics' ``available_models`` keys off column presence.
     """
     reg = INFERENCE_REGISTRY[pos]
     device = device or _device()
     targets = list(reg["targets"])
-    model_dir = model_dir or reg["model_dir"]
+    model_dir = resolve_model_dir(pos, reg, model_dir)
 
     pos_train = reg["filter_fn"](train_df)
     pos_val = reg["filter_fn"](val_df)
@@ -158,7 +210,10 @@ def build_test_df_from_artifacts(
     total_fn = _make_total_fn(pos, targets, reg, scoring_format)
 
     def _warn(model: str, exc: Exception) -> None:
-        print(f"[artifact_eval] {pos} {model} load/predict failed: {exc!r} — column omitted")
+        print(
+            f"[artifact_eval] {pos} {model} load/predict failed (model_dir={model_dir!r}): "
+            f"{exc!r} — column omitted"
+        )
 
     # --- Ridge (deterministic; reproduces the served numbers exactly) ---------
     try:
@@ -298,6 +353,25 @@ def build_test_df_from_artifacts(
     return pos_test
 
 
+def warn_if_sync_noop() -> bool:
+    """Warn loudly when an ``--sync`` will silently no-op (S3 bucket unset).
+
+    ``src.shared.model_sync.sync_models_from_s3`` is opt-in via ``FF_MODEL_S3_BUCKET``
+    and skips with only a terse ``[model_sync]`` line when it's unset — so ``--sync``
+    then scores whatever (often stale) on-disk artifacts exist instead of the served
+    set. That is the same silent failure this module's loud-failure contract kills,
+    so surface it prominently. Returns ``True`` when the sync will actually run.
+    """
+    if os.environ.get("FF_MODEL_S3_BUCKET"):
+        return True
+    print(
+        "[artifact_eval] WARNING: --sync requested but FF_MODEL_S3_BUCKET is unset — the S3 "
+        "sync will NO-OP and you'll score whatever on-disk artifacts exist (likely stale). "
+        "Set FF_MODEL_S3_BUCKET=<bucket> (and FF_MODEL_S3_PREFIX, default 'models') to sync."
+    )
+    return False
+
+
 def _main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--positions", nargs="*", default=["QB", "RB", "WR", "TE", "K", "DST"])
@@ -308,6 +382,7 @@ def _main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.sync:
+        warn_if_sync_noop()
         from src.shared.model_sync import sync_models_from_s3
 
         print("Syncing latest model artifacts from S3 ...")
