@@ -793,15 +793,35 @@ def _load_reg(path):
     return df
 
 
-def _load_base_data_locked():
-    print("Loading data...")
-
+def _load_base_splits():
+    """Load the skill train/val/test splits (REG-filtered + scoring formats).
+    Shared by the boot path and the hydrated-container refresh path so the two
+    can't drift (training/inference-path parity, AGENTS.md)."""
     train = _load_reg("data/splits/train.parquet")
     val = _load_reg("data/splits/val.parquet")
     test = _load_reg("data/splits/test.parquet")
-
     for df in [train, val, test]:
         _compute_scoring_formats(df)
+    return train, val, test
+
+
+def _build_splits_dict(train, val, test, k_split, dst_split):
+    """Assemble the per-position cache ``splits`` dict. QB/RB/WR/TE share the
+    skill (train, val, test); K and DST pass their own authoritative tuples."""
+    return {
+        "QB": (train, val, test),
+        "RB": (train, val, test),
+        "WR": (train, val, test),
+        "TE": (train, val, test),
+        "K": k_split,
+        "DST": dst_split,
+    }
+
+
+def _load_base_data_locked():
+    print("Loading data...")
+
+    train, val, test = _load_base_splits()
 
     print("Loading kicker data...")
     k_train, k_val, k_test, k_kicks_df = _load_k_splits()
@@ -920,14 +940,9 @@ def _load_base_data_locked():
 
     _apply_expert_predictions(results)
 
-    app_pkg._cache["splits"] = {
-        "QB": (train, val, test),
-        "RB": (train, val, test),
-        "WR": (train, val, test),
-        "TE": (train, val, test),
-        "K": (k_train, k_val, k_test),
-        "DST": (dst_train, dst_val, dst_test),
-    }
+    app_pkg._cache["splits"] = _build_splits_dict(
+        train, val, test, (k_train, k_val, k_test), (dst_train, dst_val, dst_test)
+    )
     # K's attention NN needs the raw per-kick records to build nested history
     # at inference — stash here so _apply_position_models can reach it.
     app_pkg._cache["k_kicks_df"] = k_kicks_df
@@ -1002,11 +1017,7 @@ def _load_splits_locked(results):
     reindex; keep them in sync (training/inference-path drift, see AGENTS.md).
     """
     try:
-        train = _load_reg("data/splits/train.parquet")
-        val = _load_reg("data/splits/val.parquet")
-        test = _load_reg("data/splits/test.parquet")
-        for df in [train, val, test]:
-            _compute_scoring_formats(df)
+        train, val, test = _load_base_splits()
         k_train, k_val, k_test, k_kicks_df = _load_k_splits()
         dst_train, dst_val, dst_test = _load_dst_splits()
     except Exception as e:  # noqa: BLE001 — best-effort; caller marks failed
@@ -1039,14 +1050,13 @@ def _load_splits_locked(results):
                 f"{pos_label} split row-count mismatch on hydrated container "
                 f"({len(existing_index)} cached vs {len(pos_test)} fresh)"
             )
-    app_pkg._cache["splits"] = {
-        "QB": (train, val, test),
-        "RB": (train, val, test),
-        "WR": (train, val, test),
-        "TE": (train, val, test),
-        "K": (k_train, k_val, reindexed["K"]),
-        "DST": (dst_train, dst_val, reindexed["DST"]),
-    }
+    app_pkg._cache["splits"] = _build_splits_dict(
+        train,
+        val,
+        test,
+        (k_train, k_val, reindexed["K"]),
+        (dst_train, dst_val, reindexed["DST"]),
+    )
     app_pkg._cache["k_kicks_df"] = k_kicks_df
 
 
