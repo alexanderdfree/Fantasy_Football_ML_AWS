@@ -383,9 +383,13 @@ def _job_lifecycle(label, status, created_at, started_at, stopped_at):
     the span a warm pre-pulled AMI shrinks, so this split is the baseline a
     before/after AMI comparison measures against (production training is
     orchestration-bound, not GPU-bound). Emits a ``[timing] phase=batch_lifecycle``
-    line (same log contract as ``src.shared.utils.timed``, scraped from
-    CloudWatch / Actions logs) and returns the breakdown dict. None-safe: a
-    job that never started a container leaves ``startedAt`` unset.
+    line read from CloudWatch / Actions logs and returns the breakdown dict. The
+    line shares the ``[timing] phase=`` anchor of ``src.shared.utils.timed`` but
+    deliberately carries structured fields (queue_provision_s/run_s/total_s)
+    instead of that helper's single ``seconds=`` — no automated scraper parses
+    ``seconds=`` (``src/batch/train.py`` already emits non-conforming ``[timing]``
+    lines), so the richer shape breaks no consumer. None-safe: a job that never
+    started a container leaves ``startedAt`` unset.
     """
 
     def _span(a, b):
@@ -451,7 +455,7 @@ def _emit_batch_lifecycle_ledger(lifecycle):
                 default=str,
             )
         print(f"[batch-lifecycle] wrote {path}")
-    except OSError as e:
+    except Exception as e:  # instrumentation must never break the wait loop
         print(f"[batch-lifecycle] could not write {path}: {e!r}")
 
 
