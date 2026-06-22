@@ -254,9 +254,18 @@ jobs:
             shard_lower=$(echo "$shard" | tr '[:upper:]' '[:lower:]')
             echo "paths=tests/${shard_lower}/" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.${shard_lower} --cov=src" >> "$GITHUB_OUTPUT"
-            # loadfile: per-position module-scoped trained fixtures (test_regression.py +
-            # test_pipeline_e2e.py) must stay on one worker.
-            echo "dist=loadfile" >> "$GITHUB_OUTPUT"
+            # loadgroup (was loadfile): a position shard has THREE separate heavy files
+            # (test_pipeline_e2e.py, test_run_cv_pipeline.py, test_regression.py) that each build
+            # features + train Ridge/LGBM/NN. Under loadfile those 3 files land on 3 DIFFERENT
+            # workers and their per-worker training peaks OVERLAP at the tail -> the cross-file
+            # cumulative-OOM that SIGKILLs a worker ("node down", no faulthandler dump). The repo-
+            # root conftest.py groups every e2e/regression/integration item into the single
+            # `xdist_group("train")`, so loadgroup pins ALL heavy training onto ONE worker (at most
+            # one pipeline resident at a time, measured single-worker peak ~1.33 GiB << 15 GiB
+            # ceiling) while the ~10 light files keep parallelizing across the other workers. The
+            # heavy group dominates shard wall-clock anyway (one slow file), so the serialization
+            # cost is near-zero. See the loadgroup-OOM PR for the per-worker measurements.
+            echo "dist=loadgroup" >> "$GITHUB_OUTPUT"
             echo "jobs=auto" >> "$GITHUB_OUTPUT"
           fi
 
