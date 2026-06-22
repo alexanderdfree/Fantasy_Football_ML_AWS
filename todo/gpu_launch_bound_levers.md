@@ -636,7 +636,17 @@ confirmed captured `full`**:
   #1309), so any future re-measure on a different GPU / regime (e.g. an L4 with real MPS, or a
   larger model where device-side overlap could exist) starts from a faithful baseline.
 
-### Lever B′ — within-position overlap (base NN ∥ attention NN) — PROTOTYPE (2026-06-07)
+### Lever B′ — within-position overlap (base NN ∥ attention NN) — IN-PROCESS variant MEASURED-REJECTED (2026-06-22, 5080 sm_120); process+MPS variant still separate
+
+**MEASURED-REJECTED for the in-process implementation (2026-06-22, RB / 5080 sm_120, draft PR #1332, FF_NN_OVERLAP).** The doc's suggested productionization — "overlap the two trainers in `_gpu_branch` behind an `FF_*` flag" — was built as in-process threads on two CUDA streams and A/B'd on the production path. Verdict: **reject, three independent reasons.**
+
+1. **Mutually exclusive with the shipped CUDA-graph path.** On the production default (graph capture autodetect-ON, sm_80+) the overlap run **crashes**: `CUDA error: operation not permitted when stream is capturing` (`cudaErrorStreamCaptureUnsupported` → `StreamCaptureInvalidated`). One stream capturing a graph forbids any other stream from launching work, so two trainers capturing concurrently in the **same process/context** invalidate each other. This corrects the "**composes with CUDA graphs**" claim below — it does **not**, for the in-process variant. (The *process*-based prototype above sidesteps this: separate processes = separate CUDA contexts = independent capture.)
+2. **Strictly dominated even where it runs.** Graphs-OFF (`FF_CUDA_GRAPH=0`) the overlap is real and **not** GIL-strangled — RB `train_models_total` 79.6s → **50.4s (1.58×)** on the GPU branch (so, unlike Lever B's 1.03×, the mechanism works). But graphs and B′ reclaim the **same** host-dispatch idle, and graphs do it far better: graphs-ON **sequential** = **7.5s** vs graphs-OFF **overlap** = 50.4s (~6.7×). You would never trade graphs for overlap.
+3. **Off the critical path + non-deterministic.** NN training is ~7.5s of a ~23s RB run (`prepare_data` 10.6s dominates), and production wall-clock is orchestration-bound (warm-AMI / Batch lifecycle), so the GPU branch barely moves it. Separately the in-process threads share the **global RNG**, so the overlap path is **not** byte-identical (the process prototype's per-child RNG re-seed avoids this, but the in-process flag can't).
+
+`FF_NN_OVERLAP` is unshipped (default-off only); don't re-propose the in-process variant. The **process-based** prototype below and its **AWS-MPS** cousin are a *different* track (separate contexts dodge reason 1; per-child RNG dodges reason 3) — still untested here and gated on MPS for real GPU overlap (unavailable on WSL2/Windows), so they live with the warm-MPS-packed-training proposal, not the local launch-bound effort.
+
+---
 
 A smaller, lower-risk slice of B scoped to **one position**: the pipeline trains
 the base NN then the attention NN *sequentially* in `_gpu_branch`, but they are
