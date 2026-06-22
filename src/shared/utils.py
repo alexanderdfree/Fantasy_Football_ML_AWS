@@ -179,17 +179,24 @@ def cuda_graph_enabled() -> bool:
     to a falsy value (``0``/``false``/``no``/``off``) to force the eager path —
     e.g. for a bit-comparable A/B against an eager baseline.
 
-    **Deliberately per-arch / NOT byte-identical** (reverses the original
-    off-by-default; ADR-0017). Unlike ``FF_COMPILE``/TF32, graph replay is not
-    numerically inert: a single fwd+bwd step is bitwise-exact, but the
-    FP16+GradScaler path amplifies sub-ULP graph kernel-ordering differences
-    over many steps into a ~0.5% worst-target *eval* drift. So the sm_80+
-    training path is intentionally non-byte-identical to CPU/CI, and benchmark
-    history rebaselines (graphed-vs-graphed) from the cutover — the speedup was
-    prioritised over comparability by owner decision (see ADR-0017 and
-    todo/gpu_launch_bound_levers.md). CPU/MPS and the T4 (sm_75, EC2 rollback)
-    can't capture, so they always take the eager path: CI stays eager and the
-    divergence is confined to sm_80+.
+    **Numerical inertness is dtype-dependent (ADR-0017).** A single fwd+bwd step
+    is always bitwise-exact; what differs is the multi-step trajectory:
+
+    - **Default (FP32+TF32, AMP off — the post-2026-06-22 #1311 regime):** there
+      is no ``GradScaler``, so graph replay is effectively inert — graph-on vs
+      graph-off differ only by the dropout-RNG warmup the capture introduces
+      (seed-noise, and exactly Δ=0 with dropout zeroed), the same order as any
+      reseed. No graphed rebaseline is needed on this path.
+    - **Opt-in FP16 (``FF_AMP_DTYPE=fp16``):** FP16+GradScaler amplifies sub-ULP
+      graph kernel-ordering differences over many steps into a ~0.5% worst-target
+      *eval* drift, so that path is intentionally non-byte-identical and its
+      benchmark history rebaselines graphed-vs-graphed from the cutover — the
+      speedup was prioritised over comparability by owner decision (see ADR-0017
+      and todo/gpu_launch_bound_levers.md).
+
+    Independently of graphs, sm_80+ uses TF32 matmuls (numerically neutral) so it
+    is never bit-identical to the pure-FP32 CPU/CI and T4 paths. CPU/MPS and the
+    T4 (sm_75, EC2 rollback) can't capture, so they always take the eager path.
     """
     # Hardware floor: capture only runs on CUDA sm_80+. CPU/MPS and the T4
     # (sm_75) short-circuit to False here, so an explicit FF_CUDA_GRAPH=1 can't
@@ -216,15 +223,16 @@ def cuda_graph_full_enabled() -> bool:
 
     **Autodetect-ON for CUDA sm_80+** (the production default since 2026-06-15;
     ADR-0017 Changelog), ``FF_CUDA_GRAPH_FULL`` is a **force-off override**
-    (``0``/``false``/``no``/``off``) — mirroring :func:`cuda_graph_enabled`. This
-    is the **owner-approved second graphed rebaseline**: full-step capture is
-    per-step bitwise-exact but the FP16+GradScaler path amplifies the multi-step
-    trajectory the same way model-only capture does (~0.5% worst-target eval
-    drift, the 2026-06-05 model-only promotion below), so the next 6-position
-    retrain rebaselines graphed-full-vs-graphed-full. Validated on Batch before
-    promotion (graph-scope determinism + bounded divergence vs model-only).
-    Requires ``cuda_graph_enabled()`` (CUDA sm_80+, not force-disabled) —
-    full-step capture is a superset, never a substitute, of the base gate, so
+    (``0``/``false``/``no``/``off``) — mirroring :func:`cuda_graph_enabled`.
+    Full-step capture is per-step bitwise-exact; its trajectory inertness follows
+    the same dtype split as :func:`cuda_graph_enabled` — effectively inert on the
+    FP32+TF32 default (no GradScaler), and only on the **opt-in FP16 path**
+    (``FF_AMP_DTYPE=fp16``) does FP16+GradScaler amplify it into the same ~0.5%
+    worst-target eval drift as model-only capture, where it was shipped as the
+    owner-approved second graphed rebaseline (validated on Batch: graph-scope
+    determinism + bounded divergence vs model-only). Requires
+    ``cuda_graph_enabled()`` (CUDA sm_80+, not force-disabled) — full-step
+    capture is a superset, never a substitute, of the base gate, so
     ``FF_CUDA_GRAPH=0`` disables both. K's nested trainer no-ops capture; the
     ensemble/stacked regime sets ``FF_CUDA_GRAPH_FULL=0`` to stay eager.
     """

@@ -193,8 +193,8 @@ gh label create regress-risk-high --color D93F0B --description "Audit fix: model
 ## Step 1: Prep
 
 1. Read AGENTS.md stop rules verbatim, plus the "Platform & hardware targets"
-   stop-rules (FP16 default / BF16 opt-in / CUDA-graph autodetect-ON sm_80+ /
-   MPS opt-in / Windows OPENBLAS), the "CI & training" section (`BATCH_ACTIVE` /
+   stop-rules (FP32+TF32 default / FP16+BF16 opt-in / CUDA-graph autodetect-ON
+   sm_80+ / MPS opt-in / Windows OPENBLAS), the "CI & training" section (`BATCH_ACTIVE` /
    `BATCH_SPLIT_ACTIVE`, `train-batch.yml` vs `train-ec2.yml`, the shared
    `detect` job + `scope_positions`, the `[docs-only]` opt-in contract,
    `deploy.yml` being paths-gated), and the infra-relevant Stop rules
