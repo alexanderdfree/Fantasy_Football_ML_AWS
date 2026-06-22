@@ -324,10 +324,12 @@ def _force_eager_for_concurrent_thread_trials(parallel_backend: str, n_jobs: int
     if parallel_backend != _THREAD_BACKEND or n_jobs <= 1 or not _cuda_graph_enabled():
         return False
     os.environ["FF_CUDA_GRAPH"] = "0"
-    # The full-step capture (cuda_graph_full_enabled) gates on cuda_graph_enabled,
-    # so zeroing the base env already kills it; force its env too so the regime
-    # is explicit in the environment a worker or subprocess might inherit.
+    # The full-step + optimizer-tail captures (cuda_graph_full_enabled /
+    # cuda_graph_opt_enabled) cascade off cuda_graph_enabled, so zeroing the base
+    # env already kills both; force their envs too so the regime is explicit in
+    # the environment a worker or subprocess might inherit.
     os.environ["FF_CUDA_GRAPH_FULL"] = "0"
+    os.environ["FF_CUDA_GRAPH_OPT"] = "0"
     print(
         f"[tune_nn] thread backend with n_jobs={n_jobs} > 1: forcing FF_CUDA_GRAPH=0 "
         "(eager trials) — torch.cuda.graph's global-mode capture races other trial "
@@ -1403,6 +1405,8 @@ def _run_mps_optimize(
         env_overrides["FF_CUDA_GRAPH"] = os.environ["FF_CUDA_GRAPH"]
     if "FF_CUDA_GRAPH_FULL" in os.environ:
         env_overrides["FF_CUDA_GRAPH_FULL"] = os.environ["FF_CUDA_GRAPH_FULL"]
+    if "FF_CUDA_GRAPH_OPT" in os.environ:
+        env_overrides["FF_CUDA_GRAPH_OPT"] = os.environ["FF_CUDA_GRAPH_OPT"]
     if "FF_AMP_DTYPE" in os.environ:
         env_overrides["FF_AMP_DTYPE"] = os.environ["FF_AMP_DTYPE"]
     if "FF_COMPILE" in os.environ:

@@ -75,7 +75,13 @@ from src.shared.training import (
     make_nested_kick_dataloaders,
     plot_training_curves,
 )
-from src.shared.utils import cuda_enabled, mps_enabled, seed_everything, timed
+from src.shared.utils import (
+    cuda_enabled,
+    cuda_graph_opt_enabled,
+    mps_enabled,
+    seed_everything,
+    timed,
+)
 
 
 def _read_split(path: str) -> pd.DataFrame:
@@ -226,6 +232,18 @@ def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
     return scaler, scaled
 
 
+def _a3_capturable(fused: bool, per_batch: bool) -> bool:
+    """Whether AdamW should be built ``capturable=True`` for the A3 graph.
+
+    True only when the optimizer-tail CUDA graph (Lever A3) can engage: a fused
+    CUDA optimizer, a per-EPOCH scheduler (OneCycleLR mutates LR per step, which
+    the baked single-LR-tensor graph can't track), and the A3 gate on. Pure
+    logic so the wiring is unit-testable without a CUDA build (the trainer's
+    ``_maybe_graph_full_opt`` re-checks every precondition before capturing).
+    """
+    return fused and not per_batch and cuda_graph_opt_enabled()
+
+
 def _run_nn_training(
     *,
     model: torch.nn.Module,
@@ -254,8 +272,26 @@ def _run_nn_training(
     # CUDA-only; ``fused=False`` is the valid no-op on CPU/MPS.
     _first_param = next(model.parameters(), None)
     _fused = _first_param is not None and _first_param.is_cuda
+    # ``capturable=True`` (Lever A3): keeps Adam's step counter + LR on-device so
+    # the whole AdamW step can be replayed inside the per-step ``_GraphedFullStep``
+    # CUDA graph (the optimizer-tail capture). Enable ONLY when A3 is eligible —
+    # fused, NOT a per-batch scheduler (OneCycleLR mutates the LR every step, which
+    # the baked single-LR-tensor graph can't track), and the A3 gate is on. It is
+    # math-inert vs ``capturable=False`` over identical grads (verified Δ=0), but
+    # it costs a few extra device ops per step when NOT graphed, so it is gated on
+    # the same condition the graph engages under rather than set unconditionally.
+    # The scheduler-type pre-check reads the same value ``_build_scheduler`` will,
+    # WITHOUT reordering construction (OneCycleLR.__init__ writes into the
+    # optimizer's param_groups, so the scheduler is still built after the optimizer).
+    _sched_type = _scheduler_value(cfg, "scheduler_type", scheduler_prefix)
+    _per_batch = _sched_type == "onecycle"
+    _capturable = _a3_capturable(_fused, _per_batch)
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=lr, weight_decay=weight_decay, fused=_fused
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
+        fused=_fused,
+        capturable=_capturable,
     )
     scheduler, scheduler_per_batch = _build_scheduler(
         optimizer, cfg, train_loader, scheduler_prefix=scheduler_prefix

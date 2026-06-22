@@ -12,7 +12,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from src.shared.utils import amp_dtype, cuda_graph_enabled, cuda_graph_full_enabled
+from src.shared.utils import (
+    amp_dtype,
+    cuda_graph_enabled,
+    cuda_graph_full_enabled,
+    cuda_graph_opt_enabled,
+)
 
 SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
 _TRUE_ENV = {"1", "true", "yes", "on"}
@@ -69,6 +74,22 @@ def _restore_batchnorm_state(
     for module, state in snapshot:
         for name, saved in state.items():
             getattr(module, name).copy_(saved)
+
+
+def _optimizer_is_fused_capturable(optimizer) -> bool:
+    """True iff every param group runs fused + capturable AdamW.
+
+    The optimizer-tail CUDA graph (Lever A3, :class:`_GraphedFullStep`) bakes
+    the AdamW step; ``capturable=True`` keeps its step counter + LR on-device so
+    the step is graph-safe, and ``fused=True`` collapses the update to one
+    kernel. ``_run_nn_training`` sets both together under the same A3 gate; this
+    is the trainer-side defensive precondition so a non-capturable optimizer
+    never reaches capture.
+    """
+    groups = getattr(optimizer, "param_groups", None)
+    if not groups:
+        return False
+    return all(g.get("fused") and g.get("capturable") for g in groups)
 
 
 def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
@@ -673,6 +694,185 @@ class _GraphedValPass:
         yield (*feats, y_batch)
 
 
+class _GraphedFullStep:
+    """The WHOLE train iteration — gather + forward + backward + combined-loss
+    AND the per-step tail (zero_grad / clip / AdamW step / loss copy) — captured
+    into ONE manual ``torch.cuda.CUDAGraph`` and replayed per step (Lever A3).
+
+    A2 (``_maybe_graph_full_step``) graphs only {gather+fwd+bwd+loss} via
+    ``make_graphed_callables`` and leaves the optimizer tail eager (8.6% RB /
+    12.7% WR / 24.2% QB of attn-NN step time). ``make_graphed_callables`` can't
+    include the optimizer, and its output callable CANNOT be re-captured inside
+    an outer graph ("Cannot prepare for replay during capturing stage"), so A3
+    re-captures the step EAGERLY: it runs a fresh, un-graphed
+    :class:`_GraphedTrainStep` (the identical gather+fwd+loss ops) plus an eager
+    ``loss.backward()`` + clip + ``optimizer.step()`` inside one manual capture,
+    in the ``_GraphedValPass`` style (static I/O buffers, side-stream warmup).
+    The A2 ``make_graphed_callables`` build still runs first — A3 reuses it ONLY
+    to reproduce A2-only's BatchNorm warmup perturbation (below), then captures
+    its own graph and the train loop replays A3 instead of A2's ``_graphed_step``.
+
+    Unlocked by the FP32 production default (#1311): with no ``GradScaler`` the
+    optimizer has no data-dependent inf/NaN skip branch, so the step is
+    capture-safe and the trajectory is **bit-identical to A2-only** (validated
+    Δ=0 micro-test + the end-to-end gate). Two mechanisms hold that:
+
+    - **LR refresh:** ``AdamW(capturable=True)`` keeps each param group's ``lr``
+      as a device tensor the graph bakes by address. A per-epoch
+      ``scheduler.step()`` (cosine: constant within an epoch) may rebind
+      ``param_group['lr']`` to a NEW tensor → replays would read a STALE baked
+      LR. :meth:`refresh_lr_from_scheduler` writes the scheduler's fresh value
+      INTO the baked tensor in place and restores the binding.
+    - **Warmup snapshot/reset:** the priming step, side-stream warmup, and
+      capture each run REAL optimizer steps, mutating weights, BN running stats,
+      and Adam moments. :meth:`build` snapshots params + BN at the point A2's
+      build left them (A2-only's step-0 state: initial params, warmup-perturbed
+      BN), then after capture restores params + BN and resets the optimizer
+      moments to the pristine step-0 values — so the first real replay
+      reproduces A2-only's first real step exactly.
+    """
+
+    def __init__(self, eager_step, model, optimizer, batch_size, device, autocast_factory):
+        # ``eager_step`` is a fresh, UN-graphed _GraphedTrainStep (plain ops).
+        self._eager_step = eager_step
+        self._model = model
+        self.optimizer = optimizer
+        self._device = device
+        self._autocast_factory = autocast_factory
+        # Stable param list (gradient-bearing only) reused for clip + the
+        # snapshot/reset; materialized ONCE so addresses stay constant for the
+        # capture's lifetime.
+        self._params = [p for p in model.parameters() if p.requires_grad]
+        # Static graph I/O: the per-replay index input and the loss output.
+        self._idx_static = torch.empty(batch_size, dtype=torch.long, device=device)
+        self._loss_static = torch.zeros((), dtype=torch.float32, device=device)
+        # The baked LR tensors, discovered post-capture (capturable AdamW stores
+        # ``lr`` as a device tensor); the train loop's between-epoch refresh
+        # writes into these in place. One per param group (production uses one).
+        self._baked_lr_tensors: list[torch.Tensor] = []
+        self._graph: torch.cuda.CUDAGraph | None = None
+
+    def _run_body(self) -> None:
+        # In-place grad zero (NOT set_to_none): the grad buffers must keep stable
+        # addresses across replays. Numerically identical to set_to_none here —
+        # backward OVERWRITES (does not accumulate into) the grads each step, so
+        # a pre-zeroed buffer and a freshly-allocated one both end identical.
+        for p in self._params:
+            if p.grad is not None:
+                p.grad.zero_()
+        loss = self._eager_step(self._idx_static)  # gather + fwd + combined loss (eager)
+        loss.backward()
+        # foreach clip with a capture-safe clamp; ``error_if_nonfinite=False``
+        # avoids the host ``.isfinite()`` sync that would abort capture (FP32 has
+        # no overflow skip path, so there is nothing to assert on anyway).
+        torch.nn.utils.clip_grad_norm_(self._params, max_norm=1.0, error_if_nonfinite=False)
+        self.optimizer.step()
+        self._loss_static.copy_(loss.detach())
+
+    def build(self) -> None:
+        """Snapshot, prime, side-stream warmup, capture, then reset to step 0.
+
+        ``build`` is called right after A2's ``make_graphed_callables`` build, so
+        the model is already at A2-only's step-0 state (initial params,
+        warmup-perturbed BN). Snapshot that, allocate the capturable AdamW state
+        with one priming step, warm up + capture (more real steps), then restore
+        params + BN to the snapshot and reset the optimizer moments — so the
+        first real replay continues from A2-only's exact step-0 state.
+        """
+        param_snapshot = [p.detach().clone() for p in self._params]
+        bn_snapshot = _snapshot_batchnorm_state(self._model)
+
+        # LR LOAD-BEARING: force each param group's ``lr`` to a DEVICE TENSOR
+        # before capture. Fused+capturable AdamW happily reads a Python-float lr
+        # and the graph would then bake that VALUE constant (replays stuck on the
+        # build-time LR; the cosine schedule would silently no-op → ~1% trajectory
+        # fork vs A2-only). A device tensor is read on-device each replay, so
+        # refresh_lr_from_scheduler() can update the schedule in place. The value
+        # is unchanged (same float), so the captured steps stay bit-identical to
+        # the A2-only eager tail at the initial LR (verified 1-epoch Δ=0). FP32
+        # dtype matches AdamW's expectation for the capturable lr tensor.
+        self._baked_lr_tensors = []
+        for g in self.optimizer.param_groups:
+            lr = g["lr"]
+            lr_t = (
+                lr
+                if torch.is_tensor(lr)
+                else torch.tensor(float(lr), device=self._device, dtype=torch.float32)
+            )
+            g["lr"] = lr_t
+            self._baked_lr_tensors.append(lr_t)
+
+        # Priming step — allocate capturable AdamW's state tensors (step,
+        # exp_avg, exp_avg_sq) BEFORE capture, on a valid arange batch (RNG-free,
+        # like A2's capture sample_idx).
+        self._idx_static.copy_(torch.arange(self._idx_static.numel(), device=self._device))
+        with self._autocast_factory():
+            self._run_body()
+
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(3):
+                with self._autocast_factory():
+                    self._run_body()
+        torch.cuda.current_stream().wait_stream(side)
+
+        graph = torch.cuda.CUDAGraph()
+        with self._autocast_factory(), torch.cuda.graph(graph):
+            self._run_body()
+        self._graph = graph
+
+        # Restore params + BN to the pre-build state and reset the optimizer
+        # moments to the pristine step-0 values (the state tensors keep their
+        # baked addresses; only their VALUES are reset).
+        for p, saved in zip(self._params, param_snapshot, strict=True):
+            p.detach().copy_(saved)
+        _restore_batchnorm_state(bn_snapshot)
+        for p in self._params:
+            st = self.optimizer.state.get(p)
+            if not st:
+                continue
+            for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+                buf = st.get(key)
+                if torch.is_tensor(buf):
+                    buf.zero_()
+            step = st.get("step")
+            if torch.is_tensor(step):
+                step.zero_()
+            elif step is not None:
+                st["step"] = 0
+        # ``_baked_lr_tensors`` was populated at the top of build() (the lr
+        # tensors the graph captured); the train loop refreshes them in place.
+
+    def refresh_lr_from_scheduler(self) -> None:
+        """Write the scheduler's current LR into the baked device LR tensors.
+
+        Called after each per-epoch ``scheduler.step()``: the scheduler assigns
+        ``param_group['lr']`` a fresh Python float (computed from the float
+        ``base_lrs`` it captured at construction), REPLACING the device tensor the
+        graph baked. Copy that float INTO the baked tensor in place and restore
+        the binding, so the captured graph (which reads the tensor's address each
+        replay) uses the new epoch's LR. Param groups and ``_baked_lr_tensors``
+        share construction order, so the match is positional (robust whether the
+        scheduler left a float or the baked tensor in place).
+        """
+        if not self._baked_lr_tensors:
+            return
+        for g, baked in zip(self.optimizer.param_groups, self._baked_lr_tensors, strict=True):
+            lr = g["lr"]
+            if lr is baked:
+                continue  # scheduler did not rebind (e.g. ReduceLROnPlateau, no change)
+            baked.copy_(torch.as_tensor(float(lr), device=baked.device, dtype=baked.dtype))
+            g["lr"] = baked
+
+    def replay(self, idx: torch.Tensor) -> None:
+        self._idx_static.copy_(idx, non_blocking=True)
+        self._graph.replay()
+
+    def loss_value(self) -> torch.Tensor:
+        return self._loss_static
+
+
 def _gpu_resident_device(device=None) -> torch.device | None:
     """Return the CUDA device for the GPU-resident batcher, else ``None``.
 
@@ -965,6 +1165,13 @@ class MultiHeadTrainer:
         # a build failure flips the _failed latch -> permanent eager val.
         self._graphed_val = None
         self._graphed_val_failed = False
+        # Set to the captured _GraphedFullStep when OPTIMIZER-TAIL capture
+        # engages (Lever A3, FF_CUDA_GRAPH_OPT path); the train loop then
+        # replays the whole iteration (including the optimizer step) and skips
+        # the eager tail. A build failure flips _graphed_opt_failed and keeps
+        # the A2 eager tail.
+        self._graphed_opt = None
+        self._graphed_opt_failed = False
 
     def _autocast(self):
         """Return the autocast context when AMP is active, else nullcontext.
@@ -1161,6 +1368,86 @@ class MultiHeadTrainer:
         self._graphed = True
         return True
 
+    def _maybe_graph_full_opt(self, train_loader) -> bool:
+        """Lever A3: extend A2's full-step capture to bake the optimizer tail.
+
+        Engages only ON TOP of A2 (``self._graphed_step`` set) and captures the
+        whole iteration — gather + forward + backward + combined loss + zero_grad
+        + clip + ``AdamW.step`` + loss copy — into one manual
+        :class:`_GraphedFullStep` graph, so the eager per-step tail disappears.
+        Returns True when engaged (sets ``self._graphed_opt``); the train loop
+        then replays it instead of calling A2's ``_graphed_step``.
+
+        STRICTLY INERT (bit-identical to A2-only; no rebaseline). The FP32
+        production default removed ``GradScaler`` (no inf/NaN skip branch), so
+        the requirements force the only regime where that holds:
+        - A2 engaged (``_graphed_step`` set) on a CUDA-device trainer;
+        - ``cuda_graph_opt_enabled()`` (A3 ⊆ A2 ⊆ base gate);
+        - a per-EPOCH scheduler (``not scheduler_per_batch``) — OneCycleLR
+          mutates the LR every step, which the baked single-LR-tensor graph
+          can't track (the ``capturable`` wiring in ``_run_nn_training`` also
+          disables it there, this is the defensive mirror);
+        - AMP off (``not self._use_amp``) and the GradScaler disabled / not
+          fixed-scale / not traced — A3 only covers the no-skip FP32 path;
+        - the optimizer fused + capturable (so its step is graph-safe; a
+          defensive precondition — ``_run_nn_training`` sets these together).
+        Any capture failure logs, synchronizes, latches ``_graphed_opt_failed``,
+        and falls back to A2's eager tail — never fails the run.
+        """
+        if (
+            self._graphed_opt is not None
+            or self._graphed_opt_failed
+            or self._graphed_step is None
+            or self.device.type != "cuda"
+            or not cuda_graph_opt_enabled()
+            or self.scheduler_per_batch
+            or self._use_amp
+            or self._scaler.is_enabled()
+            or self._fixed_amp_scale
+            or bool(self._scaler_trace_path)
+            or not isinstance(train_loader, _GPUResidentBatcher)
+            or not train_loader._drop_last
+        ):
+            return False
+        # Defensive: the capturable AdamW step is what makes the optimizer
+        # graph-safe (on-device step counter + LR). ``_run_nn_training`` sets
+        # fused+capturable together under the same A3 gate; bail rather than
+        # capture a non-capturable optimizer.
+        if not _optimizer_is_fused_capturable(self.optimizer):
+            return False
+        try:
+            eager_step = _GraphedTrainStep(
+                self.model, self.criterion, train_loader.features, train_loader.y_dict
+            )
+            eager_step.train()
+            gfs = _GraphedFullStep(
+                eager_step,
+                self.model,
+                self.optimizer,
+                train_loader._batch_size,
+                self.device,
+                # A3 is FP32-only (gated on ``not self._use_amp``), so the
+                # capture autocast is a nullcontext — mirrors the AMP-off branch
+                # of _GraphedValPass.build's factory.
+                contextlib.nullcontext,
+            )
+            gfs.build()
+        except Exception as e:
+            print(
+                f"[cuda-graph] optimizer-tail capture failed ({e!r}); keeping the A2 eager tail",
+                flush=True,
+            )
+            torch.cuda.synchronize()
+            self._graphed_opt_failed = True
+            return False
+        print(
+            "[cuda-graph] optimizer-tail capture engaged (Lever A3); "
+            "the per-step tail is now graphed",
+            flush=True,
+        )
+        self._graphed_opt = gfs
+        return True
+
     def _maybe_graph_model(self, train_loader) -> None:
         """Autodetect-ON for CUDA sm_80+ (``FF_CUDA_GRAPH`` is the force-off
         override): replace ``self.model`` with a CUDA graph capture of its
@@ -1230,7 +1517,11 @@ class MultiHeadTrainer:
         # full-step (gather+fwd+loss; FF_CUDA_GRAPH_FULL=0 forces eager)
         # subsumes the autodetect-ON model-only capture (FF_CUDA_GRAPH=0 forces
         # eager); no-op otherwise.
-        if not self._maybe_graph_full_step(train_loader):
+        if self._maybe_graph_full_step(train_loader):
+            # A2 engaged: try to also capture the optimizer tail (Lever A3).
+            # Inert on the FP32 path; falls back to A2's eager tail otherwise.
+            self._maybe_graph_full_opt(train_loader)
+        else:
             self._maybe_graph_model(train_loader)
         # FF_NN_FIXED_EPOCHS=<N> (test-only): train exactly N epochs, never
         # early-stop, keep last-epoch weights (skip best-val restore). Makes
@@ -1285,9 +1576,29 @@ class MultiHeadTrainer:
             # Full-step graph path iterates bare index tensors (the gather
             # happens inside the captured graph); eager / model-only-graph
             # paths iterate sliced batches. Same RNG consumption either way.
+            # A3 (optimizer-tail graph) replays the WHOLE iteration including the
+            # optimizer step, so it iterates bare index tensors like A2 but skips
+            # the eager tail entirely. A2 (full-step) iterates index tensors and
+            # runs the eager tail; the model-only / eager paths iterate sliced
+            # batches. Same RNG consumption (one randperm/pass) in every case.
+            opt_step = self._graphed_opt
             full_step = self._graphed_step
-            batch_iter = train_loader.index_batches() if full_step is not None else train_loader
+            batch_iter = (
+                train_loader.index_batches()
+                if (opt_step is not None or full_step is not None)
+                else train_loader
+            )
             for batch in batch_iter:
+                if opt_step is not None:
+                    # ``batch`` is the bare idx from index_batches(); the replay
+                    # runs zero_grad/fwd/bwd/clip/AdamW.step/loss-copy as one
+                    # graph. epoch_train_loss reads the static FP32 loss buffer
+                    # (on-GPU; .item() deferred to the epoch-end sync below).
+                    opt_step.replay(batch)
+                    epoch_train_loss += opt_step.loss_value()
+                    n_train_batches += 1
+                    global_step += 1
+                    continue
                 self.optimizer.zero_grad(set_to_none=True)
                 with self._autocast():
                     if full_step is not None:
@@ -1509,6 +1820,13 @@ class MultiHeadTrainer:
                     self.scheduler.step(avg_val_loss)
                 else:
                     self.scheduler.step()
+                # A3 LOAD-BEARING: capturable AdamW's LR is a baked device
+                # tensor. A per-epoch scheduler.step() may rebind
+                # param_group['lr'] to a NEW object → replays would read a STALE
+                # LR. Write the fresh value INTO the baked tensor in place so the
+                # next epoch's replays use the current LR (no-op when A3 is off).
+                if self._graphed_opt is not None:
+                    self._graphed_opt.refresh_lr_from_scheduler()
 
             # --- Early Stopping (loss-weighted MAE) ---
             val_mae_weighted = (
@@ -1869,6 +2187,13 @@ class MultiHeadNestedHistoryTrainer(MultiHeadTrainer):
         ``_maybe_graph_model`` above — ``_GraphedTrainStep`` calls
         ``model(*feats)`` positionally and the 5-tuple legacy path carries a
         ``None`` history leaf. K stays eager under FF_CUDA_GRAPH_FULL too."""
+        return False
+
+    def _maybe_graph_full_opt(self, train_loader) -> bool:
+        """Optimizer-tail capture (Lever A3) no-ops here too: A3 builds on the
+        full-step graph this trainer never engages (above), so it can never fire.
+        Explicit override is a defensive guard against a future base-class change
+        accidentally enabling it for the nested-K kwarg/None-leaf path."""
         return False
 
     def _forward_batch(self, batch) -> tuple[dict, dict]:

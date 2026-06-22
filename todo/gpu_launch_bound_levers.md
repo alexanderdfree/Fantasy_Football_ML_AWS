@@ -256,9 +256,18 @@ studies were wiped at the redefinition; no production studies existed).
 
 D1+D2 = **+40% trials/min** over the full-step base (plan predicted +20–30%), zero capture
 failures train or val, best-val stable (58.7–59.2 across runs). Net for the day: **~3.7×
-trials per GPU-hour** on identical hardware. Remaining levers are the rejected
-whole-iteration capture — this closes the planned throughput rounds; next bottleneck is
-per-trial capture build (~1–2 s) + Optuna/study churn, not worth chasing.
+trials per GPU-hour** on identical hardware. The next per-step lever is the
+whole-iteration capture (the optimizer tail) — built as A3 below; this closes the planned
+throughput rounds, and the remaining tune-loop bottleneck is per-trial capture build
+(~1–2 s) + Optuna/study churn, not worth chasing.
+
+> **Correction (2026-06-22):** earlier notes called whole-iteration (optimizer-tail)
+> capture "rejected / not worth chasing." That judgment was made under the FP16-autocast
+> default (GradScaler's data-dependent inf/NaN skip branch makes the optimizer step
+> non-capturable) and framed purely as tune throughput. The FP32+TF32 default (#1311)
+> removed GradScaler, which UNBLOCKS the capture, and the optimizer tail is a real
+> production step-time fraction (24.2% QB / 12.7% WR / 8.6% RB). A3 below builds it and
+> ships it autodetect-ON, strictly inert.
 
 **Oversubscription re-probed post-D2 (2026-06-11, n_jobs=5 on 4 vCPUs, fresh study): still
 ~1 useful trial per vCPU.** 69 trials (22C/47P) in 218.4 s = 19.0 trials/min vs 18.7 at
@@ -267,6 +276,85 @@ bs512-class epochs slowed 0.14–0.16 → 0.24–0.27 s — a super-proportional
 penalty at 1.25× oversubscription (5 workers on 2 physical cores). The graphed loop is
 still host-paced; `--n-jobs auto` = vCPU count stays correct, and the concurrency
 question is closed on measurement (the pre-D2 8-on-4 result was not stale after all).
+
+### Lever A3 — OPTIMIZER-TAIL capture (`FF_CUDA_GRAPH_OPT`) — BUILT & GATE-PASSED 2026-06-22 (local 5080)
+
+A2 graphs {gather + forward + backward + combined-loss} but leaves the per-step EAGER TAIL
+eager: `zero_grad → clip_grad_norm_ → AdamW.step → loss accumulate`. Measured tail fraction
+of attn-NN step time: **24.2% QB / 12.7% WR / 8.6% RB**. A3 captures that tail too.
+
+**Why now (the FP32 unblock).** `make_graphed_callables` can't include the optimizer, so A3
+is a MANUAL `torch.cuda.CUDAGraph` over the whole iteration (the `_GraphedValPass` style:
+static I/O buffers, side-stream warmup, `torch.cuda.graph(...)`). Under the old FP16-autocast
+default, GradScaler's data-dependent inf/NaN skip branch (`scaler.step` may skip
+`optimizer.step()`) made the step non-capturable. The FP32+TF32 default (#1311) removed
+GradScaler, so the step is now branch-free and capturable.
+
+**Architecture (`_GraphedFullStep` in training.py).** A3 gates ON TOP of A2
+(`cuda_graph_opt_enabled()`: `FF_CUDA_GRAPH_OPT` truthy on top of `cuda_graph_full_enabled()`
+— A3 ⊆ A2 ⊆ base sm_80+ gate). Two non-obvious design points the implementation had to solve
+(both would have made it NOT inert; both caught by the local Δ=0 gate before any Batch run):
+
+1. **You cannot re-capture A2's `make_graphed_callables` output inside an outer graph** —
+   calling its replay during an active capture raises *"Cannot prepare for replay during
+   capturing stage."* So A3 captures the step EAGERLY: a fresh, un-graphed `_GraphedTrainStep`
+   (the identical gather+fwd+loss ops) + `loss.backward()` + clip + `optimizer.step()`. A2's
+   `make_graphed_callables` build still runs first — A3 reuses it ONLY to reproduce A2-only's
+   BatchNorm warmup perturbation (so step-0 BN matches), then replays its own graph instead of
+   A2's `_graphed_step`.
+2. **`capturable=True` LR must be a DEVICE TENSOR, not a float** (`_run_nn_training` sets
+   `AdamW(capturable=True)` only when A3-eligible — fused, per-EPOCH scheduler, gate on). Fused
+   capturable AdamW happily reads a Python-float `lr`, and the graph then bakes that VALUE as a
+   constant → replays freeze on the build-time LR and the cosine schedule silently no-ops, a
+   ~1% trajectory fork vs A2-only (`build()` forces `param_group['lr']` to a device tensor;
+   `refresh_lr_from_scheduler()` writes the post-`scheduler.step()` float into that tensor IN
+   PLACE each epoch). Warmup also runs REAL optimizer steps, so `build()` snapshots params + BN
+   and resets the Adam moments to step-0 after capture. K's nested trainer no-ops capture.
+
+**STRICTLY INERT (no rebaseline) — local end-to-end Δ=0 gate, 2026-06-22 (5080 sm_120).**
+Per position, two same-seed runs (`FF_NN_FIXED_EPOCHS=30 FF_FORCE_DROPOUT_ZERO=1`,
+`FF_CUDA_GRAPH_OPT={1,0}`), attention-NN test FP-MAE compared; deterministic Ridge FP-MAE
+identical throughout (data-identity tell). The owner skipped Batch validation, so this local
+gate is the proof. **Engagement is a true positive, not a Δ=0-because-it-never-fired false
+pass** (independently verified): with `FF_CUDA_GRAPH_OPT=1` the optimizer is built
+`capturable=True`, `_graphed_opt` is set, and the trainer logs `[cuda-graph] optimizer-tail
+capture engaged (Lever A3)`; with `FF_CUDA_GRAPH_OPT=0` the optimizer is `capturable=False`,
+`_graphed_opt` is None, and A2's full-step graph still engages (the A2-only baseline).
+
+| position | A3-on attn FP-MAE | A2-only attn FP-MAE | \|Δ\| |
+|---|---|---|---|
+| RB (seed 42) | 4.161292110313279 | 4.161292110313279 | **0.000000** |
+| QB (seed 42) | 5.958248304188605 | 5.958248304188605 | **0.000000** |
+| WR (seed 42) | 4.053313073959706 | 4.053313073959706 | **0.000000** |
+| DST (seed 42) | 6.050014096147874 | 6.050014096147874 | **0.000000** |
+| RB seed 1337 | 4.164618728178873 | 4.164618728178873 | **0.000000** |
+| RB seed 2024 | 4.136827474537323 | 4.136827474537323 | **0.000000** |
+
+RB same-seed determinism (A3-on run twice): `4.161292110313279` both times, |Δ|=0. Every
+Ridge FP-MAE was bit-identical within each pair (data-identity tell). All twelve cells: **Δ=0
+exactly.**
+
+The verified mechanisms: `AdamW(fused=True)` vs `fused=True, capturable=True` over identical
+grads → max|Δ|=0 (capturable is math-inert); a CUDA-graph replay of the capturable step vs
+eager → max|Δ|=0; a tensor-LR updated in place reproduces an eager LR schedule through the
+graph bit-for-bit. A naive first cut (float LR + identity-discovery) forked ~1% from epoch 1;
+the 1-epoch slice stayed Δ=0 (per-step capture correct), which localized it to the
+between-epoch LR refresh — fixed by the device-tensor LR above.
+
+**Speedup (sanity, not a gate) — honest ~2%, NOT 30%.** The per-step eager-tail fractions
+measured on origin/main are RB 8.6% / WR 12.7% / QB 24.2% of the attn step — that is the
+size of the tail A3 captures. The *net production* gain is modest: A3 step ≈1.159 ms vs the
+REAL A2-only baseline (`capturable=False`) ≈1.183 ms on RB, **~2%**. A naive 30%-class
+reading is INFLATED — it timed A3 against an A2 tail running on a `capturable=True`
+optimizer (capturable mode adds eager per-step overhead that the graph then reclaims), not
+against the true `capturable=False` baseline. The 5080's low launch overhead and the
+one-time capture build also swamp the small RB-tail saving at this scale (the phase timer
+reads ~1.8 s either way; whole-pipeline wall ~20.6 vs ~21.5 s is dominated by non-attn
+work). The win scales with the tail fraction (largest on QB at 24.2%) and the L4's higher
+launch overhead vs the 5080, and helps LOCAL ITERATION only — the default tuner runs
+stacked-graphs-OFF and production is orchestration-bound. The value of A3 is its inertness
+(strictly bit-identical), so it ships autodetect-ON without a speedup gate.
+
 
 ---
 
