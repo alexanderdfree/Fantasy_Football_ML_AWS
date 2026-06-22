@@ -81,6 +81,14 @@ JOB_IDS_FILE = os.environ.get("FF_BATCH_JOB_IDS_FILE", "") or None
 # and the attention NN) but NOT bit-identical to eager (see
 # todo/gpu_launch_bound_levers.md, Lever A).
 FF_CUDA_GRAPH = os.environ.get("FF_CUDA_GRAPH", "") or None
+# Optional FULL-STEP CUDA-graph OVERRIDE: the wider gather+forward+loss+backward
+# capture (cuda_graph_full_enabled() in src/shared/utils.py) is ALSO autodetect-ON
+# for sm_80+ (and requires the base FF_CUDA_GRAPH gate). train-batch.yml threads
+# the FF_BATCH_CUDA_GRAPH_FULL repo variable as a SEPARATE fleet override: leave it
+# unset for the autodetect default, or set it to 0 to degrade the fan-out from the
+# full-step graph to the model-only graph (keeps the ~1.84x model-only win) without
+# forcing the whole path back to eager (which FF_BATCH_CUDA_GRAPH=0 would do).
+FF_CUDA_GRAPH_FULL = os.environ.get("FF_CUDA_GRAPH_FULL", "") or None
 
 from src.shared.registry import ALL_POSITIONS, CPU_ONLY_POSITIONS  # noqa: E402
 
@@ -265,6 +273,11 @@ def submit_job(
         # trainer no-ops capture regardless; cuda_graph_enabled() re-checks
         # compute capability so a value on an ineligible GPU is inert.
         environment.append({"name": "FF_CUDA_GRAPH", "value": FF_CUDA_GRAPH})
+    if FF_CUDA_GRAPH_FULL:
+        # Full-step capture override only — cuda_graph_full_enabled() autodetects
+        # ON for sm_80+, so a value is needed only to force "0" (degrade to the
+        # model-only graph; FF_CUDA_GRAPH=0 above is what kills graphs entirely).
+        environment.append({"name": "FF_CUDA_GRAPH_FULL", "value": FF_CUDA_GRAPH_FULL})
     # Forward the model-artifact prefix into the container so an isolated
     # benchmark run (FF_MODEL_S3_PREFIX=experiments/...) writes its tarball +
     # manifest under that prefix instead of prod ``models/`` — the serving site

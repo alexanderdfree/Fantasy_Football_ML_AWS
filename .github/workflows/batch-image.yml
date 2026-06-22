@@ -244,27 +244,26 @@ jobs:
           }'
           TIMEOUT='{"attemptDurationSeconds": 1800}'
 
-          # Two clusters of env vars are pinned at the job-definition level so
+          # These BLAS-thread env vars are pinned at the job-definition level so
           # every Batch run inherits them (per-submission containerOverrides in
           # src/batch/launch.py still append/override on top of these).
+          # (NN_DATALOADER_NUM_WORKERS=3 used to be pinned here too, but PR #309's
+          # GPU-resident batcher fixed DataLoader workers at 0, leaving it a no-op
+          # — see src/shared/training.py — so it's dropped from the env below.)
           #
-          # 1. NN_DATALOADER_NUM_WORKERS=3 — src/shared/training.py reads it; on
-          #    g6.xlarge with 4 vCPU, 3 prefetch workers keep the GPU fed for
-          #    attention training while leaving one core for the CPU branch
-          #    overlapped via the ThreadPoolExecutor introduced in 00c6d10.
-          #
-          # 2. OMP_NUM_THREADS=1 / MKL_NUM_THREADS=1 / OPENBLAS_NUM_THREADS=1 /
-          #    NUMEXPR_NUM_THREADS=1 — cap BLAS-via-OMP threads to 1 *per
-          #    process*, not per Batch host. Required because:
+          # OMP_NUM_THREADS=1 / MKL_NUM_THREADS=1 / OPENBLAS_NUM_THREADS=1 /
+          # NUMEXPR_NUM_THREADS=1 — cap BLAS-via-OMP threads to 1 *per
+          # process*, not per Batch host. Required because:
           #      • src/shared/pipeline.py:_tune_ridge_alphas_cv runs alphas
           #        through joblib.Parallel(n_jobs=-1, prefer="threads") — 4
           #        threads on a 4-vCPU box.
           #      • Each sklearn Ridge solve delegates the normal-equation
           #        solve to BLAS, which defaults to OMP_NUM_THREADS=nproc=4.
-          #      • 4 joblib threads × 4 BLAS threads each + 3 DataLoader
-          #        worker subprocesses + main GPU thread = ~19 thread slots
-          #        on 4 cores. The CPU branch hangs in OpenBLAS under that
-          #        ~5x oversubscription on Linux.
+          #      • 4 joblib threads × 4 BLAS threads each + main GPU thread
+          #        (historically + 3 DataLoader worker subprocesses, now 0 under
+          #        PR #309's GPU-resident batcher) = ~17 thread slots on 4 cores.
+          #        The CPU branch hangs in OpenBLAS under that oversubscription
+          #        on Linux.
           #    PR #293 (BF16 autocast) masked this by hanging the GPU branch
           #    first, so CPU branch had the cores to itself. PR #301 fixed the
           #    BF16 hang → CPU and GPU branches now actually overlap, exposing
@@ -286,6 +285,10 @@ jobs:
                 | .image = $image
                 | .environment = (
                     ((.environment // []) | map(select(
+                      # Strip-only (no re-append): the dead NN_DATALOADER_NUM_WORKERS
+                      # no-op is currently baked into the live job def, so keep
+                      # filtering it out of the inherited env on every re-register
+                      # to actually purge it from the rendered definition.
                       .name != "NN_DATALOADER_NUM_WORKERS"
                       and .name != "OMP_NUM_THREADS"
                       and .name != "MKL_NUM_THREADS"
@@ -293,7 +296,6 @@ jobs:
                       and .name != "NUMEXPR_NUM_THREADS"
                     )))
                     + [
-                        {name: "NN_DATALOADER_NUM_WORKERS", value: "3"},
                         {name: "OMP_NUM_THREADS", value: "1"},
                         {name: "MKL_NUM_THREADS", value: "1"},
                         {name: "OPENBLAS_NUM_THREADS", value: "1"},
