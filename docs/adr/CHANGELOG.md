@@ -3,6 +3,7 @@
 Terse, chronological log of architecture changes — one line each: `YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`. Full rationale lives in the per-decision
 files in this directory; pre-split detail is in [../architecture-history.md](../architecture-history.md).
 
+- 2026-06-22 · Batch GPU Spot capacity fallback fixed: g6-primary/g5-fallback queue order (which only falls back on misconfiguration, never Spot starvation) folded into ONE diversified `ff-gpu-spot` CE (`instanceTypes`=g6.xlarge+g5.xlarge, SPOT_PRICE_CAPACITY_OPTIMIZED); `ff-gpu-spot-g5` retired; infra-only, no retrain · (PR #pending) · → ADR-0013
 - 2026-06-22 · Lever A3 optimizer-tail full-iteration capture (FF_CUDA_GRAPH_OPT, autodetect-ON sm_80+) — strictly inert (local Δ=0 gate), ~8-24% of attn-NN step · (PR #pending) · → ADR-0017
 - 2026-06-22 · NN training default flipped FP16 autocast → FP32+TF32 (FP16 now opt-in via FF_AMP_DTYPE=fp16); metric-path change, 6-pos rebaseline · (PR #pending) · → ADR-0017
 - 2026-06-20 · ADR-0004 condq eager confirmation: the production retrain (`ac3686f`, authoritative) did NOT reproduce the stacked screen wins — RB/TE flat, WR +0.046 RMSE regress; Ridge byte-identical (attention-only); KEPT enabled for RB/WR/TE as an owner forward-bet for #1210, not a measured win; serving healthy post-roll (all attn_nn, no NaN; `ecs_rollout` red only on a `services-stable` waiter timeout) · → ADR-0004

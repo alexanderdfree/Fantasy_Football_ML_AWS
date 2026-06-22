@@ -1,6 +1,6 @@
 # AWS Batch Training Design Doc
 
-> **Status (2026-06-10): Active when `BATCH_ACTIVE=true`.** Default mode remains the D13 parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml): six 4-vCPU GPU Spot hosts, one position per host. The GPU job queue prefers `g6.xlarge` / L4 (`ff-gpu-spot`, order 1) and falls back to `g5.xlarge` / A10G (`ff-gpu-spot-g5`, order 2) when g6 cannot provide suitable capacity. **Split mode is opt-in via `BATCH_SPLIT_ACTIVE=true` / `src.batch.launch --split`: NN work stays on the GPU queue, while Ridge+LightGBM run on a new c8a CPU Spot queue and a merge job publishes the complete artifact only after both staged branches validate (ADR-0019).** Measured 2026-05-21 monolithic path: ~10 min for the "Submit Batch jobs and wait" step. Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host; SOCI lazy-loading was removed 2026-06-07 because ECS-EC2 Batch cannot use it. Image size is now dominated by the torch CUDA wheel; `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) and [ADR-0019 (split Batch training)](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md); [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
+> **Status (2026-06-10): Active when `BATCH_ACTIVE=true`.** Default mode remains the D13 parallel Spot fan-out via [.github/workflows/train-batch.yml](../.github/workflows/train-batch.yml): six 4-vCPU GPU Spot hosts, one position per host. The GPU job queue routes to a single Spot CE (`ff-gpu-spot`) whose `instanceTypes` list both `g6.xlarge` / L4 and `g5.xlarge` / A10G; `SPOT_PRICE_CAPACITY_OPTIMIZED` diversifies across both pools and launches wherever Spot capacity exists. (A g6-primary / g5-fallback *queue order* was tried and reverted 2026-06-22 — a job queue's CE order only falls back on a misconfiguration, never on Spot capacity starvation, so a healthy below-max g6 CE parked jobs in RUNNABLE and never reached g5; see ADR-0013.) **Split mode is opt-in via `BATCH_SPLIT_ACTIVE=true` / `src.batch.launch --split`: NN work stays on the GPU queue, while Ridge+LightGBM run on a new c8a CPU Spot queue and a merge job publishes the complete artifact only after both staged branches validate (ADR-0019).** Measured 2026-05-21 monolithic path: ~10 min for the "Submit Batch jobs and wait" step. Warm-EC2 rollback path: ~120-min sequential loop. Cold-start: ~120 s image pull on a fresh Spot host; SOCI lazy-loading was removed 2026-06-07 because ECS-EC2 Batch cannot use it. Image size is now dominated by the torch CUDA wheel; `.dockerignore` + explicit `COPY` trim the app side. See [ADR-0013 (Spot fan-out via AWS Batch)](adr/0013-spot-fan-out-via-aws-batch.md) and [ADR-0019 (split Batch training)](adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md); [infra/batch/README.md](../infra/batch/README.md) is the operator runbook.
 >
 > Rollback: `gh variable set BATCH_ACTIVE --body "false"` returns push-driven training to the warm-EC2 path ([docs/ec2_design.md](ec2_design.md)) on the next push to `main`. Both paths remain provisioned.
 
@@ -27,7 +27,7 @@ src/batch/launch.py ─────────────> S3: s3://ff-trainin
        │                               test.parquet
        │
        ├─> Batch Job: ff-rb-xxx ───> CloudWatch Logs
-       │     (g6 Spot, g5 fallback)    stdout/stderr streamed
+       │     (g6+g5 Spot pool)         stdout/stderr streamed
        │     src.batch.train --position RB
        │       ├─ boto3: download data from S3
        │       ├─ src.rb.run_pipeline.run(train_df, val_df, test_df)
@@ -261,7 +261,7 @@ aws batch create-compute-environment \
 
 - `type=SPOT` — 70% cheaper than on-demand
 - `minvCpus=0` — scales to zero when idle (no cost)
-- `maxvCpus=64` — up to 16 concurrent 4-vCPU GPU hosts per CE (`g6.xlarge` primary, `g5.xlarge` fallback); matches the Spot G+VT quota raised 24 → 64 on 2026-06-11, so two six-position fan-outs (or a fan-out plus a tune fleet) no longer starve each other at the CE ceiling
+- `maxvCpus=64` — up to 16 concurrent 4-vCPU GPU hosts (`g6.xlarge` + `g5.xlarge`, both in the one diversified CE); matches the Spot G+VT quota raised 24 → 64 on 2026-06-11, so two six-position fan-outs (or a fan-out plus a tune fleet) no longer starve each other at the CE ceiling
 - `allocationStrategy=SPOT_PRICE_CAPACITY_OPTIMIZED` — AWS-recommended strategy that weighs *both* capacity (lowest current reclaim risk) and Spot price. Strict superset of `SPOT_CAPACITY_OPTIMIZED`: same reclaim-avoidance behaviour plus price awareness
 
 ### Job Queue
@@ -272,9 +272,12 @@ aws batch create-job-queue \
   --state ENABLED \
   --priority 1 \
   --compute-environment-order \
-    order=1,computeEnvironment=ff-gpu-spot \
-    order=2,computeEnvironment=ff-gpu-spot-g5
+    order=1,computeEnvironment=ff-gpu-spot
 ```
+
+(One CE only. A second `order=2` CE is *not* a Spot-capacity fallback: Batch
+advances queue order only on a misconfiguration, never on capacity starvation —
+diversify `instanceTypes` inside the single CE instead. See ADR-0013.)
 
 ### Job Definition
 
@@ -351,7 +354,7 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 
 1. Create ECR repository (`ff-training`)
 2. Create IAM roles (`BatchTrainingRole` + reuse `ecsTaskExecutionRole`)
-3. Create GPU Compute Environments (`ff-gpu-spot` primary, `ff-gpu-spot-g5` fallback)
+3. Create GPU Compute Environment (`ff-gpu-spot`, diversified `g6.xlarge` + `g5.xlarge` Spot pool)
 4. Create CPU Compute Environment (`ff-cpu-spot`)
 5. Create Job Queues (`ff-training-queue`, `ff-cpu-training-queue`)
 6. Register Job Definitions (`ff-training-job`, `ff-training-cpu-job`)

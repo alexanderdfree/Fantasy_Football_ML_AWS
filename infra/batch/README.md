@@ -36,8 +36,7 @@ The script creates:
 | IAM role (task execution) | `ecsTaskExecutionRole` |
 | Instance profile | `ecsInstanceRole` |
 | Security group | `ff-batch-sg` (egress only) |
-| Compute environment | `ff-gpu-spot` (SPOT, max 64 vCPU, g6.xlarge, queue order 1) |
-| Fallback compute environment | `ff-gpu-spot-g5` (SPOT, max 64 vCPU, g5.xlarge, queue order 2) |
+| GPU compute environment | `ff-gpu-spot` (SPOT, max 64 vCPU, diversified `g6.xlarge` + `g5.xlarge`, `SPOT_PRICE_CAPACITY_OPTIMIZED`) |
 | Job queue | `ff-training-queue` |
 | Job definition | `ff-training-job` (rev 1; CI re-registers on every push) |
 | CloudWatch log group | `/aws/batch/job` (7-day retention) |
@@ -165,7 +164,7 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    ```
    All six should reach RUNNING simultaneously (six 4-vCPU GPU Spot hosts;
    the 64 vCPU Spot quota leaves headroom for a second concurrent fan-out or a
-   tune fleet; g6 preferred, g5 fallback). Total wall-clock for the
+   tune fleet; one diversified g6+g5 Spot CE). Total wall-clock for the
    "Submit Batch jobs and wait" step measured ~10 min on 2026-05-21
    — the slowest position dominates, not the sum.
 
@@ -196,8 +195,9 @@ stopped in parallel — flipping back is instant.
 
 Spot g6.xlarge in us-east-1: ~$0.35/hr × 6 positions × ~10 min ≈ **~$0.35 per
 full retrain** (estimate post-migration from g4dn; measured baseline was ~$0.16
-on g4dn 2026-05-21). g5.xlarge fallback may cost more when used, but only when
-g6 cannot provide suitable capacity. Single-position retrains scale down
+on g4dn 2026-05-21). `g5.xlarge` shares the pool and may cost slightly more on
+the runs the allocation strategy places there, but it only picks g5 when g6 is
+pricier or scarcer. Single-position retrains scale down
 linearly. At zero capacity when idle, the CEs have no standing cost. CloudWatch
 logs and ECR storage are free-tier territory for this volume.
 
@@ -221,7 +221,7 @@ manually if you want a complete wipe.
 
 | File | Purpose |
 |---|---|
-| `setup.sh` | Idempotent provisioning: IAM, SG, CE (`ff-gpu-spot` + `ff-gpu-spot-g5` fallback), JQ, JD seed revision. Re-runs skip anything that already exists. |
+| `setup.sh` | Idempotent provisioning: IAM, SG, CE (`ff-gpu-spot`, diversified `g6.xlarge` + `g5.xlarge` Spot pool), JQ, JD seed revision. Re-runs skip anything that already exists. |
 | `teardown.sh` | Reverse-order tear down (JQ → CE → SG → IAM roles + profile); idempotent. |
 | `iam-trust-policy-job.json` | `ecs-tasks.amazonaws.com` trust (job + execution roles). |
 | `iam-trust-policy-instance.json` | `ec2.amazonaws.com` trust (EC2 instance role). |
@@ -231,8 +231,8 @@ manually if you want a complete wipe.
 
 See [`docs/batch_design.md`](../../docs/batch_design.md). Short version: warm
 EC2 forced sequential training because one T4 can't host six concurrent NN
-jobs; Spot fanout gives each position its own g6.xlarge L4 host when available,
-or a g5.xlarge A10G fallback host when needed, parallelizing the workload.
+jobs; Spot fanout gives each position its own single-GPU Spot host from a
+diversified g6.xlarge/L4 + g5.xlarge/A10G pool, parallelizing the workload.
 Cold-start (the original blocker) is paid once per host (~120 s full image
 pull) while all six positions train concurrently, so it no longer
 dominates wall-clock the way the sequential warm-EC2 loop did. SOCI

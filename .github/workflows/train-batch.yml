@@ -2,9 +2,10 @@ name: Train on Batch (Spot)
 
 # Active training path when BATCH_ACTIVE=true. Fires after batch-image.yml
 # pushes a fresh image to ECR, then submits one Batch job per position to the
-# ff-training-queue queue backed by ordered Spot compute environments:
-# ff-gpu-spot (g6 primary) then ff-gpu-spot-g5 (g5 fallback). Each position
-# trains in parallel on its own 4-vCPU GPU host. See docs/batch_design.md.
+# ff-training-queue queue backed by a single diversified Spot compute
+# environment ff-gpu-spot (instanceTypes g6.xlarge + g5.xlarge, picked by
+# SPOT_PRICE_CAPACITY_OPTIMIZED). Each position trains in parallel on its own
+# 4-vCPU single-GPU host. See docs/batch_design.md.
 #
 # When BATCH_ACTIVE != 'true' the gate on the `train` job below skips this
 # workflow on workflow_run; train-ec2.yml stays active. workflow_dispatch
@@ -647,7 +648,7 @@ jobs:
           # the silent-drift the old hardcoded string risked is gone. The value
           # below is only a FALLBACK, used when a run carries no GPU metadata
           # (pre-stamping artifacts / all-CPU run); it mirrors the current
-          # g6-preferred/g5-fallback graphed pool, and the force-off case keeps
+          # g6+g5 diversified graphed pool, and the force-off case keeps
           # the fallback honest when FF_CUDA_GRAPH disables capture.
           INSTANCE_TYPE="g6.xlarge/g5.xlarge (Spot, CUDA-graph)"
           case "$(echo "${FF_CUDA_GRAPH:-}" | tr 'A-Z' 'a-z')" in
