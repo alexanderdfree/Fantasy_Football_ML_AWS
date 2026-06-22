@@ -1074,6 +1074,28 @@ def test_benchmark_history_sync_skips_files_already_on_disk(monkeypatch, tmp_pat
 
 
 @pytest.mark.unit
+def test_download_file_atomic_cleans_up_tmp_on_replace_failure(monkeypatch, tmp_path):
+    """The atomic path must unlink its sibling .tmp if os.replace fails, then
+    re-raise — the poller runs thousands of times over a container's life, so a
+    persistent rename failure would otherwise accumulate temp turds."""
+    key = "models/benchmark_history/x.json"
+    fake_s3 = _FakeS3({key: b'{"x": 1}'})
+    dest = tmp_path / "x.json"
+
+    def boom(_src, _dst):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("os.replace", boom)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        model_sync._download_file(fake_s3, "test-bucket", key, dest, atomic=True)
+
+    # Failure propagated (so the caller records it in `failed`), but no .tmp turd
+    # is left behind and the dest was never half-written.
+    assert not list(tmp_path.glob("*.tmp"))
+    assert not dest.exists()
+
+
+@pytest.mark.unit
 def test_start_benchmark_history_poller_calls_sync_each_cycle(monkeypatch):
     """The poller thread must re-call sync_benchmark_history_from_s3 each cycle
     so a run uploaded after boot surfaces without a restart."""

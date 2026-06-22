@@ -587,8 +587,17 @@ def _download_file(s3_client, bucket: str, key: str, dest: Path, *, atomic: bool
         # name is per-(pid, thread) unique so the 8-way download pool can't
         # collide on it.
         tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, dest)
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, dest)
+        except Exception:
+            # A mid-rename failure (ENOSPC, EACCES) or a partial temp write must
+            # not leave the sibling .tmp behind — the poller runs thousands of
+            # times over a container's life, so a persistent failure would
+            # otherwise accumulate turds. The download failure itself is recorded
+            # in the caller's ``failed`` list once this re-raises.
+            tmp.unlink(missing_ok=True)
+            raise
     else:
         dest.write_bytes(data)
     return {"key": key, "bytes": len(data), "secs": round(time.time() - t0, 2)}
