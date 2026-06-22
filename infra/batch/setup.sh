@@ -17,7 +17,6 @@ set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 BUCKET="ff-predictor-training"
 COMPUTE_ENV="ff-gpu-spot"
-FALLBACK_COMPUTE_ENV="ff-gpu-spot-g5"
 JOB_QUEUE="ff-training-queue"
 JOB_DEF="ff-training-job"
 CPU_COMPUTE_ENV="ff-cpu-spot"
@@ -39,14 +38,25 @@ STANDARD_SPOT_QUOTA_CODE="L-34B43A08"
 # plus tune-fleet headroom, 16 x 4-vCPU hosts max per CE.
 MAX_VCPUS=64
 CPU_MAX_VCPUS=64
-# GPU Spot instance types for the fan-out. Keep them in separate compute
-# environments so queue order can enforce preference: g6/L4 first, then g5/A10G
-# only when the primary CE can't provide suitable capacity. Both are 4 vCPU /
-# 16 GiB / 1 GPU with 24 GB GPU memory and both qualify for the sm_80+
-# CUDA-graph path, so the training container can run unchanged.
+# GPU Spot instance types for the fan-out. Both go in ONE compute environment;
+# the SPOT_PRICE_CAPACITY_OPTIMIZED allocation strategy then diversifies across
+# every (instance-type x AZ) Spot pool and launches wherever capacity exists.
+#
+# Why one CE and not a g6-primary / g5-fallback queue order: a job queue's
+# compute-environment ORDER only advances to the next CE on a MISCONFIGURATION
+# (maxvCpus too small, job resource requirement, unsupported config, service
+# role) -- NOT on Spot capacity starvation. A healthy, below-max g6 CE that
+# simply can't get g6 Spot parks jobs in RUNNABLE forever and never reaches a
+# g5 CE behind it. The capacity-fallback mechanism is the allocation strategy
+# *inside* a CE, so the pool must be diversified within one CE (this mirrors the
+# ff-cpu-spot CE, which already lists c8a + m8a). Both types are 4 vCPU / 16 GiB
+# / 1 GPU with 24 GB GPU memory and are single-GPU (so GPU=1 keeps one job per
+# host), and both qualify for the sm_80+ CUDA-graph path, so the training
+# container runs unchanged. PRIMARY_INSTANCE_TYPE is the representative type used
+# for subnet/AZ resolution (g6 and g5 are offered in the same us-east-1 AZs).
 PRIMARY_INSTANCE_TYPE="g6.xlarge"
-FALLBACK_INSTANCE_TYPE="g5.xlarge"
-ALL_GPU_INSTANCE_TYPES=("$PRIMARY_INSTANCE_TYPE" "$FALLBACK_INSTANCE_TYPE")
+SECONDARY_INSTANCE_TYPE="g5.xlarge"
+ALL_GPU_INSTANCE_TYPES=("$PRIMARY_INSTANCE_TYPE" "$SECONDARY_INSTANCE_TYPE")
 CPU_PRIMARY_INSTANCE_TYPE="c8a.xlarge"
 CPU_FALLBACK_INSTANCE_TYPE="m8a.xlarge"
 CPU_INSTANCE_TYPES_JSON="[\"$CPU_PRIMARY_INSTANCE_TYPE\",\"$CPU_FALLBACK_INSTANCE_TYPE\"]"
@@ -112,7 +122,7 @@ resolve_default_subnets_for_instance_type() {
   RESOLVED_SUBNET_COUNT="$subnet_count"
 }
 
-log "Account $ACCOUNT_ID, VPC $VPC_ID, preferred GPU order: $PRIMARY_INSTANCE_TYPE -> $FALLBACK_INSTANCE_TYPE"
+log "Account $ACCOUNT_ID, VPC $VPC_ID, GPU Spot pool: ${ALL_GPU_INSTANCE_TYPES[*]} (single diversified CE)"
 
 CPU_OFFERING_AZS=$(aws ec2 describe-instance-type-offerings \
   --location-type availability-zone \
@@ -301,13 +311,23 @@ wait_for_compute_environment_valid() {
 
 ensure_compute_environment() {
   local ce_name="$1"
-  local instance_type="$2"
+  # Space-separated list of instance types (e.g. "g6.xlarge g5.xlarge"); all live
+  # in this single CE so the Spot allocation strategy can diversify across them.
+  local instance_types_str="$2"
+  local primary_type="${instance_types_str%% *}"
+  local instance_types_json
+  instance_types_json="$(json_array $instance_types_str)"
+  local desired_types_sorted
+  desired_types_sorted="$(printf '%s\n' $instance_types_str | sort | paste -sd' ' -)"
 
-  resolve_default_subnets_for_instance_type "$instance_type"
+  # Resolve subnets on the representative (primary) type; the listed GPU types are
+  # offered in the same us-east-1 AZs, and the allocation strategy simply skips
+  # any (type, AZ) pool that isn't offered.
+  resolve_default_subnets_for_instance_type "$primary_type"
   local subnet_ids="$RESOLVED_SUBNET_IDS"
   local subnets_json="$RESOLVED_SUBNETS_JSON"
   local subnets_sorted="$RESOLVED_SUBNETS_SORTED"
-  log "$ce_name: $instance_type offered in AZs ($RESOLVED_OFFERING_AZS_DISPLAY); using $RESOLVED_SUBNET_COUNT default subnets"
+  log "$ce_name: [$instance_types_str] offered in AZs ($RESOLVED_OFFERING_AZS_DISPLAY); using $RESOLVED_SUBNET_COUNT default subnets"
 
   CE_STATUS=$(aws batch describe-compute-environments \
     --compute-environments "$ce_name" \
@@ -315,7 +335,7 @@ ensure_compute_environment() {
     --query 'computeEnvironments[0].status' \
     --output text 2>/dev/null || echo "None")
   if [ "$CE_STATUS" = "None" ] || [ -z "$CE_STATUS" ] || [ "$CE_STATUS" = "null" ]; then
-    log "Creating Compute Environment $ce_name ($instance_type)..."
+    log "Creating Compute Environment $ce_name ([$instance_types_str])..."
     aws batch create-compute-environment \
       --compute-environment-name "$ce_name" \
       --type MANAGED \
@@ -325,7 +345,7 @@ ensure_compute_environment() {
         \"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\",
         \"minvCpus\": 0,
         \"maxvCpus\": $MAX_VCPUS,
-        \"instanceTypes\": [\"$instance_type\"],
+        \"instanceTypes\": $instance_types_json,
         \"subnets\": [$subnets_json],
         \"securityGroupIds\": [\"$SG_ID\"],
         \"instanceRole\": \"arn:aws:iam::$ACCOUNT_ID:instance-profile/$INSTANCE_PROFILE\"
@@ -359,8 +379,8 @@ ensure_compute_environment() {
       --region "$REGION" \
       --query 'computeEnvironments[0].computeResources.maxvCpus' \
       --output text 2>/dev/null || echo "None")
-    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$instance_type" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ] || [ "$CURRENT_MAX" != "$MAX_VCPUS" ]; then
-      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> $instance_type; maxVcpus ${CURRENT_MAX:-None} -> $MAX_VCPUS; subnets refreshed for $instance_type offerings"
+    if [ "$CURRENT_INSTANCE_TYPES_SORTED" != "$desired_types_sorted" ] || [ "$CURRENT_SUBNETS_SORTED" != "$subnets_sorted" ] || [ "$CURRENT_MAX" != "$MAX_VCPUS" ]; then
+      log "Reconciling $ce_name: instanceTypes ${CURRENT_INSTANCE_TYPES:-None} -> [$instance_types_str]; maxVcpus ${CURRENT_MAX:-None} -> $MAX_VCPUS; subnets refreshed for $primary_type offerings"
       log "  step 1/3: DISABLE"
       aws batch update-compute-environment \
         --compute-environment "$ce_name" \
@@ -370,7 +390,7 @@ ensure_compute_environment() {
       log "  step 2/3: UPDATE instanceTypes/subnets/maxvCpus"
       aws batch update-compute-environment \
         --compute-environment "$ce_name" \
-        --compute-resources "{\"maxvCpus\": $MAX_VCPUS, \"instanceTypes\": [\"$instance_type\"], \"subnets\": [$subnets_json]}" \
+        --compute-resources "{\"allocationStrategy\": \"SPOT_PRICE_CAPACITY_OPTIMIZED\", \"maxvCpus\": $MAX_VCPUS, \"instanceTypes\": $instance_types_json, \"subnets\": [$subnets_json]}" \
         --region "$REGION" >/dev/null
       wait_for_compute_environment_valid "$ce_name" 30
       log "  step 3/3: ENABLE"
@@ -379,21 +399,16 @@ ensure_compute_environment() {
         --state ENABLED \
         --region "$REGION" >/dev/null
       wait_for_compute_environment_valid "$ce_name" 30
-      log "$ce_name reconciled — instanceTypes=[$instance_type], maxVcpus=$MAX_VCPUS. Next Spot host picks it up."
+      log "$ce_name reconciled — instanceTypes=[$instance_types_str], maxVcpus=$MAX_VCPUS. Next Spot host picks it up."
     else
-      log "$ce_name already matches desired instance type/subnets/maxVcpus ($instance_type, $MAX_VCPUS)."
+      log "$ce_name already matches desired instance types/subnets/maxVcpus ([$instance_types_str], $MAX_VCPUS)."
     fi
   fi
 
-  if [ "$ce_name" = "$COMPUTE_ENV" ]; then
-    PRIMARY_SUBNET_IDS="$subnet_ids"
-  else
-    FALLBACK_SUBNET_IDS="$subnet_ids"
-  fi
+  PRIMARY_SUBNET_IDS="$subnet_ids"
 }
 
-ensure_compute_environment "$COMPUTE_ENV" "$PRIMARY_INSTANCE_TYPE"
-ensure_compute_environment "$FALLBACK_COMPUTE_ENV" "$FALLBACK_INSTANCE_TYPE"
+ensure_compute_environment "$COMPUTE_ENV" "${ALL_GPU_INSTANCE_TYPES[*]}"
 
 # --- 11. CPU Compute Environment ----------------------------------------
 CPU_SUBNETS_JSON=$(printf '"%s",' $CPU_SUBNET_IDS | sed 's/,$//')
@@ -507,7 +522,6 @@ fi
 # --- 12. Job Queue ------------------------------------------------------
 CE_ORDER_ARGS=(
   "order=1,computeEnvironment=$COMPUTE_ENV"
-  "order=2,computeEnvironment=$FALLBACK_COMPUTE_ENV"
 )
 JQ_STATUS=$(aws batch describe-job-queues \
   --job-queues "$JOB_QUEUE" \
@@ -537,7 +551,7 @@ if [ "$JQ_STATUS" = "None" ] || [ -z "$JQ_STATUS" ] || [ "$JQ_STATUS" = "null" ]
   done
 else
   log "Job Queue $JOB_QUEUE already exists (status: $JQ_STATUS)"
-  log "Reconciling Job Queue compute environment order: $COMPUTE_ENV (g6 first), then $FALLBACK_COMPUTE_ENV (g5 fallback)"
+  log "Reconciling Job Queue compute environment: single CE $COMPUTE_ENV (g6+g5 diversified Spot pool)"
   aws batch update-job-queue \
     --job-queue "$JOB_QUEUE" \
     --state ENABLED \
@@ -694,8 +708,7 @@ cat <<EOF
 ────────────────────────────────────────────────────────────────
 Batch + Spot infrastructure ready:
   Region:              $REGION
-  Primary CE:          $COMPUTE_ENV ($PRIMARY_INSTANCE_TYPE, maxVcpus=$MAX_VCPUS, order=1)
-  Fallback CE:         $FALLBACK_COMPUTE_ENV ($FALLBACK_INSTANCE_TYPE, maxVcpus=$MAX_VCPUS, order=2)
+  GPU CE:              $COMPUTE_ENV (types=${ALL_GPU_INSTANCE_TYPES[*]}, maxVcpus=$MAX_VCPUS, SPOT_PRICE_CAPACITY_OPTIMIZED)
   Job queue:           $JOB_QUEUE
   Job definition:      $JOB_DEF (image: $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO:latest)
   CPU environment:     $CPU_COMPUTE_ENV (maxVcpus=$CPU_MAX_VCPUS, types=$CPU_PRIMARY_INSTANCE_TYPE,$CPU_FALLBACK_INSTANCE_TYPE)
@@ -705,8 +718,7 @@ Batch + Spot infrastructure ready:
   Instance role:       arn:aws:iam::$ACCOUNT_ID:role/$INSTANCE_ROLE
   Task exec role:      arn:aws:iam::$ACCOUNT_ID:role/$TASK_EXEC_ROLE
   Security group:      $SG_ID
-  Primary subnets:     $PRIMARY_SUBNET_IDS
-  Fallback subnets:    $FALLBACK_SUBNET_IDS
+  GPU subnets:         $PRIMARY_SUBNET_IDS
 
 Next steps:
   1. (Cold-start opt) Create ECR pull-through cache for the PyTorch base image:
@@ -715,7 +727,7 @@ Next steps:
          --upstream-registry-url registry-1.docker.io \\
          --region $REGION
   2. Verify CE and JQ are VALID:
-       aws batch describe-compute-environments --compute-environments $COMPUTE_ENV $FALLBACK_COMPUTE_ENV \\
+       aws batch describe-compute-environments --compute-environments $COMPUTE_ENV \\
          --query 'computeEnvironments[].{name:computeEnvironmentName,state:state,status:status,instanceTypes:computeResources.instanceTypes}' --region $REGION
   3. Smoke test (single cheap position, ~2-3 min):
        AWS_REGION=$REGION python -m src.batch.launch --positions K --seed 42
