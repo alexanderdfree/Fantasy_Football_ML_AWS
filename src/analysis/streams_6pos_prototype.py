@@ -11,6 +11,18 @@ all 6 positions on per-position ``torch.cuda.Stream``s, so their kernels co-resi
 single CUDA context and fill each other's idle gaps (the substitute for NVIDIA MPS,
 which is unavailable on the WSL2/Windows 5080 this targets).
 
+**RESULT — MEASURED-NEGATIVE (2026-06-22, RTX 5080 / sm_120).** Graphed full-step A/B
+(QB/RB/WR/TE, seeds 42/1337/2024, ``--fixed-epochs 30``, all four captured ``full``):
+**seq→streams = 1.033 ± 0.005×, i.e. NO overlap** (an earlier graphed run gave
+1.010 ± 0.008× — both ≈1.0×; eager sanity also 1.00×). The single
+thread can't fill the GPU's idle gaps — in eager mode the GIL serialises the host
+launches (the bottleneck), and in graphed mode the launch storm is already collapsed so
+there's nothing left to overlap. **Lever B is CLOSED** — the ``parallel_train -j6``
+subprocess model stays. Limitation: K/DST were excluded (their targets are computed from
+raw PBP downstream of ``data/splits``, so they don't build in this harness); the 4 skill
+positions share the same launch-bound attn arch and are representative. Full write-up in
+[todo/gpu_launch_bound_levers.md](../../todo/gpu_launch_bound_levers.md) (Lever B).
+
 **The crux (why one thread, not six):** Python's GIL serialises host-side launches
 across threads — the very thing that's the bottleneck — so this drives a **single
 thread that round-robins one training step per position per round onto each position's
@@ -92,6 +104,7 @@ class PositionState:
     n_epochs: int
     targets: list[str]
     graphed: bool = False
+    graph_mode: str = "eager"  # "full" | "model" | "eager" — which capture engaged
 
 
 def _fingerprint(preds: dict) -> dict:
@@ -204,7 +217,7 @@ def _build_states(positions: list[str], seed: int, splits, fixed_epochs: int) ->
 def _train_one_step(trainer, batch) -> None:
     """One optimizer step.
 
-    === KEEP IN SYNC with src/shared/training.py MultiHeadTrainer.train (866-906) ===
+    === KEEP IN SYNC with src/shared/training.py MultiHeadTrainer.train (1288-1378) ===
     Replicates: zero_grad → autocast(forward + loss + dormant entropy) →
     scaler.scale().backward() → unscale_ → clip_grad_norm_(1.0) → scaler.step →
     scaler.update → (per-batch scheduler).
@@ -217,10 +230,18 @@ def _train_one_step(trainer, batch) -> None:
     """
     import torch
 
+    full_step = trainer._graphed_step
     trainer.optimizer.zero_grad(set_to_none=True)
     with trainer._autocast():
-        preds, y_batch = trainer._forward_batch(batch)
-        loss, _ = trainer.criterion(preds, y_batch)
+        if full_step is not None:
+            # Full-step graph: gather + forward + combined loss happen INSIDE the
+            # captured graph; ``batch`` is a bare index tensor (training.py:1293-1294).
+            loss = full_step(batch)
+        else:
+            preds, y_batch = trainer._forward_batch(batch)
+            # _compute_loss_components (not criterion.__call__): matches production
+            # (training.py:1302), which avoids forward()'s per-head .item() syncs.
+            loss, _ = trainer.criterion._compute_loss_components(preds, y_batch)
         entropy_fn = getattr(trainer.model, "attention_entropy_loss", None)
         if entropy_fn is not None:
             entropy_term = entropy_fn()
@@ -263,13 +284,24 @@ def _maybe_capture_graph(state: PositionState, base_seed: int, stream) -> None:
     ctx = torch.cuda.stream(stream) if stream is not None else contextlib.nullcontext()
     try:
         with ctx:
-            state.trainer._maybe_graph_model(state.train_loader)
+            # Widest-scope-first, mirroring production (training.py:1233-1234):
+            # full-step (gather+fwd+loss) capture; else model-only fwd+bwd.
+            if not state.trainer._maybe_graph_full_step(state.train_loader):
+                state.trainer._maybe_graph_model(state.train_loader)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         state.graphed = getattr(state.trainer, "_graphed", False)
+        state.graph_mode = (
+            "full"
+            if getattr(state.trainer, "_graphed_step", None) is not None
+            else "model"
+            if state.graphed
+            else "eager"
+        )
     except Exception as e:  # noqa: BLE001 — graph+stream capture is the fragile bit
         print(f"  WARN: graph capture failed for {state.position}: {e!r}; eager fallback")
         state.graphed = False
+        state.graph_mode = "eager"
 
 
 def _train_position_solo(state: PositionState, base_seed: int) -> float:
@@ -285,9 +317,11 @@ def _train_position_solo(state: PositionState, base_seed: int) -> float:
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     t0 = time.perf_counter()
+    full_step = state.trainer._graphed_step is not None
     for epoch in range(state.n_epochs):
         _reseed(base_seed, state.index, epoch)
-        for batch in state.train_loader:
+        loader_iter = state.train_loader.index_batches() if full_step else state.train_loader
+        for batch in loader_iter:
             _train_one_step(state.trainer, batch)
         if not state.trainer.scheduler_per_batch:
             state.trainer.scheduler.step()
@@ -318,11 +352,18 @@ def _train_streams_roundrobin(states: dict, base_seed: int) -> tuple[float, dict
     for s in pos_list:
         _maybe_capture_graph(s, base_seed, stream=streams[s.position])
 
+    def _epoch_iter(state):
+        # Full-step-graphed positions consume bare index tensors; others consume
+        # sliced batches — mirror production's iterator switch (training.py:1289).
+        if state.trainer._graphed_step is not None:
+            return iter(state.train_loader.index_batches())
+        return iter(state.train_loader)
+
     iters = {}
     epochs = {s.position: 0 for s in pos_list}
     for s in pos_list:
         _reseed(base_seed, s.index, 0)
-        iters[s.position] = iter(s.train_loader)
+        iters[s.position] = _epoch_iter(s)
     active = list(pos_list)
     host_t0 = {s.position: None for s in pos_list}
     host_sec = {s.position: 0.0 for s in pos_list}
@@ -346,7 +387,7 @@ def _train_streams_roundrobin(states: dict, base_seed: int) -> tuple[float, dict
                     active.remove(s)
                     continue
                 _reseed(base_seed, s.index, epochs[s.position])
-                iters[s.position] = iter(s.train_loader)
+                iters[s.position] = _epoch_iter(s)
                 batch = next(iters[s.position])
             # Issue this step onto the position's stream; NO cross-stream sync in the
             # round — the GPU scheduler overlaps device-side kernels across streams.
@@ -519,6 +560,7 @@ def main() -> int:
     print(f"sequential total (sum of solo)   : {seq_total:8.1f} s")
     print(f"streams wall-clock (round-robin) : {streams_wall:8.1f} s")
     print(f"SEQUENTIAL → STREAMS SPEEDUP     : {speedup:8.2f}×")
+    print("capture modes (streams arm):", {p: s.graph_mode for p, s in str_states.items()})
     if eager_in_graph:
         print(f"\nnote: graph ON but eager (no-op capture) for: {eager_in_graph} (nested trainer)")
     if per_batch_sched:

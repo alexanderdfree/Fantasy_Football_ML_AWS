@@ -1,8 +1,9 @@
-# GPU launch-bound optimization — CUDA graph built; streams prototyped
+# GPU launch-bound optimization — CUDA graph built; streams measured-negative
 
 Planning doc for making **local 6-position parallel training faster**, written after the
 core-pool work (#670) established that the bottleneck is the GPU, not the CPU. **Lever A is
-now built & measured** (2026-05-31, see below); Lever B is not. Both levers are opt-in and
+now built & measured** (2026-05-31, see below); **Lever B is now MEASURED-NEGATIVE**
+(2026-06-22, 5080 sm_120 — no cross-stream overlap; lever closed, see below). Both levers are opt-in and
 gated like the existing `FF_COMPILE` per-arch speed knobs (ADR-0017). The intended gate was a
 per-position A/B (inertness Δ=0 MAE + speedup) — Lever A cleared the speedup but **not** the
 strict Δ=0 inertness, and shipped as a documented opt-in speed knob anyway (details below).
@@ -471,7 +472,7 @@ happened to pass a number. Fixed via the env channel (not argv): `launch_tune` n
 `auto` sentinel never hits `type=int`. No train.py edit was needed (it would have fired a
 6-position retrain); an explicit `--n-jobs N` still overrides.
 
-## Lever B — single process + per-position CUDA streams (the MPS substitute)
+## Lever B — single process + per-position CUDA streams (the MPS substitute) — MEASURED-NEGATIVE (2026-06-22, 5080 sm_120); CLOSED
 
 **Idea:** the thing MPS would have done. Collapse the 6 subprocesses into **one process** running the 6 positions on separate `torch.cuda.Stream`s, so their kernels co-reside in one CUDA context and fill each other's idle gaps inside the scheduler — without a cross-process server.
 
@@ -507,6 +508,42 @@ single thread only overlaps *device-side* work (the GIL serialises launches), an
 already fills some idle gaps; so the incremental win over graphed `-j6` may be modest. The
 harness exists to replace that estimate with a number.
 
+**MEASURED — NEGATIVE (2026-06-22, RTX 5080 / sm_120 / WSL2; PR #1309).** The prototype
+was first refreshed to **full-step-graph parity** (its per-step body, capture, and batch
+iterators now mirror production's autodetect-ON full-step CUDA graph: `_maybe_graph_full_step`
+→ `_graphed_step`, `index_batches()` iterators, `_compute_loss_components`). Then the gate was
+run on QB/RB/WR/TE, 3 seeds (42/1337/2024), `--fixed-epochs 30`, with **all four positions
+confirmed captured `full`**:
+
+- **Graphed full-step A/B: seq→streams = 1.033 ± 0.005×** (fresh re-run, the headline; an
+  earlier graphed run gave 1.010 ± 0.008× — both ≈1.0× / no meaningful overlap, run-to-run
+  variation on the shared GPU). i.e. **zero overlap**. The eager sanity arm
+  (`--no-graph --deterministic`) is also 1.00×. The single-thread round-robin streams arm's
+  wall-clock ≈ the sequential sum of solos.
+- **Why no overlap:** the lever's two regimes both fail to fill the GPU's idle gaps. (1) *Eager:*
+  the GIL serialises the host-side kernel **launches** — the exact bottleneck the diagnosis
+  identified — so one thread round-robining steps onto N streams still issues launches one at a
+  time. (2) *Graphed:* full-step capture has already collapsed the launch storm into one cheap
+  replay per step, so there is little host-launch idle left to overlap, and the FP16+GradScaler
+  per-step inf/NaN-check sync plus each replay's own GPU occupancy leave no device-side slack for
+  a neighbouring stream to slot into. This **matches the section's own "honest expectation"**
+  above (graphs already collapsed the launches; the single thread only overlaps device-side work;
+  `-j6` already fills some gaps).
+- **Limitations (don't over-read):** measured on the **4 skill positions only** — K and DST are
+  unbuildable from this environment's `data/splits` (their targets `fg_yards_made` /
+  `points_allowed` are computed from raw kicker/defense PBP downstream of the shared splits, a
+  pre-existing prototype/data limitation, not a streams issue). They share the same launch-bound
+  attention arch, so the overlap physics is representative. Separately, the prototype's
+  `--no-graph --deterministic` "**parity OK**" precondition does **not** currently hold even for
+  the *unmodified* (pre-edit) code — both arms DRIFT identically (proven by re-running pre-edit
+  `HEAD~1`); the cause is the round-robin's cuDNN-autotune-under-co-residency / shared-RNG draw,
+  not the copied step body, and it does **not** affect the batch-order-independent **timing**.
+- **Conclusion — Lever B CLOSED.** No productionization; the `parallel_train -j6` subprocess
+  model stays (it keeps process isolation + the core pool), and **Lever A (CUDA graphs) remains
+  the local-iteration win**. The prototype is now refreshed to full-step-graph parity (PR
+  #1309), so any future re-measure on a different GPU / regime (e.g. an L4 with real MPS, or a
+  larger model where device-side overlap could exist) starts from a faithful baseline.
+
 ### Lever B′ — within-position overlap (base NN ∥ attention NN) — PROTOTYPE (2026-06-07)
 
 A smaller, lower-risk slice of B scoped to **one position**: the pipeline trains
@@ -538,6 +575,6 @@ per-position worker entry.
 
 ## Recommended sequencing
 1. ~~**Lever A first**~~ — **DONE** (shipped behind `FF_CUDA_GRAPH`, 1.84×, off by default; not bit-inert — see the Lever A result above).
-2. **Lever B only if A is insufficient** — it's the bigger MPS-substitute hammer but supersedes the core pool + subprocess model; weigh that explicitly before committing. (A's per-position 1.84× is a real local-iteration win, so B is lower priority now.)
+2. ~~**Lever B only if A is insufficient**~~ — **CLOSED, MEASURED-NEGATIVE** (2026-06-22, 5080): the single-process round-robin streams arm gave **1.03×** (1.033 ± 0.005×, no cross-stream overlap) even with full-step graphs engaged — the GIL serialises launches and graphs already collapsed the launch storm, so there's no idle to fill. The `-j6` subprocess model + core pool stay; A's per-position 1.84× remains the local-iteration win. (See the Lever B section for the measurement.)
 
 Both are **launch-overhead** levers (the measured bottleneck), not occupancy/FLOP levers (the 5080 has those to spare).
