@@ -1,0 +1,10 @@
+{
+  "run_id": "2026-06-22T16:55:30_ed04a46",
+  "timestamp": "2026-06-22T16:55:30",
+  "git_hash": "ed04a46",
+  "note": "Training skipped (manual) - inert src/shared change: Lever A3 optimizer-tail CUDA-graph capture (PR #1314); local end-to-end delta=0 gate confirmed bit-identical to the A2 path, owner-approved skip",
+  "results": [],
+  "positions": [],
+  "training_skipped": true,
+  "pr_number": 1314
+}
