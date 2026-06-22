@@ -215,7 +215,12 @@ def _job_definition_for(position: str, branch: str = "full") -> str:
             else JOB_DEFINITION
         )
 
-    use_cpu = position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU
+    # Full-mode CPU routing requires BOTH the CPU job-def AND the CPU queue, so
+    # it stays symmetric with _job_queue_for (line ~231) and the --split guard.
+    # A def/queue pair must agree for a valid Batch submission; routing a CPU
+    # job-def to the default GPU queue is invalid/wasteful, so a partial config
+    # (only one of the two vars set) falls back to the GPU def+queue pair.
+    use_cpu = position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU and JOB_QUEUE_CPU
     base = JOB_DEFINITION_CPU if use_cpu else JOB_DEFINITION
     if use_cpu and JOB_DEFINITION_CPU_REVISION:
         return f"{base}:{JOB_DEFINITION_CPU_REVISION}"
