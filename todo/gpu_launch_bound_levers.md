@@ -42,8 +42,8 @@ process-backed MPS backend for that environment:
   `--parallel-backend auto --n-jobs auto` (auto n_jobs = CPU count, RAM-clamped
   for mps → 4 on the g6.xlarge shape), preserving the outer six-position
   fan-out (one g6.xlarge per position). The container resolves `auto` through
-  `detect_platform()`: native-Linux L4/g6 -> MPS; Mac/MPS, WSL/native 5080, and
-  non-L4 CUDA hosts -> the existing thread backend.
+  `detect_platform()`: native-Linux L4/g6 or A10G/g5 (sm_89/sm_86) -> MPS;
+  Mac/MPS, WSL/native 5080, and other CUDA hosts -> the existing thread backend.
 - `src.tuning.tune_nn` starts `nvidia-cuda-mps-control` inside the container,
   launches worker subprocesses via `spawn`, and uses the existing core pool to
   lease CPU affinity for each whole trial while BLAS stays capped at one thread.
