@@ -75,11 +75,14 @@ _INCLUDE_FEATURES = {
     # All EWMA dropped (>0.98 corr with rolling means).
     "ewma": [],
     "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
+    # carry_share_L3/L5 dropped: WRs rarely carry, so these are sparse,
+    # near-constant (mostly 0), low-information columns. RB measured
+    # carry_share_L5 r=0.984 w/ L3 and carry_share_L3 r=0.982 w/ team-share
+    # and dropped them (see src/rb/config.py share-block comment); WR's are
+    # additionally low-variance, so they add noise without signal.
     "share": [
         "target_share_L3",
         "target_share_L5",
-        "carry_share_L3",
-        "carry_share_L5",
         "snap_pct",
         "air_yards_share",
     ],

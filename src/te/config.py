@@ -70,16 +70,15 @@ _INCLUDE_FEATURES = {
     ],
     "ewma": [],
     "trend": ["trend_targets", "trend_carries", "trend_snap_pct"],
-    # Inherited from WR's share block — kept both L3 and L5 here without a
-    # TE-specific collinearity audit. RB dropped target_share_L5 / carry_share_L5
-    # / carry_share_L3 after measuring r > 0.96 with their L3 / team-share
-    # counterparts (see src/rb/config.py share-block comment). May revisit
-    # once a TE audit is run.
+    # carry_share_L3/L5 dropped: TEs rarely carry, so these are sparse,
+    # near-constant (mostly 0), low-information columns. RB dropped
+    # carry_share_L5 (r=0.984 w/ L3) and carry_share_L3 (r=0.982 w/ team-share)
+    # after its multicollinearity audit (see src/rb/config.py share-block
+    # comment); TE's are additionally low-variance, so they add noise without
+    # signal. target_share_L3/L5 retained (TE target usage is real signal).
     "share": [
         "target_share_L3",
         "target_share_L5",
-        "carry_share_L3",
-        "carry_share_L5",
         "snap_pct",
         "air_yards_share",
     ],
