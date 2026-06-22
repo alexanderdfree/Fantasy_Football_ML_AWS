@@ -178,13 +178,27 @@ raises per-host tune throughput — the quota raise multiplies hosts, not trials
   stands for 100+-trial-per-worker runs (consider `empty_cache()` between trials).
 - **(ii) graph-vs-graph same-seed Δ=0 and (iii) 3-seed regime sanity (FF_NN_FIXED_EPOCHS=30,
   FF_FORCE_DROPOUT_ZERO=1, vs model-only graph within the ~0.5% worst-target envelope):
-  PENDING** — required before proposing the knob anywhere beyond tuning (training stays
-  default-off regardless until an owner-approved rebaseline). 5080 recipe (Batch
-  `--mode train` would pollute prod artifacts, so run locally):
+  VERIFIED on the local 5080 (sm_120), 2026-06-22 — results below.** (Was the open gate
+  before proposing the knob beyond tuning; full-step shipped as the production default on
+  2026-06-15 / #1171 off the L4 Batch validation, and these 5080 numbers corroborate it.)
+  Reproduction (Batch `--mode train` would pollute prod artifacts, so run locally):
   `FF_CUDA_GRAPH_FULL=1 FF_NN_FIXED_EPOCHS=30 FF_FORCE_DROPOUT_ZERO=1 python -m src.rb.run_pipeline`
-  twice same-seed → diff attn metrics for (ii); 3 seeds × `FF_CUDA_GRAPH_FULL={1,0}`
-  (same fixed-epoch knobs) → worst-target attn FP-MAE delta ≤ ~0.5% for (iii).
+  twice same-seed → diff attn metrics for (ii); seeds × `FF_CUDA_GRAPH_FULL={1,0}`
+  (same fixed-epoch knobs) → full-step-vs-model-only attn FP-MAE delta for (iii).
   Note the graphfull regime now INCLUDES the graphed val pass (D2 below).
+  - **(ii) PASS, exactly.** Two same-seed `FF_CUDA_GRAPH_FULL=1` RB runs gave attn FP-MAE
+    `4.134755` vs `4.134755`, |Δ| = 0.00e+00 (deterministic Ridge FP-MAE identical too → same
+    data path). The graphed full-step path is bit-deterministic run-to-run.
+  - **(iii) PASS in substance (8 seeds, RB, 30 fixed epochs, dropout-0).** Paired same-seed
+    Δ(full−model) total FP-MAE = **−0.001 ± 0.041 (−0.02% of the 4.13 base) = 0.02× the
+    seed-to-seed spread** (model-only std 0.043 = 1.0% of base, full-step std 0.020 = 0.5%) —
+    full-step and model-only are statistically indistinguishable, no systematic regression.
+    Per-head signed mean drift is ≤0.25% on the yardage/reception heads; only `rushing_tds`
+    shows +0.82% mean (~0.003 absolute, sign-varying, doesn't reach the aggregate). **Metric
+    caveat (same trap as the Lever C parity gate):** a naive worst-target *relative* delta
+    reads 50–136% — entirely `fumbles_lost` (model MAE ~0.04, near-zero clamped head); exclude
+    sub-0.05-MAE heads or judge in FP space. A first 3-seed run looked 1–2% sign-varying; that
+    was seed noise that averaged to ~0 at 8 seeds (the AGENTS ≥5–8-seed rule).
 
 ### Round 2 — per-trial fixed costs (D1 #1127) + graphed val pass (D2 #1128), 2026-06-11
 
@@ -368,7 +382,19 @@ seeds-per-config, lanes/hosts multiply configs. Eager-vs-stacked tuning rate: 35
 namespace — stacked trials cost ~2× an eager-regime trial for 4× the seeds.
 **DEFAULT-ON at N=24 for NN tuning + the ab_harness A/B path (owner call, 2026-06-15).**
 Given the crossover (eager-FP16+full-graph wins ≤8 seeds; stacking wins ≥~9, measured 2.68
-vs 1.0 s/seed at N=24), stacking is now the GPU default at the per-seed optimum. **Scope:
+vs 1.0 s/seed at N=24), stacking is now the GPU default at the per-seed optimum.
+
+**Local 5080 (sm_120) head-to-head — stacking wins EARLIER and HARDER than on the L4**
+(measured 2026-06-22, RB, 30 fixed epochs, `ab_ensemble_seeds --compare`, single lane, 1 core):
+crossover is **below N=8** — stacked per-seed speedup **1.28× at N=8, 2.58× at N=16, 3.51× at
+N=24** (vs the L4's ~9-seed crossover / 2.68× at N=24). eager-FP16+full-graph holds a ~1.7 s/seed
+launch-bound floor (the 5080's FP16 tensor cores don't help a launch-bound model); stacked s/seed
+drops 1.38 → 0.68 → 0.47. The intuition that a faster GPU would favour the FP16-graph arm is
+**backwards** — a faster GPU is *more* launch-bound, so it favours the launch-amortizing stacked
+arm even more (L4→5080 speeds eager ~1.6× but stacked@24 ~2.1×). So the N=24 default is even
+better-placed on the 5080 than on the L4 it was decided on; no per-arch retune needed.
+
+**Scope:
 tune + every `ab_*.py` spec (and any `ab_harness`-based ablation) — NOT the legacy
 `ablate_*` scripts on `ablation_runner`**, which stay eager: only ~3 of 8 are
 stacking-compatible and several break under the LN/FP32/NN-only regime (`backbone_norm`
