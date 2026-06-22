@@ -31,5 +31,6 @@ The commit↔model relationship is now one-to-one: every merge to `main` produce
 
 ## Changelog
 
+- **2026-06-22** — Warm-EC2 rollback host swapped g4dn/T4 → g6/L4 (T4 retired from training). This ADR's body is kept verbatim as the original g4dn-era decision; the current rollback hardware is g6.xlarge/L4 (see [ADR-0009](0009-warm-training-host.md) + [docs/ec2_design.md](../ec2_design.md)). Documentation-only.
 - **2026-06-01** — Corrected the historical EC2 rollback implementation text: current `train-ec2.yml` runs one sequential SSM command on the single T4 host, not six parallel commands. Documentation-only.
 - **2026-04-19** — D7/D9 and §2 diagram reconciled with the EC2 training switch; the Batch path is preserved as standby (see [docs/batch_design.md](../batch_design.md)).

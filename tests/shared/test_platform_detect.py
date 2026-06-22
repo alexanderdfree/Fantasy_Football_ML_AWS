@@ -44,8 +44,15 @@ def _force_os(monkeypatch, system, release="", machine="x86_64"):
 @pytest.mark.parametrize(
     "capability,name,sm,bf16,wheel",
     [
-        ((7, 5), "Tesla T4", "sm_75", False, "cu126"),  # g4dn — no native BF16
-        ((8, 9), "NVIDIA L4", "sm_89", True, "cu126"),  # g6 — BF16-capable
+        ((7, 0), "Tesla V100-SXM2-16GB", "sm_70", False, "cu126"),  # pre-Turing → cu126
+        (
+            (7, 5),
+            "Tesla T4",
+            "sm_75",
+            False,
+            "cu130",
+        ),  # g4dn (retired) — no native BF16; cu130 still ships sm_75
+        ((8, 9), "NVIDIA L4", "sm_89", True, "cu130"),  # g6 — BF16-capable
         ((12, 0), "NVIDIA GeForce RTX 5080", "sm_120", True, "cu130"),  # Blackwell
     ],
 )

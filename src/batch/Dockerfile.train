@@ -3,11 +3,14 @@
 # per-Spot-host image pull (the dominant chunk of the ~258 s cold start; see
 # docs/batch_design.md §"Cold-start optimization"). Replaces the conda-based
 # pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime base (~3.7 GB compressed) with
-# nvidia/cuda:*-base (~86 MB) + the cu126 torch wheel, which bundles its own
+# nvidia/cuda:*-base (~86 MB) + the cu130 torch wheel, which bundles its own
 # CUDA libs — so we do NOT layer them on a *-cudnn-runtime base (~2 GB) that
-# would double-count cudnn/cublas and erase the win. torch VERSION is pinned
-# identical to the old base (2.12.0 / cu126) so training numerics stay
-# comparable: this is a packaging change, not a torch upgrade.
+# would double-count cudnn/cublas and erase the win. torch is 2.12.1 / cu130
+# (bumped from 2.12.0 / cu126 on 2026-06-22, once the T4/sm_75 EC2 rollback
+# retired to g6/L4): cu130 covers sm_75->sm_120 and unifies this image with the
+# local cu130 dev wheel (requirements-gpu.txt). This is a deliberate numerics
+# rebaseline — the next 6-position retrain re-establishes the benchmark baseline
+# (not byte-comparable to the pre-cutover cu126 history).
 #
 # Base image served via an optional ECR pull-through cache (strategy 2c). When
 # PULL_THROUGH_PREFIX is set, the base is pulled from ECR instead of Docker Hub
@@ -17,7 +20,7 @@
 # leave unset to pull from Docker Hub directly. nvidia/cuda is an org image, so
 # it routes through the cache exactly like pytorch/pytorch did.
 ARG PULL_THROUGH_PREFIX=
-FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}nvidia/cuda:12.6.3-base-ubuntu24.04
+FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}nvidia/cuda:13.0.3-base-ubuntu24.04
 
 # System deps the conda base provided that the slim CUDA base lacks:
 #  - python3: Ubuntu 24.04 ships CPython 3.12, matching the project's cp312
@@ -48,9 +51,9 @@ WORKDIR /opt/ml/code
 # cache mount lives on a different overlay, so hardlinking falls back to copy —
 # explicit copy mode skips the failed probe and silences the CI warning.
 ENV UV_LINK_MODE=copy
-# requirements.txt carries the cu126 torch wheel via an --extra-index-url
+# requirements.txt carries the cu130 torch wheel via an --extra-index-url
 # (mirrors requirements-gpu.txt). unsafe-best-match lets uv resolve torch +
-# its nvidia-*-cu12 deps from the pytorch index while everything else resolves
+# its nvidia-*-cu13 deps from the pytorch index while everything else resolves
 # from PyPI (matches train-batch.yml's UV_INDEX_STRATEGY).
 ENV UV_INDEX_STRATEGY=unsafe-best-match
 

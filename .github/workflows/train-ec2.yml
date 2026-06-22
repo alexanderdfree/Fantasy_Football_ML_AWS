@@ -1,7 +1,7 @@
 name: Train on EC2
 
 # Active training path — fires after batch-image.yml pushes a fresh image to
-# ECR, then sends an SSM Run Command to the warm g4dn.xlarge. See
+# ECR, then sends an SSM Run Command to the warm g6.xlarge. See
 # docs/ec2_design.md.
 
 on:
@@ -250,7 +250,8 @@ jobs:
               ;;
           esac
           # Sequential loop inside a single SSM command so we get one command
-          # ID to poll. Parallel runs would OOM the single T4.
+          # ID to poll. Sequential by design on the single host — the g6/L4 has
+          # memory headroom but the rollback stays sequential for predictable polling.
           # Positions are emitted by the detect helper as position symbols.
           # JSON-encode via jq so command quoting can't bite us.
           REMOTE_CMD="set -eu; for POS in $POSITIONS; do FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA' /usr/local/bin/ff-train \"\$POS\" '$SEED'; done"
@@ -438,12 +439,13 @@ jobs:
           # --instance-type is now a FALLBACK: src/batch/benchmark.py derives the
           # History-tab label at runtime from the gpu_name + cuda_graph_active
           # fields src/batch/train.py stamps into benchmark_metrics.json (the EC2
-          # warm box is a g4dn/T4, sm_75 < sm_80, so it derives "...(T4, On-Demand)"
-          # and never CUDA-graph). This value only shows if GPU metadata is absent.
+          # warm box is a g6/L4, sm_89 >= sm_80, so it derives
+          # "...(L4, On-Demand, CUDA-graph)"). This value only shows if GPU
+          # metadata is absent.
           python -m src.batch.benchmark \
             --download-only \
             --backend ec2 \
-            --instance-type "g4dn.xlarge (On-Demand)" \
+            --instance-type "g6.xlarge (On-Demand)" \
             --positions $POSITIONS \
             --note "EC2 auto-run (${NOTE_SHA})" \
             --git-hash "$HEAD_SHA" \

@@ -600,12 +600,24 @@ def test_derive_instance_label_l4_batch_adds_cuda_graph():
 
 @pytest.mark.unit
 def test_derive_instance_label_ec2_is_on_demand():
-    """``backend=ec2`` (warm rollback box) → On-Demand provisioning."""
+    """``backend=ec2`` → On-Demand provisioning (generic; the T4 was the
+    pre-2026-06-22 rollback GPU, kept here to exercise the eager/no-graph path)."""
     import src.batch.benchmark as bb
 
     metrics = {"QB": {"gpu_name": "Tesla T4", "sm": "sm_75", "cuda_graph_active": False}}
     label = bb._derive_instance_label(metrics, backend="ec2", fallback="FB")
     assert label == "g4dn.xlarge (T4, On-Demand)"
+
+
+@pytest.mark.unit
+def test_derive_instance_label_l4_ec2_is_on_demand():
+    """The post-2026-06-22 EC2 rollback host is a g6/L4 (sm_89 >= sm_80), so the
+    warm-box label is On-Demand AND picks up the ``, CUDA-graph`` suffix."""
+    import src.batch.benchmark as bb
+
+    metrics = {"QB": {"gpu_name": "NVIDIA L4", "sm": "sm_89", "cuda_graph_active": True}}
+    label = bb._derive_instance_label(metrics, backend="ec2", fallback="FB")
+    assert label == "g6.xlarge (L4, On-Demand, CUDA-graph)"
 
 
 @pytest.mark.unit

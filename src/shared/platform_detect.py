@@ -66,7 +66,7 @@ class PlatformInfo:
     sm: str | None  # CUDA only, e.g. "sm_120"
     supports_bf16: bool  # native BF16 Tensor Cores (CUDA sm_80+)
     cpu_count: int | None
-    recommended_cuda_wheel: str | None  # "cu130" (sm_120) | "cu126" | None
+    recommended_cuda_wheel: str | None  # "cu130" (sm_75+) | "cu126" (pre-Turing) | None
 
     def summary(self) -> str:
         """One-line, log-friendly description of the host."""
@@ -101,8 +101,10 @@ def detect_platform() -> PlatformInfo:
             sm=f"sm_{major}{minor}",
             supports_bf16=cc >= _BF16_MIN_CAPABILITY,
             cpu_count=os.cpu_count(),
-            # Blackwell (sm_120) needs the cu130 wheel; T4/A10G/L4 run on cu126.
-            recommended_cuda_wheel="cu130" if major >= 12 else "cu126",
+            # cu130 covers Turing->Blackwell (sm_75+: T4/A10G/L4/5080); cu126 is
+            # only for pre-Turing (sm<7.5, e.g. V100). All current project GPUs
+            # use cu130 (the AWS Batch image moved off cu126 on 2026-06-22).
+            recommended_cuda_wheel="cu130" if cc >= (7, 5) else "cu126",
         )
 
     backend = "mps" if torch.backends.mps.is_available() else "cpu"

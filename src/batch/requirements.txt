@@ -1,23 +1,25 @@
 # torch is no longer provided by the base image — the slim nvidia/cuda:*-base
-# base (cold-start image-slim change) ships no torch, so install it here. Pin the
-# SAME version the old pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime base shipped
-# (2.12.0 / cu126) so training numerics stay comparable; this is a packaging
-# change, not an upgrade. The L4 (sm_89) uses the cu126 build (mirrors
-# requirements-gpu.txt's cu130 pin for the Blackwell dev box). uv resolves this
-# +its nvidia-*-cu12 deps from the extra index; UV_INDEX_STRATEGY=unsafe-best-match
-# (set in Dockerfile.train) lets PyPI serve the rest.
---extra-index-url https://download.pytorch.org/whl/cu126
-torch==2.12.0+cu126
-numpy==2.4.6
+# base (cold-start image-slim change) ships no torch, so install it here. As of
+# 2026-06-22 this is torch 2.12.1 / cu130 (CUDA 13.0), bumped from 2.12.0 / cu126
+# once the T4/sm_75 EC2 rollback retired to g6/L4: cu130 covers Turing->Blackwell
+# (sm_75->sm_120) and unifies the Batch image with requirements-gpu.txt's local
+# cu130 dev wheel. This is a deliberate numerics rebaseline (different CUDA
+# kernels), NOT a transparent packaging change — the next 6-position retrain
+# re-establishes the benchmark baseline. uv resolves this + its nvidia-*-cu13
+# deps from the extra index; UV_INDEX_STRATEGY=unsafe-best-match (set in
+# Dockerfile.train) lets PyPI serve the rest.
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.12.1+cu130
+numpy==2.5.0
 pandas==3.0.3
 pyarrow==24.0.0
 nflreadpy==0.1.5
 polars==1.41.2
 scikit-learn==1.9.0
-scipy==1.17.1
+scipy==1.18.0
 matplotlib==3.11.0
 joblib==1.5.3
 lightgbm==4.6.0
 mord==0.7
-boto3==1.43.31
+boto3==1.43.35
 optuna==4.9.0

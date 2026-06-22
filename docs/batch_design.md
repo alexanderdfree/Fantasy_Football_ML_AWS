@@ -120,16 +120,16 @@ Simplified shape (the real file uses uv + a build-time import smoke + the
 and §"Cold-start optimization" 2d):
 
 ```dockerfile
-FROM nvidia/cuda:12.6.3-base-ubuntu24.04          # slim CUDA base (~86 MB), no torch
+FROM nvidia/cuda:13.0.3-base-ubuntu24.04          # slim CUDA base (~86 MB), no torch
 RUN apt-get install -y python3 python3-dev g++ libgomp1 ca-certificates
 WORKDIR /opt/ml/code
 COPY src/batch/requirements.txt .
-RUN uv pip install --system -r requirements.txt   # incl. torch==2.12.0+cu126 (cu126 index)
+RUN uv pip install --system -r requirements.txt   # incl. torch==2.12.1+cu130 (cu130 index)
 COPY src/ src/
 ENTRYPOINT ["python", "-m", "src.batch.train"]
 ```
 
-- Slim `nvidia/cuda:*-base` base; **torch installed via pip** (`2.12.0+cu126`, the
+- Slim `nvidia/cuda:*-base` base; **torch installed via pip** (`2.12.1+cu130`, the
   wheel brings its own CUDA libs) rather than baked into a conda base (2d)
 - Project source baked into `/opt/ml/code/`
 - ENTRYPOINT runs train.py; Batch passes `["--position", "RB", "--seed", "42"]` as command override
@@ -164,7 +164,7 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 
 Derived from root `requirements.txt`:
 - **Excluded**: `flask`, `gunicorn`, `pytest`
-- **Added (CUDA)**: `torch==2.12.0+cu126` via `--extra-index-url https://download.pytorch.org/whl/cu126` — the slim `nvidia/cuda:*-base` base ships no torch (was previously provided by the conda base; see §"Cold-start optimization" 2d)
+- **Added (CUDA)**: `torch==2.12.1+cu130` via `--extra-index-url https://download.pytorch.org/whl/cu130` — the slim `nvidia/cuda:*-base` base ships no torch (was previously provided by the conda base; see §"Cold-start optimization" 2d). cu130 (bumped from cu126 on 2026-06-22, T4 retired) covers sm_75→sm_120
 - **Added**: `boto3>=1.34` (S3 operations), `nflreadpy==0.1.5` + `polars==1.41.1` (nflverse data loading via the `src/data/nfl_source.py` shim; imported transitively by K/DST data modules even though no fetch happens at training time)
 
 ## Position Pipeline Invocation
@@ -411,16 +411,17 @@ stacking build-time optimizations:
 
 ### 2d. Slim CUDA base + pip torch (primary image-size lever, 2026-06-07)
 
-`src/batch/Dockerfile.train` bases on `nvidia/cuda:12.6.3-base-ubuntu24.04`
-(~86 MB compressed) and installs `torch==2.12.0+cu126` via the uv layer, instead
+`src/batch/Dockerfile.train` bases on `nvidia/cuda:13.0.3-base-ubuntu24.04`
+(~86 MB compressed) and installs `torch==2.12.1+cu130` via the uv layer, instead
 of the conda-based `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime` (~3.7 GB
 compressed) that bundled torch+CUDA+mamba+MKL in one re-pulled layer. The `*-base`
 flavor ships **no** CUDA math libs, so the torch wheel brings its own — using a
 `*-cudnn-runtime` base (~2 GB) instead would double-count cudnn/cublas and erase
-the win. **torch version is held identical** (2.12.0 / cu126, the build the old
-base shipped) so this is packaging, not an upgrade: deterministic Ridge MAE stays
-byte-identical (data-identity tell) while NN/attn rows rebaseline within
-single-seed noise (different torch *distribution*). System deps the conda base
+the win. **As of 2026-06-22 this is torch 2.12.1 / cu130** (bumped from 2.12.0 /
+cu126 once the T4/sm_75 EC2 rollback retired to g6/L4 — cu130 covers sm_75→sm_120
+and unifies with the local cu130 dev wheel): a deliberate numerics rebaseline.
+Deterministic Ridge MAE stays byte-identical (data-identity tell); NN/attn rows
+rebaseline on the first post-cutover 6-position retrain (different CUDA kernels). System deps the conda base
 provided are re-added explicitly (`python3`+`python3-dev`, `g++` for the Inductor
 probe, `libgomp1` for LightGBM/sklearn OpenMP, `ca-certificates`). A build-time
 `python -c "import torch, ..."` smoke fails the CI build on an incoherent install

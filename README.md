@@ -43,7 +43,7 @@ nflverse API ─┐
                              │ GPU training (BATCH_ACTIVE)    │◀── GitHub Actions
                              │  true  → 6× Spot g6→g5 (Batch) │    push to main
                              │          (default; ~15 min)    │
-                             │  false → warm OD g4dn (SSM)    │
+                             │  false → warm OD g6 (SSM)      │
                              │          (rollback; ~120 min)  │
                              │ Same Dockerfile.train; D13/D7  │
                              └────────────────────────────────┘
@@ -137,7 +137,7 @@ data/README.md                      Pointer to nflverse loaders + gitignored cac
 models/README.md                    Pointer to per-position artifact dirs + S3 layout
 notebooks/README.md                 Project doesn't use notebooks; analysis lives in src/analysis/
 docs/                               ARCHITECTURE (ADR-001), design docs, runbooks
-infra/ec2/                          Rollback training host (warm g4dn.xlarge)
+infra/ec2/                          Rollback training host (warm g6.xlarge)
 infra/batch/                        Active training stack (AWS Batch + Spot)
 infra/aws/                          ECS/ALB serving stack
 tests/                              Per-position + shared test trees
@@ -178,8 +178,8 @@ GitHub Actions
    │        │   ~15 min wall-clock                         │
    │        │ ─────────────────────────────────────────────│
    │        │ BATCH_ACTIVE=false (rollback):               │
-   │        │   train-ec2.yml → warm g4dn.xlarge OD via SSM│
-   │        │     (six positions sequential on one T4)     │
+   │        │   train-ec2.yml → warm g6.xlarge OD via SSM  │
+   │        │     (six positions sequential on one L4)     │
    │        │   ~120 min wall-clock                        │
    │        │ ─────────────────────────────────────────────│
    │        │ Either path: per-position change detection   │
@@ -197,7 +197,7 @@ GitHub Actions
 deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
 ```
 
-- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six Spot GPU hosts via AWS Batch (one position per host on a diversified g6.xlarge+g5.xlarge Spot pool; ~15 min wall-clock). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g4dn.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
+- **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six Spot GPU hosts via AWS Batch (one position per host on a diversified g6.xlarge+g5.xlarge Spot pool; ~15 min wall-clock). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g6.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.
 - **Artifact safety** — S3 manifest schema v2 tracks `stable` / `current` / `previous` plus a 5-version `history`. New artifacts must clear a smoke-test gate before being promoted to `stable`. [src/scripts/promote.py](src/scripts/promote.py) supports manual rollback to any history entry; bucket versioning is defense-in-depth.
 - **Serving** — ECS Fargate (arm64, 2 vCPU / 8 GB) sits behind an ALB with ACM-terminated HTTPS. The slim Flask image fetches models from S3 at boot rather than baking them in — keeps the image roughly 3× smaller and lets prod track new artifacts without a full redeploy.
 - **IAM** — the serving task role is scoped to `s3:GetObject` on `ff-predictor-training/models/*` only.
@@ -224,7 +224,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
              │                      │                       (~15 min full retrain)
              │                      │
              │                      │                            BATCH_ACTIVE=false
-             │                      └─▶ train-ec2.yml ────────▶ warm OD g4dn (sequential)
+             │                      └─▶ train-ec2.yml ────────▶ warm OD g6 (sequential)
              │                                                  (~120 min full retrain)
              │
              └──▶ deploy.yml ─────────▶ ECR ──▶ ECS Fargate
@@ -244,7 +244,7 @@ push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov ·
 - Docs-only filter folded into `detect`; standalone `tests-skip.yml` retired (PR #186, `5737c67`)
 - Training-step perf composition: Feather parquet cache + async DataLoader + cuDNN benchmark + phase timings (PR #183, `48ef419`)
 - Static-pad attention sequences (−30% on attention training) + disk-backed feature-engineering cache (−86× on `prepare_data` hits) (PR #200, `349aa4a`)
-- `torch.compile` measured and rejected on T4 (+32% wall time on sm_75 + variable-length sequences) — wrapper kept on EC2 image but short-circuited (PR #189, `3167b56`)
+- `torch.compile` measured and rejected on T4 (+32% wall time on sm_75 + variable-length sequences); now opt-in and sm_80+-gated, off by default (PR #189, `3167b56`, D12)
 - Native `arm64` deploy runner + BuildKit cache (PR #83, `3243d72`)
 - Pytest sharding (PR #48, `40f49b2`) + xdist within shards (PR #57, `2f42867`)
 - Diagnostic workflows: RB TD-gate ablation (PR #97, `3e49419`) and LightGBM Optuna retune (PR #98, `b7fde11`)
