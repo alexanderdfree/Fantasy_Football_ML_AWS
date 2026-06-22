@@ -61,7 +61,10 @@ SG_NAME="${FF_WARM_AMI_SG_NAME:-ff-batch-sg}"
 # CE AMI is deliberate — a custom AMI only adds pre-pulled layers, nothing else.
 SSM_AMI_PARAM="/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id"
 AMI_NAME="ff-warm-$(date -u +%Y%m%d-%H%M%S)"
-TAG_SPEC="ResourceType=instance,Tags=[{Key=Name,Value=ff-warm-ami-builder},{Key=ff-purpose,Value=warm-ami-build}]"
+# AMI_NAME is unique per run (UTC timestamp) and doubles as the per-run instance
+# tag + run-instances client token, so the cleanup trap can recover a leaked
+# builder by tag without ever terminating a concurrent build's host.
+TAG_SPEC="ResourceType=instance,Tags=[{Key=Name,Value=ff-warm-ami-builder},{Key=ff-purpose,Value=warm-ami-build},{Key=ff-warm-ami-run,Value=$AMI_NAME}]"
 
 log() { echo "[warm-ami] $*"; }
 
@@ -117,6 +120,21 @@ cleanup() {
   if [ -n "$INSTANCE_ID" ]; then
     log "cleanup: terminating builder $INSTANCE_ID"
     aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" >/dev/null 2>&1 || true
+    return
+  fi
+  # INSTANCE_ID never captured — run-instances may have created the host but the
+  # CLI died before the assignment landed. Recover the leaked builder by the
+  # per-run unique tag so a concurrent build's host is never touched.
+  local leaked
+  leaked="$(aws ec2 describe-instances \
+    --filters "Name=tag:ff-warm-ami-run,Values=$AMI_NAME" \
+              "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+    --region "$REGION" --query 'Reservations[].Instances[].InstanceId' \
+    --output text 2>/dev/null || true)"
+  if [ -n "$leaked" ]; then
+    log "cleanup: terminating leaked builder(s) by tag ff-warm-ami-run=$AMI_NAME: $leaked"
+    # shellcheck disable=SC2086  # intentional word-split: space-separated ids
+    aws ec2 terminate-instances --instance-ids $leaked --region "$REGION" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -130,6 +148,7 @@ INSTANCE_ID="$(aws ec2 run-instances \
   --iam-instance-profile "Name=$INSTANCE_PROFILE" \
   --security-group-ids "$SG_ID" \
   --tag-specifications "$TAG_SPEC" \
+  --client-token "$AMI_NAME" \
   --region "$REGION" \
   --query 'Instances[0].InstanceId' \
   --output text)"
@@ -202,8 +221,29 @@ AMI_ID="$(aws ec2 create-image \
   --region "$REGION" \
   --query 'ImageId' \
   --output text)"
-log "AMI $AMI_ID creating — waiting for available..."
-aws ec2 wait image-available --image-ids "$AMI_ID" --region "$REGION"
+# `aws ec2 wait image-available` caps at 40 polls x 15s = 10 min, but a warm AMI
+# bakes the multi-GB training-image layers into an EBS snapshot that routinely
+# takes longer — the waiter would time out and `set -e` would kill the script
+# before printing the AMI id, even though the AMI keeps building. Poll directly
+# with a generous ceiling instead.
+log "AMI $AMI_ID creating — waiting for available (up to ~40 min; large GPU AMI snapshots exceed the default 10-min waiter)..."
+img_state=""
+for _ in $(seq 1 120); do  # 120 x 20s = 40 min
+  img_state="$(aws ec2 describe-images --image-ids "$AMI_ID" --region "$REGION" \
+    --query 'Images[0].State' --output text 2>/dev/null || echo pending)"
+  case "$img_state" in
+    available) break ;;
+    failed | error | invalid)
+      echo "ERROR: AMI $AMI_ID entered terminal state '$img_state'" >&2
+      exit 1
+      ;;
+  esac
+  sleep 20
+done
+if [ "$img_state" != "available" ]; then
+  echo "ERROR: AMI $AMI_ID not available after ~40 min (last state=$img_state)" >&2
+  exit 1
+fi
 aws ec2 create-tags \
   --resources "$AMI_ID" \
   --tags "Key=Name,Value=$AMI_NAME" "Key=ff-source-ami,Value=$SOURCE_AMI" \
