@@ -24,7 +24,7 @@ jobs:
     outputs:
       positions: ${{ steps.scope.outputs.positions }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # workflow_run: the merged SHA on main. workflow_dispatch: the
           # ref we were dispatched on.
