@@ -115,6 +115,21 @@ def _producer_model_dir(pos: str) -> str:
     return os.path.join(pos.lower(), "outputs", "models")
 
 
+def _is_populated_dir(path: str) -> bool:
+    """True iff ``path`` is a directory with at least one entry.
+
+    An *empty* dir is treated as absent: a failed/partial ``--sync`` leaves an
+    empty ``src/{pos}/outputs/models`` (``model_sync`` ``mkdir``s the dest before
+    extracting), and preferring it would shadow a freshly-populated producer dir
+    and resurrect the very per-model ``FileNotFoundError`` cascade this resolver
+    exists to kill. Cheap entry-count, not a full artifact-manifest check.
+    """
+    try:
+        return os.path.isdir(path) and bool(os.listdir(path))
+    except OSError:
+        return False
+
+
 def resolve_model_dir(pos: str, reg: dict, override: str | None = None) -> str:
     """Locate ``pos``'s artifacts on disk, preferring the served path.
 
@@ -122,23 +137,25 @@ def resolve_model_dir(pos: str, reg: dict, override: str | None = None) -> str:
     (``reg["model_dir"]``, where ``--sync`` + serving read) → producer/staging path
     (:func:`_producer_model_dir`, where a LOCAL ``run()`` / the Batch container
     writes them). The fallback is what lets this module score a *local* pipeline
-    run's artifacts without an S3 ``--sync``.
+    run's artifacts without an S3 ``--sync``. A served/producer dir that exists but
+    is EMPTY counts as absent (:func:`_is_populated_dir`) so a failed sync can't
+    shadow a populated producer dir.
 
-    Raise loudly when NEITHER exists. A missing artifact dir must not masquerade as
-    "no models found": that silent degradation hid a served-vs-producer path
-    mismatch (``reg["model_dir"]`` = ``src/{pos}/outputs/models`` vs. the local
-    producer path ``{pos}/outputs/models``) behind four cryptic per-model
+    Raise loudly when NEITHER is populated. A missing artifact dir must not
+    masquerade as "no models found": that silent degradation hid a served-vs-
+    producer path mismatch (``reg["model_dir"]`` = ``src/{pos}/outputs/models`` vs.
+    the local producer path ``{pos}/outputs/models``) behind four cryptic per-model
     ``FileNotFoundError`` warnings — the whole reason this resolver exists.
     """
     if override:
         return override
     served = reg["model_dir"]
-    if os.path.isdir(served):
+    if _is_populated_dir(served):
         return served
     producer = _producer_model_dir(pos)
-    if os.path.isdir(producer):
+    if _is_populated_dir(producer):
         print(
-            f"[artifact_eval] {pos}: served path {served!r} absent; scoring LOCAL "
+            f"[artifact_eval] {pos}: served path {served!r} absent/empty; scoring LOCAL "
             f"producer-path artifacts {producer!r} (a local run's outputs, not "
             "necessarily the S3-deployed set — pass --sync for the served artifacts)."
         )
@@ -354,15 +371,19 @@ def build_test_df_from_artifacts(
 
 
 def warn_if_sync_noop() -> bool:
-    """Warn loudly when an ``--sync`` will silently no-op (S3 bucket unset).
+    """Warn loudly when an ``--sync`` will silently no-op (S3 bucket unconfigured).
 
     ``src.shared.model_sync.sync_models_from_s3`` is opt-in via ``FF_MODEL_S3_BUCKET``
     and skips with only a terse ``[model_sync]`` line when it's unset — so ``--sync``
     then scores whatever (often stale) on-disk artifacts exist instead of the served
     set. That is the same silent failure this module's loud-failure contract kills,
-    so surface it prominently. Returns ``True`` when the sync will actually run.
+    so surface it prominently. Mirror ``model_sync``'s ``.strip()`` gate exactly so a
+    whitespace-only value (``FF_MODEL_S3_BUCKET=' '``) is flagged, not silently
+    skipped. Returns ``True`` when the bucket is configured (sync will attempt to
+    run); a configured bucket can still fetch nothing on bad creds/empty prefix —
+    ``model_sync`` owns that failure path.
     """
-    if os.environ.get("FF_MODEL_S3_BUCKET"):
+    if os.environ.get("FF_MODEL_S3_BUCKET", "").strip():
         return True
     print(
         "[artifact_eval] WARNING: --sync requested but FF_MODEL_S3_BUCKET is unset — the S3 "
@@ -392,9 +413,17 @@ def _main(argv: list[str] | None = None) -> None:
 
     train_df, val_df, test_df = _load_splits()
     for pos in (p.upper() for p in args.positions):
-        df = build_test_df_from_artifacts(
-            pos, train_df, val_df, test_df, scoring_format=args.scoring_format
-        )
+        # resolve_model_dir raises loudly when a position has NO artifacts; in a
+        # multi-position sweep that should skip that position, not abort the rest
+        # (e.g. a local run produced only QB/RB/WR/TE). The raise stays the loud
+        # contract for library callers; the CLI logs it and continues.
+        try:
+            df = build_test_df_from_artifacts(
+                pos, train_df, val_df, test_df, scoring_format=args.scoring_format
+            )
+        except FileNotFoundError as e:
+            print(f"[artifact_eval] {pos}: {e} — skipping this position.")
+            continue
         pred_cols = sorted(c for c in df.columns if c.startswith("pred_") and c.endswith("_total"))
         print(f"{pos}: {len(df)} test rows | model totals present: {pred_cols}")
 
