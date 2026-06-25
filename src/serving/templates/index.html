@@ -445,20 +445,27 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                 </div>
             </div>
 
-            <div class="comparison-table-block" id="comparison-reliability-block">
-                <div class="section-header">Source reliability — residual σ (pts)</div>
+            <div class="comparison-table-block" id="comparison-quartile-block">
+                <div class="section-header">Bias by scoring quartile (2025)</div>
                 <div class="comparison-reliability-sub">
-                    How noisy each source's weekly projection is around the actual outcome on the
-                    <span id="comparison-reliability-span">2025 test season</span>. σ is the spread of
-                    (value − actual); <strong>lower σ = steadier</strong>. <strong>Our models</strong> are
-                    computed live and update each retrain; experts are scored on the same season. Hover a
-                    cell for its bias (+ ⇒ over-projects), sample size, and each expert's full 2018–2025 σ.
+                    Players are split into quartiles by their <strong>actual</strong> fantasy points for the
+                    selected position — Q1 = lowest scorers, Q4 = the highest / boom weeks. Each cell is the
+                    source's <strong>signed bias</strong>, mean(prediction − actual), in that quartile:
+                    <span style="color:#dc2626;font-weight:600">red over-predicts (+)</span>,
+                    <span style="color:#2563eb;font-weight:600">blue under-predicts (−)</span>. This exposes
+                    systematic miss patterns the overall MAE hides — most notably regression-to-the-mean
+                    under-prediction of the Q4 boom tier. Computed live on the 2025 test season; hover a cell
+                    for its MAE and sample size.
+                </div>
+                <div class="intervals-examples-controls">
+                    <span class="comparison-metric-label">Position</span>
+                    <div class="pill-group" id="quartile-pos-toggle"></div>
                 </div>
                 <div class="table-container">
                     <table class="comparison-table">
                         <thead>
                             <tr>
-                                <th>Position</th>
+                                <th>Quartile</th>
                                 <th class="comparison-num">Ridge</th>
                                 <th class="comparison-num">Neural Net</th>
                                 <th class="comparison-num">Attention NN</th>
@@ -467,45 +474,14 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
                                 <th class="comparison-num">RotoWire</th>
                             </tr>
                         </thead>
-                        <tbody id="comparison-reliability-body">
-                            <tr><td colspan="7" class="arch-loading">Loading reliability…</td></tr>
+                        <tbody id="quartile-bias-body">
+                            <tr><td colspan="7" class="arch-loading">Loading quartile bias…</td></tr>
                         </tbody>
                     </table>
                 </div>
-                <div class="comparison-reliability-note" id="comparison-reliability-note"></div>
             </div>
 
             <div class="comparison-notes" id="comparison-notes"></div>
-
-            <!-- Prediction intervals: per-projection 80% floor–ceiling bands -->
-            <div class="comparison-table-block" id="comparison-intervals-block" style="display:none;">
-                <div class="section-header">Prediction intervals — 80% floor–ceiling bands</div>
-                <div class="intervals-intro" id="intervals-intro"></div>
-
-                <div class="intervals-sub-header">Calibration — does the 80% band actually contain ~80% of outcomes?</div>
-                <div class="table-container">
-                    <table class="comparison-table" id="intervals-calibration-table">
-                        <thead>
-                            <tr>
-                                <th>Position</th>
-                                <th class="comparison-num">NFL.com</th>
-                                <th class="comparison-num">RotoWire</th>
-                            </tr>
-                        </thead>
-                        <tbody id="intervals-calibration-body">
-                            <tr><td colspan="3" class="arch-loading">Loading intervals…</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="intervals-examples-controls">
-                    <span class="comparison-metric-label">Example bands</span>
-                    <div class="pill-group" id="intervals-pos-toggle"></div>
-                </div>
-                <div id="intervals-examples"></div>
-
-                <div class="comparison-notes" id="intervals-notes"></div>
-            </div>
         </section>
 
         <!-- ============ HISTORY VIEW ============ -->

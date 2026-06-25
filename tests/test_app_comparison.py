@@ -4,13 +4,21 @@ The route merges LIVE per-model columns (one block per architecture — ridge / 
 attn_nn / lgbm — computed from ``_cache["results"]`` via the same ``compute_metrics``
 path as Model Performance, so they auto-update on retrain) with STATIC expert columns
 (NFL.com / RotoWire) read from the committed ``src/serving/comparison_experts.json``.
+The tab publishes the 3 accuracy tables plus a live per-source **quartile-bias**
+analysis (signed bias by actual-FP quartile). The former source-reliability (σ) and
+prediction-interval blocks are no longer published to the site; their committed JSON
++ offline methodology stay in the repo, so their helpers (``_model_reliabilities_from_results``,
+``_load_expert_intervals``) and JSON contracts are still tested here even though the
+route no longer emits ``model_reliability`` / ``expert_reliability`` / ``intervals``.
+
 Coverage:
 
-  - ``_model_blocks_from_results`` / ``_model_reliabilities_from_results`` helpers:
-    per-model metric + residual-σ dicts, top-30 id filter, and the no-prediction /
-    empty-slice → all-``None`` paths (unit).
-  - the route's merge, the model-unavailable fallback, and scoring passthrough
-    (integration, via the Flask test client).
+  - ``_model_blocks_from_results`` / ``_model_reliabilities_from_results`` /
+    ``_quartile_bias_from_results`` helpers: per-model metric, residual-σ, and
+    per-quartile bias dicts, top-30 id filter, and the no-prediction / empty-slice
+    / too-small-slice → ``None`` paths (unit).
+  - the route's merge, the live quartile-bias block, the model-unavailable fallback,
+    and scoring passthrough (integration, via the Flask test client).
   - the committed JSON's data contract (six positions × three subsets, coverage
     holes nulled, metrics present) — guards the generator's output shape.
 """
@@ -168,6 +176,38 @@ def test_model_reliabilities_all_none_when_no_predictions(app_module):
 
 
 # --------------------------------------------------------------------------- #
+# _quartile_bias_from_results — signed bias by actual-FP quartile (pure helper)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_quartile_bias_from_results(app_module):
+    """Bins by actual FP into Q1–Q4 and reports mean(pred − actual) per source/bin."""
+    actuals = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]  # 8 rows → 2 per quartile
+    rows = [
+        {
+            "player_id": f"QB{i:03d}",
+            "position": "QB",
+            "fantasy_points": a,
+            "ridge_pred_ppr": a + 1.0,  # constant +1 residual → bias +1 every bin
+            "nflcom_pred_ppr": a - 2.0,  # constant −2 residual → bias −2 every bin
+            "nn_pred_ppr": np.nan,  # column present but all-NaN → None cells
+        }
+        for i, a in enumerate(actuals)
+    ]
+    qb = comparison._quartile_bias_from_results(pd.DataFrame(rows), "ppr", "QB")
+    assert set(qb) == {"Q1", "Q2", "Q3", "Q4"}
+    for q in ("Q1", "Q2", "Q3", "Q4"):
+        assert qb[q]["ridge"] == {"n": 2, "mae": 1.0, "bias": 1.0}
+        assert qb[q]["nflcom"] == {"n": 2, "mae": 2.0, "bias": -2.0}
+        assert qb[q]["nn"] is None  # all-NaN preds
+        assert qb[q]["lgbm"] is None  # column absent entirely
+    # Too-small slice (< n_q rows) and an absent position both degrade to None.
+    assert comparison._quartile_bias_from_results(pd.DataFrame(rows[:3]), "ppr", "QB") is None
+    assert comparison._quartile_bias_from_results(pd.DataFrame(rows), "ppr", "RB") is None
+
+
+# --------------------------------------------------------------------------- #
 # /api/comparison — route (Flask boundary)
 # --------------------------------------------------------------------------- #
 
@@ -285,45 +325,39 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
 
 
 @pytest.mark.integration
-def test_comparison_passes_expert_reliability_through(app_module, synthetic_cache, monkeypatch):
-    """The per-source residual-σ block is forwarded verbatim from the committed JSON,
-    including the position-coverage gaps (NFL.com no-DST, RotoWire no-K)."""
+def test_comparison_includes_quartile_bias(app_module, synthetic_cache, monkeypatch):
+    """The live per-source quartile-bias block replaces the former reliability /
+    interval blocks: six positions, each Q1–Q4 × the model + expert sources with
+    {n, mae, bias}, computed from the cached test rows. The removed payload keys
+    are gone (kept in the committed JSON + docs, just not published)."""
     monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         body = c.get("/api/comparison").get_json()
 
-    rel = body["expert_reliability"]
-    assert rel["seasons"] == [2024, 2025]
-    assert rel["positions"]["QB"]["nflcom"]["sigma"] == 6.9
-    assert rel["positions"]["QB"]["rotowire"]["sigma"] == 7.4
-    assert rel["positions"]["DST"]["nflcom"] is None
-    assert rel["positions"]["K"]["rotowire"] is None
+    assert "expert_reliability" not in body
+    assert "model_reliability" not in body
+    assert "intervals" not in body
 
+    meta = body["quartile_bias_meta"]
+    assert meta["quartiles"] == ["Q1", "Q2", "Q3", "Q4"]
+    assert meta["binned_by"] == "actual_fantasy_points"
+    assert meta["bias_convention"] == "pred_minus_actual"
 
-@pytest.mark.integration
-def test_comparison_includes_live_model_reliability(app_module, synthetic_cache, monkeypatch):
-    """The model side of the reliability table is computed live per position from the
-    cached test predictions (auto-updates on retrain), alongside the static experts."""
-    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
-    app_module._cache.update(synthetic_cache)
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        body = c.get("/api/comparison").get_json()
-
-    mr = body["model_reliability"]
-    assert set(mr) == set(_POSITIONS)
-    qb = mr["QB"]  # per-model dict now, not a single best-arch block
-    assert qb is not None
-    assert set(qb) >= _MODEL_KEYS
-    for key in _MODEL_KEYS:  # QB has all four models in the synthetic cache
-        assert qb[key] is not None, key
-        assert {"n", "mae", "bias", "sigma"} == set(qb[key])
-        assert qb[key]["sigma"] >= 0.0
-    # K lacks attn_nn / lgbm predictions in the synthetic cache → null per model.
-    assert mr["K"]["attn_nn"] is None and mr["K"]["lgbm"] is None
-    assert mr["K"]["ridge"] is not None
+    qb = body["quartile_bias"]
+    assert set(qb) == set(_POSITIONS)
+    qbq = qb["QB"]  # QB has enough synthetic rows + all sources to fill four quartiles
+    assert qbq is not None and set(qbq) == {"Q1", "Q2", "Q3", "Q4"}
+    for q in ("Q1", "Q2", "Q3", "Q4"):
+        for key in _MODEL_KEYS:  # QB has all four live model columns
+            assert qbq[q][key] is not None, (q, key)
+            assert {"n", "mae", "bias"} == set(qbq[q][key])
+        assert qbq[q]["nflcom"] is not None  # experts present for QB
+        assert qbq[q]["rotowire"] is not None
+    # Coverage holes survive: NFL.com has no DST, RotoWire has no K (every quartile).
+    assert all(qb["DST"][q]["nflcom"] is None for q in qb["DST"])
+    assert all(qb["K"][q]["rotowire"] is None for q in qb["K"])
 
 
 @pytest.mark.integration
@@ -358,8 +392,8 @@ def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
     # No live models → the per-model columns are absent; experts still render.
     assert all(qb.get(key) is None for key in _MODEL_KEYS)
     assert qb["nflcom"] is not None  # experts unaffected
-    # The live model reliability columns are also unavailable, per position.
-    assert body["model_reliability"]["QB"] is None
+    # The live quartile-bias block is also unavailable, per position.
+    assert body["quartile_bias"]["QB"] is None
 
 
 @pytest.mark.integration
@@ -418,8 +452,10 @@ def test_committed_expert_summary_contract():
 
 
 # --------------------------------------------------------------------------- #
-# Prediction intervals — _load_expert_intervals + the /api/comparison block +
-# the committed expert_intervals.json calibration contract
+# Prediction intervals — committed expert_intervals.json + its loader. The block
+# is no longer published to the site (the route stopped emitting ``intervals``),
+# but the methodology / committed data / loader are retained, so the loader's
+# missing-file degrade and the committed calibration contract are still pinned.
 # --------------------------------------------------------------------------- #
 
 _INTERVAL_SOURCES = ("nflcom", "rotowire")
@@ -429,34 +465,6 @@ _INTERVAL_SOURCES = ("nflcom", "rotowire")
 def test_load_expert_intervals_missing_file_returns_none(app_module, monkeypatch, tmp_path):
     monkeypatch.setattr(comparison, "_EXPERT_INTERVALS_PATH", str(tmp_path / "nope.json"))
     assert comparison._load_expert_intervals() is None
-
-
-@pytest.mark.integration
-def test_comparison_includes_intervals_block(app_module, synthetic_cache, monkeypatch):
-    """The intervals ride along on the /api/comparison payload (one fetch)."""
-    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
-    app_module._cache.update(synthetic_cache)
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        body = c.get("/api/comparison").get_json()
-
-    assert "intervals" in body
-    iv = body["intervals"]
-    assert iv is not None and set(iv["intervals"]) == set(_INTERVAL_SOURCES)
-
-
-@pytest.mark.integration
-def test_comparison_intervals_optional(app_module, synthetic_cache, monkeypatch):
-    """A missing intervals file degrades to intervals=None; accuracy tables unaffected."""
-    monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
-    monkeypatch.setattr(comparison, "_load_expert_intervals", lambda: None)
-    app_module._cache.update(synthetic_cache)
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        body = c.get("/api/comparison").get_json()
-
-    assert body["intervals"] is None
-    assert body["subsets"]["all"]["QB"]["nflcom"] is not None
 
 
 @pytest.mark.unit
