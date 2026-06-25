@@ -155,7 +155,13 @@ def main(argv: list[str] | None = None) -> None:
             print(f"\nScoring {pos} from saved artifacts ...", flush=True)
             from src.analysis.artifact_eval import build_test_df_from_artifacts
 
-            test_df = build_test_df_from_artifacts(pos, train_df, val_df, test_df_all)
+            # A position with no artifacts raises loudly; skip it and keep going so
+            # one missing position doesn't abort the whole multi-position comparison.
+            try:
+                test_df = build_test_df_from_artifacts(pos, train_df, val_df, test_df_all)
+            except FileNotFoundError as e:
+                print(f"  ! {pos}: {e} — skipping.")
+                continue
         else:
             print(f"\nRunning {pos} pipeline ...", flush=True)
             result = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run()
