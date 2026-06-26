@@ -11,8 +11,14 @@ import os
 import traceback
 
 import numpy as np
+import pandas as pd
 
-from src.serving.serialization import _MODEL_PRED_PREFIXES, _actual_col, _pred_col
+from src.serving.serialization import (
+    _MODEL_PRED_PREFIXES,
+    _ROW_PRED_PREFIXES,
+    _actual_col,
+    _pred_col,
+)
 from src.shared.evaluation import compute_metrics
 
 # ---------------------------------------------------------------------------
@@ -48,6 +54,11 @@ def _load_expert_intervals():
 
     Optional: a missing/unreadable file degrades to ``None`` so the Comparison tab
     still renders its accuracy tables without the intervals block.
+
+    RETAINED, NOT CURRENTLY PUBLISHED: the prediction-intervals block was removed
+    from the Comparison tab (the route no longer emits ``intervals``). The fitter
+    (``src.analysis.expert_intervals``), the committed JSON, and this loader are
+    kept so the methodology stays documented and the block can be re-enabled.
     """
     try:
         with open(_EXPERT_INTERVALS_PATH, encoding="utf-8") as f:
@@ -155,6 +166,11 @@ def _model_reliabilities_from_results(results, scoring, pos):
     matches ``src.analysis.expert_uncertainty``: **bias > 0 ⇒ over-predicts**. The model
     is leakage-free only on its test split, so this is 2025-only by design (the whole
     Comparison tab is the 2025 test season).
+
+    RETAINED, NOT CURRENTLY PUBLISHED: the source-reliability block was removed from
+    the Comparison tab (the route no longer emits ``model_reliability``). This live
+    helper is kept alongside the static ``expert_reliability`` JSON so the σ/bias
+    methodology stays documented and the block can be re-enabled.
     """
 
     def _rel(a, p):
@@ -168,3 +184,68 @@ def _model_reliabilities_from_results(results, scoring, pos):
         }
 
     return _per_model_from_results(results, scoring, pos, None, _rel)
+
+
+# Quartile labels, lowest actual fantasy points to highest. Q4 is the "boom" tier.
+_QUARTILE_LABELS = ("Q1", "Q2", "Q3", "Q4")
+
+
+def _quartile_bias_from_results(results, scoring, pos, n_q=4):
+    """Per-source signed bias across this position's actual-FP quartiles, or ``None``.
+
+    Bins the position's test rows into ``n_q`` quartiles by **actual** fantasy
+    points — Q1 = lowest scorers … Q4 = highest / boom weeks — rank-based so tied
+    actuals never collapse a bin. For every prediction source (our four models
+    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the two experts ``nflcom``/``rotowire``,
+    i.e. ``_ROW_PRED_PREFIXES``) it reports per-quartile ``{n, mae, bias}`` where
+    ``bias = mean(pred − actual)`` — **bias > 0 ⇒ over-predicts** (same residual
+    convention as ``_model_reliabilities_from_results`` / ``expert_uncertainty``).
+
+    Computed live from the same cached per-row predictions as
+    ``_model_blocks_from_results`` (so it auto-updates on every retrain). The
+    quartile partition is defined once by the shared actual column, so every
+    source is scored on the *same* rows and is directly comparable across the
+    quartile axis; a source's per-quartile ``n`` may still differ because experts
+    don't project every player — that coverage gap is real and surfaced, not hidden.
+
+    Returns ``{ "Q1": {source: {n,mae,bias}|None, ...}, ... }`` keyed by the same
+    source prefixes as the accuracy tables, or ``None`` when the slice is missing or
+    too small to form ``n_q`` quartiles (e.g. a thin K/DST slice).
+    """
+    sliced = _position_actuals(results, scoring, pos, None)
+    if sliced is None:
+        return None
+    sub, actual = sliced
+    if len(actual) < n_q:
+        return None
+    labels = list(_QUARTILE_LABELS[:n_q])
+    try:
+        # Rank-based qcut: equal-frequency bins that never collapse on tied actuals
+        # (mirrors the project-wide "signed bias by quartile" convention, e.g.
+        # src/analysis/attn_weekly_accuracy.py / rmse_gap_decomposition._tiers).
+        ranks = pd.Series(actual).rank(method="first")
+        quartile = pd.qcut(ranks, n_q, labels=labels).to_numpy().astype(object)
+    except (ValueError, TypeError):
+        return None
+
+    out = {q: {} for q in labels}
+    for prefix in _ROW_PRED_PREFIXES:
+        pred_col = _pred_col(prefix, scoring)
+        present = pred_col in sub.columns
+        pred = sub[pred_col].to_numpy() if present else None
+        for q in labels:
+            if not present:
+                out[q][prefix] = None
+                continue
+            mask = (quartile == q) & ~pd.isna(pred)
+            n = int(mask.sum())
+            if n == 0:
+                out[q][prefix] = None
+                continue
+            resid = pred[mask].astype(float) - actual[mask].astype(float)
+            out[q][prefix] = {
+                "n": n,
+                "mae": round(float(np.mean(np.abs(resid))), 4),
+                "bias": round(float(np.mean(resid)), 4),
+            }
+    return out

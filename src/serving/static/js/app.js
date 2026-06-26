@@ -1501,7 +1501,6 @@ const EXPERT_SOURCES = [
     { key: "nflcom", label: "NFL.com" },
     { key: "rotowire", label: "RotoWire" },
 ];
-const MODEL_KEYS = new Set(MODEL_SOURCES.map(s => s.key));
 const COMPARISON_SOURCES = [...MODEL_SOURCES, ...EXPERT_SOURCES];
 const COMPARISON_METRIC_HINTS = {
     mae: "Mean absolute error — lower is better",
@@ -1520,9 +1519,8 @@ async function loadComparison() {
         if (comparisonData.error) throw new Error(comparisonData.error);
         comparisonLoaded = true;
         renderComparisonTables();
-        renderComparisonReliability();
         renderComparisonNotes();
-        renderIntervals();
+        renderQuartileBias();
     } catch (e) {
         console.error("Failed to load comparison:", e);
         const msg = `<tr><td colspan="7" class="arch-error">Failed to load: ${escapeHtml(e.message)}</td></tr>`;
@@ -1590,77 +1588,76 @@ function renderComparisonTables() {
     if (top12Body) top12Body.innerHTML = renderComparisonRows(subsets.top12 || {});
 }
 
-// Source reliability — residual σ per source on the 2025 test season. The model
-// side is live (auto-updates on retrain); experts are scored on the same season,
-// with their full 2018–2025 archive σ shown on hover. One table, always σ
-// (independent of the MAE/RMSE/R² toggle); lower σ = steadier.
-const RELIABILITY_COLS = [...MODEL_SOURCES, ...EXPERT_SOURCES];
+// Quartile bias — per-position signed bias (mean(pred − actual)) of every source
+// across the actual-fantasy-point quartiles (Q1 = lowest actual … Q4 = highest /
+// booms). Computed live on the 2025 test rows in the same data path as the accuracy
+// tables (comparison._quartile_bias_from_results), so it auto-updates on retrain.
+// + bias ⇒ over-predicts (red); − ⇒ under-predicts (blue). Exposes the systematic
+// by-tier miss the overall MAE hides (e.g. boom-tier regression to the mean).
+const QUARTILE_LABELS = { Q1: "Q1 · lowest", Q2: "Q2", Q3: "Q3", Q4: "Q4 · highest" };
+let quartilePos = "QB";
+let quartilePosWired = false;
 
-function _validSigma(v) {
-    return v !== null && v !== undefined && !Number.isNaN(v);
-}
-
-// Resolve one (position, source) reliability cell on the 2025 basis. Each model
-// column reads its per-model block from the live model_reliability map; experts
-// come from the committed block's per_season["2025"] slice, carrying the pooled
-// multi-season σ for hover.
-function reliabilityCell(pos, key) {
-    if (MODEL_KEYS.has(key)) {
-        const byModel = comparisonData.model_reliability && comparisonData.model_reliability[pos];
-        const m = byModel && byModel[key];
-        if (!m || !_validSigma(m.sigma)) return null;
-        return { sigma: m.sigma, bias: m.bias, n: m.n, kind: "model" };
-    }
-    const rel = comparisonData.expert_reliability;
-    const pooled = rel && rel.positions && rel.positions[pos] && rel.positions[pos][key];
-    if (!pooled) return null;
-    const s = pooled.per_season && pooled.per_season["2025"];
-    if (!s || !_validSigma(s.sigma)) return null;
-    return {
-        sigma: s.sigma,
-        bias: s.bias,
-        n: s.n,
-        kind: "expert",
-        totals_only: !!pooled.totals_only,
-        archiveSigma: pooled.sigma,
-        archiveN: pooled.n,
-    };
-}
-
-function renderComparisonReliability() {
-    const block = document.getElementById("comparison-reliability-block");
-    const body = document.getElementById("comparison-reliability-body");
-    if (!block || !body) return;
-    const rel = comparisonData && comparisonData.expert_reliability;
-    if (!rel || !rel.positions) {
+function renderQuartileBias() {
+    const block = document.getElementById("comparison-quartile-block");
+    if (!block) return;
+    const qb = comparisonData && comparisonData.quartile_bias;
+    if (!qb || !COMPARISON_POSITIONS.some(p => qb[p])) {
         block.style.display = "none";
         return;
     }
     block.style.display = "";
+    setupQuartilePosToggle();
+    renderQuartileBiasTable();
+}
 
-    body.innerHTML = COMPARISON_POSITIONS.map(pos => {
-        const cells = RELIABILITY_COLS.map(c => reliabilityCell(pos, c.key));
-        const sigmas = cells.filter(Boolean).map(c => c.sigma);
-        const best = sigmas.length ? Math.min(...sigmas) : null;
-        const tds = cells.map(c => {
-            if (!c) return `<td class="comparison-num comparison-empty">—</td>`;
-            const isBest = best !== null && Math.abs(c.sigma - best) < 1e-9;
-            const cls = "comparison-num" + (isBest ? " comparison-best" : "");
-            const star = c.totals_only ? `<span class="comparison-arch">totals-only*</span>` : "";
-            const biasTxt = (c.bias >= 0 ? "+" : "") + c.bias.toFixed(2);
-            const dir = c.bias >= 0 ? "over" : "under";
-            const verb = c.kind === "model" ? "predicts" : "projects";
-            let title = `bias ${biasTxt} pts (${dir}-${verb}) · n=${c.n} · 2025`;
-            if (c.kind === "expert" && _validSigma(c.archiveSigma)) {
-                title += ` · 2018–2025 σ ${c.archiveSigma.toFixed(2)} (n=${c.archiveN})`;
-            }
-            return `<td class="${cls}" title="${escapeHtml(title)}">${c.sigma.toFixed(2)}${star}</td>`;
-        }).join("");
-        return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
+// Position pills — default to the first position that has data; disable any without.
+function setupQuartilePosToggle() {
+    const toggle = document.getElementById("quartile-pos-toggle");
+    if (!toggle) return;
+    const qb = comparisonData.quartile_bias || {};
+    if (!qb[quartilePos]) quartilePos = COMPARISON_POSITIONS.find(p => qb[p]) || quartilePos;
+    toggle.innerHTML = COMPARISON_POSITIONS.map(
+        pos => `<button class="pill${pos === quartilePos ? " active" : ""}" data-pos="${pos}"${qb[pos] ? "" : " disabled"}>${pos}</button>`
+    ).join("");
+    if (!quartilePosWired) {
+        toggle.addEventListener("click", ev => {
+            const pill = ev.target.closest(".pill");
+            if (!pill || pill.disabled) return;
+            quartilePos = pill.dataset.pos;
+            toggle.querySelectorAll(".pill").forEach(p => p.classList.toggle("active", p === pill));
+            renderQuartileBiasTable();
+        });
+        quartilePosWired = true;
+    }
+}
+
+// One bias cell: signed value, background tinted by magnitude (red = over-, blue =
+// under-prediction); MAE + n on hover. Empty when the source has no rows in the bin.
+function quartileBiasCell(cell) {
+    if (!cell || cell.bias === null || cell.bias === undefined || Number.isNaN(cell.bias)) {
+        return `<td class="comparison-num comparison-empty">—</td>`;
+    }
+    const bias = cell.bias;
+    const sign = bias >= 0 ? "+" : "";
+    const dir = bias > 0 ? "over" : bias < 0 ? "under" : "even";
+    const mag = Math.min(Math.abs(bias) / 6, 1); // ~6 pts saturates the tint
+    const alpha = (0.08 + 0.42 * mag).toFixed(3);
+    const rgb = bias >= 0 ? "220,38,38" : "37,99,235";
+    const style = dir === "even" ? "" : ` style="background:rgba(${rgb},${alpha})"`;
+    const title = `bias ${sign}${bias.toFixed(2)} pts (${dir}-predicts) · MAE ${cell.mae.toFixed(2)} · n=${cell.n}`;
+    return `<td class="comparison-num"${style} title="${escapeHtml(title)}">${sign}${bias.toFixed(2)}</td>`;
+}
+
+function renderQuartileBiasTable() {
+    const body = document.getElementById("quartile-bias-body");
+    if (!body || !comparisonData) return;
+    const byPos = (comparisonData.quartile_bias || {})[quartilePos] || {};
+    body.innerHTML = ["Q1", "Q2", "Q3", "Q4"].map(q => {
+        const row = byPos[q] || {};
+        const tds = COMPARISON_SOURCES.map(s => quartileBiasCell(row[s.key])).join("");
+        return `<tr><td class="comparison-pos">${QUARTILE_LABELS[q]}</td>${tds}</tr>`;
     }).join("");
-
-    const noteEl = document.getElementById("comparison-reliability-note");
-    if (noteEl) noteEl.innerHTML = rel.note ? `<p>${escapeHtml(rel.note)}</p>` : "";
 }
 
 function renderComparisonNotes() {
@@ -1697,161 +1694,6 @@ function renderComparisonNotes() {
             activateTab("wiki");
         });
     });
-}
-
-// ---------------------------------------------------------------------------
-// Prediction intervals — per-projection 80% floor–ceiling bands for the expert
-// sources. Fit offline (src/analysis/expert_intervals.py) and committed; ride
-// along on the /api/comparison payload. The calibration table reports held-out
-// coverage (does the 80% band contain ~80% of actuals?); the example bands show
-// real test-season player-weeks with floor/median/ceiling and where the actual
-// landed. Optional block — hidden when the committed JSON is absent.
-// ---------------------------------------------------------------------------
-const INTERVAL_SOURCES = [
-    { key: "nflcom", label: "NFL.com" },
-    { key: "rotowire", label: "RotoWire" },
-];
-let intervalsPos = "QB";
-let intervalsPosWired = false;
-
-function intervalsBlockFor(intervals, source, pos) {
-    const s = intervals && intervals.intervals && intervals.intervals[source];
-    if (!s) return null;
-    const b = s[pos];
-    if (!b || b.skipped || !b.calibration) return null;
-    return b;
-}
-
-function renderIntervals() {
-    const block = document.getElementById("comparison-intervals-block");
-    if (!block) return;
-    const intervals = comparisonData && comparisonData.intervals;
-    if (!intervals || !intervals.intervals) {
-        block.style.display = "none";
-        return;
-    }
-    block.style.display = "";
-
-    const nominalPct = Math.round((intervals.nominal_coverage || 0.8) * 100);
-    const intro = document.getElementById("intervals-intro");
-    if (intro) {
-        intro.innerHTML = `Each expert gives a single number per player-week. We quantile-regress the
-            actual fantasy points on that projection (per position) to attach an <strong>${nominalPct}%
-            band</strong> — a floor (10th percentile) and ceiling (90th percentile) — around every
-            projection. A well-calibrated band contains the actual outcome about ${nominalPct}% of the time.`;
-    }
-    renderIntervalsCalibration(intervals);
-    setupIntervalsPosToggle(intervals);
-    renderIntervalsNotes(intervals);
-}
-
-function renderIntervalsCalibration(intervals) {
-    const body = document.getElementById("intervals-calibration-body");
-    if (!body) return;
-    body.innerHTML = COMPARISON_POSITIONS.map(pos => {
-        const tds = INTERVAL_SOURCES.map(s => {
-            const b = intervalsBlockFor(intervals, s.key, pos);
-            if (!b) return `<td class="comparison-num comparison-empty">—</td>`;
-            const cal = b.calibration;
-            const covPct = (cal.coverage * 100).toFixed(0);
-            const flag = cal.flag || "ok";
-            const std = b.totals_only ? ` <span class="interval-totals" title="standard scoring">std</span>` : "";
-            const fit = (b.fit_seasons || []).join(", ");
-            const tip = fit ? ` title="fit on ${escapeHtml(fit)}"` : "";
-            return `<td class="comparison-num"${tip}>
-                <span class="interval-cov interval-cov-${flag}">${covPct}%</span>${std}
-                <span class="interval-cov-sub">n=${cal.n_eval} · band ${cal.mean_width.toFixed(1)}</span></td>`;
-        }).join("");
-        return `<tr><td class="comparison-pos">${pos}</td>${tds}</tr>`;
-    }).join("");
-}
-
-function setupIntervalsPosToggle(intervals) {
-    const toggle = document.getElementById("intervals-pos-toggle");
-    if (!toggle) return;
-    // Default to the first position that actually has example bands.
-    const hasEx = pos => INTERVAL_SOURCES.some(s => {
-        const b = intervalsBlockFor(intervals, s.key, pos);
-        return b && b.examples && b.examples.length;
-    });
-    if (!hasEx(intervalsPos)) intervalsPos = COMPARISON_POSITIONS.find(hasEx) || intervalsPos;
-    toggle.innerHTML = COMPARISON_POSITIONS.map(
-        pos => `<button class="pill${pos === intervalsPos ? " active" : ""}" data-pos="${pos}">${pos}</button>`
-    ).join("");
-    if (!intervalsPosWired) {
-        toggle.addEventListener("click", ev => {
-            const pill = ev.target.closest(".pill");
-            if (!pill) return;
-            intervalsPos = pill.dataset.pos;
-            toggle.querySelectorAll(".pill").forEach(p => p.classList.toggle("active", p === pill));
-            renderIntervalsExamples(comparisonData.intervals, intervalsPos);
-        });
-        intervalsPosWired = true;
-    }
-    renderIntervalsExamples(intervals, intervalsPos);
-}
-
-function renderIntervalsExamples(intervals, pos) {
-    const host = document.getElementById("intervals-examples");
-    if (!host) return;
-    const cols = INTERVAL_SOURCES.map(s => {
-        const b = intervalsBlockFor(intervals, s.key, pos);
-        const examples = (b && b.examples) || [];
-        const head = `<div class="intervals-col-head">${s.label}</div>`;
-        if (!examples.length) {
-            return `<div class="intervals-col">${head}<div class="intervals-empty">No ${escapeHtml(pos)} projections.</div></div>`;
-        }
-        return `<div class="intervals-col">${head}${examples.map(renderBandBar).join("")}</div>`;
-    }).join("");
-    host.innerHTML = `<div class="intervals-cols">${cols}</div>`;
-}
-
-function renderBandBar(ex) {
-    // Per-row scale spans the band AND the actual, so the actual marker is always
-    // visible even when it lands outside the band.
-    const lo = Math.min(ex.floor, ex.actual);
-    const hi = Math.max(ex.ceiling, ex.actual);
-    const span = hi - lo || 1;
-    const pct = x => ((x - lo) / span) * 100;
-    const fillL = pct(ex.floor);
-    const fillW = pct(ex.ceiling) - fillL;
-    const cls = ex.in_band ? "in" : "out";
-    const mark = ex.in_band ? "✓" : "✗";
-    return `<div class="band-row">
-        <div class="band-head">
-            <span class="band-player">${escapeHtml(ex.player_name)}</span>
-            <span class="band-week">Wk ${ex.week}</span>
-            <span class="band-proj">proj ${ex.projection.toFixed(1)}</span>
-        </div>
-        <div class="band-track">
-            <div class="band-fill" style="left:${fillL}%;width:${fillW}%"></div>
-            <div class="band-median" style="left:${pct(ex.median)}%" title="median ${ex.median.toFixed(1)}"></div>
-            <div class="band-actual band-actual-${cls}" style="left:${pct(ex.actual)}%"></div>
-        </div>
-        <div class="band-foot">
-            <span class="band-end">${ex.floor.toFixed(1)}</span>
-            <span class="band-actual-label band-actual-${cls}">actual ${ex.actual.toFixed(1)} ${mark}</span>
-            <span class="band-end">${ex.ceiling.toFixed(1)}</span>
-        </div>
-    </div>`;
-}
-
-function renderIntervalsNotes(intervals) {
-    const el = document.getElementById("intervals-notes");
-    if (!el) return;
-    const meta = intervals.sources_meta || {};
-    const evalSeasons = (intervals.eval_seasons || []).join(", ");
-    const rwUnverified = meta.rotowire && meta.rotowire.provenance_unverified;
-    const nflLeak = (meta.nflcom && meta.nflcom.look_ahead_seasons) || [];
-    el.innerHTML = `
-        <ul class="comparison-note-list">
-            <li><strong>Method.</strong> ${escapeHtml(intervals.method || "")}. Fit on genuine pre-${escapeHtml(evalSeasons)} player-weeks (which seasons varies by position — hover a coverage cell); the coverage above is measured on the held-out ${escapeHtml(evalSeasons)} season, so it reflects the bands as shipped.</li>
-            <li><strong>Reading coverage.</strong> Near 80% is well-calibrated. Well below means the band is too tight (over-confident); well above means it is too wide.</li>
-            ${nflLeak.length ? `<li><strong>Look-ahead guard.</strong> Some NFL.com "projected" files (${escapeHtml(nflLeak.join(", "))}) are backfilled with realized stats — implausibly accurate, so auto-excluded from the fit. NFL.com offense bands therefore fit on the recent genuine season(s).</li>` : ""}
-            <li><strong>NFL.com K.</strong> Totals-only ("std") — the band is on the standard-scoring kicker scale, not PPR.</li>
-            ${rwUnverified ? `<li><strong>RotoWire caveat.</strong> Provenance is unverified, but its error spread is stable across every season and matches the held-out season, so its bands sanity-check clean (no look-ahead detected).</li>` : ""}
-            <li><strong>Coverage holes.</strong> NFL.com has no DST; RotoWire has no K.</li>
-        </ul>`;
 }
 
 // ---------------------------------------------------------------------------

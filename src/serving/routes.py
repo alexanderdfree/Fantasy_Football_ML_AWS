@@ -657,21 +657,21 @@ def api_comparison():
                 "rotowire": cell.get("rotowire"),
             }
 
-    # Live per-model residual σ on the 2025 test rows — the model-side counterpart to
-    # the static expert_reliability block. Computed fresh each request (auto-updates on
-    # retrain); each position maps to a per-model dict (or None when models aren't
-    # loaded), so the tab degrades to the expert columns alone.
-    model_reliability = {
+    # Live per-source signed bias across the actual-FP scoring quartiles (Q1 lowest …
+    # Q4 boom), computed fresh each request from the same cached 2025 test rows as the
+    # accuracy tables (auto-updates on retrain). This replaces the former source-σ
+    # reliability and prediction-interval blocks on the site — their offline
+    # methodology stays in the committed JSON + helpers + docs, just no longer
+    # published here. ``None`` per position when models aren't loaded, so the tab
+    # degrades to the accuracy tables alone.
+    quartile_bias = {
         pos: (
-            comparison._model_reliabilities_from_results(results, scoring, pos)
+            comparison._quartile_bias_from_results(results, scoring, pos)
             if model_source == "live"
             else None
         )
         for pos in _ALL_POSITIONS
     }
-    # Per-projection prediction intervals (static, optional) ride along on the
-    # same payload so the Comparison tab needs only one fetch.
-    intervals = comparison._load_expert_intervals()
 
     return jsonify(
         {
@@ -682,13 +682,17 @@ def api_comparison():
             "top_n": experts.get("top_n"),
             "top12_n": experts.get("top12_n"),
             "subsets": out_subsets,
-            # Per-source residual σ: experts are static multi-season (2018–2025) from the
-            # committed JSON; the model side is computed live on the 2025 test season
-            # (its only leakage-free season). The frontend renders both on the 2025 basis
-            # for an apples-to-apples table and shows each expert's full-archive σ on hover.
-            "expert_reliability": experts.get("expert_reliability"),
-            "model_reliability": model_reliability,
-            "intervals": intervals,
+            # Per-source signed bias by actual-FP quartile (Q1 lowest … Q4 highest):
+            # bias = mean(pred − actual), > 0 ⇒ over-predicts. Live on the 2025 test
+            # season; None per position when models aren't loaded.
+            "quartile_bias": quartile_bias,
+            "quartile_bias_meta": {
+                "n_quantiles": 4,
+                "quartiles": list(comparison._QUARTILE_LABELS),
+                "binned_by": "actual_fantasy_points",
+                "bias_convention": "pred_minus_actual",
+                "season": 2025,
+            },
         }
     )
 
