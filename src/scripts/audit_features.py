@@ -231,7 +231,7 @@ def _audit_depth_chart(
         pct2 = 100.0 * (rank == 2.0).sum() / n
         pct3 = 100.0 * (rank == 3.0).sum() / n
         # The loader coerces depth-chart-absent rows to the -1 sentinel
-        # (loader.py:490, ``fillna(-1)``), not NaN — so the missing-depth
+        # (loader.py:533, ``fillna(-1)``), not NaN — so the missing-depth
         # population lives in this bucket, and the NaN column is ~0 post-merge.
         pct_neg1 = 100.0 * (rank == -1.0).sum() / n
         print(

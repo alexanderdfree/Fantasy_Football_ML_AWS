@@ -7,7 +7,7 @@ pointer; a failure leaves ``stable`` pinned to the previous good artifact
 so the frontend keeps serving last-known-good. The new artifact still lands
 in ``current`` and ``history/`` for forensics either way.
 
-Why the load+predict path mirrors ``app.py::_apply_position_models`` rather
+Why the load+predict path mirrors ``src/serving/core.py::_apply_position_models`` rather
 than re-using it: the Flask layer's path requires a fully-built feature
 DataFrame (filter → compute_targets → build_position_features → attention
 history arrays), which couples the smoke test to data availability and
@@ -70,7 +70,7 @@ def _assert_finite_dict(pos: str, model_label: str, preds: dict, targets: list[s
 
 
 def _resolve_attn_static_cols(reg: dict, feature_cols: list[str]) -> list[str]:
-    """Mirror the dispatch in ``app.py::_apply_position_models``: K reads
+    """Mirror the dispatch in ``src/serving/core.py::_apply_position_models``: K reads
     its attention static cols straight off the DataFrame; everyone else
     filters the live ``feature_cols`` through the position's whitelist.
     """

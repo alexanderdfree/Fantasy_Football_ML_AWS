@@ -212,7 +212,7 @@ gh label create regress-risk-high --color D93F0B --description "Audit fix: model
 ```bash
 : > /tmp/known_issues.tsv
 for label in $DEDUPE_AUDIT_LABELS; do
-  gh issue list --label "$label" --state all --limit 400 --json number,title,labels \
+  gh issue list --label "$label" --state all --limit 800 --json number,title,labels \
     --jq '.[] | select(any(.labels[]; .name | test("^severity-(docs|low|medium|high)$"))) | "\(.number)\t\(.title)"' \
     >> /tmp/known_issues.tsv
 done
@@ -307,8 +307,8 @@ Layer B standing infra cross-cutting lenses:
   distinguishing cold-start 200 from affirmative 503; no module-level pre-warm
   under gunicorn `--preload` (#148/#149). Only an actual divergence from these
   decided patterns is a finding.
-- I4 Docker / platform: cu126 (T4/A10G/L4 Batch image) vs cu130 (Blackwell
-  sm_120 local) wheel correctness per build target; `.dockerignore` excludes
+- I4 Docker / platform: cu130 unified wheel across the Batch image and local dev
+  (covers sm_75->sm_120) wheel correctness per build target; `.dockerignore` excludes
   data/large binaries; AMP/CUDA-graph/`torch.compile` autodetect-and-branch (not
   hardcoded for one arch); the Windows `OPENBLAS_NUM_THREADS=1` correctness guard.
   Re-flag a hardcoded-for-one-box assumption, NOT an intentional per-arch default.
@@ -363,7 +363,7 @@ PRIMARY FOCUS:
     NaN artifact, leak a secret, or break a deploy.
 
 NOT FINDINGS:
-- Intentional per-arch defaults: FP16 on every CUDA GPU with BF16 opt-in only,
+- Intentional per-arch defaults: FP32+TF32 (AMP off) default on every CUDA GPU, with FP16 and BF16 opt-in only (FF_AMP_DTYPE),
   CUDA-graph autodetect-ON for sm_80+, MPS opt-in (never the Mac default), the
   T4/sm_75 lowest-common-denominator EC2 rollback target -> decided stop-rules,
   not bugs. "The GPU supports BF16, enable it" is NOT a finding.

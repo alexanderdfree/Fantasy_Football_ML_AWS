@@ -12,7 +12,7 @@ Per-position diagnostic CLIs:
 - [src/qb/diagnose_outliers.py](../src/qb/diagnose_outliers.py) — week-level outlier diagnostics for QB predictions
 - [src/rb/analyze_errors.py](../src/rb/analyze_errors.py) — RB error decomposition by target
 
-Each script is invocable via `python -m src.analysis.<filename>` (or `python src/analysis/<filename>.py`); outputs land in [analysis_output/](../analysis_output/) (gitignored).
+Each script is invocable via `python -m src.analysis.<filename>` (or `python src/analysis/<filename>.py`); outputs land in `analysis_output/` (gitignored).
 
 ## Why no notebooks
 

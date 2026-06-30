@@ -3,7 +3,7 @@
 **Status: BUILT.** [src/tuning/ab_harness.py](../src/tuning/ab_harness.py) (library + CLI + worker),
 [src/tuning/ab_example.py](../src/tuning/ab_example.py) (copy-me template + smoke target),
 [tests/tuning/test_ab_harness.py](../tests/tuning/test_ab_harness.py). Motivated by the
-2026-06-08 role-inheritance A/B (#1353).
+2026-06-08 role-inheritance A/B (#1053).
 The design below is preserved for reference; **what actually shipped** is summarized here.
 
 ## What shipped

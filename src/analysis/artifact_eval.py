@@ -15,7 +15,7 @@ Design: it reuses the **same** primitives serving uses — ``INFERENCE_REGISTRY`
 (``reg``), ``build_position_features`` (so the feature path can't drift from
 training/serving), the ``artifact_integrity`` scaler checks, and the model
 ``.load()`` / ``predict_numpy`` calls — so there is one inference contract, not a
-copy. The orchestration here mirrors ``src.serving.app._apply_position_models``;
+copy. The orchestration here mirrors ``src.serving.core._apply_position_models``;
 the intended follow-up is to extract that shared inner loop into one helper both
 serving and this module call (see PR description).
 
@@ -201,7 +201,7 @@ def build_test_df_from_artifacts(
         pos_test = reg["compute_targets_fn"](pos_test)
 
     # Mirror the train-only min-games filter that training + serving apply to
-    # pos_train BEFORE feature-building (src.serving.app._apply_position_models /
+    # pos_train BEFORE feature-building (src.serving.core._apply_position_models /
     # src.shared.pipeline._prepare_position_data): the fill-means + StandardScaler
     # are fit on pos_train, so an unfiltered train frame drifts those stats from
     # the served artifacts and these preds stop reproducing the served numbers —

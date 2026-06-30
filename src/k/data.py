@@ -847,7 +847,7 @@ def season_split(k_df: pd.DataFrame) -> tuple:
 
     Applies the ``MIN_GAMES`` per-(player_id, season) filter to **train
     only**, mirroring the shared pipeline's train-only ``MIN_GAMES_PER_SEASON``
-    filter at ``src/shared/pipeline.py:508``. Val/test rows are kept
+    filter at ``src/shared/pipeline.py:640``. Val/test rows are kept
     regardless of season-game-count so K's holdout distribution matches the
     other positions.
     """

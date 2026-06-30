@@ -201,7 +201,7 @@ gh label create regress-risk-high --color D93F0B --description "Audit fix: model
 ```bash
 : > /tmp/known_issues.tsv
 for label in $DEDUPE_AUDIT_LABELS; do
-  gh issue list --label "$label" --state all --limit 400 --json number,title,labels \
+  gh issue list --label "$label" --state all --limit 800 --json number,title,labels \
     --jq '.[] | select(any(.labels[]; .name | test("^severity-(docs|low|medium|high)$"))) | "\(.number)\t\(.title)"' \
     >> /tmp/known_issues.tsv
 done

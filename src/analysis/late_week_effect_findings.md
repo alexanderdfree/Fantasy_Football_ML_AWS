@@ -74,7 +74,7 @@ what "Huber already absorbs the outliers + more data helps" predicts.
   metric-*alignment* fix (report on weeks you actually play), not a big number move
   (wk18 ≈ 5% of the test set). A multi-seed ablation would tighten the NN deltas.
 - **K/DST** were not in Stage 1 (raw-split scoring limitation). They get correct totals
-  via the per-position pipeline in `--stage2` / `--ablation` if coverage is wanted; the
+  via the per-position pipeline in `--with-model-error` / `--ablation` if coverage is wanted; the
   effect there is second-order (kickers/defenses play regardless of offensive rest).
 - **Latent bug surfaced (independent of this) — investigated 2026-05-30, benign:**
   `snap_pct` imputation groups by raw `(position, week)`

@@ -35,7 +35,9 @@ _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_e
 # Per-projection prediction intervals (80% floor–ceiling bands) for the expert
 # sources, generated offline by ``src.analysis.expert_intervals`` and committed
 # beside this file. Same committed-JSON + live-endpoint pattern as the expert
-# summary above; surfaced under the Comparison tab's "Prediction intervals" block.
+# summary above. RETAINED, NOT CURRENTLY PUBLISHED: the "Prediction intervals" block
+# was removed from the Comparison tab (#1349); the JSON + loader are kept so it can be
+# re-enabled.
 _EXPERT_INTERVALS_PATH = os.path.join(os.path.dirname(__file__), "expert_intervals.json")
 
 

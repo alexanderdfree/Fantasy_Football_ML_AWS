@@ -1,8 +1,8 @@
-# ADR-0001: Temporal split (2012–23 train / 2024 val / 2025 test)
+# ADR-0001: Temporal split (2013–23 train / 2024 val / 2025 test)
 
 **Status:** Accepted
 
-**Decision.** Split by season, not by random row. Train on 2012–2023, validate on 2024, hold out 2025 for test.
+**Decision.** Split by season, not by random row. Train on 2013–2023 (2012 is loaded only for prior-season/rolling context, not trained on), validate on 2024, hold out 2025 for test.
 
 **Context.** Weekly fantasy data is a time series with heavy week-over-week autocorrelation within a player (rolling features by construction). A random train/test split would leak week W+1's rolling stats into week W's label.
 
@@ -14,7 +14,7 @@
 | K-fold time-series CV | Medium | Low | Medium |
 | Single season-based holdout (chosen) | Low | Low | Medium |
 
-**Chosen: single season holdout.** Matches how the model will actually be used (next season is unknown; last season is the fairest holdout). Ridge hyperparameter tuning still uses expanding-window CV *inside* the 2012–2023 train window to avoid a single fold's noise — so we get some of the statistical benefit of K-fold without contaminating the test year.
+**Chosen: single season holdout.** Matches how the model will actually be used (next season is unknown; last season is the fairest holdout). Ridge hyperparameter tuning still uses expanding-window CV *inside* the 2013–2023 train window to avoid a single fold's noise — so we get some of the statistical benefit of K-fold without contaminating the test year.
 
 **Rejected.** K-fold over seasons was considered but over-spent our limited post-2012 history and broke the "deployment mirror" intuition — at serve time we're always predicting a future we've never trained on, and a single holdout faithfully simulates that.
 

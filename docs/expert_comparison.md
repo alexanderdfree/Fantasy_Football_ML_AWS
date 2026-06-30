@@ -228,7 +228,7 @@ K is interesting because kicker fantasy production is *highly* opponent/weather/
 
 **Our best MAE: 5.107 (Attention NN)** --- in the 5.0–7.0 "established systems" band.
 
-DST landed via [commit `cc0c627`](../) with a 10-target attention model (sacks, INTs, fumble recoveries, fumbles forced, safeties, def TDs, blocked kicks, ST TDs, points allowed, yards allowed) plus a parallel opp-OFFENSE attention branch (PR [#223](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/223)) that conditions defensive predictions on the offense being faced. The Attention NN and the Multi-Head NN (no attention) are effectively tied on DST (5.107 vs 5.115 MAE) — DST signal is structurally simpler than skill-position production, so the attention branch is roughly on par with the plain NN rather than pulling decisively ahead on the current feature set.
+DST landed via commit `cc0c627` with a 10-target attention model (sacks, INTs, fumble recoveries, fumbles forced, safeties, def TDs, blocked kicks, ST TDs, points allowed, yards allowed) plus a parallel opp-OFFENSE attention branch (PR [#223](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/223)) that conditions defensive predictions on the offense being faced. The Attention NN and the Multi-Head NN (no attention) are effectively tied on DST (5.107 vs 5.115 MAE) — DST signal is structurally simpler than skill-position production, so the attention branch is roughly on par with the plain NN rather than pulling decisively ahead on the current feature set.
 
 ---
 

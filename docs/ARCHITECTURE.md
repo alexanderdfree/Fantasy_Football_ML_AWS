@@ -19,7 +19,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 
 ## 1. Context
 
-**Problem.** Predict weekly fantasy football points for individual NFL players across six positions (QB, RB, WR, TE, K, DST) for the 2025 season, using 2012–2024 as training history. Primary output is a per-player point projection (regression); ranking metrics (top-12 hit rate, Spearman correlation) are derived from projections post-hoc.
+**Problem.** Predict weekly fantasy football points for individual NFL players across six positions (QB, RB, WR, TE, K, DST) for the 2025 season, using 2013–2024 as training/validation history (2012 is loaded only for prior-season context, not trained on). Primary output is a per-player point projection (regression); ranking metrics (top-12 hit rate, Spearman correlation) are derived from projections post-hoc.
 
 **Constraints.**
 - Personal project, single maintainer, modest scope.
@@ -83,7 +83,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 | # | Decision | Status |
 |---|---|---|
-| D1 | [Temporal split (2012–23 train / 2024 val / 2025 test)](adr/0001-temporal-split.md) | Accepted |
+| D1 | [Temporal split (2013–23 train / 2024 val / 2025 test)](adr/0001-temporal-split.md) | Accepted |
 | D2 | [Multi-target decomposition with shared NN backbone](adr/0002-multi-target-decomposition-with-shared-nn-backbone.md) | Accepted |
 | D3 | [Three-way model comparison, no ensemble](adr/0003-three-way-model-comparison-no-ensemble.md) | Accepted |
 | D4 | [Attention over game history (all positions)](adr/0004-attention-over-game-history.md) | Accepted |
@@ -134,7 +134,7 @@ Standing follow-ups, mapped to decisions (item 1 is also tracked in the [TODO.md
 
 1. **K cross-season rolling leakage** — related to D1 (temporal split) and D5 (per-position non-negative targets). Requires either collecting more K games or accepting the bias.
 2. **PPR-only training** — related to D2 (multi-target). Needs a training-matrix flag for scoring format and re-running six position pipelines.
-3. **No lineup optimizer** — out of scope for this ADR; tracked as a follow-up project, not a revision of D1–D21.
+3. **No lineup optimizer** — out of scope for this ADR; tracked as a follow-up project, not a revision of D1–D22.
 
 ---
 

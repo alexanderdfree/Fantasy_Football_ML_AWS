@@ -1,7 +1,7 @@
 # LR-scheduler-type A/B — all six positions (2026-06-07)
 
 Raw per-position results: `s3://ff-predictor-training/ablate_scheduler/{POS}/result.json`
-Merged: `scheduler_ablation_results.json` (this dir).
+Merged: `2026-06-07_scheduler_type_results.json` (this dir).
 
 ## Run scope
 - Positions: QB, RB, WR, TE, K, DST (one Spot **g4dn.xlarge / T4 (sm_75)** per position —
