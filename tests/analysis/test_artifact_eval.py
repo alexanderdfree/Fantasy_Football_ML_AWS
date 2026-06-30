@@ -120,3 +120,82 @@ def test_warn_if_sync_noop_is_loud_when_bucket_unset_or_blank(monkeypatch, capsy
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "some-bucket")
     assert ae.warn_if_sync_noop() is True
     assert capsys.readouterr().out == ""  # bucket set -> no warning
+
+
+# --- Stale-artifact (Ridge-tell) drift check ---------------------------------- #
+def _write_metrics(model_dir, ridge_mae):
+    import json
+
+    (model_dir / "benchmark_metrics.json").write_text(
+        json.dumps(
+            {
+                "git_sha": "abc123",
+                "split_run_id": "sid",
+                "ridge_metrics": {"total": {"mae": ridge_mae}},
+            }
+        )
+    )
+
+
+def test_reconstruction_verdict_thresholds():
+    assert ae._reconstruction_verdict(0.03, 0.10, 0.30) == "ok"
+    assert ae._reconstruction_verdict(0.10, 0.10, 0.30) == "ok"  # boundary inclusive
+    assert ae._reconstruction_verdict(0.15, 0.10, 0.30) == "warn"
+    assert ae._reconstruction_verdict(0.86, 0.10, 0.30) == "fail"
+
+
+def _recon_df():
+    # |10-11| + |20-19| = 2, mean = 1.0 reconstructed Ridge MAE
+    return pd.DataFrame({"pred_ridge_total": [10.0, 20.0], "fantasy_points": [11.0, 19.0]})
+
+
+def test_validate_reconstruction_ok_when_recorded_matches(tmp_path, capsys):
+    _write_metrics(tmp_path, 1.0)  # recorded == reconstructed -> Δ=0
+    res = ae.validate_reconstruction("QB", _recon_df(), model_dir=str(tmp_path))
+    assert res["status"] == "ok"
+    assert res["reconstructed_ridge_mae"] == 1.0
+    assert "STALE" not in capsys.readouterr().out  # quiet when healthy
+
+
+def test_validate_reconstruction_flags_stale_and_strict_raises(tmp_path, capsys):
+    _write_metrics(tmp_path, 2.0)  # recorded 2.0 vs reconstructed 1.0 -> Δ=1.0 -> fail
+    res = ae.validate_reconstruction("QB", _recon_df(), model_dir=str(tmp_path))
+    assert res["status"] == "fail"
+    assert res["delta"] == 1.0
+    assert "STALE ARTIFACT" in capsys.readouterr().out
+    with pytest.raises(RuntimeError):
+        ae.validate_reconstruction("QB", _recon_df(), model_dir=str(tmp_path), strict=True)
+
+
+def test_validate_reconstruction_warn_band(tmp_path):
+    _write_metrics(tmp_path, 1.15)  # Δ=0.15 -> warn band (warn_tol 0.10 < Δ <= fail_tol 0.30)
+    assert (
+        ae.validate_reconstruction("QB", _recon_df(), model_dir=str(tmp_path))["status"] == "warn"
+    )
+
+
+def test_validate_reconstruction_skips_gracefully(tmp_path):
+    # no benchmark_metrics.json -> skipped (no reference)
+    assert (
+        ae.validate_reconstruction("QB", _recon_df(), model_dir=str(tmp_path))["status"]
+        == "skipped"
+    )
+    _write_metrics(tmp_path, 1.0)
+    # non-skill position (no FP total in splits) -> skipped
+    assert (
+        ae.validate_reconstruction("K", _recon_df(), model_dir=str(tmp_path))["status"] == "skipped"
+    )
+    # non-PPR scoring (recorded MAE is PPR) -> skipped
+    assert (
+        ae.validate_reconstruction(
+            "QB", _recon_df(), model_dir=str(tmp_path), scoring_format="standard"
+        )["status"]
+        == "skipped"
+    )
+    # missing pred_ridge_total (Ridge load failed upstream) -> skipped
+    assert (
+        ae.validate_reconstruction(
+            "QB", pd.DataFrame({"fantasy_points": [1.0]}), model_dir=str(tmp_path)
+        )["status"]
+        == "skipped"
+    )

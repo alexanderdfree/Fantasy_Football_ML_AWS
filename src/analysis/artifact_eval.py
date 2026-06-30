@@ -38,6 +38,7 @@ prediction columns produced per position):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 import joblib
@@ -367,7 +368,125 @@ def build_test_df_from_artifacts(
         except Exception as e:  # noqa: BLE001
             _warn("lgbm", e)
 
+    # Self-check: does the loaded deterministic Ridge still reproduce its recorded
+    # training MAE on these splits? A large divergence means the saved artifact and
+    # the current data/splits are different vintages — the artifact is STALE and its
+    # reconstructed predictions will silently corrupt downstream diagnostics (the QB
+    # incident: Ridge reconstruct 6.74 vs recorded 5.88 → a spurious −3.46 "elite
+    # under-leveling"). Warn-only here so it never breaks an operator's run.
+    try:
+        validate_reconstruction(pos, pos_test, model_dir=model_dir, scoring_format=scoring_format)
+    except Exception as e:  # noqa: BLE001 - a self-check must never break reconstruction
+        print(f"[artifact_eval] {pos}: reconstruction self-check errored (non-fatal): {e}")
+
     return pos_test
+
+
+# --- Stale-artifact (Ridge-tell) drift check ---------------------------------- #
+# Healthy cross-run reconstruction Δ is ~0.02-0.03 FP MAE; the QB drift incident was
+# Δ=0.86. warn=0.10 gives ~3x margin over the healthy band; fail=0.30. (Idiom from
+# ``ab_harness._RIDGE_TOL`` but sized for cross-run/cross-vintage drift, not its 1e-9
+# same-process tolerance.) PPR-only: the recorded ``ridge_metrics.total.mae`` is PPR,
+# and only the skill positions carry a fantasy-point total in the split data.
+_RECON_WARN_TOL = 0.10
+_RECON_FAIL_TOL = 0.30
+_RECON_VALIDATABLE_POS = ("QB", "RB", "WR", "TE")
+
+
+def _reconstruction_verdict(delta: float, warn_tol: float, fail_tol: float) -> str:
+    """Map an absolute Ridge-MAE drift to ``ok`` / ``warn`` / ``fail`` (pure, unit-tested)."""
+    if delta <= warn_tol:
+        return "ok"
+    if delta <= fail_tol:
+        return "warn"
+    return "fail"
+
+
+def validate_reconstruction(
+    pos: str,
+    test_df: pd.DataFrame,
+    *,
+    model_dir: str | None = None,
+    scoring_format: str = "ppr",
+    warn_tol: float = _RECON_WARN_TOL,
+    fail_tol: float = _RECON_FAIL_TOL,
+    strict: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """Flag a STALE artifact via the deterministic-Ridge data-identity tell.
+
+    Compares the reconstructed Ridge total MAE (``pred_ridge_total`` vs the actual
+    ``fantasy_points`` on ``test_df``) against the model's own recorded training MAE
+    (``ridge_metrics.total.mae`` in ``{model_dir}/benchmark_metrics.json``). A large
+    divergence means the saved artifact does not reproduce its recorded performance on
+    the current splits — artifact and data are different vintages, so the reconstructed
+    predictions are unreliable. WARNs loudly on divergence (raises if ``strict`` and the
+    verdict is not ``ok``); returns a verdict dict. ``skipped`` (no warning, no raise)
+    when not applicable: non-skill position, non-PPR scoring, missing
+    ``benchmark_metrics.json``/``ridge_metrics``, or missing ``pred_ridge_total`` /
+    ``fantasy_points`` (e.g. a Ridge load failure upstream).
+    """
+
+    def _skip(reason: str) -> dict:
+        if verbose:
+            print(f"[artifact_eval] {pos}: reconstruction self-check skipped ({reason}).")
+        return {"status": "skipped", "reason": reason, "pos": pos}
+
+    if pos.upper() not in _RECON_VALIDATABLE_POS:
+        return _skip(f"{pos} carries no fantasy-point total in the split data")
+    if scoring_format != "ppr":
+        return _skip(f"recorded MAE is PPR; scoring_format={scoring_format!r}")
+    if "pred_ridge_total" not in test_df.columns or "fantasy_points" not in test_df.columns:
+        return _skip("pred_ridge_total / fantasy_points absent (Ridge load failed?)")
+
+    if model_dir is None:
+        model_dir = resolve_model_dir(pos, INFERENCE_REGISTRY[pos])
+    metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
+    if not os.path.exists(metrics_path):
+        return _skip(
+            f"no benchmark_metrics.json at {metrics_path} (no reference to validate against)"
+        )
+    try:
+        with open(metrics_path) as f:
+            recorded_blob = json.load(f)
+        recorded = float(recorded_blob["ridge_metrics"]["total"]["mae"])
+    except (OSError, KeyError, ValueError, TypeError) as e:
+        return _skip(f"unreadable ridge_metrics.total.mae in benchmark_metrics.json ({e})")
+
+    sub = test_df[["pred_ridge_total", "fantasy_points"]].dropna()
+    if sub.empty:
+        return _skip("no rows with both pred_ridge_total and fantasy_points")
+    reconstructed = float((sub["pred_ridge_total"] - sub["fantasy_points"]).abs().mean())
+    delta = abs(reconstructed - recorded)
+    verdict = _reconstruction_verdict(delta, warn_tol, fail_tol)
+    result = {
+        "status": verdict,
+        "pos": pos,
+        "reconstructed_ridge_mae": round(reconstructed, 4),
+        "recorded_ridge_mae": round(recorded, 4),
+        "delta": round(delta, 4),
+        "git_sha": str(recorded_blob.get("git_sha", "?"))[:12],
+        "split_run_id": str(recorded_blob.get("split_run_id", "?"))[:40],
+    }
+    if verdict != "ok":
+        print(
+            f"[artifact_eval] STALE ARTIFACT: {pos} deterministic Ridge reconstructs "
+            f"MAE={reconstructed:.4f} vs recorded {recorded:.4f} (Δ={delta:.4f}, verdict={verdict}). "
+            f"The saved artifact (git {result['git_sha']}, split {result['split_run_id']}) does not "
+            f"reproduce its training MAE on the current splits — artifact/data vintage mismatch. "
+            f"Reconstructed predictions for {pos} are UNRELIABLE; regenerate the artifacts "
+            f"(`python -m src.scripts.regen_served_artifacts --positions {pos}`)."
+        )
+        if strict:
+            raise RuntimeError(
+                f"validate_reconstruction({pos}): STALE artifact (Δ={delta:.4f} > warn_tol={warn_tol})"
+            )
+    elif verbose:
+        print(
+            f"[artifact_eval] {pos}: reconstruction OK — Ridge MAE {reconstructed:.4f} "
+            f"vs recorded {recorded:.4f} (Δ={delta:.4f})."
+        )
+    return result
 
 
 def warn_if_sync_noop() -> bool:
@@ -400,6 +519,16 @@ def _main(argv: list[str] | None = None) -> None:
         "--sync", action="store_true", help="Pull the latest artifacts from S3 before evaluating."
     )
     parser.add_argument("--scoring-format", default="ppr")
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Run the Ridge-tell stale-artifact self-check per position and print its verdict.",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="With --validate, raise (non-zero exit) if any position's artifact is stale.",
+    )
     args = parser.parse_args(argv)
 
     if args.sync:
@@ -426,6 +555,10 @@ def _main(argv: list[str] | None = None) -> None:
             continue
         pred_cols = sorted(c for c in df.columns if c.startswith("pred_") and c.endswith("_total"))
         print(f"{pos}: {len(df)} test rows | model totals present: {pred_cols}")
+        if args.validate:
+            validate_reconstruction(
+                pos, df, scoring_format=args.scoring_format, strict=args.strict, verbose=True
+            )
 
 
 if __name__ == "__main__":
