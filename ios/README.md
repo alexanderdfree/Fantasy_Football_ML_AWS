@@ -10,8 +10,6 @@ The app consumes the same JSON the website does, showing all four models (Ridge
 scoring. The serving app also exposes `/privacy` and `/support` pages for App
 Store metadata.
 
-> Design + rationale: `/.claude/plans/design-an-iphone-app-velvety-pretzel.md`.
-
 ## Build & run (on a Mac with Xcode 15+ )
 
 The Xcode project is **generated from `project.yml`** with [XcodeGen](https://github.com/yonaskolb/XcodeGen)
