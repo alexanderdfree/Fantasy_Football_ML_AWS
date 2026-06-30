@@ -12,7 +12,7 @@ Gemini has access to specialized project skills located in `.agents/skills/`. To
 - **`pre-pr-judge`**: Spawn a worker to diff the active branch against `origin/main` and flag scope creep before opening a PR.
 - **`post-session-critique`**: Capture prompt lessons after a non-routine session to update `AGENTS.md` or memory.
 
-Each is a thin wrapper that reads the shared, provider-neutral `agent-workflows/<name>/instructions.md` (the same source the Claude skills and Codex prompts use). (`worktree-cleanup` is Claude-only — it has no shared instructions file, so Gemini does not wrap it.)
+Each is a thin wrapper that reads the shared, provider-neutral `agent-workflows/<name>/instructions.md` (the same source the Claude skills and Codex prompts use). Codex also scans `.agents/skills/`, so these wrappers include both Codex and Gemini runtime values; Gemini uses the Gemini block. (`worktree-cleanup` is Claude-only — it has no shared instructions file, so Gemini does not wrap it.)
 
 ## Auto-Memory & State
 Gemini CLI / Antigravity manages state through plain Markdown files (no SQL/JSON DB like Claude/Codex):

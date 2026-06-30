@@ -30,15 +30,21 @@ The launcher reuses the current checkout only when it is a clean Codex-owned wor
 
 Useful options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`. Use `--` before Codex arguments when a prompt or Codex option could be confused with a launcher option.
 
-## Slash Prompts
+## Skills And Slash Prompts
 
-Codex custom prompts are user-home scoped, not repo-scoped. The version-controlled prompt templates live in `.codex/prompts/`; the cross-agent repo workflows are thin wrappers over shared instructions under `agent-workflows/`. Install/update local copies with:
+Codex reads repo skills from `.agents/skills/`. Those wrappers are shared with Gemini/Antigravity, so each skill contains Codex runtime values and Gemini runtime values over the same provider-neutral instructions in `agent-workflows/`. Prefer the skills for reusable workflows:
+
+- `$pre-pr-judge`
+- `$post-session-critique`
+- `$solve-issues`
+
+Codex custom prompts are deprecated upstream but still useful as slash-command aliases for this repo, especially for the deterministic pre-PR gate that is not a skill. Prompt templates are user-home scoped, not repo-scoped. The version-controlled prompt templates live in `.codex/prompts/`; install/update local copies with:
 
 ```bash
 scripts/bootstrap-codex-local.sh
 ```
 
-Restart Codex after installing wrapper changes. Shared instruction changes under `agent-workflows/` are read from the repo at invocation time as long as the installed wrapper is current. The prompts appear as:
+Restart Codex after installing prompt-wrapper changes. Shared instruction changes under `agent-workflows/` are read from the repo at invocation time as long as the installed prompt wrapper is current. The prompt aliases appear as:
 
 - `/prompts:pre-pr-judge`
 - `/prompts:pre-pr-gate`
@@ -46,7 +52,7 @@ Restart Codex after installing wrapper changes. Shared instruction changes under
 - `/prompts:post-session-critique`
 - `/prompts:solve-issues`
 
-OpenAI now marks custom prompts deprecated in favor of skills, but prompts are still the closest Codex equivalent to Claude slash commands for this repo. If these workflows become stable enough to share across machines without a bootstrap copy step, graduate the wrappers into Codex skills while keeping behavior in `agent-workflows/`.
+Use `/prompts:pre-pr-gate` for the deterministic gate. The other `/prompts:*` entries are legacy aliases for the repo skills and remain available for muscle memory.
 
 ## Gaps Versus Claude Code
 

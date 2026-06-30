@@ -143,6 +143,20 @@ def test_workflow_wrapper_has_required_keys(provider: str, name: str) -> None:
     )
 
 
+@pytest.mark.parametrize("name", WORKFLOW_NAMES)
+def test_agents_skill_wrappers_are_codex_and_gemini_safe(name: str) -> None:
+    """Codex now scans `.agents/skills`, which used to be Gemini-only here.
+
+    Keep these wrappers dual-runtime so Codex does not implicitly load a
+    Gemini-specific skill body.
+    """
+    text = _read(f".agents/skills/{name}/SKILL.md")
+    assert "Codex runtime values" in text
+    assert "Gemini runtime values" in text
+    assert "WORKFLOW_PROVIDER=Codex" in text
+    assert "WORKFLOW_PROVIDER=Gemini CLI" in text
+
+
 # --- every provider wraps every shared routine -------------------------------
 
 

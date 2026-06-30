@@ -56,13 +56,13 @@ gemini_tool_paths() {
   local input="$1"
   local jq_bin="$2"
   if [ -n "$jq_bin" ]; then
-    printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // empty' 2>/dev/null || true
+    printf '%s' "$input" | "$jq_bin" -r '.tool_input.TargetFile // .tool_input.file_path // empty' 2>/dev/null || true
   elif command -v python3 >/dev/null 2>&1; then
     printf '%s' "$input" | python3 -c 'import json, sys
 try:
     ti = json.load(sys.stdin).get("tool_input") or {}
 except Exception:
     sys.exit(0)
-print(ti.get("file_path") or "")' 2>/dev/null || true
+print(ti.get("TargetFile") or ti.get("file_path") or "")' 2>/dev/null || true
   fi
 }
