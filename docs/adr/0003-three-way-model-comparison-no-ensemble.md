@@ -40,5 +40,6 @@ It ships **disabled for every position** (`PositionConfig.train_tabpfn=False`), 
 
 ## Changelog
 
+- **2026-06-30** — Doc-nit: the Decision's "LightGBM … falls apart on K/DST" reflects the decision-time read. Current benchmarks show LightGBM is **best/tied-best on DST R²** and 2nd-best on K (every model has ≈0 R² on K); the neural nets are the weak DST/K models. The original framing is retained as decision-time context.
 - 2026-06-08 · Added `TabPFNMultiTarget` as an opt-in, default-off 5th model variant (dormant infrastructure; not in prod). Decision unchanged — independent comparison, no ensemble. (PR for the TabPFN model variant)
 - 2026-06-08 · v2 → TabPFN-3 upgrade (#1079; best on the WR pilot at 3.912 FP MAE) + per-position tuning levers exposed (`tabpfn_softmax_temperature` / `tabpfn_auto_scale_n_estimators` / `tabpfn_inference_config`, inert defaults). Still default-off, non-commercial / benchmark-only.

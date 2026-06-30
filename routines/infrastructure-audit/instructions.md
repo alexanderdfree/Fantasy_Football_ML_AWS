@@ -319,7 +319,9 @@ Layer B standing infra cross-cutting lenses:
   policy JSON; and no committed secrets/credentials in workflows or infra
   scripts.
 - I6 Cost / quota safety: AWS quota assumptions (24 vCPU G+VT OD, 64 vCPU Spot;
-  `maxvCpus=64`), Spot CE ordering (g6 primary -> g5 fallback), and the EC2
+  `maxvCpus=64`), one diversified `ff-gpu-spot` CE (g6+g5 under
+  `SPOT_PRICE_CAPACITY_OPTIMIZED`; the g6-primary/g5-fallback queue order was
+  reverted 2026-06-22, ADR-0013), and the EC2
   auto-shutdown service/timer being present and wired (idle-cost guard). Only a
   correctness/safety gap is a finding — not a cost-tuning suggestion.
 
@@ -365,7 +367,8 @@ PRIMARY FOCUS:
 NOT FINDINGS:
 - Intentional per-arch defaults: FP32+TF32 (AMP off) default on every CUDA GPU, with FP16 and BF16 opt-in only (FF_AMP_DTYPE),
   CUDA-graph autodetect-ON for sm_80+, MPS opt-in (never the Mac default), the
-  T4/sm_75 lowest-common-denominator EC2 rollback target -> decided stop-rules,
+  defensive sm_75 gates (the T4/g4dn EC2 rollback was retired to g6/L4 on
+  2026-06-22; cu130 still ships sm_75 kernels) -> decided stop-rules,
   not bugs. "The GPU supports BF16, enable it" is NOT a finding.
 - Cost/perf tuning suggestions (cheaper instance, different parallelism, fewer
   Spot CEs) that are not an actual correctness or safety defect.

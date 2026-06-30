@@ -29,5 +29,6 @@ Net effect on a typical rollback push: if the instance is already warm, training
 
 ## Changelog
 
+- **2026-06-30** — The 2026-05-20 cold-start snapshot below (SOCI index realized but the snapshotter not consuming on the default Batch AMI `ami-03dd7084ddd63d5d0`; ~258 s) is historical. SOCI was removed 2026-06-07 — it cannot work on ECS-managed EC2 ([batch_design.md](../batch_design.md) §2a). The realized cold-start levers are now the slim cu130 base (§2d) and the warm pre-pulled AMI (ADR-0022).
 - **2026-06-22** — EC2 rollback host swapped g4dn.xlarge/T4 → g6.xlarge/L4 (T4 retired from training; the rollback now matches the Batch L4 fleet and the cu130 image). Config/docs only — the path stays disabled (`BATCH_ACTIVE=true`); the live warm instance + `EC2_TRAINER_INSTANCE_ID` are re-provisioned out-of-band when the rollback is next exercised. Note the g6/L4 is sm_89 (sm_80+), so the rollback now runs CUDA-graphed like the Batch fleet (the old T4 stayed eager).
 - **2026-06-01** — Corrected the rollback runbook text to match `train-ec2.yml`: one sequential SSM command on the single T4 host, about 120 minutes wall-clock. Documentation-only.

@@ -81,8 +81,8 @@ what "Huber already absorbs the outliers + more data helps" predicts.
   (`src/data/preprocessing.py::impute_snap_pct`), conflating 2012–2020's *final* wk17
   with 2021+'s *penultimate* wk17 — an era-contaminated median in principle. **No
   production impact: the median branch is dead code.** `src/features/engineer.py`
-  zero-fills every `snap_pct` NaN (`groupby(["player_id","season"]).shift(1).fillna(0)`,
-  L290) *before* any split function runs, so by the time `impute_snap_pct` executes — in
+  zero-fills every `snap_pct` NaN (`groupby(["player_id","season","stint_id"])["snap_pct_raw"].shift(1).fillna(0)`,
+  ~L362) *before* any split function runs, so by the time `impute_snap_pct` executes — in
   `temporal_split` (on that in-memory post-`build_features` frame) and in the CV /
   rolling-origin folds (`expanding_window_folds` / `rolling_origin_folds`, which re-read
   the post-`build_features` on-disk splits) — there are **0 NaN** to fill — confirmed

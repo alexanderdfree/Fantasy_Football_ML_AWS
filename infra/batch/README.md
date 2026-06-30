@@ -236,8 +236,9 @@ pricier or scarcer. Single-position retrains scale down
 linearly. At zero capacity when idle, the CEs have no standing cost. CloudWatch
 logs and ECR storage are free-tier territory for this volume.
 
-Compared to the warm-EC2 g4dn path's ~$8/mo idle EBS + ~$0.53/hr active OD,
-Spot fanout is still cheaper *and* faster. The g4dn → g6 swap was chosen for
+Compared to the warm-EC2 g6.xlarge rollback path's idle EBS + active on-demand
+cost (the g4dn/T4 rollback host was retired to g6/L4 on 2026-06-22),
+Spot fanout is still cheaper *and* faster. The earlier g4dn → g6 swap was chosen for
 BF16 support (T4 lacked sm_80+) and `torch.compile` re-eligibility (rejected on
 T4 in D12), not cost — absolute annual delta is ~$25.
 
