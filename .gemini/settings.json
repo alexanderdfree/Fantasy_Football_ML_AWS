@@ -18,7 +18,7 @@
   "hooks": {
     "BeforeTool": [
       {
-        "matcher": "write_file|replace",
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|write_file|replace",
         "hooks": [
           {
             "name": "guard-worktree-path",
@@ -29,7 +29,7 @@
         ]
       },
       {
-        "matcher": "run_shell_command",
+        "matcher": "run_command|run_shell_command",
         "hooks": [
           {
             "name": "pre-pr-gate",
@@ -42,7 +42,7 @@
     ],
     "AfterTool": [
       {
-        "matcher": "write_file|replace",
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|write_file|replace",
         "hooks": [
           {
             "name": "ruff-format",
