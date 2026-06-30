@@ -45,9 +45,10 @@ subprocess-only break unit tests can't see — caught by the smoke, not CI.)
   `expect=identical` → "data-identical"; served `k/outputs` byte-identical.
 
 ### Follow-ups (not in this PR)
-- **Reproduce the role-inheritance A/B** (verification item 1) is deferred — it needs the
-  role-inheritance *feature* itself (Phase 1 of #1353),
-  which isn't built yet. The harness is ready to run it (RB/WR, frame-injection shape).
+- **Reproduce the role-inheritance A/B** (verification item 1) — the role-inheritance
+  *feature* itself has since shipped (`is_top_available` / `inherited_opportunity`,
+  #1053 RB+WR, productionized via #1061), so the harness can now run it (RB/WR,
+  frame-injection shape).
 - **Port the existing `ablate_*` scripts** (`ablate_rb_gate`, `ablate_injury_features`,
   `ablate_backbone_norm`, …) onto the harness so they parallelize + isolate too. Mechanical; left out
   here to keep the PR to the harness itself.

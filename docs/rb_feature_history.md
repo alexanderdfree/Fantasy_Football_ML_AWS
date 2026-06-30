@@ -8,7 +8,7 @@ Companion artifact: `analysis_output/rb_feature_audit.json` — a generated, unc
 
 - **Pathways**: the model has three feature pathways and every feature lives in exactly one.
   - `INCLUDE_FEATURES` — the flat opt-in whitelist used by Ridge, LightGBM, ElasticNet, and the base `MultiHeadNet`. Organised into 10 categories (rolling, prior_season, ewma, trend, share, matchup, defense, contextual, weather_vegas, specific).
-  - `ATTN_STATIC_FEATURES` — derived from `INCLUDE_FEATURES` via `ATTN_STATIC_CATEGORIES` (currently: prior_season + matchup + defense + contextual + weather_vegas). Feeds the attention NN's static branch.
+  - `ATTN_STATIC_FEATURES` — derived from `INCLUDE_FEATURES` via `ATTN_STATIC_CATEGORIES` (currently: prior_season + matchup + contextual + weather_vegas). Feeds the attention NN's static branch.
   - `ATTN_HISTORY_STATS` — per-game raw stats fed as a sequence to the attention NN's history branch (independent of `INCLUDE_FEATURES`).
 - **Targets** are listed separately. They moved from fantasy-point components to raw NFL stats in the target-migration (PR #15).
 - Drops and additions are timestamped to PR/SHA so you can `git show <sha>` for the full diff.
@@ -40,7 +40,7 @@ Aggregator `predictions_to_fantasy_points("RB", preds)` converts the raw-stat pr
 For each of `[fantasy_points, targets, receptions, carries, rushing_yards, receiving_yards, snap_pct]`, three aggregates `[mean, std, max]` × two windows `[L3, L8]`. `fantasy_points` additionally gets `rolling_min` at L3, L5, L8 (the only L5 retained; see "L5 dropped" rule below).
 
 #### `prior_season` (after PR-#190 audit drops)
-Prior-season `[mean, std, max]` over the same 7 base stats, **minus** the 10 cells filtered by `_PRIOR_SEASON_DROPS` ([config.py:56-67](../src/rb/config.py:56)): `prior_season_{mean,std,max}_receptions`, `prior_season_{mean,std,max}_rushing_yards`, `prior_season_{mean,std,max}_fantasy_points`, `prior_season_std_receiving_yards`. Drop rationale is in the inline comment.
+Prior-season `[mean, std, max]` over the same 7 base stats, **minus** the 10 cells filtered by `_PRIOR_SEASON_DROPS` ([config.py:56-67](../src/rb/config.py)): `prior_season_{mean,std,max}_receptions`, `prior_season_{mean,std,max}_rushing_yards`, `prior_season_{mean,std,max}_fantasy_points`, `prior_season_std_receiving_yards`. Drop rationale is in the inline comment.
 
 #### `ewma`
 Empty by design: "All EWMA dropped (>0.98 corr with rolling means)".
@@ -55,16 +55,16 @@ Empty by design: "All EWMA dropped (>0.98 corr with rolling means)".
 `opp_rush_pts_allowed_to_pos`, `opp_recv_pts_allowed_to_pos`. The sum `opp_fantasy_pts_allowed_to_pos` and the rank `opp_def_rank_vs_pos` were dropped — see the change log.
 
 #### `defense` — 6 columns
-L5 rolling means of the opponent defense's allowed stats: `opp_def_sacks_L5`, `opp_def_pass_yds_allowed_L5`, `opp_def_pass_td_allowed_L5`, `opp_def_ints_L5`, `opp_def_rush_yds_allowed_L5`, `opp_def_pts_allowed_L5`. Built by [`_build_defense_matchup_features`](../src/features/engineer.py:825).
+L5 rolling means of the opponent defense's allowed stats: `opp_def_sacks_L5`, `opp_def_pass_yds_allowed_L5`, `opp_def_pass_td_allowed_L5`, `opp_def_ints_L5`, `opp_def_rush_yds_allowed_L5`, `opp_def_pts_allowed_L5`. Built by [`_build_defense_matchup_features`](../src/features/engineer.py).
 
-#### `contextual` — 6 columns (after PR-#190 audit drops)
-`is_home`, `week`, `days_rest`, `practice_status`, `game_status`, `depth_chart_rank`. `is_returning_from_absence` was dropped (r=0.934 with `days_rest`) — see the change log.
+#### `contextual` — 12 columns
+`is_home`, `week`, `days_rest`, `practice_status`, `game_status`, `depth_chart_rank`, `contract_apy_cap_pct`, `contract_guaranteed`, `contract_years_remaining`, `contract_age`, `is_top_available`, `inherited_opportunity`. `is_returning_from_absence` was dropped (r=0.934 with `days_rest`) in the PR-#190 audit; the four `contract_*` columns and the role-inheritance pair `is_top_available` / `inherited_opportunity` (#1053) were added later — see the change log.
 
 #### `weather_vegas` — 4 columns
 `implied_team_total`, `implied_opp_total`, `is_dome`, `rest_advantage`. (The old Weather-NN-only per-position drop helper was removed after it lost production callers; this list is the live RB allowlist.)
 
 #### `specific` — 14 columns (after PR-#190 audit drops)
-Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py:28):
+Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py):
 
 | Feature | What it measures |
 |---|---|
@@ -85,18 +85,18 @@ Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py:28):
 
 `weighted_opportunities_L3` was dropped (r=0.940 with `opportunity_index_L3`) — see the change log.
 
-### `ATTN_STATIC_CATEGORIES` (5 categories → ATTN_STATIC_FEATURES)
+### `ATTN_STATIC_CATEGORIES` (4 categories → ATTN_STATIC_FEATURES)
 
-`prior_season + matchup + defense + contextual + weather_vegas` feed the attention NN's static branch through the post-drop category lists above (full list materialised at runtime via `ATTN_STATIC_FEATURES = [c for cat in CATEGORIES for c in INCLUDE_FEATURES[cat]]`).
+`prior_season + matchup + contextual + weather_vegas` feed the attention NN's static branch through the post-drop category lists above (full list materialised at runtime via `ATTN_STATIC_FEATURES = [c for cat in CATEGORIES for c in INCLUDE_FEATURES[cat]]`).
 
-**Excluded by design**: `rolling`, `ewma`, `trend`, `share`, `specific`. The attention sequence already learns temporal patterns from `ATTN_HISTORY_STATS`; routing rolling/share/specific into the static branch would double-count signal (see the `attn_static_features`/`attn_history_stats` block in [src/rb/config.py](../src/rb/config.py), approx. lines 292-342).
+**Excluded by design**: `rolling`, `ewma`, `trend`, `share`, `defense`, `specific` (the `defense` columns are L5-windowed opponent stats, so they fall under the same no-rolling-in-the-static-branch rule). The attention sequence already learns temporal patterns from `ATTN_HISTORY_STATS`; routing rolling/share/specific into the static branch would double-count signal (see the `attn_static_features`/`attn_history_stats` block in [src/rb/config.py](../src/rb/config.py), approx. lines 292-342).
 
-### `ATTN_HISTORY_STATS` (32 per-game stats fed as a sequence)
+### `ATTN_HISTORY_STATS` (37 per-game stats fed as a sequence)
 
 ```python
 [
     "rushing_yards", "receiving_yards", "rushing_tds", "receiving_tds",
-    "carries", "targets", "receptions", "fumbles_lost", "snap_pct",
+    "carries", "targets", "receptions", "fumbles_lost", "snap_pct_raw",
     "rushing_first_downs", "receiving_first_downs",
     "game_carry_share", "game_target_share",
     "game_carry_hhi", "game_target_hhi",
@@ -109,12 +109,15 @@ Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py:28):
     # Per-game red-zone & goal-line touch counts (from PBP)
     "redzone_carries", "redzone_targets", "inside10_carries",
     "inside5_carries", "redzone_target_share",
+    # nflverse expected-stats (xYAC / xTD model outputs) per game
+    "rush_yards_gained_exp", "rush_touchdown_exp",
+    "rec_yards_gained_exp", "rec_touchdown_exp", "receptions_exp",
 ]
 ```
 
 `max_seq_len = 17`. Padding=0, mask flag tracks real vs padded games.
 
-**Excluded by design**: `fantasy_points` ([config.py:258-262](../src/rb/config.py:258)) — deterministic linear combination of the represented components.
+**Excluded by design**: `fantasy_points` ([config.py:258-262](../src/rb/config.py)) — deterministic linear combination of the represented components.
 
 ---
 
@@ -123,7 +126,7 @@ Defined in `_SPECIFIC_FEATURES` at [config.py:28-43](../src/rb/config.py:28):
 ### 2026-04 — PR #190 feat(rb): drop 14 redundant features per multicollinearity audit
 **Removed** 14 columns from `INCLUDE_FEATURES` and `SPECIFIC_FEATURES` based on the audit at [`src/analysis/analysis_rb_feature_audit.py`](../src/analysis/analysis_rb_feature_audit.py) (16,604 RB training rows). Drops fell into two buckets:
 
-*By-construction redundancy* — `opp_def_rank_vs_pos` (Spearman -0.937 with `opp_fantasy_pts_allowed_to_pos` — literal `rank()` per [engineer.py:795](../src/features/engineer.py:795)), `target_share_L5` / `carry_share_L5` (r=0.966 / 0.984 with the L3 versions; same threshold the project applied to all `rolling_*_L5`), `carry_share_L3` (r=0.982 with `team_rb_carry_share_L3` — denominators differ only by QB scrambles), `weighted_opportunities_L3` (r=0.940 with `opportunity_index_L3`), `is_returning_from_absence` (r=0.934 with `days_rest`).
+*By-construction redundancy* — `opp_def_rank_vs_pos` (Spearman -0.937 with `opp_fantasy_pts_allowed_to_pos` — literal `rank()` per [engineer.py:795](../src/features/engineer.py)), `target_share_L5` / `carry_share_L5` (r=0.966 / 0.984 with the L3 versions; same threshold the project applied to all `rolling_*_L5`), `carry_share_L3` (r=0.982 with `team_rb_carry_share_L3` — denominators differ only by QB scrambles), `weighted_opportunities_L3` (r=0.940 with `opportunity_index_L3`), `is_returning_from_absence` (r=0.934 with `days_rest`).
 
 *High VIF / functional derivation* — `opp_fantasy_pts_allowed_to_pos` (VIF 193; sum ≈ rush + recv components), `prior_season_{mean,std,max}_receptions` (r=0.937–0.982 with `prior_season_*_targets`), `prior_season_{mean,std,max}_rushing_yards` (r=0.943–0.963 with `prior_season_*_carries`), `prior_season_std_receiving_yards`, `prior_season_std_fantasy_points` (r=0.91–0.94 with the matching `_max`).
 
@@ -149,7 +152,7 @@ Made the per-head non-negativity clamp explicit in the RB config (`NN_NON_NEGATI
 | B (Poisson/no gate, PR-#96) | 4.258 | 0.329 | 0.064 | 0.989 |
 | C (Poisson+gate, this PR) | 4.239 | 0.304 | 0.099 | 0.983 |
 
-Variant C edges B by 0.019 pt/game — under the 0.05 decision threshold, so the ablation script reported "drop the gate" and PR #96 shipped B. But B's per-target rushing_tds MAE regressed +0.052 vs A; Variant C closes half that gap at zero cost to FP MAE. Documented in extensive detail in [config.py:292-307](../src/rb/config.py:292).
+Variant C edges B by 0.019 pt/game — under the 0.05 decision threshold, so the ablation script reported "drop the gate" and PR #96 shipped B. But B's per-target rushing_tds MAE regressed +0.052 vs A; Variant C closes half that gap at zero cost to FP MAE. Documented in extensive detail in [config.py:292-307](../src/rb/config.py).
 
 ### 2026-04 — `f11dd89` / PR #108 feat(lgbm): RB retuned on huber objective
 **Changed** `LGBM_OBJECTIVE` from `"fair"` to `"huber"`. 50 Optuna trials (run 24823926033) on the huber objective gave:
@@ -205,7 +208,7 @@ Behaviour-preserving cleanup of `opportunity_index_L3`'s per-game ratio computat
 - yards: w = 0.133 (= 2/15)
 - TDs / fumbles / receptions: w = 1.0
 
-Encoded the `2.0/δ` invariant inline in [config.py:250-260](../src/rb/config.py:250) so future contributors who change a Huber δ re-derive the matching weight. NN FP MAE recovered from 5.21 → 4.23 (-0.98 pt/game). Ridge / LGBM unaffected (per-target, independent).
+Encoded the `2.0/δ` invariant inline in [config.py:250-260](../src/rb/config.py) so future contributors who change a Huber δ re-derive the matching weight. NN FP MAE recovered from 5.21 → 4.23 (-0.98 pt/game). Ridge / LGBM unaffected (per-target, independent).
 
 ### 2026-04 — `51cb2e3` / PR #15 target-migration: RB raw-stat targets + dual-gate TD
 **This is the foundational target migration.** Switched RB predictions from fantasy-point components (`rushing_floor`, `receiving_floor`, `td_points`) to raw NFL stats:
@@ -236,12 +239,12 @@ The pre-restructure history is a sequence of terse-message commits (`weather`, `
 
 - **Weather/Vegas** (`7c4e560` "added weather to all", `1d501fe` "weather"): first introduction of `is_dome`, `is_grass`, `temp_adjusted`, `wind_adjusted`, `implied_team_total`, `implied_opp_total`, `total_line`, `implied_total_x_wind`, `is_divisional`, `days_rest_improved`, `rest_advantage`. Subsequently pruned per-position into the live config allowlists (historical design notes remain in [docs/archive/design_weather_and_odds.md](archive/design_weather_and_odds.md)).
 - **Attention features** (`18170a6` "binary gate on NN, added features to attention"): introduced `ATTN_HISTORY_STATS` for RB.
-- **PCA** (`39349da` "PCA on WR, RB"): introduced `ridge_pca_components=80` for RB. Dropped Ridge condition number from 1.8e8 (after `is_home` removal) to 49.8; both yards targets improved by ~0.002 MAE ([config.py:212-214](../src/rb/config.py:212)).
+- **PCA** (`39349da` "PCA on WR, RB"): introduced `ridge_pca_components=80` for RB. Dropped Ridge condition number from 1.8e8 (after `is_home` removal) to 49.8; both yards targets improved by ~0.002 MAE ([config.py:212-214](../src/rb/config.py)).
 - **Depth chart + injuries** (`c399c12`): introduced `depth_chart_rank`, `is_returning_from_absence`, `practice_status`, `game_status`, `days_rest`.
-- **L5 dropped** (pre-restructure cleanup): every `rolling_*_L5` column dropped because >0.97 correlated with `L3` or `L8` neighbour. Exception: `rolling_min_fantasy_points_L5` retained ([config.py:80-98](../src/rb/config.py:80)).
-- **EWMA dropped** (pre-restructure cleanup): all EWMA columns dropped because >0.98 correlated with their `rolling_mean` counterparts ([config.py:132](../src/rb/config.py:132)).
-- **`spread_line` excluded** ([config.py:168-169](../src/rb/config.py:168)): "implied_team + implied_opp encodes both game total and spread direction without the perfect collinearity of keeping total_line alongside."
-- **`first_down_rate_L3` split** ([features.py:149-155](../src/rb/features.py:149)): combined first-down rate replaced with split `rushing_first_down_rate_L3` and `receiving_first_down_rate_L3` to avoid collinearity (the combined rate ≈ weighted average of the two).
+- **L5 dropped** (pre-restructure cleanup): every `rolling_*_L5` column dropped because >0.97 correlated with `L3` or `L8` neighbour. Exception: `rolling_min_fantasy_points_L5` retained ([config.py:80-98](../src/rb/config.py)).
+- **EWMA dropped** (pre-restructure cleanup): all EWMA columns dropped because >0.98 correlated with their `rolling_mean` counterparts ([config.py:132](../src/rb/config.py)).
+- **`spread_line` excluded** ([config.py:168-169](../src/rb/config.py)): "implied_team + implied_opp encodes both game total and spread direction without the perfect collinearity of keeping total_line alongside."
+- **`first_down_rate_L3` split** ([features.py:149-155](../src/rb/features.py)): combined first-down rate replaced with split `rushing_first_down_rate_L3` and `receiving_first_down_rate_L3` to avoid collinearity (the combined rate ≈ weighted average of the two).
 
 ---
 
@@ -263,7 +266,7 @@ Every position predicts raw NFL stats. Fantasy points are computed *after* predi
 
 ### 4. Loss weights are tuned inverse-to-Huber-delta
 
-`LOSS_WEIGHTS[t] ≈ 2.0 / HUBER_DELTAS[t]`. Source: PR #21, [CLAUDE.md](../CLAUDE.md), [config.py:250-260](../src/rb/config.py:250). Why: without this, yards heads (δ=15) dominate count heads (δ=0.5) by ~2500× per sample.
+`LOSS_WEIGHTS[t] ≈ 2.0 / HUBER_DELTAS[t]`. Source: PR #21, [CLAUDE.md](../CLAUDE.md), [config.py:250-260](../src/rb/config.py). Why: without this, yards heads (δ=15) dominate count heads (δ=0.5) by ~2500× per sample.
 
 ### 5. Always diff training vs inference paths
 
@@ -275,15 +278,15 @@ Anything inside the forward pass / loss / `aggregate_fn` callback must stay in `
 
 ### 7. L3/L8 only — `*_L5` was uniformly redundant
 
-All `rolling_*_L5` columns dropped at the >0.97-corr threshold. Source: [config.py:46](../src/rb/config.py:46). Exception: `rolling_min_fantasy_points_L5` kept (the only L5 that wasn't redundant). The `target_share_L5` and `carry_share_L5` columns in the `share` category were never re-audited under this rule and the recent audit (`analysis_output/rb_feature_audit.json`) confirms they trip the threshold (r=0.966 and 0.984 respectively) — pending follow-up.
+All `rolling_*_L5` columns dropped at the >0.97-corr threshold. Source: [config.py:46](../src/rb/config.py). Exception: `rolling_min_fantasy_points_L5` kept (the only L5 that wasn't redundant). The `target_share_L5` and `carry_share_L5` columns in the `share` category were never re-audited under this rule and the recent audit (`analysis_output/rb_feature_audit.json`) confirms they trip the threshold (r=0.966 and 0.984 respectively) — pending follow-up.
 
 ### 8. No EWMA — uniformly redundant with rolling means
 
-Source: [config.py:60-61](../src/rb/config.py:60). All EWMA columns dropped at >0.98 corr.
+Source: [config.py:60-61](../src/rb/config.py). All EWMA columns dropped at >0.98 corr.
 
 ### 9. `fantasy_points` excluded from attention sequence
 
-Linear combination of represented components. Source: PR #161 + [config.py:258-262](../src/rb/config.py:258).
+Linear combination of represented components. Source: PR #161 + [config.py:258-262](../src/rb/config.py).
 
 ### 10. RB-specific constants are explicit, not defaults
 
@@ -297,7 +300,7 @@ The PR-#190 audit drops are landed (see the change log above). What remains:
 
 **Drop #10** — `rolling_mean_snap_pct_L8` (r=0.957 with the L3 version, just under the documented 0.97 threshold). Deferred pending the impact of PR #190 on benchmark drift; if that ships clean, this is a small follow-up.
 
-**Architectural follow-up — RESOLVED, do not re-add.** RB's parallel opp-defense attention branch was added in #214 (mirroring QB/WR/TE from #123) and then **disabled for all four positions in #1175** (`opp_attn_history_stats=[]`, 2026-06-15). A 24-seed stacked Batch A/B ([`src/tuning/ab_opp_def.py`](../src/tuning/ab_opp_def.py)) found the branch does **not** improve the attention NN, overturning #214's single-seed claim (the canonical "single-seed NN MAE is noise" trap). The infra ([`build_opp_defense_history_arrays`](../src/features/engineer.py:652)) stays wired but unused for QB/RB/WR/TE; the 6 `opp_def_*_L5` features remain in static for Ridge/LightGBM. See [ADR-0004](adr/0004-attention-over-game-history.md) (2026-06-15 entry). DST keeps its separate opp-**offense** branch.
+**Architectural follow-up — RESOLVED, do not re-add.** RB's parallel opp-defense attention branch was added in #214 (mirroring QB/WR/TE from #123) and then **disabled for all four positions in #1175** (`opp_attn_history_stats=[]`, 2026-06-15). A 24-seed stacked Batch A/B ([`src/tuning/ab_opp_def.py`](../src/tuning/ab_opp_def.py)) found the branch does **not** improve the attention NN, overturning #214's single-seed claim (the canonical "single-seed NN MAE is noise" trap). The infra ([`build_opp_defense_history_arrays`](../src/features/engineer.py)) stays wired but unused for QB/RB/WR/TE; the 6 `opp_def_*_L5` features remain in static for Ridge/LightGBM. See [ADR-0004](adr/0004-attention-over-game-history.md) (2026-06-15 entry). DST keeps its separate opp-**offense** branch.
 
 **Possible further drops** — `prior_season_max_X` ↔ `prior_season_std_X` for stats not yet trimmed (the PR-#190 set covered receiving_yards and fantasy_points; rushing_yards was caught by the upstream-stats rule). Run a fresh audit (`python -m src.analysis.analysis_rb_feature_audit`) before opening that PR; the JSON output is the source of truth.
 
