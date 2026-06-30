@@ -192,8 +192,12 @@ class TestGeminiHooks:
         parent_path = main / "src/qb/config.py"
         corrected_path = worktree / "src/qb/config.py"
 
-        # Test both write_to_file (Antigravity format) and write_file (legacy format)
-        for tool_name, param_name in [("write_to_file", "TargetFile"), ("write_file", "file_path")]:
+        # Test Antigravity TargetFile tools and the legacy file_path tool.
+        for tool_name, param_name in [
+            ("write_to_file", "TargetFile"),
+            ("edit_file", "TargetFile"),
+            ("write_file", "file_path"),
+        ]:
             result = _run_hook(
                 ".gemini/hooks/guard-worktree-path.sh",
                 {
@@ -293,19 +297,20 @@ class TestGeminiHooks:
         _, worktree = git_worktree_pair
         target = worktree / "messy.py"
 
-        # Test write_to_file (Antigravity format)
-        target.write_text("x=1\n")
-        result = _run_hook(
-            ".gemini/hooks/ruff-format.sh",
-            {
-                "cwd": str(worktree),
-                "tool_name": "write_to_file",
-                "tool_input": {"TargetFile": str(target)},
-            },
-            worktree,
-        )
-        assert result.returncode == 0
-        assert target.read_text() == "x = 1\n"
+        # Test Antigravity TargetFile tools.
+        for tool_name in ["write_to_file", "edit_file"]:
+            target.write_text("x=1\n")
+            result = _run_hook(
+                ".gemini/hooks/ruff-format.sh",
+                {
+                    "cwd": str(worktree),
+                    "tool_name": tool_name,
+                    "tool_input": {"TargetFile": str(target)},
+                },
+                worktree,
+            )
+            assert result.returncode == 0
+            assert target.read_text() == "x = 1\n"
 
         # Test write_file (legacy format)
         target.write_text("x=1\n")
