@@ -158,9 +158,11 @@ class PositionConfig:
     # attention branches). True by default so every position opts in; flip to
     # False per-position if a benchmark diff shows a per-target MAE regression
     # beyond the project's ±2% tolerance. The *dtype* is chosen by `amp_dtype()`
-    # (src/shared/utils.py), NOT here: FP16 + GradScaler on all CUDA (T4 and
-    # Blackwell — a 5080 A/B showed BF16 regresses high-magnitude heads, so FP16
-    # is the default everywhere), and a no-op on non-CUDA (CPU/MPS → byte-
+    # (src/shared/utils.py), NOT here: FP32 storage + TF32 matmuls (AMP off)
+    # on all CUDA by default since the 2026-06-22 #1311 flip;
+    # FP16+GradScaler is opt-in via FF_AMP_DTYPE=fp16 (a 5080 A/B showed
+    # BF16 regresses high-magnitude heads, so BF16 is never auto-selected),
+    # and a no-op on non-CUDA (CPU/MPS → byte-
     # identical to FP32). BF16 is opt-in via FF_AMP_DTYPE=bf16 (sm_80+ only;
     # refused on T4, which it hung in #293/#301).
     nn_use_amp: bool = True

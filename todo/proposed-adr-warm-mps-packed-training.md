@@ -1,7 +1,7 @@
 # Proposed ADR — Warm single-GPU MPS-packed training ("Option B")
 
-**Status:** Proposed (pre-build). Promote to `docs/adr/0018-warm-mps-packed-training.md`
-(next free number; 0017 is the current max) **only after the benchmark gate below is
+**Status:** Proposed (pre-build). Promote to `docs/adr/0023-warm-mps-packed-training.md`
+(next free number; 0022 is the current max) **only after the benchmark gate below is
 green**. Lives in `todo/` (not `docs/adr/`) until then so it doesn't fire `deploy.yml`
 or publish an undecided proposal to the in-app wiki. `[docs-only]`.
 

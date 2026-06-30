@@ -837,7 +837,7 @@ def sync_data_from_s3() -> dict | None:
 # after the first ``_ensure_metrics()`` run. Uploading that cache to S3 lets
 # the next ECS task hydrate without recomputing — fingerprint mismatch on
 # the consumer side guards against serving stale predictions against
-# refreshed models. See app.py::_try_hydrate_from_disk and
+# refreshed models. See src/serving/core.py::_try_hydrate_from_disk and
 # _persist_cache_to_disk for the producer/consumer side.
 
 _PREDICTIONS_CACHE_DIR_REL = "data/serving_cache"
@@ -846,7 +846,7 @@ _PREDICTIONS_CACHE_FILES = ("predictions.parquet", "metrics.json", "fingerprint.
 # partial-sync (it never triggers the cleanup-and-recompute path that a missing
 # required file does) — the consumer tolerates them being absent. snapshot.json
 # is the browser-ready predictions payload the frontend hydrates first paint
-# from (see src/serving/app.py::_write_snapshot_json + /api/snapshot); if it is
+# from (see src/serving/core.py::_write_snapshot_json + /api/snapshot); if it is
 # missing the frontend simply falls back to /api/predictions.
 _PREDICTIONS_CACHE_OPTIONAL = ("snapshot.json",)
 

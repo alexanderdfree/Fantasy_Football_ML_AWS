@@ -2,7 +2,7 @@
 
 Authoritative record of every feature change to the RB model — what was added, removed, or moved between feature pathways, and why. Sources are `git log --follow` on [`src/rb/config.py`](../src/rb/config.py) + [`src/rb/features.py`](../src/rb/features.py) (which transparently includes their pre-rename predecessors), [TODO.md](../TODO.md)'s **Fixed archive**, and inline comments in the configs.
 
-Companion artifact: [`analysis_output/rb_feature_audit.json`](../analysis_output/rb_feature_audit.json) and the audit script [`src/analysis/analysis_rb_feature_audit.py`](../src/analysis/analysis_rb_feature_audit.py) for empirical multicollinearity evidence on the current feature set.
+Companion artifact: `analysis_output/rb_feature_audit.json` — a generated, uncommitted artifact produced by the audit script [`src/analysis/analysis_rb_feature_audit.py`](../src/analysis/analysis_rb_feature_audit.py) — for empirical multicollinearity evidence on the current feature set.
 
 ## How to read this doc
 
@@ -25,10 +25,12 @@ The authoritative current list is whatever [`src/rb/config.py`](../src/rb/config
 |---|---|---|
 | `rushing_tds` | Poisson NLL + BCE gate | w=1.0 |
 | `receiving_tds` | Poisson NLL + BCE gate | w=1.0 |
-| `rushing_yards` | Huber | δ=15, w=0.133 (≈ 2.0/δ) |
-| `receiving_yards` | Huber | δ=15, w=0.133 |
+| `rushing_yards` | MSE | δ=15, w=0.0667 (≈ 1.0/δ) |
+| `receiving_yards` | MSE | δ=15, w=0.0667 |
 | `receptions` | Hurdle ZTNB-2 + BCE gate | w=1.0 |
 | `fumbles_lost` | Poisson NLL | w=1.0 |
+
+The two yards heads use **MSE** loss; δ=15 is retained only as the characteristic error scale from which the MSE weight (w ≈ 1.0/δ) derives.
 
 Aggregator `predictions_to_fantasy_points("RB", preds)` converts the raw-stat predictions to fantasy points post-prediction. There is no `total` head.
 
@@ -273,7 +275,7 @@ Anything inside the forward pass / loss / `aggregate_fn` callback must stay in `
 
 ### 7. L3/L8 only — `*_L5` was uniformly redundant
 
-All `rolling_*_L5` columns dropped at the >0.97-corr threshold. Source: [config.py:46](../src/rb/config.py:46). Exception: `rolling_min_fantasy_points_L5` kept (the only L5 that wasn't redundant). The `target_share_L5` and `carry_share_L5` columns in the `share` category were never re-audited under this rule and the recent audit ([analysis_output/rb_feature_audit.json](../analysis_output/rb_feature_audit.json)) confirms they trip the threshold (r=0.966 and 0.984 respectively) — pending follow-up.
+All `rolling_*_L5` columns dropped at the >0.97-corr threshold. Source: [config.py:46](../src/rb/config.py:46). Exception: `rolling_min_fantasy_points_L5` kept (the only L5 that wasn't redundant). The `target_share_L5` and `carry_share_L5` columns in the `share` category were never re-audited under this rule and the recent audit (`analysis_output/rb_feature_audit.json`) confirms they trip the threshold (r=0.966 and 0.984 respectively) — pending follow-up.
 
 ### 8. No EWMA — uniformly redundant with rolling means
 

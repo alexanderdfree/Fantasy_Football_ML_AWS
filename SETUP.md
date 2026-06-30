@@ -22,7 +22,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # PyTorch (CPU wheel — swap in the CUDA wheel if training locally)
-pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
+pip install torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
 
 # Dev/test tooling (pytest, ruff) — only needed for running tests or lint
 pip install -r requirements-dev.txt
@@ -77,13 +77,13 @@ py -3.12 -m venv .venv
 pip install -r requirements-gpu.txt
 ```
 
-To match CI's `uv` path instead, set `UV_INDEX_STRATEGY` first — `$env:UV_INDEX_STRATEGY="unsafe-best-match"` in PowerShell (or `set UV_INDEX_STRATEGY=unsafe-best-match` in `cmd`) — then `uv pip install -r requirements-gpu.txt`. To swap an existing CPU env in place without a full reinstall: `pip install --force-reinstall torch==2.12.0 --index-url https://download.pytorch.org/whl/cu130`.
+To match CI's `uv` path instead, set `UV_INDEX_STRATEGY` first — `$env:UV_INDEX_STRATEGY="unsafe-best-match"` in PowerShell (or `set UV_INDEX_STRATEGY=unsafe-best-match` in `cmd`) — then `uv pip install -r requirements-gpu.txt`. To swap an existing CPU env in place without a full reinstall: `pip install --force-reinstall torch==2.12.1 --index-url https://download.pytorch.org/whl/cu130`.
 
 **Verify the GPU is visible:**
 
 ```powershell
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-# → 2.12.0+cu130 13.0 True NVIDIA GeForce RTX 5080
+# → 2.12.1+cu130 13.0 True NVIDIA GeForce RTX 5080
 ```
 
 **First-time data pull** — the heredoc in the next section is bash-only; on Windows use this cross-shell one-liner instead:
@@ -187,7 +187,7 @@ uv pip install -r requirements.txt
 UV_INDEX_STRATEGY=unsafe-best-match uv pip install -r requirements-gpu.txt
 uv pip install -r requirements-dev.txt
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
-# → 2.12.0+cu130 13.0 True NVIDIA GeForce RTX 5080
+# → 2.12.1+cu130 13.0 True NVIDIA GeForce RTX 5080
 ```
 
 **The Windows `OPENBLAS_NUM_THREADS=1` crash does NOT apply here — but still cap BLAS, for speed.**

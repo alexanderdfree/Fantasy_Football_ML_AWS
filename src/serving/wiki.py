@@ -248,7 +248,7 @@ def _render_wiki_doc(slug: str) -> str:
     cache_key = ("wiki", slug)
     meta = WIKI_DOCS[slug]
     # WIKI_DOCS paths are relative to repo root (e.g. "docs/ARCHITECTURE.md").
-    # After the src/ migration this module lives at src/serving/app.py, so
+    # After the src/ migration this module lives at src/serving/wiki.py, so
     # repo root is two parents up. The Dockerfile copies the same .md files
     # into /app at the same relative paths, so this resolves correctly in
     # both local dev and the deployed container.

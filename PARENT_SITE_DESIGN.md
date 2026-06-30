@@ -132,9 +132,9 @@ These are the concrete changes the Fantasy repo must action. **No application co
 | 2 | Add `fantasy.alexfree.me` as a SAN on the ACM cert (or issue a new cert) and attach to the ALB **HTTPS:443 listener** | ACM + ALB. Cert requested in `infra/aws/bootstrap.sh` Step 7; 443 listener created Step 8 |
 | 3 | `DOMAIN="alexfree.me"` → `DOMAIN="fantasy.alexfree.me"`; drop the `DOMAIN_WWW="www.alexfree.me"` line (www belongs to the parent now) | `infra/aws/bootstrap.sh` line 34–35; mirror in `infra/aws/teardown.sh` + `infra/aws/README.md` |
 | 4 | `SERVICE_URL: https://alexfree.me` → `https://fantasy.alexfree.me` (post-deploy/post-train `/warm` probe target) | `.github/workflows/deploy.yml` (~line 52) **and** `.github/workflows/train-batch.yml` (~line 68) |
-| 5 | Dashboard URL `alexfree.me` → `fantasy.alexfree.me` | `README.md` lines 3, 172, 206 |
+| 5 | Dashboard URL `alexfree.me` → `fantasy.alexfree.me` | `README.md` lines 3, 163, 197 |
 
-**No-touch (verified):** `/health` (ALB health check path), `/warm`, `/static/*`, `/api/*` all keep working unchanged at the new host. The `alexfree.me` mentions in `src/serving/app.py` (lines 815, 3106) are **dated incident comments** — leave them.
+**No-touch (verified):** `/health` (ALB health check path), `/warm`, `/static/*`, `/api/*` all keep working unchanged at the new host. The `alexfree.me` mentions in `src/serving/core.py:378` and `src/serving/routes.py:759` are **dated incident comments** — leave them.
 
 **Sequencing (avoid an outage window):**
 1. Stand up `fantasy.alexfree.me` first: add the cert SAN (#2), attach to the 443 listener, add the `fantasy` CNAME (#1).
@@ -186,5 +186,5 @@ Then browser-load `https://alexfree.me`: the dark-themed landing page renders, t
 | Design tokens (colors/fonts/radius) reused in Section 3.3 | `src/serving/static/css/style.css` |
 | DOMAIN vars, ACM (Step 7), HTTPS listener (Step 8) | `infra/aws/bootstrap.sh`, `infra/aws/teardown.sh`, `infra/aws/README.md` |
 | `SERVICE_URL` warm-probe target | `.github/workflows/deploy.yml`, `.github/workflows/train-batch.yml` |
-| Dashboard URL references | `README.md` (lines 3, 172, 206) |
-| ALB health check path `/health`; container port 8000; Fargate (arm64) → ALB + ACM HTTPS | `infra/aws/` + `gunicorn.conf.py` + `README.md` line 206 |
+| Dashboard URL references | `README.md` (lines 3, 163, 197) |
+| ALB health check path `/health`; container port 8000; Fargate (arm64) → ALB + ACM HTTPS | `infra/aws/` + `gunicorn.conf.py` + `README.md` line 197 |

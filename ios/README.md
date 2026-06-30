@@ -14,7 +14,7 @@ Store metadata.
 
 ## Build & run (on a Mac with Xcode 15+ )
 
-The Xcode project is **generated from `project.yml`** with [XcodeGen](https://github.com/yonsm/XcodeGen)
+The Xcode project is **generated from `project.yml`** with [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 so the whole app is plain text (authored on Linux). It is gitignored — regenerate
 any time:
 

@@ -147,7 +147,7 @@ def _maybe_upload_to_s3(local_path: str) -> None:
 def _significance_block(position, result):
     """Compact within-season bootstrap CI on the best model's MAE gaps, for history fold-in.
 
-    Schema-safe: the website History tab (``src/serving/app.py::_benchmark_row``) and
+    Schema-safe: the website History tab (``src/serving/benchmark_history.py::_benchmark_row``) and
     ``print_history_comparison`` read only known keys, so this extra ``significance`` key is
     ignored by old readers. Returns None if the result lacks per-row test predictions.
     """

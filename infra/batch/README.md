@@ -138,13 +138,13 @@ A SOCI index is published alongside the image by
 [batch-image.yml](../../.github/workflows/batch-image.yml)'s `Publish SOCI
 index` step (`continue-on-error: false`, version-pinned to `0.13.0`). The
 `ff-gpu-spot` CE uses the `ff-batch-lt` launch template, whose UserData
-([userdata.sh](userdata.sh)) installs `soci-snapshotter-grpc` v0.13.0 on
+(`userdata.sh`) installs `soci-snapshotter-grpc` v0.13.0 on
 the AL2 host, registers it as a containerd proxy plugin, and starts it
 as a systemd unit ordered `Before=ecs.service`. First image pull on a
 fresh Spot host streams lazily via SOCI instead of doing a full ~122 s
 pull.
 
-**Two-gate bootstrap (see [userdata.sh](userdata.sh) steps 3 + 4)**:
+**Two-gate bootstrap (see `userdata.sh` steps 3 + 4)**:
 
 1. **Socket-wait** (after `systemctl enable --now soci-snapshotter`) —
    verifies the snapshotter daemon is up before containerd is asked to
@@ -164,7 +164,7 @@ rather than letting a single broken host serve overlayfs pulls
 indefinitely.
 
 **SOCI_VERSION discipline**: the version pin MUST stay aligned between
-[userdata.sh](userdata.sh) (host snapshotter) and
+`userdata.sh` (host snapshotter) and
 [batch-image.yml](../../.github/workflows/batch-image.yml) (index
 publisher). Manifest format evolves between minor releases.
 
@@ -214,7 +214,7 @@ Both training workflows guard on `vars.BATCH_ACTIVE`. The current default is `tr
 | `BATCH_ACTIVE` | Active path |
 |---|---|
 | `true` (default since 2026-05-20) | [train-batch.yml](../../.github/workflows/train-batch.yml) — parallel Spot fanout |
-| `false` (or unset) | [train-ec2.yml](../../.github/workflows/train-ec2.yml) — warm g4dn.xlarge OD (rollback) |
+| `false` (or unset) | [train-ec2.yml](../../.github/workflows/train-ec2.yml) — warm g6.xlarge OD (rollback) |
 
 Flip with one command:
 

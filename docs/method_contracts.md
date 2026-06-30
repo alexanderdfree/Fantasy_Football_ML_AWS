@@ -995,7 +995,7 @@ OPP_ROLLING_WINDOW = 5
 # === Ridge ===
 RIDGE_ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]
 
-# === Neural Net (global defaults; overridden per-position in {POS}/{pos}_config.py) ===
+# === Neural Net (global defaults; overridden per-position in src/{pos}/config.py) ===
 NN_HIDDEN_LAYERS = [128, 64, 32]
 NN_DROPOUT = 0.3
 NN_LR = 1e-3

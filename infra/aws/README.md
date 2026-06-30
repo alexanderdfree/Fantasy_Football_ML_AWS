@@ -68,7 +68,7 @@ Baseline with stack up: ~$54/month. After teardown: ~$0.10/month (ECR storage).
 | `teardown.sh` | Cost-control delete of ALB + service + SGs |
 | `seed_s3_models.sh` | Upload git-committed models to S3 so Gap 1 sync has data |
 | `enable_bucket_versioning.sh` | Enable S3 bucket versioning on the artifacts bucket (operator-run once, idempotent) so a buggy GC prune or console misclick can be recovered. |
-| `task-definition.json` | ECS task def template (ARM64 Fargate, 1 vCPU / 2 GB, `/health` check). Placeholders `__ACCOUNT_ID__`, `__REGION__`, `__ECR_URI__`, `__IMAGE_TAG__`, `__FF_MODEL_S3_BUCKET__` are substituted by `bootstrap.sh`. |
+| `task-definition.json` | ECS task def template (ARM64 Fargate, 2 vCPU / 8 GB, `/health` check). Placeholders `__ACCOUNT_ID__`, `__REGION__`, `__ECR_URI__`, `__IMAGE_TAG__`, `__FF_MODEL_S3_BUCKET__` are substituted by `bootstrap.sh`. |
 | `task-role-policy.json` | `s3:GetObject` on `ff-predictor-training/models/*` for the task role |
 | `task-trust-policy.json` | Trust policy letting ECS tasks assume both the execution and task roles |
 | `.env.out` | Resource IDs from the last bootstrap run (gitignored) |

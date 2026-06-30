@@ -73,7 +73,7 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 - **Rationale:** Kickers have stable multi-year careers and small per-season sample sizes (~17 games), so cross-season windows provide more signal. Comment above the `grp` assignment records this rationale.
 - **Risk:** If a kicker changes teams or role between seasons, stale cross-season features could mislead the model. Likely small impact.
 ### [LOW] `_cache` dict grows without eviction
-- **File:** `src/serving/app.py:88` (`_cache = {}`)
+- **File:** `src/serving/app.py:52` (`_cache = {}`)
 - **What:** `_get_data()` caches results in a module-level dict (serialized by `_cache_lock` since #31). The cache is never cleared. Not a real problem in practice (server restarts frequently), but worth noting.
 ### [LOW] `drop_last=True` silently discards training samples
 - **File:** the train-DataLoader constructions in `src/shared/training.py` (grep `drop_last=True`).
@@ -84,14 +84,14 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 ### [LOW] Redundant NaN handling in feature engineering
 - **Files:** All `*_features.py` files
 - **What:** Pattern like `(a / b).fillna(0)` followed by `df.loc[b == 0, col] = 0` is redundant — fillna already handled the division-by-zero case. Not wrong, just noisy.
-### [UNCERTAIN] K/DST index collision in `_get_data()`
-- **File:** `src/serving/core.py:659`
+### [UNCERTAIN] K/DST index collision in `_load_base_data_locked()`
+- **File:** `src/serving/core.py:863`
 - **What:** K/DST test rows are appended to `results` with `offset = results.index.max() + 1`. Assumes the general test data has a well-behaved index. If the general test parquet has gaps, K/DST indices could collide. Probably safe in practice since parquet preserves sequential indices.
 ### [UNCERTAIN] Team share features computed per-split
 - **Files:** `src/rb/features.py:113`, `src/wr/features.py:72`, `src/te/features.py:64`
 - **What:** Team carry/target shares are computed within each split independently (`compute_team_*_totals` runs on each split's own data). A player's share could differ between train and test if their teammates are distributed differently across splits. By design (prevents leakage), but the share values won't be globally consistent.
 ### [LOW] Drop `RidgeMultiTarget.predict_total` / `ElasticNetMultiTarget.predict_total`
-- **Files:** `src/shared/models.py:568` (inherited `predict_total` on `_MultiTargetLinear`); consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
+- **Files:** `src/shared/models.py:578` (inherited `predict_total` on `_MultiTargetLinear`); consumers in `tests/{qb,rb,wr,te,k,dst}/test_models.py`, `tests/shared/test_elasticnet.py`.
 - **What:** `predict_total` returns an unweighted raw-stat sum (yards + TDs + receptions, all summed as if commensurate). No production callers in `src/`; only tests reference it. A future caller using it for ranking would regress the ~1.9 pt/game double-count fix in the Fixed archive.
 - **Why not now:** Deletion touches shared model helpers and per-position model tests, tripping the benchmark-freshness gate; this Tier A pass intentionally avoided pipeline/benchmark evidence.
 ### [LOW] Defer per-position `CONFIG = build_pipeline_config(...)` to function level

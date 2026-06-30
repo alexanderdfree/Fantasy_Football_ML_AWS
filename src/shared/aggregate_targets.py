@@ -69,8 +69,8 @@ del _pos_key
 
 # K and DST target sets — used by ``infer_position`` to route them to their
 # bespoke aggregators instead of the standard linear ``target * weight`` path.
-# Must stay in sync with ``src/k/config.py::TARGETS`` and
-# ``src/dst/config.py::TARGETS`` (covered by parity tests in
+# Must stay in sync with ``src/k/config.py::_TARGETS`` and
+# ``src/dst/config.py::_TARGETS`` (covered by parity tests in
 # tests/test_aggregate_targets.py).
 K_TARGETS: tuple[str, ...] = ("fg_yard_points", "pat_points", "fg_misses", "xp_misses")
 DST_TARGETS: tuple[str, ...] = (
@@ -171,7 +171,7 @@ def _dst_predictions_to_fantasy_points(preds_dict: dict):
     """Aggregate the 10 DST raw-stat predictions into fantasy points.
 
     Must match ``src.dst.targets.compute_targets``'s ``fantasy_points``
-    column exactly. Used at serving time (``app.py:_combine_total``) and for
+    column exactly. Used at serving time (``src/serving/core.py::_combine_total``) and for
     benchmark reporting; training itself supervises only the raw-stat heads.
 
     Works on numpy arrays (inference in ``app.py``) and torch Tensors (in
