@@ -4,7 +4,7 @@ Also the productionization-validation harness for the *static* inheritance featu
 and WR (run ``--only +static``). The injector computes inheritance within each of
 ``_POSITIONS`` so one spec covers both.
 
-Three arms (RB is the validated role-inheritance position, todo/rotowire_gap_remediation.md):
+Three arms (RB is the validated role-inheritance position, #1353):
 
 * ``baseline``         — production config.
 * ``+static``          — ``is_top_available`` + ``inherited_opportunity`` whitelisted into

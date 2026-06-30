@@ -16,7 +16,7 @@ Scope vs the eager script (which stays for the per-target table and the dropped 
   ensemble's extra ``torch.func.vmap`` "members" batch dim: every stacked-GPU seed errors
   ``RuntimeError: attn_bias: wrong shape (batch dimension)`` (run_id
   ``ab_attn_arch-20260615T072824Z-b5b46ea``, L4). It is a Tier-4 "expect a regression, confirm
-  once eagerly, then delete the dead code" arm (``todo/run_attn_arch_harness_priority.md``), so
+  once eagerly, then delete the dead code" arm (#1055), so
   confirm it via ``ablate_attn_arch.py`` rather than making the encoder vmap-safe for a likely
   loser. The CPU vmap smoke that once guarded it passed yet missed this GPU-only SDPA failure.
 * **Attention-only by construction**: every flag feeds the NN only, so each arm is

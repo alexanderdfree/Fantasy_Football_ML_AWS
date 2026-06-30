@@ -2,8 +2,7 @@
 # Shared, provider-neutral helpers for the agent hook libs.
 #
 # Single home for the functions that were verbatim-identical across
-# .claude/hooks/lib.sh, .codex/hooks/lib.sh, and .gemini/hooks/lib.sh (audit P4,
-# todo/cross-model-parity-audit.md). Each provider lib.sh sources this file and
+# .claude/hooks/lib.sh, .codex/hooks/lib.sh, and .gemini/hooks/lib.sh (audit P4). Each provider lib.sh sources this file and
 # re-exports the canonical functions under its own prefix (claude_* / codex_* /
 # gemini_*), so existing hooks and tests keep calling the prefixed names while the
 # IMPLEMENTATION lives here once.

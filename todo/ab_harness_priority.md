@@ -3,7 +3,7 @@
 **Status: BUILT.** [src/tuning/ab_harness.py](../src/tuning/ab_harness.py) (library + CLI + worker),
 [src/tuning/ab_example.py](../src/tuning/ab_example.py) (copy-me template + smoke target),
 [tests/tuning/test_ab_harness.py](../tests/tuning/test_ab_harness.py). Motivated by the
-2026-06-08 role-inheritance A/B ([todo/rotowire_gap_remediation.md](rotowire_gap_remediation.md)).
+2026-06-08 role-inheritance A/B (#1353).
 The design below is preserved for reference; **what actually shipped** is summarized here.
 
 ## What shipped
@@ -46,7 +46,7 @@ subprocess-only break unit tests can't see — caught by the smoke, not CI.)
 
 ### Follow-ups (not in this PR)
 - **Reproduce the role-inheritance A/B** (verification item 1) is deferred — it needs the
-  role-inheritance *feature* itself (Phase 1 of [rotowire_gap_remediation.md](rotowire_gap_remediation.md)),
+  role-inheritance *feature* itself (Phase 1 of #1353),
   which isn't built yet. The harness is ready to run it (RB/WR, frame-injection shape).
 - **Port the existing `ablate_*` scripts** (`ablate_rb_gate`, `ablate_injury_features`,
   `ablate_backbone_norm`, …) onto the harness so they parallelize + isolate too. Mechanical; left out

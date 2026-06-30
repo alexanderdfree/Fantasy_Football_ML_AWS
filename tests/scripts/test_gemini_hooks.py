@@ -1,7 +1,7 @@
 """Gemini/Antigravity (.gemini/) hook contract tests.
 
-Parity twin of tests/scripts/test_codex_hooks.py (see
-todo/cross-model-parity-audit.md, P2). Antigravity hooks receive JSON on stdin
+Parity twin of tests/scripts/test_codex_hooks.py (audit P2).
+Antigravity hooks receive JSON on stdin
 with `tool_name` + `tool_input` and block via exit code 2 (stderr = reason).
 These exercise the deterministic guardrails purely through the stdin/exit-code
 contract — no Antigravity install needed.
