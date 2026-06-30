@@ -55,7 +55,7 @@ head. RB/TE/WR are effectively a wash with LightGBM.
   near-unbiased** (−0.0 to −0.7). The learned/tree models shrink toward the mean
   harder than Ridge — the price of their lower variance.
 
-![weekly MAE and bias](attn_weekly_accuracy.png)
+_(Figure `attn_weekly_accuracy.png` is generated to the analysis CLI's `--figdir` and is not committed.)_
 
 ## 2b. Week-by-week vs the experts (NFL.com + Sleeper)
 
@@ -91,7 +91,7 @@ players, which are intrinsically higher-variance).
   slate including deep bench/streamers the models' lead would widen, but no
   public expert line exists there to compare against.
 
-![weekly: models vs NFL.com & Sleeper](weekly_models_vs_experts.png)
+_(Figure `weekly_models_vs_experts.png` is generated to the analysis CLI's `--figdir` and is not committed.)_
 
 ## 3. Subgroup: actual-score tier (judged by signed bias)
 

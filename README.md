@@ -1,6 +1,6 @@
 # Fantasy Football Weekly Points Predictor
 
-A per-position machine learning system that predicts weekly NFL fantasy points for QBs, RBs, WRs, TEs, Kickers, and D/STs — comparing a Ridge baseline, a custom PyTorch multi-head neural network (with an attention variant at every position), and LightGBM across the 2012–2025 seasons. Served as a Flask dashboard at [alexfree.me](https://alexfree.me).
+A per-position machine learning system that predicts weekly NFL fantasy points for QBs, RBs, WRs, TEs, Kickers, and D/STs — comparing a Ridge baseline, a custom PyTorch multi-head neural network (with an attention variant at every position), and LightGBM across the 2012–2025 seasons. Served as a Flask dashboard at [fantasy.alexfree.me](https://fantasy.alexfree.me).
 
 Personal project, ongoing.
 
@@ -160,7 +160,7 @@ Tests live under the top-level `tests/` tree, mirroring the `src/` layout (`test
 
 ## Full-Stack Engineering
 
-Beyond the ML core, the project ships a production deploy at [alexfree.me](https://alexfree.me), GPU training on AWS, and CI/CD that gates every push. Operator runbooks are linked above in **Deeper Reading** — this section summarizes the architecture and the meaningful enhancements that landed along the way.
+Beyond the ML core, the project ships a production deploy at [fantasy.alexfree.me](https://fantasy.alexfree.me), GPU training on AWS, and CI/CD that gates every push. Operator runbooks are linked above in **Deeper Reading** — this section summarizes the architecture and the meaningful enhancements that landed along the way.
 
 ### AWS Infrastructure
 
@@ -194,7 +194,7 @@ GitHub Actions
    │        └────────────────────────────────────────┘
    │                              │ s3:GetObject (task role)
    ▼                              ▼
-deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ alexfree.me
+deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS ──▶ fantasy.alexfree.me
 ```
 
 - **Training** — two interchangeable GPU paths, selected by the `BATCH_ACTIVE` repo variable. Default since 2026-05-20: `BATCH_ACTIVE=true` fires [.github/workflows/train-batch.yml](.github/workflows/train-batch.yml), which fans out across six Spot GPU hosts via AWS Batch (one position per host on a diversified g6.xlarge+g5.xlarge Spot pool; ~15 min wall-clock). Rollback path: `BATCH_ACTIVE=false` fires [.github/workflows/train-ec2.yml](.github/workflows/train-ec2.yml) and drives a warm OD g6.xlarge sequentially via SSM Run Command (~120 min wall-clock, auto-shuts down on idle). Both paths use the same `detect` job to retrain only positions whose code changed, and both reuse [src/batch/Dockerfile.train](src/batch/Dockerfile.train) as the training container. See D7 + D13 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trade-off.

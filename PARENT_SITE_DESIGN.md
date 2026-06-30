@@ -126,6 +126,8 @@ The domain is registered at **Namecheap** (authoritative DNS; not Route 53). In 
 
 These are the concrete changes the Fantasy repo must action. **No application code changes** — infra + strings only.
 
+> **✅ Completed — the `fantasy.alexfree.me` cutover is live (2026-06-30).** All rows below are done (the workflows use `https://fantasy.alexfree.me`; the README dashboard URLs were repointed). This section is retained as the handoff record.
+
 | # | Change | Where |
 |---|--------|-------|
 | 1 | Add DNS record `CNAME fantasy → <ALB DNS name>` | Namecheap Advanced DNS |
