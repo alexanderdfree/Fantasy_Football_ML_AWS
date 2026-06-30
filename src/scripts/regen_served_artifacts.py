@@ -30,7 +30,7 @@ import subprocess
 from src.analysis.artifact_eval import _producer_model_dir
 from src.analysis.cohort_analysis import _load_splits
 from src.config import SPLITS_DIR
-from src.shared.registry import INFERENCE_REGISTRY, get_runner
+from src.shared.registry import INFERENCE_REGISTRY, accepts_dataframes, get_runner
 from src.shared.utils import seed_everything
 
 _METRIC_KEYS = (
@@ -60,7 +60,7 @@ def _splits_fingerprint() -> str:
     return ";".join(parts)
 
 
-def _write_benchmark_metrics(pos: str, result: dict, seed: int, served_dir: str) -> float | None:
+def _build_metrics_blob(pos: str, result: dict, seed: int) -> dict:
     blob: dict = {
         "position": pos,
         "seed": seed,
@@ -72,22 +72,29 @@ def _write_benchmark_metrics(pos: str, result: dict, seed: int, served_dir: str)
     for key in _METRIC_KEYS:
         if result.get(key):
             blob[key] = result[key]
-    if "ridge_metrics" not in blob:
-        raise RuntimeError(
-            f"{pos}: run result has no ridge_metrics — cannot write benchmark_metrics.json"
-        )
-    with open(os.path.join(served_dir, "benchmark_metrics.json"), "w") as f:
-        json.dump(blob, f, indent=2)
-    return blob["ridge_metrics"].get("total", {}).get("mae")
+    return blob
 
 
 def regen(pos: str, seed: int = 42) -> None:
     pos = pos.upper()
     if pos not in INFERENCE_REGISTRY:
         raise ValueError(f"unknown position {pos!r}")
+    if not accepts_dataframes(pos):
+        # K/DST build their own splits (run(seed, config)) and are NOT drift-validatable by the
+        # Ridge-tell check (no fantasy-point total in their split data), so this helper doesn't
+        # support them — fail early, before loading splits / training.
+        raise ValueError(
+            f"{pos}: regen_served_artifacts supports only the frame-runner positions (QB/RB/WR/TE); "
+            f"K/DST self-load their splits and are not drift-validatable here."
+        )
     reg = INFERENCE_REGISTRY[pos]
     served = reg["model_dir"]
     producer = _producer_model_dir(pos)
+    if os.path.abspath(producer) == os.path.abspath(served):
+        raise RuntimeError(
+            f"{pos}: producer path {producer!r} resolves to the served path {served!r} "
+            f"(run from the repo root, not src/, so they differ)."
+        )
 
     train_df, val_df, test_df = _load_splits()
     seed_everything(seed)
@@ -96,13 +103,31 @@ def regen(pos: str, seed: int = 42) -> None:
 
     if not os.path.isdir(producer) or not os.listdir(producer):
         raise RuntimeError(f"{pos}: pipeline did not populate producer dir {producer!r}")
+    blob = _build_metrics_blob(pos, result, seed)
+    if "ridge_metrics" not in blob:
+        # Validate the drift-check reference BEFORE the destructive promote, so we never leave
+        # served populated with fresh weights but no benchmark_metrics.json (which would silently
+        # disable the very check this helper exists to enable). Served artifacts left untouched.
+        raise RuntimeError(
+            f"{pos}: run result has no ridge_metrics — refusing to promote (served untouched)."
+        )
 
-    # Promote producer -> served (mirror batch/train.py::_replace_model_dir_contents).
+    # Safe promote: stage a complete fresh copy adjacent to served, then atomic-swap — so a
+    # copy that fails partway (disk full, interrupt) never destroys the existing served set.
     os.makedirs(os.path.dirname(served) or ".", exist_ok=True)
+    staging, backup = served + ".regen_tmp", served + ".regen_old"
+    for tmp in (staging, backup):
+        if os.path.isdir(tmp):
+            shutil.rmtree(tmp)
+    shutil.copytree(producer, staging)
+    with open(os.path.join(staging, "benchmark_metrics.json"), "w") as f:
+        json.dump(blob, f, indent=2)
     if os.path.isdir(served):
-        shutil.rmtree(served)
-    shutil.copytree(producer, served)
-    ridge_mae = _write_benchmark_metrics(pos, result, seed, served)
+        os.rename(served, backup)
+    os.rename(staging, served)
+    if os.path.isdir(backup):
+        shutil.rmtree(backup)
+    ridge_mae = blob["ridge_metrics"].get("total", {}).get("mae")
     print(
         f"[regen] {pos}: promoted {producer} -> {served}; wrote benchmark_metrics.json "
         f"(ridge total MAE={ridge_mae}). Verify: "

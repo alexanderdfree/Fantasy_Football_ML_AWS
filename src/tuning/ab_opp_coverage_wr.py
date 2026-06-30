@@ -110,19 +110,21 @@ def _build_coverage_table(seasons: list[int]) -> pd.DataFrame:
         columns={"opponent": "defense_team"}
     )[["defense_team", "season", "week", "sep", "cushion"]]
 
-    # full (defense, season, week) grid so the rolling spans every game the defense played
+    # full (defense, season, week) grid so the per-season rolling sees every game the defense
+    # played that season
     grid = team_opp.rename(columns={"team": "defense_team"})[
         ["defense_team", "season", "week"]
     ].drop_duplicates()
     base = grid.merge(allowed, on=["defense_team", "season", "week"], how="left").sort_values(
         ["defense_team", "season", "week"]
     )
-    base["opp_sep_allowed_L5"] = base.groupby("defense_team")["sep"].transform(
-        lambda s: s.shift(1).rolling(_OPP_ROLL, min_periods=1).mean()
-    )
-    base["opp_cushion_allowed_L5"] = base.groupby("defense_team")["cushion"].transform(
-        lambda s: s.shift(1).rolling(_OPP_ROLL, min_periods=1).mean()
-    )
+    # Roll WITHIN season (groupby includes season) so a season opener gets a fresh value, not the
+    # prior season's tail — matching production engineer._build_defense_matchup_features (groupby
+    # ["opponent_team","season"]); cross-season carry regressed openers (#1137).
+    for _col, _out in (("sep", "opp_sep_allowed_L5"), ("cushion", "opp_cushion_allowed_L5")):
+        base[_out] = base.groupby(["defense_team", "season"])[_col].transform(
+            lambda s: s.shift(1).rolling(_OPP_ROLL, min_periods=1).mean()
+        )
     return base.rename(columns={"defense_team": "opponent_team"})[
         ["opponent_team", "season", "week", *_COVERAGE_COLS]
     ]
@@ -146,8 +148,11 @@ def _inject_coverage(train, val, test):
         merged = wr.merge(tbl, on=_KEY, how="left", suffixes=("", "_cov"))
         for c in _COVERAGE_COLS:
             vals = merged[f"{c}_cov"].to_numpy()
-            # train-frame fill for the pre-2016 (NGS-absent) tail; 0.0 already set for non-WR
-            df.loc[wr.index, c] = np.where(np.isnan(vals), 0.0, vals)
+            # Leave NaN where coverage is absent (pre-2016 / unmatched) so the pipeline's fill_nans
+            # imputes the train mean — 0.0 is an out-of-distribution separation/cushion value (yds),
+            # and era-correlated 0.0s would leak a spurious signal. Non-WR rows keep 0.0 (filtered
+            # out downstream, never read).
+            df.loc[wr.index, c] = vals
         return df
 
     return _add(train), _add(val), _add(test)
@@ -162,10 +167,17 @@ def _mut_coverage(cfg):
 
 
 def _mut_coverage_static(cfg):
-    """Whitelist AND route to the attention static branch (so the attention NN + condq — the
-    documented #1210 landing spot — actually sees it). Static-eligible as a MATCHUP feature: the
-    existing opponent DvP matchup block (also rolling) already feeds attn_static; the player-own
-    windowed stop-rule does not apply to an opponent signal absent from the player's history."""
+    """EXPLORATORY arm: whitelist AND route the coverage cols into the attention static branch so
+    the attention NN + condq (the documented #1210 landing spot) actually sees them.
+
+    NOTE this DELIBERATELY puts rolling (_L5) features on the static branch, which AGENTS.md's
+    stop-rule forbids for production ("Never add rolling / ewma / trend / L3 / L5 / L8 ... to
+    ATTN_STATIC_FEATURES"). The existing matchup features that feed attn_static are NON-rolling
+    (the rolling ``opp_def_*_L5`` block is excluded from DEFAULT_ATTN_STATIC_CATEGORIES,
+    src/shared/position_config.py). This arm exists only to MEASURE whether condq can exploit a
+    coverage signal at all; a positive result would NOT license promoting these L5 cols into
+    production ATTN_STATIC_FEATURES (that would recreate the windowed double-feed the design
+    forbids)."""
     _mut_coverage(cfg)
     if "attn_static_features" in cfg:
         cfg["attn_static_features"] = [*cfg["attn_static_features"], *_COVERAGE_COLS]

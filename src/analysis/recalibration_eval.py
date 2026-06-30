@@ -27,7 +27,8 @@ Also reconciles the QB-slice question: our −3.46 FP under-level is on ``depth_
 starters; the scoring-tier doc's "QB needs nothing (+0.47)" is the a-priori prior-season-rank elite.
 
 Reads ``scratchpad/substrate/{pos}.parquet`` (built + validated by
-``scratchpad/substrate/build_substrate.py``); falls back to rebuilding from artifacts if absent.
+``scratchpad/substrate/build_substrate.py``); if the parquet is absent it raises with a pointer to
+that build step (no auto-rebuild).
 Writes ``scratchpad/recal/recal_eval.{json,md}``. Run: ``python -m src.analysis.recalibration_eval``.
 """
 

@@ -10,8 +10,9 @@ retrains from clobbering the served ``{pos}/outputs`` weights, and its GPU-shari
 
 Per origin × position, ``metric_fn`` reports — for {attn_nn, lgbm, recal(attn), recal(lgbm),
 rotowire} — the **elite (top-30-by-actual) RMSE + signed bias** on the model∩rotowire intersection
-(the recalibration question) and **optimal-lineup regret** on the full slate (the head-selection
-question). Recalibration = leave-one-week-out isotonic (``recalibration_eval.lowo_isotonic``).
+(the recalibration question) and **optimal-lineup regret** on the shared RotoWire-covered slate —
+identical for every arm so the regret ceilings are comparable (the head-selection question).
+Recalibration = leave-one-week-out isotonic (``recalibration_eval.lowo_isotonic``).
 
 Confirms P0 if: recal(attn)/recal(lgbm) drive elite bias → ~0 and cut elite RMSE at QB/TE in EVERY
 season (not just 2025). Confirms P1 if: lgbm (or recal_lgbm) beats attn_nn on regret every season.
@@ -105,14 +106,17 @@ def metric_fn(result, position):
     elite = df[df["player_id"].isin(top30) & df["rotowire_pred"].notna()]
     y = elite["fantasy_points"].to_numpy()
 
+    # Regret on a SINGLE shared slate (the RotoWire-covered rows) for EVERY candidate, so the
+    # weekly optimum is identical across arms — comparing a full-slate model regret against a
+    # subset-slate rotowire regret would be apples-to-oranges (different achievable ceilings).
+    slate = df[df["rotowire_pred"].notna()]
+
     out: dict = {}
     for name, col in cands.items():
         row = {
             "elite_rmse": _rmse(elite[col], y) if len(elite) else float("nan"),
             "elite_bias": _bias(elite[col], y) if len(elite) else float("nan"),
-            "regret": _regret(
-                df if name != "rotowire" else df[df["rotowire_pred"].notna()], col, n
-            ),
+            "regret": _regret(slate, col, n),
             "season": float(season),
             "n_elite": float(len(elite)),
         }

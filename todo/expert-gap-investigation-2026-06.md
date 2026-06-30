@@ -43,7 +43,10 @@ Trained fresh per origin (train `[2013..T-2]`, val `T-1`, test `T`, no leakage; 
 - **Recalibration REJECTED:** it reduces bias toward the expert level but leaves elite RMSE neutral and
   **hurts RB/WR lineup regret every season** — a bias-centering trick, not a decision win.
 - **LightGBM-for-RB/WR head selection holds** (beats our attn head on RB/WR regret every season) but
-  **still trails RotoWire** — a real but partial gain.
+  **still trails RotoWire** — a real but partial gain. (Caveat: the original run measured model regret
+  on the full slate vs RotoWire on its covered subset — an apples-to-oranges ceiling; the spec now
+  computes regret on a shared RotoWire-covered slate. The **bias/RMSE** conclusions — recalibration
+  rejected, QB calibrated, RB/WR/TE under-leveling real — are regret-independent and unaffected.)
 
 ## 4. P3 — WR opponent-coverage feature (net-new, tested, NEGATIVE)
 Verified WR carries only team-level pass-defense *volume* (no coverage-*quality* signal; NGS/PFR

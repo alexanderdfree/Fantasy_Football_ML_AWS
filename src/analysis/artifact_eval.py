@@ -415,16 +415,19 @@ def validate_reconstruction(
 ) -> dict:
     """Flag a STALE artifact via the deterministic-Ridge data-identity tell.
 
-    Compares the reconstructed Ridge total MAE (``pred_ridge_total`` vs the actual
-    ``fantasy_points`` on ``test_df``) against the model's own recorded training MAE
-    (``ridge_metrics.total.mae`` in ``{model_dir}/benchmark_metrics.json``). A large
-    divergence means the saved artifact does not reproduce its recorded performance on
-    the current splits — artifact and data are different vintages, so the reconstructed
-    predictions are unreliable. WARNs loudly on divergence (raises if ``strict`` and the
-    verdict is not ``ok``); returns a verdict dict. ``skipped`` (no warning, no raise)
-    when not applicable: non-skill position, non-PPR scoring, missing
-    ``benchmark_metrics.json``/``ridge_metrics``, or missing ``pred_ridge_total`` /
-    ``fantasy_points`` (e.g. a Ridge load failure upstream).
+    Compares the reconstructed Ridge total MAE against the model's own recorded training
+    MAE (``ridge_metrics.total.mae`` in ``{model_dir}/benchmark_metrics.json``). To be a
+    clean apples-to-apples staleness signal it rebuilds the actual total the SAME way the
+    recorded MAE did — aggregating the *true target stats* via ``predictions_to_fantasy_points``
+    (the canonical ``compute_fantasy_points_mae`` truth, mirroring ``rmse_gap_decomposition``),
+    NOT the split ``fantasy_points`` column (which can carry scoring components outside a
+    position's target set, e.g. a WR's rushing FP, adding a structural offset). Falls back
+    to the ``fantasy_points`` column only when the target columns are absent. A large
+    divergence means the saved artifact does not reproduce its recorded performance on the
+    current splits. WARNs loudly on divergence (raises if ``strict`` and the verdict is not
+    ``ok``); returns a verdict dict. ``skipped`` (no warning, no raise) when not applicable:
+    non-skill position, non-PPR scoring, missing ``benchmark_metrics.json``/``ridge_metrics``,
+    or missing ``pred_ridge_total`` and target columns (e.g. a Ridge load failure upstream).
     """
 
     def _skip(reason: str) -> dict:
@@ -436,11 +439,15 @@ def validate_reconstruction(
         return _skip(f"{pos} carries no fantasy-point total in the split data")
     if scoring_format != "ppr":
         return _skip(f"recorded MAE is PPR; scoring_format={scoring_format!r}")
-    if "pred_ridge_total" not in test_df.columns or "fantasy_points" not in test_df.columns:
-        return _skip("pred_ridge_total / fantasy_points absent (Ridge load failed?)")
+    if "pred_ridge_total" not in test_df.columns:
+        return _skip("pred_ridge_total absent (Ridge load failed?)")
+    targets = list(INFERENCE_REGISTRY[pos.upper()].get("targets", []))
+    have_targets = bool(targets) and all(t in test_df.columns for t in targets)
+    if not have_targets and "fantasy_points" not in test_df.columns:
+        return _skip("neither target columns nor fantasy_points present")
 
     if model_dir is None:
-        model_dir = resolve_model_dir(pos, INFERENCE_REGISTRY[pos])
+        model_dir = resolve_model_dir(pos, INFERENCE_REGISTRY[pos.upper()])
     metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
     if not os.path.exists(metrics_path):
         return _skip(
@@ -453,10 +460,19 @@ def validate_reconstruction(
     except (OSError, KeyError, ValueError, TypeError) as e:
         return _skip(f"unreadable ridge_metrics.total.mae in benchmark_metrics.json ({e})")
 
-    sub = test_df[["pred_ridge_total", "fantasy_points"]].dropna()
+    cols = ["pred_ridge_total", *(targets if have_targets else ["fantasy_points"])]
+    sub = test_df[cols].dropna()
     if sub.empty:
-        return _skip("no rows with both pred_ridge_total and fantasy_points")
-    reconstructed = float((sub["pred_ridge_total"] - sub["fantasy_points"]).abs().mean())
+        return _skip("no rows with pred_ridge_total + actual total")
+    if have_targets:
+        # Match the recorded MAE's ground truth (agg of true target stats), not the
+        # fantasy_points column — else WR/TE carry a structural rushing-FP offset.
+        true_fp = predictions_to_fantasy_points(
+            pos, {t: sub[t].to_numpy(dtype=float) for t in targets}, scoring_format
+        )
+    else:
+        true_fp = sub["fantasy_points"].to_numpy(dtype=float)  # fallback (targets absent)
+    reconstructed = float(np.abs(sub["pred_ridge_total"].to_numpy(dtype=float) - true_fp).mean())
     delta = abs(reconstructed - recorded)
     verdict = _reconstruction_verdict(delta, warn_tol, fail_tol)
     result = {
@@ -470,12 +486,15 @@ def validate_reconstruction(
     }
     if verdict != "ok":
         print(
-            f"[artifact_eval] STALE ARTIFACT: {pos} deterministic Ridge reconstructs "
-            f"MAE={reconstructed:.4f} vs recorded {recorded:.4f} (Δ={delta:.4f}, verdict={verdict}). "
-            f"The saved artifact (git {result['git_sha']}, split {result['split_run_id']}) does not "
-            f"reproduce its training MAE on the current splits — artifact/data vintage mismatch. "
-            f"Reconstructed predictions for {pos} are UNRELIABLE; regenerate the artifacts "
-            f"(`python -m src.scripts.regen_served_artifacts --positions {pos}`)."
+            f"[artifact_eval] STALE ARTIFACT / SPLITS-VINTAGE MISMATCH: {pos} deterministic Ridge "
+            f"reconstructs MAE={reconstructed:.4f} vs recorded {recorded:.4f} (Δ={delta:.4f}, "
+            f"verdict={verdict}). The saved artifact (git {result['git_sha']}, split "
+            f"{result['split_run_id']}) does not reproduce its recorded MAE on the CURRENT local "
+            f"splits — EITHER the artifact is stale OR the local data/splits are a different vintage "
+            f"than the artifact was trained on. Reconstructed predictions for {pos} are UNRELIABLE "
+            f"until the two are realigned: regenerate the artifact on the current splits "
+            f"(`python -m src.scripts.regen_served_artifacts --positions {pos}`), or refresh the "
+            f"splits to the artifact's vintage."
         )
         if strict:
             raise RuntimeError(
