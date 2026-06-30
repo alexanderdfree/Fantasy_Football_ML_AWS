@@ -42,7 +42,7 @@ def build_features(
     src.data.loader. Each position's config opts into the subset it consumes.
 
     ``injuries_df`` is the raw nflverse injuries frame (``src.data.nfl_source.injuries``)
-    used by the RB/WR role-inheritance features — the OUT teammates whose role gets
+    used by the QB/RB/WR/TE role-inheritance features — the OUT teammates whose role gets
     inherited are absent from the weekly frame, so the out-set must come from the injury
     report. Passed by the splits-building callers (refresh-splits); ``None`` (e.g. a
     diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
@@ -379,7 +379,7 @@ def build_features(
     pos_cols = {f"pos_{p}": (df["position"] == p).astype(int) for p in ["QB", "RB", "WR", "TE"]}
     df = pd.concat([df, pd.DataFrame(pos_cols, index=df.index)], axis=1)
 
-    # --- Role-inheritance features (RB/WR static branch) ---
+    # --- Role-inheritance features (QB/RB/WR/TE static branch) ---
     df = _build_inheritance_features(df, injuries_df, rosters_df)
 
     return df

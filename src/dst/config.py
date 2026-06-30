@@ -197,10 +197,13 @@ POSITION_CONFIG = PositionConfig(
         "points_allowed": 0.2,  # 1 / 5.0 (MSE)
         "yards_allowed": 0.0333,  # 1 / 30.0 (MSE)
     },
-    # Deltas roughly match each target's typical variance. Very-rare
-    # targets moved to Poisson NLL (see poisson_targets) and are absent
-    # here — MultiTargetLoss picks the per-target loss by lookup, so
-    # listing them would only add dead config.
+    # RETAINED BUT INERT: every target listed below is mapped to "mse" in
+    # head_losses (the Huber->MSE switch, #870), and MultiTargetLoss reads
+    # huber_deltas only in its "huber" branch — so NO DST head consults these
+    # deltas. They are kept as documentation of each target's typical scale;
+    # deleting them is Δ=0.0000 and editing a value is a silent no-op unless the
+    # matching head is switched back to "huber". Very-rare targets use Poisson
+    # NLL (see poisson_targets) and are intentionally absent.
     huber_deltas={
         "def_sacks": 1.0,
         "def_ints": 0.5,

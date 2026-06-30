@@ -29,7 +29,7 @@ Gemini runtime values:
 - `WORKFLOW_SHARED_INSTRUCTIONS=agent-workflows/pre-pr-judge/instructions.md`
 - `WORKFLOW_BASE=origin/main` unless the user supplies another base
 - `WORKFLOW_ORIGINAL_TASK=<infer from the current thread unless explicitly supplied>`
-- `WORKFLOW_PRE_PR_GATE=run the deterministic checks manually — ruff check . && ruff format --check . && pytest -m unit (Gemini CLI has no pre-PR hook)`
+- `WORKFLOW_PRE_PR_GATE=the wired .gemini BeforeTool hook (.gemini/hooks/pre-pr.sh on run_shell_command, delegating to the single-source .claude/hooks/pre-pr.sh) gates a top-level gh pr create; run the deterministic checks manually — ruff check . && ruff format --check . && pytest -m unit — only as a fallback when the hook is unavailable`
 - `WORKFLOW_REVIEW_TOOL=the @gemini-cli /review PR workflow (.github/workflows/gemini-review.yml), heavier and post-PR`
 - `WORKFLOW_SUBAGENTS=delegate the diff-vs-intent read to a Gemini subagent if available; otherwise perform the check directly`
 
