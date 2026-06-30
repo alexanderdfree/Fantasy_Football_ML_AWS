@@ -2,7 +2,7 @@
   "run_id": "2026-06-22T21:10:13_1e67be7",
   "timestamp": "2026-06-22T21:10:13",
   "git_hash": "1e67be7",
-  "note": "Local rolling-origin (walk-forward) 2-season+ eval over 2023/2024/2025; served model + splits unchanged (origin/main 1e67be7); --no-sync (not on S3). Per-season + mean\u00b1std per model in each result's rolling_origin block. For the deferred History-tab UI (see todo/rolling-origin-2season-eval.md).",
+  "note": "Local rolling-origin (walk-forward) 2-season+ eval over 2023/2024/2025; served model + splits unchanged (origin/main 1e67be7); --no-sync (not on S3). Per-season + mean\u00b1std per model in each result's rolling_origin block. For the deferred History-tab UI (see #1352).",
   "positions": [
     "QB",
     "RB",

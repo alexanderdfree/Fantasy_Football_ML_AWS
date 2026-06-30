@@ -5,7 +5,7 @@ wrapper for ALL THREE providers (Claude Code, Codex, Gemini/Antigravity), that
 each wrapper points back at its single shared instructions file, and that the
 shared instruction files stay provider-neutral.
 
-Why this exists (see todo/cross-model-parity-audit.md, finding F2): the
+Why this exists (audit finding F2): the
 wrapper/shared-instructions design is only model-agnostic for as long as the
 three wrappers stay in lockstep. Nothing else catches "a 4th shared workflow was
 added but a provider wrapper was forgotten" or "the shared instructions file was

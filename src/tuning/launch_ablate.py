@@ -8,8 +8,7 @@ box, for the arms that only make sense eagerly. The motivating case is
 ``ablate_attn_arch``'s ``selfattn`` arm: its ``nn.MultiheadAttention`` SDPA
 ``attn_bias`` errors under ``torch.func.vmap``, so it was dropped from the
 stacked ``ab_attn_arch`` spec — this launcher is its GPU home (the "confirm once
-eagerly, then delete the dead code" Tier-4 prior in
-``todo/run_attn_arch_harness_priority.md``).
+eagerly, then delete the dead code" Tier-4 prior in #1055).
 
 Shape (mirrors launch_ab / ADR-0020): each per-position job rides the
 ``--mode=tune`` env dispatch (``FF_TUNE_ABLATE_MOD`` routes ``tune_nn.main`` into
