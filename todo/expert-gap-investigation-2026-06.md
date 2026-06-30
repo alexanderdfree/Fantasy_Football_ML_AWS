@@ -149,7 +149,9 @@ current-week starter-news feed (#1134), not a derivable feature.
   (`upcomingProjection()`, `src/serving/static/js/app.js:596-599`) globally prefers `attn_nn→lgbm→nn`;
   for **RB/WR the LightGBM head ranks better**. Per-position best-ranker selection is
   **ADR-0003-compatible** (head *selection*, not ensembling/stacking — there is no single "served head"
-  today; all four are shown). Real but partial.
+  today: all four heads are computed per position and surfaced across the Comparison / Season-Leaders /
+  Model-Performance tabs, while the homepage shows NN / Attn NN / LightGBM and ranks by
+  `attn_nn→lgbm→nn`). Real but partial.
 - **RB research lever (no new data):** the RB ordering edge (iso +0.168) + bust-avoidance (+1.3pp top-24,
   4/4 seasons) concentrates in established-alpha RBs (D1, 4/4 positive) — unlike WR's external CB gap, part
   of RB bust risk may be forecastable from workload/role/game-script we already have. Investigate via
