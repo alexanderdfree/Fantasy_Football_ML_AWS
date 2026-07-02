@@ -65,8 +65,23 @@ def _compute_features(df: pd.DataFrame) -> None:
 
     team_te_totals = compute_team_te_totals(df)
     df_merged = df.merge(team_te_totals, on=["recent_team", "season", "week"], how="left")
-    player_tgt_roll = rolling_agg(df_merged, "targets", grp, window=3)
-    team_te_tgt_roll = rolling_agg(df_merged, "team_te_targets", grp, window=3)
+    # Stint-aware grouping for the team-TE-target-share rolling (#1192): a TE
+    # traded mid-season would otherwise have the 3-week rolling team_te_targets
+    # denominator concatenate the OLD team's TE-target volume with the NEW
+    # team's for ~3 weeks post-trade, mixing two teams' totals into one share.
+    # Build stint_id locally (the engineer.py one is dropped before we run) by
+    # flagging each in-season team change and cumsum-ing it — mirrors
+    # src/wr/features.py (#674). df is already sorted by (player_id, season,
+    # week) above, so the merge (1-to-1 on recent_team, season, week) preserves
+    # order and stint_id carries onto df_merged.
+    df_merged["_team_changed"] = (
+        df_merged.groupby(["player_id", "season"])["recent_team"].shift(1)
+        != df_merged["recent_team"]
+    ).fillna(False)
+    df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+    stint_grp = ["player_id", "season", "stint_id"]
+    player_tgt_roll = rolling_agg(df_merged, "targets", stint_grp, window=3)
+    team_te_tgt_roll = rolling_agg(df_merged, "team_te_targets", stint_grp, window=3)
     df["team_te_target_share_L3"] = safe_divide(player_tgt_roll, team_te_tgt_roll).values
 
     df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
@@ -120,4 +135,17 @@ def _compute_features(df: pd.DataFrame) -> None:
 
 def fill_nans(train_df, val_df, test_df, te_feature_cols):
     """Fill NaNs in TE-specific feature columns using training set statistics."""
-    return fill_nans_with_train_means(train_df, val_df, test_df, te_feature_cols)
+    # prior_season_mean_catch_rate is in INCLUDE_FEATURES["prior_season"] (so
+    # the model uses it) but absent from _SPECIFIC_FEATURES — the column set
+    # the pipeline passes here as te_feature_cols — so without this it skips
+    # the leak-safe train-mean fill and falls through to
+    # build_position_features' catch-all .fillna(0). For a rookie /
+    # no-prior-season TE (and the ≥0.5/game volume guard in _compute_features)
+    # that 0 is far from the league-average catch rate and maps to a strong
+    # negative z-score post-scaler. Mirrors the RB fix (#390); TE gap #1290.
+    prior_cols = [
+        c
+        for c in ("prior_season_mean_catch_rate",)
+        if c in train_df.columns and c not in te_feature_cols
+    ]
+    return fill_nans_with_train_means(train_df, val_df, test_df, [*te_feature_cols, *prior_cols])

@@ -117,6 +117,39 @@ class TestComputeRBSpecific:
         if len(shares) > 0:
             assert all(0.4 <= s <= 0.6 for s in shares)
 
+    def test_team_shares_stint_aware_on_trade(self, make_player_games):
+        """#1193: the 3-week team-RB share denominators must reset on a
+        mid-season trade, not mix the old and new team's RB volume.
+
+        RB_A plays weeks 1-4 on KC alongside RB_B (each 10 carries / 5
+        targets → KC RB totals 20 / 10 per week, share ≈ 0.5), then is traded
+        to SF for weeks 5-7 where he's the lone RB (share = 1.0). At week 7
+        the rolling window (shift(1) → weeks 5,6) lies entirely inside the SF
+        stint, so the stint-aware share is exactly 1.0. The old
+        ``player×season`` grouping spanned the trade (window weeks 4,5,6 →
+        player 30 / team 20+10+10=40 = 0.75), so this value separates the fix
+        from the bug — mirrors the WR test (#674).
+        """
+        rb_a_kc = make_player_games("RB_A", n_weeks=4, carries=10, targets=5, recent_team="KC")
+        rb_a_sf = make_player_games("RB_A", n_weeks=3, carries=10, targets=5, recent_team="SF")
+        rb_a_sf["week"] = [5, 6, 7]
+        rb_b_kc = make_player_games("RB_B", n_weeks=4, carries=10, targets=5, recent_team="KC")
+        df = pd.concat([rb_a_kc, rb_a_sf, rb_b_kc], ignore_index=True)
+        _compute_features(df)
+
+        a = df[df["player_id"] == "RB_A"].set_index("week")
+        # Stint-aware: window {5,6} fully inside the SF stint → 20/20 = 1.0.
+        # (A non-stint denominator would give 30/40 = 0.75, mixing KC's wk4.)
+        assert pytest.approx(a.loc[7, "team_rb_carry_share_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[7, "team_rb_target_share_L3"], abs=1e-9) == 1.0
+        # Stint boundary (the fix's largest per-row change, old→new 0.5→0.0):
+        # week 5 is the first game of the new stint, so shift(1) has no
+        # prior-game inside the stint → rolling NaN → safe_divide fills 0.
+        # Week 6 (window {5}) is already all-SF → 1.0. Pin both so a
+        # min_periods / NaN-fill refactor can't silently move the boundary.
+        assert pytest.approx(a.loc[5, "team_rb_carry_share_L3"], abs=1e-9) == 0.0
+        assert pytest.approx(a.loc[6, "team_rb_carry_share_L3"], abs=1e-9) == 1.0
+
 
 @pytest.mark.unit
 class TestFillRBNansSpecific:

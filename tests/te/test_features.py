@@ -162,3 +162,77 @@ class TestComputeTERates:
         shares = later["team_te_target_share_L3"].dropna()
         assert len(shares) == 3
         assert all(0.4 <= s <= 0.6 for s in shares)
+
+    def test_team_target_share_stint_aware_on_trade(self, te_player_games_factory):
+        """#1192: the 3-week team-TE-target-share denominator must reset on a
+        mid-season trade, not mix the old and new team's TE-target volume.
+
+        TE_A plays weeks 1-4 on KC alongside TE_B (each 6 targets → KC TE
+        total = 12/week, share ≈ 0.5), then is traded to SF for weeks 5-7
+        where he's the lone TE (share = 1.0). At week 7 the rolling window
+        (shift(1) → weeks 5,6) lies entirely inside the SF stint, so the
+        stint-aware share is exactly 1.0. The old ``player×season`` grouping
+        spanned the trade (window weeks 4,5,6 → player 18 / team 12+6+6=24 =
+        0.75) — mirrors the WR test (#674).
+        """
+        te_a_kc = te_player_games_factory("TE_A", n_weeks=4, targets=6, recent_team="KC")
+        te_a_sf = te_player_games_factory("TE_A", n_weeks=3, targets=6, recent_team="SF")
+        te_a_sf["week"] = [5, 6, 7]
+        te_b_kc = te_player_games_factory("TE_B", n_weeks=4, targets=6, recent_team="KC")
+        df = pd.concat([te_a_kc, te_a_sf, te_b_kc], ignore_index=True)
+        _compute_features(df)
+
+        a = df[df["player_id"] == "TE_A"].set_index("week")["team_te_target_share_L3"]
+        # Stint-aware: window {5,6} fully inside the SF stint → 12/12 = 1.0.
+        # (A non-stint denominator would give 18/24 = 0.75, mixing KC's wk4.)
+        assert pytest.approx(a.loc[7], abs=1e-9) == 1.0
+        # Stint boundary (old→new 0.5→0.0 at week 5): first game of the new
+        # stint has no prior-game window inside it → rolling NaN → safe_divide
+        # fills 0; week 6 (window {5}) is already all-SF → 1.0.
+        assert pytest.approx(a.loc[5], abs=1e-9) == 0.0
+        assert pytest.approx(a.loc[6], abs=1e-9) == 1.0
+
+
+@pytest.mark.unit
+class TestFillTENansPriorSeason:
+    """#1290: prior_season_mean_catch_rate is whitelisted (INCLUDE_FEATURES
+    ["prior_season"]) but absent from _SPECIFIC_FEATURES, so it must be
+    carved into the leak-safe train-mean fill — otherwise a rookie /
+    no-prior-season TE falls through to build_position_features' catch-all
+    .fillna(0), and a raw 0 (vs a ~0.65 league catch rate) maps to a strong
+    negative z-score post-scaler. Mirrors the RB fix (#390)."""
+
+    def test_catch_rate_train_mean_filled_not_zero(self):
+        train = pd.DataFrame(
+            {"feat1": [1.0, 2.0, 3.0], "prior_season_mean_catch_rate": [0.6, 0.8, float("nan")]}
+        )
+        val = pd.DataFrame({"feat1": [1.5], "prior_season_mean_catch_rate": [float("nan")]})
+        test = pd.DataFrame({"feat1": [2.5], "prior_season_mean_catch_rate": [float("nan")]})
+
+        # te_feature_cols deliberately excludes the prior-season column — the
+        # pipeline passes only _SPECIFIC_FEATURES here.
+        train, val, test = fill_nans(train, val, test, ["feat1"])
+
+        train_mean = 0.7  # mean of the two non-NaN train rows
+        assert pytest.approx(train["prior_season_mean_catch_rate"].iloc[2]) == train_mean
+        assert pytest.approx(val["prior_season_mean_catch_rate"].iloc[0]) == train_mean
+        assert pytest.approx(test["prior_season_mean_catch_rate"].iloc[0]) == train_mean
+
+    def test_carve_out_wiring_matches_production_config(self):
+        """Pin the activation preconditions the carve-out silently depends on:
+        the column is whitelisted (so the model consumes it), absent from
+        _SPECIFIC_FEATURES (so it needs the carve-out at all), and
+        _compute_features emits it under exactly this name — a rename or
+        whitelist change must fail HERE, not silently re-zero rookies."""
+        from src.te.config import POSITION_CONFIG
+        from src.te.features import get_feature_columns
+
+        col = "prior_season_mean_catch_rate"
+        assert col in get_feature_columns()
+        assert col not in POSITION_CONFIG.specific_features
+        df = _make_player_games(n_weeks=3)
+        df["prior_season_mean_receptions"] = 3.0
+        df["prior_season_mean_targets"] = 5.0
+        _compute_features(df)
+        assert col in df.columns
+        assert df[col].notna().all()
