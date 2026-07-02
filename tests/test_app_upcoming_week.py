@@ -475,14 +475,14 @@ def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
     """The built frame = current-season completed REG weeks + context-filled week W."""
     history = pd.DataFrame(
         {
-            "player_id": ["00-1"] * 4 + ["00-1"],
-            "season": [2026, 2026, 2026, 2026, 2025],
-            "week": [1, 2, 2, 3, 12],
-            "season_type": ["REG", "REG", "POST", "REG", "REG"],
-            "recent_team": ["SEA"] * 5,
-            "position": ["RB"] * 5,
-            "game_status": [1.0] * 5,
-            "fantasy_points": [10.0, 12.0, 8.0, 14.0, 9.0],
+            "player_id": ["00-1"] * 4,
+            "season": [2026, 2026, 2026, 2025],
+            "week": [1, 2, 3, 12],
+            "season_type": ["REG"] * 4,
+            "recent_team": ["SEA"] * 4,
+            "position": ["RB"] * 4,
+            "game_status": [1.0] * 4,
+            "fantasy_points": [10.0, 12.0, 14.0, 9.0],
         }
     )
     roster = pd.DataFrame({"player_id": ["00-1"], "position": ["RB"], "recent_team": ["SEA"]})
@@ -498,12 +498,8 @@ def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
     out = upcoming_week.build_upcoming_week_frame(2026, 4, slate, roster)
 
     ctx = out[out["week"] < 4]
-    # Completed current-season REG weeks only: no POST row, no prior season.
-    assert sorted(zip(ctx["week"], ctx["season_type"], strict=True)) == [
-        (1, "REG"),
-        (2, "REG"),
-        (3, "REG"),
-    ]
+    # Completed current-season weeks only: no prior-season rows.
+    assert sorted(ctx["week"]) == [1, 2, 3]
     assert set(ctx["season"]) == {2026}
     # Prior-week rows pass through untouched by the context fill.
     assert ctx["fantasy_points"].tolist() == [10.0, 12.0, 14.0]

@@ -219,15 +219,24 @@ def build_upcoming_week_frame(
     skel = _build_skeleton(season, week, slate, roster, history.columns)
     combined = pd.concat([history, skel], ignore_index=True)
     featurized = build_features(combined, injuries_df=injuries_df, rosters_df=rosters_df)
+    if not featurized.index.is_unique:
+        # _apply_position_models writes predictions by index; a duplicated index
+        # would land week-W predictions on context rows (and vice versa).
+        raise RuntimeError("build_features returned a non-unique index")
     in_season = featurized["season"] == season
     sl = featurized[in_season & (featurized["week"] == week)].copy()
     sl = _fill_current_week_context(
         sl, history, depth_chart_ranks, game_status_map, practice_status_map, contract_features
     )
+    # Season-to-date context is REG-only already: preprocess() filters history to
+    # REG and _build_skeleton stamps REG on the synthetic rows.
     ctx = featurized[in_season & (featurized["week"] < week)]
-    if "season_type" in ctx.columns:
-        # The training splits are REG-only; keep the lookback context identical.
-        ctx = ctx[ctx["season_type"] == "REG"]
+    if week > 1 and ctx.empty:
+        # Mid-season with no completed-week rows (e.g. nflverse weekly lagging)
+        # degrades to exactly the #1411 one-week cold-start — make it visible.
+        print(
+            f"[upcoming_week] WARNING: no season-to-date rows for {season} W{week}; attention history/rollups will cold-start"
+        )
     # No ignore_index: _apply_position_models writes predictions by index, so
     # both slices must keep their original (disjoint) ``featurized`` indices.
     return pd.concat([ctx, sl])
