@@ -232,6 +232,52 @@ def test_top_level_metadata():
     assert "provenance" in out["note"].lower()  # RotoWire caveat rides along
 
 
+def test_pooled_sigma_excludes_lookahead_season():
+    """A backfilled season (projection ≈ realized) is dropped from the pooled σ
+    and ``seasons``, kept in ``per_season`` flagged ``look_ahead``, and listed
+    in ``excluded_seasons`` — the #1163 contamination guard."""
+    rng = np.random.default_rng(0)
+    rows = []
+    for season, backfilled in ((2023, True), (2024, False), (2025, False)):
+        for i in range(30):
+            actual = 10.0 + (i % 7) + (season - 2023)
+            noise = 0.05 if backfilled else float(rng.normal(0, 5))
+            rows.append(
+                {
+                    "player_id": f"P{i}",
+                    "season": season,
+                    "week": i % 10 + 1,
+                    "actual_pts": actual,
+                    "pred": actual + noise,
+                }
+            )
+    joined = pd.DataFrame(rows)
+
+    block = mod._reliability_from_joined(joined, "pred")
+    assert block["excluded_seasons"] == [2023]
+    assert block["seasons"] == [2024, 2025]
+    assert set(block["per_season"]) == {2023, 2024, 2025}
+    assert block["per_season"][2023].get("look_ahead") is True
+    assert "look_ahead" not in block["per_season"][2024]
+    assert block["n"] == 60  # pooled over the two genuine seasons only
+    # Pooled σ reflects the genuine noise; the near-zero backfilled season
+    # would have dragged it far below the genuine spread.
+    assert block["sigma"] > 2.0
+
+
+def test_all_lookahead_returns_none():
+    joined = pd.DataFrame(
+        {
+            "player_id": [f"P{i}" for i in range(20)],
+            "season": [2023] * 20,
+            "week": list(range(1, 21)),
+            "actual_pts": [10.0 + i for i in range(20)],
+            "pred": [10.0 + i for i in range(20)],  # exact copies — pure backfill
+        }
+    )
+    assert mod._reliability_from_joined(joined, "pred") is None
+
+
 # --------------------------------------------------------------------------- #
 # build_comparison_summary enrichment — the block reaches the committed dict
 # --------------------------------------------------------------------------- #
