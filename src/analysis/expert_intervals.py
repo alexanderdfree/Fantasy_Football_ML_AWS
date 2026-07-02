@@ -271,6 +271,22 @@ def _examples(eval_df: pd.DataFrame, params: dict, names: dict[str, str]) -> lis
     return out
 
 
+def _season_residual_stats(resid: pd.Series, season: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Per-season ``(near_exact fraction, residual std)`` — the look-ahead inputs."""
+    near_exact = (resid.abs() < _LOOKAHEAD_EPS).groupby(season).mean()
+    stds = resid.groupby(season).std()
+    return near_exact, stds
+
+
+def _lookahead_from_stats(near_exact: pd.Series, stds: pd.Series) -> set[int]:
+    """Classify seasons as look-ahead from :func:`_season_residual_stats` output."""
+    return {
+        int(s)
+        for s in stds.index
+        if near_exact[s] > _LOOKAHEAD_FRAC or not np.isfinite(stds[s]) or stds[s] == 0
+    }
+
+
 def lookahead_seasons(actual: pd.Series, projection: pd.Series, season: pd.Series) -> set[int]:
     """Seasons whose "projections" are backfilled realized stats (look-ahead).
 
@@ -283,11 +299,7 @@ def lookahead_seasons(actual: pd.Series, projection: pd.Series, season: pd.Serie
     detector.
     """
     resid = actual.astype(float) - projection.astype(float)
-    near_exact = (resid.abs() < _LOOKAHEAD_EPS).groupby(season).mean()
-    stds = resid.groupby(season).std()
-    return {
-        int(s) for s in stds.index if near_exact[s] > _LOOKAHEAD_FRAC or not np.isfinite(stds[s])
-    }
+    return _lookahead_from_stats(*_season_residual_stats(resid, season))
 
 
 def _select_fit_seasons(
@@ -303,9 +315,9 @@ def _select_fit_seasons(
     pre = panel[~panel["season"].isin(eval_set)]
     if pre.empty:
         return [], {}
-    look = lookahead_seasons(pre["actual"], pre["projection"], pre["season"])
-    resid = pre["actual"] - pre["projection"]
-    stds = resid.groupby(pre["season"]).std()
+    resid = pre["actual"].astype(float) - pre["projection"].astype(float)
+    near_exact, stds = _season_residual_stats(resid, pre["season"])
+    look = _lookahead_from_stats(near_exact, stds)
 
     excluded: dict[int, str] = {s: "look-ahead" for s in look}
     genuine: dict[int, float] = {
