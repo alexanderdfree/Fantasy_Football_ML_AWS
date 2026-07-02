@@ -453,10 +453,17 @@ def _build_inheritance_features(
                 injuries_df["report_status"].isin(["Out", "Doubtful"])
                 & injuries_df["position"].isin(_INHERITANCE_POSITIONS)
             ]
+            # Normalize legacy relocation codes (OAK/SD/STL) to modern ones: the
+            # raw injuries frame carries pre-relocation codes for those seasons
+            # while the weekly frame's recent_team (the lookup key below) is
+            # already modern, so an unnormalized out-set silently never matches
+            # for relocated-franchise seasons — inherited_opportunity stays 0
+            # exactly when a starter is Out (#1269; same class as the schedule
+            # merges above).
             for pos, s, t, w, g in zip(
                 out["position"],
                 out["season"].astype(int),
-                out["team"],
+                out["team"].replace(TEAM_CODE_NORMALIZATION),
                 out["week"].astype(int),
                 out["gsis_id"].astype(str),
                 strict=True,
@@ -499,10 +506,12 @@ def _build_inheritance_features(
                 rosters_df["status"].isin(["RES", "INA"])
                 & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
             ]
+            # Same legacy-code normalization as the injuries out-set above (#1269):
+            # rosters carry OAK/SD pre-relocation codes; recent_team is modern.
             for pos, s, t, w, g in zip(
                 sidelined["position"],
                 sidelined["season"].astype(int),
-                sidelined["team"],
+                sidelined["team"].replace(TEAM_CODE_NORMALIZATION),
                 sidelined["week"].astype(int),
                 sidelined["player_id"].astype(str),
                 strict=True,
