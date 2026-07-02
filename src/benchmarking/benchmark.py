@@ -669,7 +669,13 @@ def main(argv=None):
         "results": summaries,
     }
     if code_fps:
-        entry["code_fingerprints"] = code_fps
+        # Re-fingerprint after training: an edit made mid-run (even if
+        # reverted before commit) means some positions trained different code
+        # than the snapshot — omit rather than record laundered evidence.
+        if collect_code_fingerprints(positions) == code_fps:
+            entry["code_fingerprints"] = code_fps
+        else:
+            print("WARNING: gated code changed during the run; omitting code_fingerprints")
     # Additive marker so the History tab can badge walk-forward runs; old
     # readers (and single-split runs) simply lack the key.
     if rolling_origin_mode:

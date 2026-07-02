@@ -484,6 +484,14 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_or
     if not ordered:
         print("[parallel_train] all positions failed — nothing recorded.", file=sys.stderr)
         return 1
+    if code_fps and collect_code_fingerprints(positions) != code_fps:
+        # An edit landed mid-run (even if reverted before commit): some cells
+        # trained different code than the snapshot — omit rather than record
+        # laundered evidence.
+        print(
+            "[parallel_train] WARNING: gated code changed during the run; omitting code_fingerprints"
+        )
+        code_fps = None
     _record_and_sync(
         summaries,
         ordered,

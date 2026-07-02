@@ -113,6 +113,12 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
 # tests/scripts/test_bench_fingerprint.py against
 # src.scripts.bench_fingerprint.GLOBAL_PATHS.
 _BENCH_SHARED_REGEX = re.compile(r"^src/(shared|data|features)/|^src/(__init__|config)\.py$")
+# Exempt-visibility: report EVERY src/batch/** + requirements.txt path (not
+# just the _GLOBAL_REGEX-matching subset) — the lookahead-excluded batch files
+# (launch.py / benchmark.py / *tune* / *ablate* / build_and_push.sh) are just
+# as un-gated locally, and a silent drop would contradict the "exempt paths
+# are reported, never silent" contract.
+_BENCH_EXEMPT_REGEX = re.compile(r"^src/batch/|^requirements\.txt$")
 
 
 def compute_benchmark_scope(changed_files: Iterable[str]) -> dict:
@@ -125,7 +131,7 @@ def compute_benchmark_scope(changed_files: Iterable[str]) -> dict:
     global but the local benchmark gate deliberately does not gate.
     """
     files = [f for f in changed_files if f and not f.startswith("tests/")]
-    exempt = [f for f in files if _GLOBAL_REGEX.match(f) and not _BENCH_SHARED_REGEX.match(f)]
+    exempt = [f for f in files if _BENCH_EXEMPT_REGEX.match(f)]
     return {
         "positions": [
             pos for pos in ALL_POSITIONS if any(f.startswith(f"src/{pos.lower()}/") for f in files)

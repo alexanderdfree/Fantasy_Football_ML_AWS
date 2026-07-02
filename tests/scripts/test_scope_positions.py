@@ -582,11 +582,19 @@ class TestComputeBenchmarkScope:
         assert not s["shared"]
         assert s["exempt"] == ["src/batch/train.py", "requirements.txt"]
 
-    def test_batch_nonglobal_files_are_not_even_exempt(self):
-        """launch.py/benchmark.py/tune/ablate are excluded from the train
-        trigger itself, so they are neither gated nor exempt-reported."""
-        s = self._scope(["src/batch/launch.py", "src/batch/benchmark.py"])
-        assert s == {"positions": [], "shared": False, "exempt": []}
+    def test_all_batch_files_exempt_reported_including_lookahead_excluded(self):
+        """EVERY src/batch/** path is exempt-reported — including the ones the
+        train trigger's lookahead excludes (launch.py/benchmark.py/tune/ablate):
+        they are equally un-gated locally, and the exempt report is the
+        never-silent visibility contract."""
+        s = self._scope(["src/batch/launch.py", "src/batch/benchmark.py", "src/batch/tune_x.py"])
+        assert s["positions"] == []
+        assert not s["shared"]
+        assert s["exempt"] == [
+            "src/batch/launch.py",
+            "src/batch/benchmark.py",
+            "src/batch/tune_x.py",
+        ]
 
     def test_tests_are_stripped(self):
         s = self._scope(["tests/te/test_features.py", "tests/shared/test_training.py"])

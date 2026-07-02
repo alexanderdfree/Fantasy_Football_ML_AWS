@@ -228,3 +228,18 @@ def test_evaluator_crash_fails_open_with_warning(gate_repo):
     res = _run_hook(gate_repo, "gh pr create --title t")
     assert res.returncode == 0
     assert "failing open" in res.stderr
+
+
+@requires_jq
+def test_no_base_ref_blocks_conservatively(gate_repo):
+    """When no base ref resolves (origin/main/main/origin/master/master all
+    absent), the per-file filters can't diff — everything must flow to the
+    evaluator and gate CONSERVATIVELY. Previously `git diff -b '' HEAD`
+    fataled inside is_additive_and_safe and classified every file safe,
+    silently skipping the whole gate."""
+    _git(gate_repo, "branch", "-m", "main", "trunk")
+    (gate_repo / "src/te/features.py").write_text("nn_lr = 0.01\ndef f():\n    return 0\n")
+    # no commit: with no base the hook falls back to `git diff HEAD` (uncommitted)
+    res = _run_hook(gate_repo, "gh pr create --title t")
+    assert res.returncode == 2
+    assert "TE" in res.stderr

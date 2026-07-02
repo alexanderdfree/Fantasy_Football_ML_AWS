@@ -230,3 +230,50 @@ def test_cmd_inert_prints_only_inert_committed_files(repo, capsys):
     assert rc == 0
     out = capsys.readouterr().out.splitlines()
     assert out == ["src/te/features.py"]
+
+
+def test_deletion_only_change_requires_fingerprint_evidence(repo, capsys):
+    """A deletion-only change has no on-disk mtime anchor — the mtime tiers
+    must NOT accept (a 0.0 anchor would let arbitrarily stale evidence pass);
+    only the fingerprint tier (which sees the deletion exactly) can."""
+    _git(repo, "rm", "-q", "src/te/features.py")
+    _git(repo, "commit", "-m", "delete te features")
+    _write_entry(repo, "legacy", ["TE"])  # fresh-mtime legacy entry
+    (repo / "te/outputs/models").mkdir(parents=True)  # fresh outputs dir too
+    verdict, _ = _evaluate(["src/te/features.py"], capsys)
+    assert verdict == "FAIL"
+    # A fingerprinted entry for the post-deletion HEAD is the valid evidence.
+    fp = position_fingerprint("TE", source="head")
+    _write_entry(repo, "fp", ["TE"], {"TE": fp})
+    verdict, _ = _evaluate(["src/te/features.py"], capsys)
+    assert verdict == "PASS"
+
+
+def test_outputs_models_accepts_in_place_overwrite(repo, capsys):
+    """run_pipeline overwrites fixed artifact names in place, which never bumps
+    the DIRECTORY mtime — the tier must scan file mtimes, or a warm box wedges
+    into always-FAIL with a fix message that can't work."""
+    d = repo / "te/outputs/models"
+    d.mkdir(parents=True)
+    artifact = d / "model.pt"
+    artifact.write_text("weights-v1")
+    _age(d)  # dir mtime stale
+    _age(artifact)  # artifact stale too
+    _age(repo / "src/te/features.py", seconds=1800)  # edit between the two
+    verdict, _ = _evaluate(["src/te/features.py"], capsys)
+    assert verdict == "FAIL"
+    artifact.write_text("weights-v2")  # in-place overwrite: dir mtime unchanged
+    verdict, detail = _evaluate(["src/te/features.py"], capsys)
+    assert verdict == "PASS"
+    assert "outputs-mtime" in detail
+
+
+def test_worktree_mode_evidence_matches_head_when_clean(repo, capsys):
+    """Production writers record WORKTREE-mode fingerprints; the gate matches
+    HEAD-mode. On a clean committed tree they must be identical — the real
+    recovery loop is edit -> commit -> benchmark -> gh pr create."""
+    wt_fp = position_fingerprint("TE", source="worktree")
+    assert wt_fp == position_fingerprint("TE", source="head")
+    _write_entry(repo, "run1", ["TE"], {"TE": wt_fp})
+    verdict, _ = _evaluate(["src/te/features.py"], capsys)
+    assert verdict == "PASS"

@@ -271,14 +271,25 @@ is_additive_and_safe() {
 # the safety net for partial-effect changes — rationale preserved from the old
 # inline implementation).
 #
-# The hook keeps three cheap file filters before the evaluator:
+# The hook keeps two cheap per-file filters before the evaluator, applied ONLY
+# to files the gate can actually scope (per-position dirs + the shared set) —
+# everything else under src/* (serving/tuning/analysis/scripts/benchmarking)
+# and the exempt-class paths (src/batch/**, requirements.txt) flow straight to
+# the evaluator, which classifies them in one cheap call (scoping stays
+# single-sourced in Python; this prefix list only bounds the EXPENSIVE per-file
+# work, and a miss here is conservative — the file still reaches the evaluator):
 #   tier 0: AST-inert (comments/docstrings/formatting only — provably inert)
 #   tier 1: is_additive_and_safe (additive-only, no risky tokens — see above)
-#   exempt-class paths (src/batch/**, requirements.txt) bypass the filters and
-#   flow straight to the evaluator so it can REPORT them as exempt-not-gated.
+# Both filters need a real diff base; when none resolves (no origin/main/main/
+# origin/master/master), SKIP the filters and let everything through to the
+# evaluator — the conservative direction (previously `git diff -b "" HEAD`
+# fataled inside is_additive_and_safe and silently classified everything safe).
 # Evaluator protocol: exit 0 + stdout line 1 PASS|FAIL (+ detail lines). A
 # nonzero exit means the evaluator itself broke — warn loudly and FAIL OPEN
 # (parity with the missing-jq behavior above; a false block wedges the session).
+# All python output is CR-stripped: a native-Windows python emits CRLF, and a
+# stray \r would break both the grep -Fx inert matching and the PASS/FAIL parse
+# (same fix as the worktree-list capture above).
 py_bin=""
 for _p in python3 python; do
   if command -v "$_p" >/dev/null 2>&1; then py_bin="$_p"; break; fi
@@ -297,8 +308,18 @@ if [ -n "$candidates" ]; then
   else
     inert=""
     if [ -n "$base" ]; then
-      inert=$(printf '%s' "$candidates" \
-        | "$py_bin" -m src.scripts.pre_pr_bench_check inert --base "$base" 2>/dev/null) || inert=""
+      inert_err=$(mktemp)
+      # Two-step capture (no trailing pipe) so the python exit status is the
+      # one tested — a `... | tr` pipeline would report tr's 0 and mask a crash.
+      if inert_raw=$(printf '%s' "$candidates" \
+        | "$py_bin" -m src.scripts.pre_pr_bench_check inert --base "$base" 2>"$inert_err"); then
+        inert=$(printf '%s' "$inert_raw" | tr -d '\r')
+      else
+        inert=""
+        echo "pre-pr hook: WARNING — AST-inert tier errored (files fall through to the stricter filters):" >&2
+        cat "$inert_err" >&2
+      fi
+      rm -f "$inert_err"
     fi
 
     kept=""
@@ -306,12 +327,16 @@ if [ -n "$candidates" ]; then
     inert_files=""
     for f in $candidates; do
       case "$f" in
-        src/batch/*|requirements.txt)
-          # Exempt-class: evaluator reports these, never gates on them.
+        src/qb/*|src/rb/*|src/wr/*|src/te/*|src/k/*|src/dst/*|src/shared/*|src/data/*|src/features/*|src/config.py|src/__init__.py) ;;
+        *)
+          # Not filterable (exempt-class or never-gated tree): evaluator
+          # classifies/reports it; no per-file git/AST cost spent on it.
           kept="$kept$f"$'\n'
           continue ;;
       esac
-      if [ -n "$inert" ] && printf '%s\n' "$inert" | grep -qFx -- "$f"; then
+      if [ -z "$base" ]; then
+        kept="$kept$f"$'\n'
+      elif [ -n "$inert" ] && printf '%s\n' "$inert" | grep -qFx -- "$f"; then
         inert_files="$inert_files $f"
       elif is_additive_and_safe "$f"; then
         skipped_files="$skipped_files $f"
@@ -327,7 +352,8 @@ if [ -n "$candidates" ]; then
     fi
 
     eval_err=$(mktemp)
-    if out=$(printf '%s' "$kept" | "$py_bin" -m src.scripts.pre_pr_bench_check evaluate 2>"$eval_err"); then
+    if out_raw=$(printf '%s' "$kept" | "$py_bin" -m src.scripts.pre_pr_bench_check evaluate 2>"$eval_err"); then
+      out=$(printf '%s' "$out_raw" | tr -d '\r')
       verdict=$(printf '%s\n' "$out" | head -n 1)
       detail=$(printf '%s\n' "$out" | tail -n +2)
       [ -n "$detail" ] && printf '%s\n' "$detail" >&2

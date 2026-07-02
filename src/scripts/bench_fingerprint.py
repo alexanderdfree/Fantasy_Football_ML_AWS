@@ -26,7 +26,15 @@ invariant — every path that can scope position P into the gate is inside P's
 manifest — is pinned by ``tests/scripts/test_bench_fingerprint.py``.
 
 Pure stdlib (like ``scope_positions``) so hooks can run it with vanilla
-``python3`` before any venv exists.
+``python3`` (3.9+, the macOS CLT floor) before any venv exists.
+
+Known limitations (both verified absent from this repo's ``src/`` tree and
+acceptable-by-construction — the failure direction is a fingerprint MISMATCH,
+i.e. a required re-benchmark, never a false accept): a file committed with
+CRLF content under ``core.autocrlf`` hashes differently in worktree vs head
+mode (``hash-object`` applies clean filters; the committed blob keeps CRLF),
+and a tracked symlink is hashed as its link-target string at HEAD but as the
+target's content in worktree mode.
 
 CLI (debugging):
     python3 -m src.scripts.bench_fingerprint [--head] QB RB ...
@@ -100,8 +108,10 @@ def worktree_manifest(paths: Iterable[str], repo_root: str = ".") -> list[tuple[
     if not present:
         return []
     stdin = ("\n".join(present) + "\n").encode()
-    hashes = _git(repo_root, ["hash-object", "--stdin-paths"], input_bytes=stdin)
-    return sorted(zip(present, hashes.decode().split(), strict=True))
+    hashes = _git(repo_root, ["hash-object", "--stdin-paths"], input_bytes=stdin).decode().split()
+    if len(hashes) != len(present):  # 3.9-safe strict-zip (vanilla-python3 contract)
+        raise RuntimeError(f"hash-object returned {len(hashes)} hashes for {len(present)} paths")
+    return sorted(zip(present, hashes))  # noqa: B905 - strict= kwarg is 3.10+; length-checked above
 
 
 def fingerprint_from_manifest(manifest: Iterable[tuple[str, str]]) -> str:

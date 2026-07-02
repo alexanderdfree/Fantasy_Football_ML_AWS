@@ -291,11 +291,31 @@ def record_benchmark_run(
         "positions": [s["position"] for s in summaries],
         "results": summaries,
     }
-    # CI checkout is immutable for the run, so fingerprinting at append time
-    # is equivalent to fingerprinting at train time. Fail-open (key omitted).
-    code_fps = collect_code_fingerprints(entry["positions"], repo_root=_REPO_ROOT)
-    if code_fps:
-        entry["code_fingerprints"] = code_fps
+    # Stamp per-position code fingerprints ONLY for positions whose downloaded
+    # artifact provably trained at THIS checkout's HEAD (per-position git_sha
+    # from the S3 manifest): --download-only and the stable->current->previous
+    # manifest fallback can resurrect artifacts from arbitrary prior runs, and
+    # fingerprinting those against the local tree would manufacture pre-PR B2
+    # gate evidence for code that never trained. In CI the checkout IS the
+    # merge SHA every job trained at, so all positions qualify; positions with
+    # a missing/divergent git_sha are conservatively skipped (key omitted for
+    # them — the gate then simply doesn't count this entry for that position).
+    local_sha = ((get_git_hash() or "")[:7]) or None
+    fp_positions = [
+        p
+        for p in entry["positions"]
+        if local_sha and (all_metrics.get(p, {}).get("git_sha") or "")[:7] == local_sha
+    ]
+    skipped_fp = [p for p in entry["positions"] if p not in fp_positions]
+    if skipped_fp:
+        print(
+            f"NOTE: code_fingerprints omitted for {skipped_fp} — artifact git_sha "
+            f"missing or != local HEAD {local_sha} (not evidence for this code)"
+        )
+    if fp_positions:
+        code_fps = collect_code_fingerprints(fp_positions, repo_root=_REPO_ROOT)
+        if code_fps:
+            entry["code_fingerprints"] = code_fps
     written_path = append_to_history(history_dir, entry, pr_number=pr_number)
 
     # Mirror the new file to S3 so the serving container can pull it at boot

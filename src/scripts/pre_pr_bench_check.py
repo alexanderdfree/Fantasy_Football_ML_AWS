@@ -68,7 +68,9 @@ HISTORY_DIR = "benchmark_history"  # top level only; tuning/ + ablations/ subdir
 
 def _strip_docstrings(tree: ast.Module) -> ast.Module:
     for node in ast.walk(tree):
-        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+        # Tuple form, NOT a PEP 604 union — isinstance unions are 3.10+ and
+        # this module's contract is vanilla python3 (macOS CLT ships 3.9).
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             body = node.body
             if (
                 body
@@ -127,29 +129,33 @@ def _load_history_entries() -> list[dict]:
         try:
             with open(path) as fh:
                 data = json.load(fh)
+            mtime = os.path.getmtime(path)  # inside the try: the file can
+            # vanish between glob and stat (concurrent benchmark/cleanup) and
+            # a crash here would fail the whole gate open
         except (OSError, json.JSONDecodeError):
-            continue  # corrupt/unreadable entry proves nothing
+            continue  # corrupt/unreadable/vanished entry proves nothing
         entries.append(
             {
                 "positions": data.get("positions") or [],
                 "code_fingerprints": data.get("code_fingerprints") or {},
-                "mtime": os.path.getmtime(path),
+                "mtime": mtime,
             }
         )
     return entries
 
 
-def _ref_ts(pos: str, files: list[str]) -> float:
-    """Max mtime over the changed files relevant to ``pos`` (0.0 if none exist).
+def _ref_ts(pos: str, files: list[str]) -> float | None:
+    """Max mtime over the changed files relevant to ``pos``.
 
-    Deleted files contribute nothing here — the fingerprint tier is the one
-    that catches deletions exactly; this timestamp only anchors the two
-    legacy mtime tiers.
+    ``None`` when no relevant file exists on disk (a deletion-only change):
+    the mtime tiers have no timestamp to anchor on, so they must NOT accept —
+    a 0.0 anchor would let arbitrarily stale evidence pass. The fingerprint
+    tier handles deletions exactly (the HEAD manifest simply lacks the file).
     """
     prefix = f"src/{pos.lower()}/"
     relevant = [f for f in files if f.startswith(prefix) or _BENCH_SHARED_REGEX.match(f)]
     times = [os.path.getmtime(f) for f in relevant if os.path.exists(f)]
-    return max(times, default=0.0)
+    return max(times) if times else None
 
 
 def cmd_evaluate(files: list[str]) -> int:
@@ -182,11 +188,28 @@ def cmd_evaluate(files: list[str]) -> int:
         if fingerprint_era(p):
             return False  # self-retired: fingerprinted evidence exists for P
         ts = _ref_ts(p, files)
+        if ts is None:
+            return False  # deletion-only change: no anchor, only tier 1 counts
         return any(e["mtime"] > ts and p in e["positions"] for e in entries)
 
     def outputs_mtime(p: str) -> bool:
+        ts = _ref_ts(p, files)
+        if ts is None:
+            return False  # deletion-only change: no anchor, only tier 1 counts
         d = os.path.join(p.lower(), "outputs", "models")
-        return os.path.isdir(d) and os.path.getmtime(d) > _ref_ts(p, files)
+        if not os.path.isdir(d):
+            return False
+        # Newest mtime across the artifact FILES, not the directory: in-place
+        # overwrites (torch.save/joblib.dump to fixed names) never bump the
+        # dirent, so a bare dir mtime goes permanently stale on a warm box.
+        newest = os.path.getmtime(d)
+        for root, _dirs, names in os.walk(d):
+            for n in names:
+                try:
+                    newest = max(newest, os.path.getmtime(os.path.join(root, n)))
+                except OSError:
+                    continue
+        return newest > ts
 
     def accepted(p: str) -> str | None:
         if fingerprint_match(p):
@@ -239,6 +262,8 @@ def cmd_evaluate(files: list[str]) -> int:
             "  or per position: "
             + "; ".join(f"python -m src.{p.lower()}.run_pipeline" for p in missing),
             "  evidence = a benchmark_history entry whose code_fingerprints match this HEAD",
+            "  (commit your pipeline edits BEFORE benchmarking — evidence is matched",
+            "   against committed HEAD content, so a dirty-tree run won't count)",
         ]
         sys.stdout.write("\n".join(lines) + "\n" + "".join(n + "\n" for n in notes))
         return 0
