@@ -405,7 +405,11 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
                     # spread_line is home-perspective from ESPN; negate for the
                     # away team so each row carries its own team's spread, matching
                     # the per-team convention in weather_features.py / dst/data.py.
-                    "spread_line": g["spread_line"] if side == "home" else -g["spread_line"],
+                    # Odds can be off-board (spread_line=None from the parser) —
+                    # keep None rather than TypeError-ing the whole slate (#1400).
+                    "spread_line": g["spread_line"]
+                    if side == "home" or g["spread_line"] is None
+                    else -g["spread_line"],
                     "total_line": g["total_line"],
                     "team_id": g["home_team_id"] if side == "home" else g["away_team_id"],
                 }

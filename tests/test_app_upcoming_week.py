@@ -419,3 +419,98 @@ def test_route_serves_offseason_unavailable(client):
     body = resp.get_json()
     assert body["available"] is False
     assert body["reason"] == "offseason"
+
+
+@pytest.mark.unit
+def test_run_upcoming_inference_passes_season_context_and_slices_week(monkeypatch):
+    """#1411 regression: the models must see season-to-date rows, the artifact only week W.
+
+    A one-week frame makes ``core._apply_position_models`` rebuild every
+    within-season lookback (attention history, L3 rollups, QB
+    season_starts_to_date) from a single row per player — a Week-1 cold start
+    every mid-season week.
+    """
+    frame = pd.DataFrame(
+        {
+            "player_id": ["00-1"] * 4,
+            "position": ["RB"] * 4,
+            "recent_team": ["SEA"] * 4,
+            "season": [2026] * 4,
+            "week": [1, 2, 3, 4],
+            "opponent_team": ["NE", "SF", "LA", "ARI"],
+            "is_home": [1, 0, 1, 0],
+        }
+    )
+    roster = pd.DataFrame({"player_id": ["00-1"], "espn_name": ["A"], "espn_id": ["10"]})
+    slate = pd.DataFrame({"recent_team": ["SEA"], "spread_line": [3.5], "total_line": [44.5]})
+
+    tiny = pd.DataFrame({"player_id": [], "season": [], "week": []})
+    monkeypatch.setattr(upcoming_week.core, "_ensure_base_data", lambda: None)
+    monkeypatch.setattr(upcoming_week.app_pkg, "_cache", {"splits": {"RB": (tiny, tiny, tiny)}})
+
+    captured = {}
+    sentinel_prefix = upcoming_week._MODEL_PRED_PREFIXES[0]
+
+    def fake_apply(train, val, test, pos, results):
+        captured[pos] = test.copy()
+        results.loc[test.index, f"{sentinel_prefix}_pred"] = 7.0
+
+    monkeypatch.setattr(upcoming_week.core, "_apply_position_models", fake_apply)
+
+    out = upcoming_week.run_upcoming_inference(frame, roster, slate, 2026, 4)
+
+    # The models received the full season-to-date frame (weeks 1..W)...
+    assert set(captured["RB"]["week"]) == {1, 2, 3, 4}
+    # ...but only the upcoming week is returned for serialization.
+    assert len(out) == 1
+    assert set(out["week"]) == {4}
+    row = out.iloc[0]
+    assert float(row[f"{sentinel_prefix}_pred"]) == 7.0
+    assert row["player_display_name"] == "A"
+    assert float(row["spread_line"]) == 3.5
+
+
+@pytest.mark.unit
+def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
+    """The built frame = current-season completed REG weeks + context-filled week W."""
+    history = pd.DataFrame(
+        {
+            "player_id": ["00-1"] * 4 + ["00-1"],
+            "season": [2026, 2026, 2026, 2026, 2025],
+            "week": [1, 2, 2, 3, 12],
+            "season_type": ["REG", "REG", "POST", "REG", "REG"],
+            "recent_team": ["SEA"] * 5,
+            "position": ["RB"] * 5,
+            "game_status": [1.0] * 5,
+            "fantasy_points": [10.0, 12.0, 8.0, 14.0, 9.0],
+        }
+    )
+    roster = pd.DataFrame({"player_id": ["00-1"], "position": ["RB"], "recent_team": ["SEA"]})
+    slate = pd.DataFrame({"recent_team": ["SEA"], "opponent_team": ["NE"], "is_home": [1]})
+
+    monkeypatch.setattr(upcoming_week, "_load_history", lambda: history)
+    monkeypatch.setattr(
+        upcoming_week,
+        "build_features",
+        lambda combined, injuries_df=None, rosters_df=None: combined,
+    )
+
+    out = upcoming_week.build_upcoming_week_frame(2026, 4, slate, roster)
+
+    ctx = out[out["week"] < 4]
+    # Completed current-season REG weeks only: no POST row, no prior season.
+    assert sorted(zip(ctx["week"], ctx["season_type"], strict=True)) == [
+        (1, "REG"),
+        (2, "REG"),
+        (3, "REG"),
+    ]
+    assert set(ctx["season"]) == {2026}
+    # Prior-week rows pass through untouched by the context fill.
+    assert ctx["fantasy_points"].tolist() == [10.0, 12.0, 14.0]
+    # The synthetic week-W row is present, context-filled with defaults.
+    wk = out[out["week"] == 4]
+    assert len(wk) == 1
+    assert wk.iloc[0]["season_type"] == "REG"
+    assert float(wk.iloc[0]["game_status"]) == 1.0  # NaN -> healthy default
+    # Disjoint original indices are preserved (prediction writes are by index).
+    assert out.index.is_unique

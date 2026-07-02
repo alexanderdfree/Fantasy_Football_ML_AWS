@@ -6,6 +6,7 @@ team-code normalization, the espn_id-from-href extraction, and the active-roster
 filtering.
 """
 
+import pandas as pd
 import pytest
 
 from src.serving import espn_live
@@ -292,3 +293,50 @@ def _inj_ath(espn_id):
         "team": {"abbreviation": "BAL"},
         "headshot": {"href": f"https://a.espncdn.com/i/headshots/nfl/players/full/{espn_id}.png"},
     }
+
+
+@pytest.mark.unit
+def test_fetch_slate_handles_missing_odds(monkeypatch):
+    """#1400 regression: one odds-less game must not TypeError the whole slate."""
+    games = [
+        {
+            "game_id": "2026_05_NE_SEA",
+            "season": 2026,
+            "week": 5,
+            "home_team": "SEA",
+            "away_team": "NE",
+            "home_team_id": "26",
+            "away_team_id": "17",
+            "spread_line": 3.5,
+            "total_line": 44.5,
+            "is_scheduled": True,
+        },
+        {
+            # Odds off-board: the parser deliberately emits None (see
+            # test_parse_scoreboard_handles_missing_odds).
+            "game_id": "2026_05_MIN_GB",
+            "season": 2026,
+            "week": 5,
+            "home_team": "GB",
+            "away_team": "MIN",
+            "home_team_id": "9",
+            "away_team_id": "16",
+            "spread_line": None,
+            "total_line": None,
+            "is_scheduled": True,
+        },
+    ]
+    monkeypatch.setattr(espn_live, "fetch_games", lambda season, week: games)
+
+    team_rows, sched_rows = espn_live.fetch_slate(2026, 5)
+
+    assert len(team_rows) == 4
+    by_team = team_rows.set_index("recent_team")
+    # Priced game: away side negated as before.
+    assert float(by_team.loc["SEA", "spread_line"]) == 3.5
+    assert float(by_team.loc["NE", "spread_line"]) == -3.5
+    # Odds-less game: both sides keep the parser's None (NaN in the frame).
+    assert pd.isna(by_team.loc["GB", "spread_line"])
+    assert pd.isna(by_team.loc["MIN", "spread_line"])
+    assert len(sched_rows) == 2
+    assert pd.isna(sched_rows.set_index("game_id").loc["2026_05_MIN_GB", "spread_line"])

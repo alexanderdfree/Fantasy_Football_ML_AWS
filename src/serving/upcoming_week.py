@@ -196,9 +196,16 @@ def build_upcoming_week_frame(
 ):
     """Featurize the upcoming (season, week) via the real offline pipeline.
 
-    Returns the ``build_features`` output rows for that (season, week) — the same
-    engineered columns the training splits carry, so serving inference treats
-    them identically. ``injuries_df`` (ESPN Out/Doubtful) and ``rosters_df``
+    Returns the ``build_features`` output rows for the current season *through*
+    that (season, week): the upcoming week's synthetic rows (context-filled)
+    plus the season's completed REG weeks. The completed weeks matter because
+    ``core._apply_position_models`` rebuilds every within-season lookback from
+    the frame it receives — the attention game-history arrays, the
+    ``shift(1)``-rolling L3 features, QB's ``season_starts_to_date`` — so a
+    frame holding only week W served every mid-season week as a Week-1
+    cold start (#1411). The artifact still serializes only the week-W rows
+    (``run_upcoming_inference`` slices predictions, not inputs).
+    ``injuries_df`` (ESPN Out/Doubtful) and ``rosters_df``
     (weekly RES/INA reserve/inactive, ``nfl_source.rosters_weekly``) together
     size the role-inheritance vacancy out-set exactly as the training splits do
     (refresh-splits passes both) — omitting ``rosters_df`` shrinks the out-set
@@ -212,10 +219,18 @@ def build_upcoming_week_frame(
     skel = _build_skeleton(season, week, slate, roster, history.columns)
     combined = pd.concat([history, skel], ignore_index=True)
     featurized = build_features(combined, injuries_df=injuries_df, rosters_df=rosters_df)
-    sl = featurized[(featurized["season"] == season) & (featurized["week"] == week)].copy()
-    return _fill_current_week_context(
+    in_season = featurized["season"] == season
+    sl = featurized[in_season & (featurized["week"] == week)].copy()
+    sl = _fill_current_week_context(
         sl, history, depth_chart_ranks, game_status_map, practice_status_map, contract_features
     )
+    ctx = featurized[in_season & (featurized["week"] < week)]
+    if "season_type" in ctx.columns:
+        # The training splits are REG-only; keep the lookback context identical.
+        ctx = ctx[ctx["season_type"] == "REG"]
+    # No ignore_index: _apply_position_models writes predictions by index, so
+    # both slices must keep their original (disjoint) ``featurized`` indices.
+    return pd.concat([ctx, sl])
 
 
 def _fill_current_week_context(
@@ -273,12 +288,20 @@ def _fill_current_week_context(
 # Inference (reuse core._apply_position_models verbatim)
 # --------------------------------------------------------------------------
 def run_upcoming_inference(
-    featurized_slice: pd.DataFrame, roster: pd.DataFrame, slate: pd.DataFrame
+    featurized: pd.DataFrame,
+    roster: pd.DataFrame,
+    slate: pd.DataFrame,
+    season: int,
+    week: int,
 ):
-    """Run the four skill-position models over the upcoming slice.
+    """Run the four skill-position models over the season-to-date frame.
 
-    Builds a SEPARATE results frame (never touches the prod 2025
-    ``_cache["results"]``), indexed to ``featurized_slice`` so
+    ``featurized`` carries the current season's completed weeks alongside the
+    synthetic week-W rows (see ``build_upcoming_week_frame``); the whole frame
+    goes through ``_apply_position_models`` so the per-position lookback
+    rebuild sees real history (#1411), and only the (season, week) rows are
+    returned for serialization. Builds a SEPARATE results frame (never touches
+    the prod 2025 ``_cache["results"]``), indexed to ``featurized`` so
     ``_apply_position_models`` writes land on the right rows. Returns the results
     frame with per-format prediction columns + display/matchup fields, plus
     ``actual_*`` left null (no games played yet).
@@ -297,9 +320,9 @@ def run_upcoming_inference(
             "is_home",
             "implied_team_total",
         )
-        if c in featurized_slice.columns
+        if c in featurized.columns
     ]
-    results = featurized_slice[keep].copy()
+    results = featurized[keep].copy()
 
     # Index-preserving display + matchup enrichment (.map keeps the index that
     # _apply_position_models writes against).
@@ -332,10 +355,12 @@ def run_upcoming_inference(
             continue
         train, val, _ = splits[pos]
         try:
-            core._apply_position_models(train, val, featurized_slice, pos, results)
+            core._apply_position_models(train, val, featurized, pos, results)
         except Exception as e:  # noqa: BLE001 - one position's failure must not sink the rest
             print(f"[upcoming_week] {pos} inference failed: {e!r}")
-    return results
+    # The season-to-date context rows exist only to give the per-position
+    # lookback rebuild real history; only week W is served.
+    return results[(results["season"] == season) & (results["week"] == week)].copy()
 
 
 # --------------------------------------------------------------------------
@@ -551,7 +576,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         practice_status_map=practice_status_map,
         contract_features=contract_features,
     )
-    results = run_upcoming_inference(featurized, roster, slate)
+    results = run_upcoming_inference(featurized, roster, slate, season, week)
     payload = _build_artifact(season, week, results)
     _write_artifact(payload)
     with _state_lock:
