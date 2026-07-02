@@ -309,24 +309,26 @@ Agent memories live outside this public repo and are deliberately **not** commit
 
 - Claude Code: `~/.claude/projects/<slug>/memory/` -> `s3://ff-predictor-training/claude-memory/<repo>/memory/`
 - Codex: `${CODEX_HOME:-~/.codex}/memories/` -> `s3://ff-predictor-training/codex-memory/<repo>/memories/`
+- Gemini/Antigravity: `~/.gemini/tmp/<project>/memory/` (override with `GEMINI_MEMORY_DIR`) -> `s3://ff-predictor-training/gemini-memory/<repo>/memory/`
 
 Claude session transcripts/subagent metadata and Codex SQLite runtime files are never synced.
 
 ```bash
-scripts/agent-memory-sync.sh all status       # dry-run both agents; writes nothing
+scripts/agent-memory-sync.sh all status       # dry-run all three agents; writes nothing
 scripts/claude-memory-sync.sh pull            # S3 -> local Claude memory
 scripts/codex-memory-sync.sh pull             # S3 -> local Codex memories
-scripts/agent-memory-sync.sh all push         # local -> S3 for both local trees
+scripts/agent-memory-sync.sh gemini pull      # S3 -> local Gemini memory
+scripts/agent-memory-sync.sh all push         # local -> S3 for all three local trees
 scripts/agent-memory-sync.sh all push --prune # mirror-delete, opt-in only
 ```
 
 - **Discipline:** pull at session start, push at session stop. Claude's `MEMORY.md` is no longer a conflict hotspot — it is a **generated, machine-local index** (rebuilt each SessionStart from the topic files' `index_line` by `scripts/memory_index.py`, and **excluded from sync**); only the additive per-file topic memories sync, so concurrent sessions can't clobber the index. See CLAUDE.md § Auto-memory.
-- **Separate remotes:** Claude and Codex never share an S3 folder. Override with `FF_CLAUDE_MEMORY_S3_PREFIX` or `FF_CODEX_MEMORY_S3_PREFIX`; the legacy `FF_MEMORY_S3_PREFIX` remains a Claude-only alias. `FF_MEMORY_S3_BUCKET` overrides the bucket for both.
+- **Separate remotes:** Claude, Codex, and Gemini never share an S3 folder. Override with `FF_CLAUDE_MEMORY_S3_PREFIX`, `FF_CODEX_MEMORY_S3_PREFIX`, or `FF_GEMINI_MEMORY_S3_PREFIX`; the legacy `FF_MEMORY_S3_PREFIX` remains a Claude-only alias. `FF_MEMORY_S3_BUCKET` overrides the bucket for all three.
 - **Additive by default:** a memory created on the other box is never silently dropped; `--prune` opts into mirror-delete (the bucket has versioning enabled as the recovery net).
 - **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook.
-- **Full-auto hooks:** tracked Claude and Codex `SessionStart` hooks pull the respective agent memory. Tracked `Stop` hooks push both local memory trees, so a cross-agent memory update made on a machine reaches both S3 prefixes when both local stores exist.
+- **Full-auto hooks:** tracked Claude, Codex, and Gemini `SessionStart` hooks pull the respective agent memory. Tracked `Stop`/`SessionEnd` hooks push the local memory trees, so a cross-agent memory update made on a machine reaches every S3 prefix when those local stores exist.
 - **Fresh-machine seed:** `bash scripts/bootstrap-claude-wsl.sh --with-memory-sync` does an initial Claude pull while installing Claude global conveniences; `bash scripts/bootstrap-codex-local.sh --with-memory-sync` installs Codex prompt templates and does an initial Codex pull.
-- **Durable vs incidental:** this syncs incidental, machine-local recall across your boxes. **Durable, share-worthy project knowledge belongs in version-controlled [AGENTS.md](AGENTS.md)**, the cross-agent source of truth both Claude Code and Codex read.
+- **Durable vs incidental:** this syncs incidental, machine-local recall across your boxes. **Durable, share-worthy project knowledge belongs in version-controlled [AGENTS.md](AGENTS.md)**, the cross-agent source of truth Claude Code, Codex, and Gemini all read.
 
 ## Bootstrap Codex local prompts (owner only)
 

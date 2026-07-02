@@ -27,7 +27,7 @@ Gemini runtime values:
 - `WORKFLOW_SHARED_INSTRUCTIONS=agent-workflows/post-session-critique/instructions.md`
 - `WORKFLOW_AGENT_DOC=GEMINI.md`
 - `WORKFLOW_MEMORY_DESTINATION=~/.gemini/tmp/<project>/memory/MEMORY.md (Gemini's Markdown memory; durable cross-agent lessons go to AGENTS.md)`
-- `WORKFLOW_WRITE_MEMORY=1 for worthwhile Gemini memory notes after duplicate checks`
+- `WORKFLOW_WRITE_MEMORY=0 — Gemini memory is plain Markdown and not authoritative, so propose the memory text without auto-writing; reserve durable cross-agent lessons for AGENTS.md`
 
 Execution:
 

@@ -34,7 +34,7 @@ Gemini runtime values:
 - `WORKFLOW_DRY_RUN=0 unless the user explicitly asks for dry-run planning only`
 - `WORKFLOW_PLAN_MODE=present the plan and stop for explicit user approval before any mutation`
 - `WORKFLOW_SUBAGENTS=delegate implementation bundles to Gemini subagents if available; otherwise work them sequentially`
-- `WORKFLOW_PRE_PR_GATE=run the deterministic checks manually — ruff check . && ruff format --check . && pytest -m unit (Gemini CLI has no pre-PR hook)`
+- `WORKFLOW_PRE_PR_GATE=the wired .gemini BeforeTool hook (.gemini/hooks/pre-pr.sh on run_shell_command, delegating to the single-source .claude/hooks/pre-pr.sh) gates a top-level gh pr create; run the deterministic checks manually — ruff check . && ruff format --check . && pytest -m unit — only as a fallback when the hook is unavailable`
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=activate_skill(name="pre-pr-judge")`
 - `WORKFLOW_REVIEW_TOOL=the @gemini-cli /review PR workflow (.github/workflows/gemini-review.yml)`
 - `WORKFLOW_MEMORY_DESTINATION=Gemini Markdown memory, plus AGENTS.md for durable cross-agent lessons`
