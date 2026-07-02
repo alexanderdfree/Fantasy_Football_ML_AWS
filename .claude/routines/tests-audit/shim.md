@@ -19,10 +19,11 @@ Claude-only runtime/tool rules:
 
 - Use Claude's configured cloud routine tools and repository checkout.
 - For the fanout step, Claude Agent subagents are available. Spawn every
-  worker with the Fable model explicitly (`model: "fable"` on each Agent
-  call) — do not let workers fall back to the platform's default subagent
-  model (Opus). Worker count, scope grouping, and batching are up to you —
-  a worker may cover several scopes; avoid over-spawning.
+  worker on the same model this routine runs on — currently Fable: pass
+  `model: "fable"` on each Agent call rather than letting workers fall back
+  to the platform's default subagent model. Worker count, scope grouping,
+  and batching are up to you — a worker may cover several scopes; avoid
+  over-spawning.
 - Keep the run read-only on repo files. The only permitted writes are those
   allowed by `routines/tests-audit/instructions.md`: `/tmp/*`, idempotent label
   creation, per-finding issue creation, comments on issues created in this run,
