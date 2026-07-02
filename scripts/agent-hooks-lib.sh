@@ -34,9 +34,17 @@ agent_hooks_find_jq() {
 # unifying the Claude no-arg form and the Codex root-arg form.
 agent_hooks_main_worktree() {
   local root="${1:-.}"
-  git -C "$root" worktree list --porcelain 2>/dev/null \
-    | awk 'NR == 1 && /^worktree / { print substr($0, 10); exit }' \
-    | tr -d '\r'
+  local out first
+  # Capture git output fully (command substitution) before slicing it. The old
+  # `git ... | awk '...exit'` pipeline made awk close git's stdout after line 1,
+  # so git took SIGPIPE and returned 141; under the launcher's `set -euo pipefail`
+  # that aborted codex-fresh-worktree.sh before a worktree was created (#1369).
+  out="$(git -C "$root" worktree list --porcelain 2>/dev/null)" || return 0
+  first="${out%%$'\n'*}"  # primary worktree is git's first --porcelain entry
+  first="${first%$'\r'}"  # strip trailing CR (Windows git)
+  case "$first" in
+    "worktree "*) printf '%s\n' "${first#worktree }" ;;
+  esac
 }
 
 # Resolve a tool path to an absolute path under the repo root ($1).

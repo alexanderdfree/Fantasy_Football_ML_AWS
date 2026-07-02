@@ -955,7 +955,6 @@ _BASE_SCORING = {
     "receiving_yards": 0.1, "receiving_tds": 6,
     "fumbles_lost": -2,  # sum of sack_fumbles_lost + rushing_fumbles_lost
 }
-PPR_FORMATS = {"standard": 0.0, "half_ppr": 0.5, "ppr": 1.0}
 SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
 SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
 SCORING_PPR      = {**_BASE_SCORING, "receptions": 1.0}
