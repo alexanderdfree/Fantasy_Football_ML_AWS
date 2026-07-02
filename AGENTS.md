@@ -134,6 +134,8 @@ These have all been attempted, shipped, and reverted. Re-proposing them costs a 
 
 ## Running code
 
+**Parallel-first rule: before ANY compute-bearing run — tests, trains, tunes, benchmarks, A/Bs, seed sweeps, smokes — search the repo for the existing most-parallelized/optimized entrypoint; never hand-roll a sequential loop or bespoke one-off script.** The paths below all autodetect platform parallelism (`detect_platform()` / `resolve_jobs` / xdist): the benchmark's multi-position fan-out, `ab_harness`/`ablation_runner`'s position×variant×seed grid, `tune_nn`'s stacked-seed N=24 CUDA default, `tune_lgbm`'s all-physical-cores default, the Batch Spot fleet (`launch_ab` / `launch_tune` / `ab-batch.yml`) for GPU-fleet fan-outs, and sharded xdist `pytest` (`scripts/pytest-fair.sh` for fair-share CPU alongside other workloads). Grep for an existing harness before writing a new runner (the `ab_harness`↔`ablation_runner` duplication → #1048 unification is the cautionary tale); a sequential one-off that pegs one core with the GPU idle is the documented failure mode (2026-06-08 role-inheritance A/B). Same rule for smokes: prefer `CONFIG_TINY`/unit-marker subsets and a 1-seed/1-position cell before any fan-out.
+
 Commands live in [SETUP.md](SETUP.md). Shortcuts:
 - `python -m src.benchmarking.benchmark [POS ...]` — benchmark & refresh artifacts (writes a `{run_id}.json` file under `benchmark_history/`); **autodetects parallel multi-position fan-out on a many-core CUDA box** (delegates to `parallel_train`), sequential elsewhere — `-j N` / `--sequential` override.
 - `python -m src.{pos}.run_pipeline` — single position, full local run.
