@@ -61,7 +61,7 @@ jobs:
     # retries can stretch that. 4h matches retune-nn-batch's ceiling.
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Configure AWS credentials
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the

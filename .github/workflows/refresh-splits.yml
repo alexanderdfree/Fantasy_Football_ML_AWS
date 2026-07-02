@@ -98,7 +98,7 @@ jobs:
     # the full 6-position inference (~10 min) on top of the ~10 min splits regen.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # AWS creds + the pending race-gate marker go FIRST (right after checkout)
       # so the marker lands ~30s in. Sitting behind setup-python + the uv

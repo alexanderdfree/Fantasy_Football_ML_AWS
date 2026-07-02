@@ -51,7 +51,7 @@ jobs:
           - language: actions
             build-mode: none
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
       # major version comment. SHA = github/codeql-action v4.36.2.
