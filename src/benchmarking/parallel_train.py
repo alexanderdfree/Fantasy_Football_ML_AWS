@@ -72,6 +72,7 @@ from src.benchmarking.benchmark import (  # noqa: E402 — after sys.path bootst
     run_rolling_origin,
     score_one_origin,
 )
+from src.scripts.bench_fingerprint import collect_code_fingerprints  # noqa: E402
 from src.shared.benchmark_utils import (  # noqa: E402
     append_to_history,
     get_git_hash,
@@ -322,6 +323,7 @@ def _record_and_sync(
     no_sync: bool,
     total_wall_sec: float | None = None,
     rolling_origin: bool = False,
+    code_fingerprints: dict[str, str] | None = None,
 ) -> None:
     """Mirror of ``benchmark.py``'s post-loop block: table, results file, history, S3.
 
@@ -352,6 +354,12 @@ def _record_and_sync(
         "results": summaries,
         "total_wall_sec": total_wall_sec,
     }
+    if code_fingerprints:
+        # Only the positions actually recorded — a failed cell's fingerprint
+        # must not masquerade as benchmark evidence for that position.
+        recorded = {p: code_fingerprints[p] for p in positions if p in code_fingerprints}
+        if recorded:
+            entry["code_fingerprints"] = recorded
     if rolling_origin:
         entry["mode"] = "rolling_origin"
     written_path = append_to_history(HISTORY_DIR, entry)
@@ -408,6 +416,10 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_or
         if len(cell_keys) > jobs:
             print(f"[dry-run] queued (dispatched as cells finish): {cell_keys[jobs:]}")
         return 0
+
+    # Fingerprint the code BEFORE dispatch so a mid-run edit can't be
+    # laundered into benchmark evidence for code that never trained.
+    code_fps = collect_code_fingerprints(positions)
 
     logdir = "logs"
     os.makedirs(logdir, exist_ok=True)
@@ -479,6 +491,7 @@ def orchestrate(positions, jobs, passthrough, note, no_sync, dry_run, rolling_or
         no_sync,
         total_wall_sec,
         rolling_origin=rolling_origin,
+        code_fingerprints=code_fps,
     )
     if failed:
         print(f"\n[parallel_train] FAILED positions (not recorded): {failed}", file=sys.stderr)

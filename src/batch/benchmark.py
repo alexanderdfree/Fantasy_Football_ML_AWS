@@ -32,6 +32,7 @@ from src.batch.launch import (
     upload_data,
     wait_for_jobs,
 )
+from src.scripts.bench_fingerprint import collect_code_fingerprints
 from src.shared.benchmark_utils import (
     append_to_history,
     get_git_hash,
@@ -280,20 +281,22 @@ def record_benchmark_run(
     history_dir = (
         HISTORY_DIR if os.path.isabs(HISTORY_DIR) else os.path.join(_REPO_ROOT, HISTORY_DIR)
     )
-    written_path = append_to_history(
-        history_dir,
-        {
-            "run_id": f"{now}_{git_short}",
-            "timestamp": now,
-            "git_hash": git_short,
-            "note": note or f"AWS {backend} benchmark",
-            "backend": backend,
-            "instance_type": instance_type,
-            "positions": [s["position"] for s in summaries],
-            "results": summaries,
-        },
-        pr_number=pr_number,
-    )
+    entry = {
+        "run_id": f"{now}_{git_short}",
+        "timestamp": now,
+        "git_hash": git_short,
+        "note": note or f"AWS {backend} benchmark",
+        "backend": backend,
+        "instance_type": instance_type,
+        "positions": [s["position"] for s in summaries],
+        "results": summaries,
+    }
+    # CI checkout is immutable for the run, so fingerprinting at append time
+    # is equivalent to fingerprinting at train time. Fail-open (key omitted).
+    code_fps = collect_code_fingerprints(entry["positions"], repo_root=_REPO_ROOT)
+    if code_fps:
+        entry["code_fingerprints"] = code_fps
+    written_path = append_to_history(history_dir, entry, pr_number=pr_number)
 
     # Mirror the new file to S3 so the serving container can pull it at boot
     # via sync_benchmark_history_from_s3 — git auto-commit is preserved for

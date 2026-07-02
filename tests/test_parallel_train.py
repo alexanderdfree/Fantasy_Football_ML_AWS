@@ -505,7 +505,15 @@ def test_orchestrate_rolling_origin_dispatches_cells_and_merges(tmp_path, monkey
 
     recorded = {}
 
-    def _fake_record(summaries, positions, note, no_sync, total_wall_sec, rolling_origin=False):
+    def _fake_record(
+        summaries,
+        positions,
+        note,
+        no_sync,
+        total_wall_sec,
+        rolling_origin=False,
+        code_fingerprints=None,
+    ):
         recorded["summaries"] = summaries
         recorded["positions"] = positions
         recorded["rolling_origin"] = rolling_origin
