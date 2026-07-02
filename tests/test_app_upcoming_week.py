@@ -178,8 +178,10 @@ def test_fill_current_week_context_carries_forward_and_defaults():
     # Veteran: carried forward from 2025.
     assert vet["depth_chart_rank"] == 1.0
     assert vet["contract_guaranteed"] == 110.0
-    # Rookie (no history): defaults — rank 3 (backup), not left NaN.
-    assert rook["depth_chart_rank"] == 3.0
+    # Rookie (no history): default is the -1 training sentinel (build_position_features
+    # remaps it to the train-mean of real ranks — the neutral no-data value), not 3
+    # (which would standardize as a real rank-3, a train/serve mismatch, #1270).
+    assert rook["depth_chart_rank"] == -1.0
     # Current-health columns default to active / full practice for everyone.
     assert set(out["game_status"]) == {1.0}
     assert set(out["practice_status"]) == {2.0}
@@ -216,8 +218,8 @@ def test_fill_current_week_context_live_signals_win():
     healthy = out[out["player_id"] == "healthy"].iloc[0]
     # Precedence: live ESPN rank wins over the stale carry-forward AND the default.
     assert vet["depth_chart_rank"] == 2.0  # live (2) beats carried 1.0
-    assert backup["depth_chart_rank"] == 1.0  # live (1) beats default 3.0
-    assert healthy["depth_chart_rank"] == 3.0  # no live, no history -> default
+    assert backup["depth_chart_rank"] == 1.0  # live (1) beats default -1.0
+    assert healthy["depth_chart_rank"] == -1.0  # no live, no history -> -1 sentinel (#1270)
     assert vet["contract_guaranteed"] == 110.0  # contracts still carry forward
     # Live injury game_status overrides the healthy default; others stay default.
     assert vet["game_status"] == 0.5
@@ -301,6 +303,38 @@ def test_input_signature_changes_with_lines():
     moved = slate.copy()
     moved.loc[0, "spread_line"] = 6.5
     assert upcoming_week._input_signature(2026, 1, moved, roster) != sig1
+
+
+@pytest.mark.unit
+def test_input_signature_changes_with_reserve_inactive_roster():
+    # #1277: a RES/INA move (which resizes the inheritance vacancy out-set) must
+    # invalidate the cache, else a stale artifact ships with the wrong out-set.
+    slate = pd.DataFrame(
+        {
+            "recent_team": ["SEA"],
+            "opponent_team": ["NE"],
+            "is_home": [1],
+            "spread_line": [3.5],
+            "total_line": [44.5],
+        }
+    )
+    roster = pd.DataFrame({"player_id": ["00-1", "00-2"]})
+    base = upcoming_week._input_signature(2026, 1, slate, roster)
+    rosters = pd.DataFrame(
+        {
+            "player_id": ["00-9"],
+            "status": ["RES"],
+            "position": ["RB"],
+            "season": [2026],
+            "team": ["SEA"],
+            "week": [1],
+        }
+    )
+    with_ir = upcoming_week._input_signature(2026, 1, slate, roster, rosters_df=rosters)
+    assert with_ir != base  # a reserve/inactive player changes the signature
+    # ACT (not sidelined) players do not size a vacancy → no signature change.
+    active = rosters.assign(status=["ACT"])
+    assert upcoming_week._input_signature(2026, 1, slate, roster, rosters_df=active) == base
 
 
 @pytest.mark.unit
