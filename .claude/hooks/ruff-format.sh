@@ -47,4 +47,7 @@ if [ -z "$ruff" ] && command -v ruff >/dev/null 2>&1; then
 fi
 [ -n "$ruff" ] || exit 0
 
-"$ruff" format "$file" >/dev/null 2>&1 || true
+# --no-cache: the mtime+size cache can false-skip a same-size rewrite landing
+# in the same mtime tick (fast same-file writes); a per-file hook gains nothing
+# from the cache anyway.
+"$ruff" format --no-cache "$file" >/dev/null 2>&1 || true

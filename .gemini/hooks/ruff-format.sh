@@ -47,7 +47,9 @@ while IFS= read -r path; do
     *" $abs "*) continue ;;
   esac
   seen="$seen $abs"
-  "$ruff" format "$abs" >/dev/null 2>&1 || true
+  # --no-cache: mirrors .claude/hooks/ruff-format.sh — the mtime+size cache can
+  # false-skip a same-size rewrite landing in the same mtime tick.
+  "$ruff" format --no-cache "$abs" >/dev/null 2>&1 || true
 done <<EOF
 $(gemini_tool_paths "$input" "$jq_bin")
 EOF
