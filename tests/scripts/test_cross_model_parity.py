@@ -199,6 +199,20 @@ def test_guardrail_hook_exists(provider: str, hook: str) -> None:
     )
 
 
+@pytest.mark.parametrize("provider", sorted(HOOK_DIRS))
+def test_ruff_format_hook_disables_cache(provider: str) -> None:
+    # Ruff's mtime+size cache false-skips a same-size rewrite landing in the
+    # same mtime tick, so a cached per-file format hook can silently leave a
+    # file unformatted. The behavioral hook tests only catch this when two
+    # writes straddle an mtime tick, so pin the flag by content.
+    rel = f"{HOOK_DIRS[provider]}/ruff-format.sh"
+    text = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
+    assert "format --no-cache" in text, (
+        f"{rel} must invoke `ruff format --no-cache` (see the same-mtime-tick "
+        "false-skip note in the hook)."
+    )
+
+
 @pytest.mark.parametrize("provider", sorted(MEMORY_SYNC_WRAPPERS))
 def test_memory_sync_wrapper_exists(provider: str) -> None:
     rel = MEMORY_SYNC_WRAPPERS[provider]
