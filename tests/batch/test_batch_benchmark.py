@@ -565,6 +565,47 @@ def test_record_benchmark_run_returns_none_when_no_metrics(monkeypatch):
     assert appended == []
 
 
+@pytest.mark.unit
+def test_record_benchmark_run_fingerprints_only_sha_matched_positions(_main_stubs, monkeypatch):
+    """code_fingerprints are stamped ONLY for positions whose downloaded
+    artifact trained at this checkout's HEAD (per-position manifest git_sha) —
+    --download-only / stale-manifest fallbacks must not manufacture pre-PR B2
+    evidence for code that never trained."""
+    import src.batch.benchmark as bb
+
+    _, _, appended = _main_stubs
+    monkeypatch.setattr(
+        bb,
+        "download_metrics",
+        lambda positions: {
+            "QB": {"position": "QB", "mae": 6.2, "git_sha": "abc1234"},  # == local HEAD
+            "RB": {"position": "RB", "mae": 4.3, "git_sha": "0ldsha99"},  # stale artifact
+        },
+    )
+    monkeypatch.setattr(
+        bb,
+        "collect_code_fingerprints",
+        lambda positions, repo_root=".", **kw: {p: "f" * 64 for p in positions},
+    )
+    bb.record_benchmark_run(["QB", "RB"])
+    row = appended[0]
+    assert row["code_fingerprints"] == {"QB": "f" * 64}  # RB conservatively omitted
+
+
+@pytest.mark.unit
+def test_record_benchmark_run_omits_fingerprints_without_git_sha(_main_stubs, monkeypatch):
+    """Artifacts without a manifest git_sha (older runs) prove nothing about
+    this code — no fingerprints stamped, collector not even invoked."""
+    import src.batch.benchmark as bb
+
+    _, _, appended = _main_stubs
+    calls: list = []
+    monkeypatch.setattr(bb, "collect_code_fingerprints", lambda *a, **kw: calls.append(a) or {})
+    bb.record_benchmark_run(["QB", "RB"])  # _main_stubs metrics carry no git_sha
+    assert "code_fingerprints" not in appended[0]
+    assert calls == []
+
+
 # --------------------------------------------------------------------------
 # _derive_instance_label — runtime hardware label (T4->L4 drift fix)
 # --------------------------------------------------------------------------

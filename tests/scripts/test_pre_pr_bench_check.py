@@ -139,11 +139,22 @@ def test_legacy_entry_stale_mtime_fails(repo, capsys):
 
 
 def test_outputs_models_mtime_accepts_with_nudge(repo, capsys):
-    (repo / "te/outputs/models").mkdir(parents=True)
+    d = repo / "te/outputs/models"
+    d.mkdir(parents=True)
+    (d / "model.pt").write_text("weights")  # a real fresh ARTIFACT is the evidence
     _age(repo / "src/te/features.py")
     verdict, detail = _evaluate(["src/te/features.py"], capsys)
     assert verdict == "PASS"
     assert "outputs-mtime" in detail
+
+
+def test_outputs_models_empty_dir_is_not_evidence(repo, capsys):
+    """A freshly-mkdir'd EMPTY artifact dir (e.g. a run that crashed before
+    saving) must not count — evidence comes from artifact FILES."""
+    (repo / "te/outputs/models").mkdir(parents=True)
+    _age(repo / "src/te/features.py")
+    verdict, _ = _evaluate(["src/te/features.py"], capsys)
+    assert verdict == "FAIL"
 
 
 def test_outputs_models_stale_fails(repo, capsys):

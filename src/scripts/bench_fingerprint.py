@@ -135,7 +135,7 @@ def position_fingerprint(pos: str, repo_root: str = ".", *, source: str = "workt
 
 
 def collect_code_fingerprints(
-    positions: Iterable[str], repo_root: str = "."
+    positions: Iterable[str], repo_root: str = ".", *, source: str = "worktree"
 ) -> dict[str, str] | None:
     """Writer entrypoint: worktree fingerprints for a benchmark history entry.
 
@@ -145,7 +145,7 @@ def collect_code_fingerprints(
     treats the entry as legacy).
     """
     try:
-        return {pos: position_fingerprint(pos, repo_root, source="worktree") for pos in positions}
+        return {pos: position_fingerprint(pos, repo_root, source=source) for pos in positions}
     except Exception as e:  # noqa: BLE001 - deliberate fail-open boundary
         print(f"WARNING: code fingerprints unavailable ({e}); history entry will omit them")
         return None

@@ -669,9 +669,11 @@ def main(argv=None):
         "results": summaries,
     }
     if code_fps:
-        # Re-fingerprint after training: an edit made mid-run (even if
-        # reverted before commit) means some positions trained different code
+        # Re-fingerprint after training: an edit that landed mid-run and
+        # persisted to run end means some positions trained different code
         # than the snapshot — omit rather than record laundered evidence.
+        # (Two-point check: an intra-run edit reverted before run end is not
+        # detectable here.)
         if collect_code_fingerprints(positions) == code_fps:
             entry["code_fingerprints"] = code_fps
         else:

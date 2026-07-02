@@ -306,12 +306,23 @@ if [ -n "$candidates" ]; then
   if [ -z "$py_bin" ]; then
     echo "pre-pr hook: WARNING — python3 not found; skipping the benchmark gate (fail-open)" >&2
   else
+    # Only gate-relevant files go to the AST tier — never-gated trees and
+    # exempt-class paths skip its 2x-git-show + ast.parse cost too (their
+    # inert verdicts were never consulted anyway).
+    filterable=""
+    for f in $candidates; do
+      case "$f" in
+        src/qb/*|src/rb/*|src/wr/*|src/te/*|src/k/*|src/dst/*|src/shared/*|src/data/*|src/features/*|src/config.py|src/__init__.py)
+          filterable="$filterable$f"$'\n' ;;
+      esac
+    done
+
     inert=""
-    if [ -n "$base" ]; then
+    if [ -n "$base" ] && [ -n "$filterable" ]; then
       inert_err=$(mktemp)
       # Two-step capture (no trailing pipe) so the python exit status is the
       # one tested — a `... | tr` pipeline would report tr's 0 and mask a crash.
-      if inert_raw=$(printf '%s' "$candidates" \
+      if inert_raw=$(printf '%s' "$filterable" \
         | "$py_bin" -m src.scripts.pre_pr_bench_check inert --base "$base" 2>"$inert_err"); then
         inert=$(printf '%s' "$inert_raw" | tr -d '\r')
       else

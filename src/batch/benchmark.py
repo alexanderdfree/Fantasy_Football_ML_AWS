@@ -313,7 +313,10 @@ def record_benchmark_run(
             f"missing or != local HEAD {local_sha} (not evidence for this code)"
         )
     if fp_positions:
-        code_fps = collect_code_fingerprints(fp_positions, repo_root=_REPO_ROOT)
+        # HEAD mode, not worktree: the git_sha gate above proved the artifact
+        # trained at this HEAD — a dirty local tree at append time must not
+        # stamp worktree content as evidence for code that never trained.
+        code_fps = collect_code_fingerprints(fp_positions, repo_root=_REPO_ROOT, source="head")
         if code_fps:
             entry["code_fingerprints"] = code_fps
     written_path = append_to_history(history_dir, entry, pr_number=pr_number)

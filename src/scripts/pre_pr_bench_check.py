@@ -163,7 +163,7 @@ def cmd_evaluate(files: list[str]) -> int:
     notes: list[str] = []
     if scope["exempt"]:
         notes.append(
-            "note: exempt from the local benchmark gate (Batch/deps — CI still retrains): "
+            "note: exempt from the local benchmark gate (Batch/deps — not exercised by the local benchmark path): "
             + ", ".join(scope["exempt"])
         )
 
@@ -199,10 +199,12 @@ def cmd_evaluate(files: list[str]) -> int:
         d = os.path.join(p.lower(), "outputs", "models")
         if not os.path.isdir(d):
             return False
-        # Newest mtime across the artifact FILES, not the directory: in-place
-        # overwrites (torch.save/joblib.dump to fixed names) never bump the
-        # dirent, so a bare dir mtime goes permanently stale on a warm box.
-        newest = os.path.getmtime(d)
+        # Newest mtime across the artifact FILES only: in-place overwrites
+        # (torch.save/joblib.dump to fixed names) never bump the dirent, so a
+        # bare dir mtime goes permanently stale on a warm box — and seeding
+        # from the dirent would let an EMPTY dir (crashed run) or a stale-file
+        # deletion count as evidence.
+        newest = 0.0
         for root, _dirs, names in os.walk(d):
             for n in names:
                 try:
