@@ -409,6 +409,24 @@ _INHERITANCE_ROLE_COL = {
     "TE": "targets",
 }
 
+# Out-set team-key normalization (#1269): the shared schedule-side map covers
+# relocations (OAK→LV, SD→LAC, STL→LA), but nfl_source.rosters_weekly labels
+# 2012–2015 with GAMEBOOK abbreviations the schedule universe never sees —
+# ARZ/BLT/CLV/HST, and the Rams as "SL" (not "STL", so even the shared map's
+# STL entry misses it). Extend locally for the out-set keys only; other
+# TEAM_CODE_NORMALIZATION consumers join schedule/injury universes where
+# gamebook codes never appear. Applied to BOTH out-set sides (injuries data
+# is currently modern+STL-style, but the union map is identity on unmatched
+# codes and robust to source drift).
+_OUT_SET_TEAM_NORMALIZATION = {
+    **TEAM_CODE_NORMALIZATION,
+    "ARZ": "ARI",
+    "BLT": "BAL",
+    "CLV": "CLE",
+    "HST": "HOU",
+    "SL": "LA",
+}
+
 
 def _build_inheritance_features(
     df: pd.DataFrame,
@@ -453,10 +471,17 @@ def _build_inheritance_features(
                 injuries_df["report_status"].isin(["Out", "Doubtful"])
                 & injuries_df["position"].isin(_INHERITANCE_POSITIONS)
             ]
+            # Normalize legacy relocation codes (OAK/SD/STL) to modern ones: the
+            # raw injuries frame carries pre-relocation codes for those seasons
+            # while the weekly frame's recent_team (the lookup key below) is
+            # already modern, so an unnormalized out-set silently never matches
+            # for relocated-franchise seasons — inherited_opportunity stays 0
+            # exactly when a starter is Out (#1269; same class as the schedule
+            # merges above).
             for pos, s, t, w, g in zip(
                 out["position"],
                 out["season"].astype(int),
-                out["team"],
+                out["team"].replace(_OUT_SET_TEAM_NORMALIZATION),
                 out["week"].astype(int),
                 out["gsis_id"].astype(str),
                 strict=True,
@@ -499,10 +524,14 @@ def _build_inheritance_features(
                 rosters_df["status"].isin(["RES", "INA"])
                 & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
             ]
+            # Same normalization as the injuries out-set above (#1269): rosters
+            # carry OAK/SD pre-relocation codes AND 2012-2015 gamebook codes
+            # (ARZ/BLT/CLV/HST/SL — see _OUT_SET_TEAM_NORMALIZATION); recent_team
+            # is modern.
             for pos, s, t, w, g in zip(
                 sidelined["position"],
                 sidelined["season"].astype(int),
-                sidelined["team"],
+                sidelined["team"].replace(_OUT_SET_TEAM_NORMALIZATION),
                 sidelined["week"].astype(int),
                 sidelined["player_id"].astype(str),
                 strict=True,

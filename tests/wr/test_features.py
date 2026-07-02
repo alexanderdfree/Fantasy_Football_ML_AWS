@@ -255,3 +255,47 @@ class TestWRBoomFeatures:
         assert pd.isna(a.loc[1])  # shift(1): week 1 has no prior game → NaN (fill_nans backfills)
         assert a.loc[2] == pytest.approx(2.0)  # mean(week1=2)
         assert a.loc[3] == pytest.approx(1.0)  # mean(week1=2, week2=0)
+
+
+@pytest.mark.unit
+class TestFillWRNansPriorSeason:
+    """#1368: prior_season_mean_catch_rate is whitelisted (INCLUDE_FEATURES
+    ["prior_season"]) but absent from _SPECIFIC_FEATURES, so it must be
+    carved into the leak-safe train-mean fill — otherwise a rookie /
+    no-prior-season WR falls through to build_position_features' catch-all
+    .fillna(0), and a raw 0 (vs a ~0.60 league catch rate) maps to a strong
+    negative z-score post-scaler. Mirrors the RB fix (#390)."""
+
+    def test_catch_rate_train_mean_filled_not_zero(self):
+        train = pd.DataFrame(
+            {"feat1": [1.0, 2.0, 3.0], "prior_season_mean_catch_rate": [0.5, 0.7, float("nan")]}
+        )
+        val = pd.DataFrame({"feat1": [1.5], "prior_season_mean_catch_rate": [float("nan")]})
+        test = pd.DataFrame({"feat1": [2.5], "prior_season_mean_catch_rate": [float("nan")]})
+
+        # wr_feature_cols deliberately excludes the prior-season column — the
+        # pipeline passes only _SPECIFIC_FEATURES here.
+        train, val, test = fill_nans(train, val, test, ["feat1"])
+
+        train_mean = 0.6  # mean of the two non-NaN train rows
+        assert pytest.approx(train["prior_season_mean_catch_rate"].iloc[2]) == train_mean
+        assert pytest.approx(val["prior_season_mean_catch_rate"].iloc[0]) == train_mean
+        assert pytest.approx(test["prior_season_mean_catch_rate"].iloc[0]) == train_mean
+
+    def test_carve_out_wiring_matches_production_config(self):
+        """Pin the activation preconditions the carve-out silently depends on:
+        the column is whitelisted (so the model consumes it), absent from
+        _SPECIFIC_FEATURES (so it needs the carve-out at all), and
+        _compute_features emits it under exactly this name — a rename or
+        whitelist change must fail HERE, not silently re-zero rookies."""
+        from src.wr.features import get_feature_columns
+
+        col = "prior_season_mean_catch_rate"
+        assert col in get_feature_columns()
+        assert col not in SPECIFIC_FEATURES
+        df = make_wr_player_games(n_weeks=3)
+        df["prior_season_mean_receptions"] = 3.0
+        df["prior_season_mean_targets"] = 5.0
+        _compute_features(df)
+        assert col in df.columns
+        assert df[col].notna().all()

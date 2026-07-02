@@ -341,6 +341,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             legacy = legacy.dropna(subset=["week"])
             legacy["week"] = legacy["week"].astype(int)
             parts.append(legacy[_DEPTH_CANONICAL_COLS])
+        skipped = []
         for s in new_seasons:
             url = (
                 "https://github.com/nflverse/nflverse-data/releases/download/"
@@ -354,8 +355,27 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             try:
                 parts.append(_normalize_espn_depth(pd.read_parquet(url), schedules, s))
             except Exception as e:
+                skipped.append(s)
                 print(f"WARNING: ESPN depth_charts fetch failed for {s} ({e}); skipping")
+        if not parts:
+            # Don't poison the cache with an empty frame — let the next call
+            # retry. Empty-with-columns so the downstream formation filter /
+            # merge still run and every row rides the -1 sentinel (a bare
+            # pd.DataFrame() would KeyError on the formation column).
+            return pd.DataFrame(columns=_DEPTH_CANONICAL_COLS)
         depth = pd.concat(parts, ignore_index=True)
+        if skipped:
+            # Partial coverage: an ESPN season failed to fetch. Return what we
+            # have for THIS call, but do NOT persist a partial frame — the cache
+            # key encodes only the requested season range, so a cache-hit on the
+            # next call would serve the incomplete frame forever (even after the
+            # source recovers) and every player-week in the missing season would
+            # ride the -1 sentinel into training. Mirrors load_team_week_stats'
+            # #807 guard. (#1215)
+            print(
+                f"WARNING: depth_charts partial coverage (skipped seasons {skipped}); not caching"
+            )
+            return depth
         atomic_write_parquet(depth, depth_path)
         return depth
 

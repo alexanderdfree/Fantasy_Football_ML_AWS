@@ -297,6 +297,43 @@ def test_load_raw_data_fresh_fetch_old_seasons_only(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
+def test_load_raw_data_espn_depth_404_partial_not_cached(tmp_path, monkeypatch, capsys):
+    """#1215: a mid-season ESPN depth-chart 404 must not poison the depth cache.
+    The cache key encodes only the requested season range, so persisting a
+    partial frame would let every subsequent cache-hit serve the incomplete
+    coverage forever — each player-week in the missing season riding the -1
+    sentinel into training. Mirrors ``load_team_week_stats``' #807 guard."""
+    import src.data.loader as loader
+
+    _mock_all_nfl_helpers(monkeypatch)
+
+    real_read_parquet = loader.pd.read_parquet
+
+    def _url_404(path, *args, **kwargs):
+        if isinstance(path, str) and path.startswith("https://"):
+            raise RuntimeError("404 mid-season")
+        return real_read_parquet(path, *args, **kwargs)
+
+    monkeypatch.setattr(loader.pd, "read_parquet", _url_404)
+
+    df = loader.load_raw_data([2024, 2025], cache_dir=str(tmp_path))
+    # The run completes on the legacy (2024) coverage alone.
+    assert "depth_chart_rank" in df.columns
+    # The missing season's player-week rows survive the merge and ride the -1
+    # sentinel — the safety net the guard's comment cites (an inner depth merge
+    # or a dropped fillna(-1) must fail here, not stay silently green).
+    rows_2025 = df[df["season"] == 2025]
+    assert len(rows_2025) > 0
+    assert (rows_2025["depth_chart_rank"] == -1).all()
+    # Partial coverage → the depth cache is NOT written; the next call retries
+    # the missing ESPN season instead of serving the partial frame from cache.
+    assert not (tmp_path / "depth_charts_v2_2024_2025.parquet").exists()
+    out = capsys.readouterr().out
+    assert "ESPN depth_charts fetch failed for 2025" in out
+    assert "depth_charts partial coverage (skipped seasons [2025]); not caching" in out
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("depth_order", [["1", "3"], ["3", "1"]])
 def test_load_raw_data_depth_chart_rank_picks_min_deterministically(
     tmp_path, monkeypatch, depth_order

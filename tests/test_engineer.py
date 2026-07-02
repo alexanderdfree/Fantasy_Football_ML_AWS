@@ -502,6 +502,93 @@ def test_inheritance_ir_roster_status_out_set():
     assert g2.loc[("B", 3), "inherited_opportunity"] == 0.0
 
 
+def test_inheritance_out_set_normalizes_legacy_team_codes():
+    """#1269: raw injuries/rosters carry pre-relocation codes (OAK/SD/STL) for
+    relocated-franchise seasons while the weekly frame's ``recent_team`` is
+    retroactively modern (LV/LAC/LA), so the out-set key must be normalized —
+    an unnormalized key silently never matches and ``inherited_opportunity``
+    stays 0 exactly when a starter is Out."""
+    from src.features.engineer import _build_inheritance_features
+
+    def _rb_frame(team, season):
+        rows = []
+        # A leads (snap .8) weeks 1-2; B backs up (.4) weeks 1-3; A absent week 3.
+        for wk in (1, 2):
+            for pid, snap in (("A", 0.8), ("B", 0.4)):
+                rows.append(
+                    dict(
+                        player_id=pid,
+                        position="RB",
+                        recent_team=team,
+                        season=season,
+                        week=wk,
+                        snap_pct_raw=snap,
+                        targets=0.0,
+                    )  # fmt: skip
+                )
+        rows.append(
+            dict(
+                player_id="B",
+                position="RB",
+                recent_team=team,
+                season=season,
+                week=3,
+                snap_pct_raw=0.45,
+                targets=0.0,
+            )  # fmt: skip
+        )
+        return pd.DataFrame(rows)
+
+    # 2019 Raiders: weekly recent_team is retroactively "LV"; the raw injury
+    # report says "OAK". A Out week 3 → B must still inherit A's 0.8 role.
+    df = _rb_frame("LV", 2019)
+    inj = pd.DataFrame(
+        [dict(gsis_id="A", position="RB", team="OAK", season=2019, week=3, report_status="Out")]
+    )
+    g = _build_inheritance_features(df, inj).set_index(["player_id", "week"])
+    assert g.loc[("B", 3), "is_top_available"] == 1.0
+    assert g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
+
+    # Same through the rosters RES/INA out-set: 2016 Chargers ("SD" → "LAC").
+    df2 = _rb_frame("LAC", 2016)
+    rosters = pd.DataFrame(
+        [dict(player_id="A", position="RB", team="SD", season=2016, week=3, status="RES")]
+    )
+    g2 = _build_inheritance_features(df2, None, rosters_df=rosters).set_index(["player_id", "week"])
+    assert g2.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
+
+    # 2012-2015 rosters use GAMEBOOK codes the shared relocation map never sees:
+    # the Rams roster code is "SL" (not "STL"), plus ARZ/BLT/CLV/HST. The
+    # out-set map must cover those too (#1269 review find — 5 teams × 2013-2015
+    # otherwise kept the silently-never-matches failure).
+    for roster_code, weekly_code in (("SL", "LA"), ("ARZ", "ARI")):
+        df_g = _rb_frame(weekly_code, 2014)
+        rosters_g = pd.DataFrame(
+            [
+                dict(
+                    player_id="A",
+                    position="RB",
+                    team=roster_code,
+                    season=2014,
+                    week=3,
+                    status="RES",
+                )
+            ]
+        )
+        g_g = _build_inheritance_features(df_g, None, rosters_df=rosters_g).set_index(
+            ["player_id", "week"]
+        )
+        assert g_g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8), roster_code
+
+    # Modern codes pass through the normalization unchanged (identity on non-legacy).
+    df3 = _rb_frame("KC", 2023)
+    inj3 = pd.DataFrame(
+        [dict(gsis_id="A", position="RB", team="KC", season=2023, week=3, report_status="Out")]
+    )
+    g3 = _build_inheritance_features(df3, inj3).set_index(["player_id", "week"])
+    assert g3.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
+
+
 def test_inheritance_prior_season_fallback_week1():
     """#1106 finding B: in Week 1 (no current-season history) the within-season expanding role is
     identically 0, which silently zeroed the vacancy signal. ``role_before`` now falls back to the
