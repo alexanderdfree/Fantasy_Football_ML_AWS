@@ -113,12 +113,28 @@ def _compute_features(df: pd.DataFrame) -> None:
     team_rb_totals = compute_team_rb_totals(df)
     df_merged = df.merge(team_rb_totals, on=["recent_team", "season", "week"], how="left")
 
-    player_carries_roll = _sum(df_merged, "carries")
-    team_rb_carries_roll = _sum(df_merged, "team_rb_carries")
+    # Stint-aware grouping for the team-RB share rollings (#1193): an RB traded
+    # mid-season would otherwise have the 3-week rolling team_rb_carries /
+    # team_rb_targets denominators concatenate the OLD team's RB volume with
+    # the NEW team's for ~3 weeks post-trade, mixing two teams' totals into one
+    # share. Build stint_id locally (the engineer.py one is dropped before we
+    # run) by flagging each in-season team change and cumsum-ing it — mirrors
+    # src/wr/features.py (#674). df is already sorted by (player_id, season,
+    # week) above, so the merge (1-to-1 on recent_team, season, week) preserves
+    # order and stint_id carries onto df_merged.
+    df_merged["_team_changed"] = (
+        df_merged.groupby(["player_id", "season"])["recent_team"].shift(1)
+        != df_merged["recent_team"]
+    ).fillna(False)
+    df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+    stint_grp = ["player_id", "season", "stint_id"]
+
+    player_carries_roll = rolling_agg(df_merged, "carries", stint_grp, window=3)
+    team_rb_carries_roll = rolling_agg(df_merged, "team_rb_carries", stint_grp, window=3)
     df["team_rb_carry_share_L3"] = safe_divide(player_carries_roll, team_rb_carries_roll).values
 
-    player_targets_roll = _sum(df_merged, "targets")
-    team_rb_targets_roll = _sum(df_merged, "team_rb_targets")
+    player_targets_roll = rolling_agg(df_merged, "targets", stint_grp, window=3)
+    team_rb_targets_roll = rolling_agg(df_merged, "team_rb_targets", stint_grp, window=3)
     df["team_rb_target_share_L3"] = safe_divide(player_targets_roll, team_rb_targets_roll).values
 
     # Game-level shares (for attention history). ``np.divide(..., where=...)``
