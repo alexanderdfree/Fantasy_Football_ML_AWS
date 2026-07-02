@@ -65,6 +65,7 @@ from src.analysis.build_comparison_summary import (
     _normalize_keys,
     _position_actuals,
 )
+from src.analysis.expert_intervals import lookahead_seasons
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 
@@ -79,8 +80,9 @@ _NOTE = (
     "source over-projects. Provenance: RotoWire (Sleeper) history is genuine weekly "
     "projections in every year 2018–2025. NFL.com 2021–2023 are BACKFILLED (look-ahead: the archive "
     "carries realized box scores, not projections — near-zero σ / R²≈0.99 in those "
-    "seasons), so they understate NFL.com's pooled σ and should be excluded from "
-    "multi-season NFL.com reliability (cf. expert_intervals.py's look-ahead detector). "
+    "seasons); such seasons are auto-excluded from the pooled σ and 'seasons' "
+    "(detector shared with expert_intervals.py; they stay in per_season flagged "
+    "look_ahead and are listed in excluded_seasons). "
     "K is NFL.com totals-only (standard scoring); DST is RotoWire-only."
 )
 
@@ -131,19 +133,33 @@ def _join_actuals(
 def _reliability_from_joined(
     joined: pd.DataFrame | None, pred_col: str, *, totals_only: bool = False
 ) -> dict | None:
-    """Pooled residual block + a per-season breakdown for one (source, position)."""
+    """Pooled residual block + a per-season breakdown for one (source, position).
+
+    Look-ahead seasons (backfilled realized stats — see
+    :func:`src.analysis.expert_intervals.lookahead_seasons`) are excluded from
+    the pooled block and ``seasons`` so they can't understate the pooled σ;
+    their per-season blocks are kept for visibility, flagged ``look_ahead``,
+    and listed in ``excluded_seasons``. Returns ``None`` if no genuine rows
+    remain (every season backfilled).
+    """
     if joined is None:
         return None
-    block = _residual_block(joined["actual_pts"].to_numpy(), joined[pred_col].to_numpy())
+    look = lookahead_seasons(joined["actual_pts"], joined[pred_col], joined["season"])
+    pooled = joined[~joined["season"].isin(look)]
+    block = _residual_block(pooled["actual_pts"].to_numpy(), pooled[pred_col].to_numpy())
     if block is None:
         return None
     per_season: dict[int, dict] = {}
     for season, grp in joined.groupby("season"):
         sblk = _residual_block(grp["actual_pts"].to_numpy(), grp[pred_col].to_numpy())
         if sblk is not None:
+            if int(season) in look:
+                sblk["look_ahead"] = True
             per_season[int(season)] = sblk
     block["per_season"] = per_season
-    block["seasons"] = sorted(per_season)
+    block["seasons"] = sorted(s for s in per_season if s not in look)
+    if look:
+        block["excluded_seasons"] = sorted(look)
     if totals_only:
         block["totals_only"] = True
     return block

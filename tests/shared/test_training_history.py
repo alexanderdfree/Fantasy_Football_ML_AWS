@@ -370,6 +370,58 @@ class TestMultiTargetLoss:
                 gated_targets=[],  # rushing_tds not gated — should error
             )
 
+    def test_gated_model_forward_through_hurdle_negbin_backward(self):
+        """Seam test (#575): GatedHead forward output feeds hurdle_negbin directly.
+
+        The GatedHead emission keys (``*_gate_logit``/``*_value_mu``/
+        ``*_value_log_alpha``) and MultiTargetLoss's hurdle_negbin consumption
+        are each unit-tested in isolation on hand-built dicts; this chains
+        model.forward → loss → backward so a key-contract drift between the
+        two surfaces here instead of only in a full (slow) attn-NN e2e run —
+        production RB/WR/TE enable exactly this path via POSITION_CONFIG's
+        head_losses/gated_targets, which CONFIG_TINY deliberately omits for
+        shard speed.
+        """
+        torch.manual_seed(0)
+        model = MultiHeadNetWithHistory(
+            static_dim=5,
+            game_dim=3,
+            target_names=TARGETS,
+            backbone_layers=[16, 8],
+            d_model=8,
+            n_attn_heads=2,
+            head_hidden=4,
+            dropout=0.1,
+            gated=True,
+            gated_targets=["rushing_tds"],
+        )
+        x_static = torch.randn(8, 5)
+        x_history = torch.randn(8, 6, 3)
+        mask = torch.ones(8, 6, dtype=torch.bool)
+        preds = model(x_static, x_history, mask)
+
+        targets = {
+            "rushing_yards": torch.randn(8),
+            "receiving_yards": torch.randn(8),
+            "rushing_tds": torch.tensor([0.0, 1.0, 0.0, 2.0, 0.0, 1.0, 3.0, 0.0]),
+        }
+        loss_fn = MultiTargetLoss(
+            target_names=TARGETS,
+            loss_weights={t: 1.0 for t in TARGETS},
+            head_losses={"rushing_tds": "hurdle_negbin"},
+            gate_weight=1.0,
+            gated_targets=["rushing_tds"],
+        )
+        total, components = loss_fn(preds, targets)
+        assert torch.isfinite(total)
+        assert "loss_gate_rushing_tds" in components
+        assert "loss_rushing_tds" in components
+
+        total.backward()
+        backbone_grads = [p.grad for n, p in model.named_parameters() if n.startswith("backbone")]
+        assert backbone_grads and all(g is not None for g in backbone_grads)
+        assert any((g != 0).any() for g in backbone_grads)
+
 
 # ---------------------------------------------------------------------------
 # MultiHeadHistoryTrainer (integration)

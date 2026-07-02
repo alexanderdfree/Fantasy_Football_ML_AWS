@@ -104,6 +104,7 @@ def test_module_imports_cleanly() -> None:
     for attr in (
         "build_intervals",
         "main",
+        "lookahead_seasons",
         "_select_fit_seasons",
         "_fit_quantile_params",
         "_apply_bands",
