@@ -150,8 +150,13 @@ def _stub_sleeper_loader(seasons):
     return pd.concat([_sleeper_qb(), _sleeper_dst()], ignore_index=True)
 
 
+def _stub_fftoday_loader(seasons):
+    # FFToday is offense-only (no K/DST); reuse the offense QB frame.
+    return _sleeper_qb()
+
+
 def _run(tmp_path, **kw):
-    """main() with all three loaders stubbed (no network/training)."""
+    """main() with all loaders stubbed (no network/training)."""
     defaults = dict(
         eval_seasons=(2025,),
         output_dir=str(tmp_path),
@@ -160,6 +165,7 @@ def _run(tmp_path, **kw):
         model_preds_loader=_stub_model_loader,
         nflcom_loader=_stub_nflcom_loader,
         sleeper_loader=_stub_sleeper_loader,
+        fftoday_loader=_stub_fftoday_loader,
     )
     defaults.update(kw)
     return mod.main(**defaults)
@@ -178,13 +184,16 @@ def test_module_imports_cleanly() -> None:
     assert mod._MODEL_PRED_COLS[0] == "pred_attn_nn_total"
 
 
-def test_two_experts_each_same_sample_and_significance(tmp_path) -> None:
+def test_experts_each_same_sample_and_significance(tmp_path) -> None:
     result = _run(tmp_path, positions=("QB", "DST"))
 
-    # Nested per-expert output.
-    assert set(result["experts"]) == {"nflcom", "sleeper"}
+    # Nested per-expert output (NFL.com + Sleeper + FFToday).
+    assert set(result["experts"]) == {"nflcom", "sleeper", "fftoday"}
     nflcom_qb = result["experts"]["nflcom"]["positions"]["QB"]
     sleeper_qb = result["experts"]["sleeper"]["positions"]["QB"]
+    # FFToday is offense-only: QB scored (same offense frame as Sleeper), DST skipped.
+    assert result["experts"]["fftoday"]["positions"]["QB"]["n_matched"] == 8
+    assert result["experts"]["fftoday"]["positions"]["DST"]["skipped"] is True
 
     # Per-expert same-sample intersection differs by source coverage:
     #   NFL.com P4..P9 ∩ model P1..P6 = {P4,P5,P6} × 2 weeks = 6
@@ -226,7 +235,7 @@ def test_writes_parseable_nested_json(tmp_path) -> None:
     out = tmp_path / "expert_comparison.json"
     assert out.exists()
     payload = json.loads(out.read_text())
-    assert set(payload["experts"]) == {"nflcom", "sleeper"}
+    assert set(payload["experts"]) == {"nflcom", "sleeper", "fftoday"}
     assert payload["experts"]["nflcom"]["positions"]["QB"]["n_matched"] == 6
     assert payload["experts"]["sleeper"]["positions"]["QB"]["n_matched"] == 8
     # The Sleeper provenance caveat rides along in the output.

@@ -69,6 +69,7 @@ from src.analysis.analysis_nflcom_baseline import (
     _json_default,
     _project_nflcom_to_ppr,
 )
+from src.analysis.fftoday_loader import load_fftoday_with_gsis_id
 from src.analysis.significance import (
     diebold_mariano_test,
     paired_bootstrap_metric_ci,
@@ -103,6 +104,15 @@ _SLEEPER_NOTE = (
     "Historical-projection provenance is unverified — read RotoWire's MAE as a "
     "sanity check (a plausible expert is ~5-6 at QB; an implausibly low value "
     "signals look-ahead/backfill, in which case do not trust the comparison)."
+)
+
+_FFTODAY_NOTE = (
+    "FFToday weekly projections (free public archive, back to 2010). A third "
+    "independent projector, distinct from FantasyPros' current-roster-filtered "
+    "historical pages (see todo/new-sources-research-2026-06.md): FFToday serves "
+    "the genuine historical slate with correct historical teams and retired "
+    "players. Offense only (QB/RB/WR/TE); no K/DST grid. FFToday has no fumble "
+    "column, so fumbles_lost is 0 (a ~0.1 pt/game contributor)."
 )
 
 
@@ -160,7 +170,7 @@ def _project_sleeper_to_ppr(raw_df: pd.DataFrame, pos: str, scoring_format: str)
     return out
 
 
-def _build_experts(nflcom_loader, sleeper_loader) -> list[ExpertSource]:
+def _build_experts(nflcom_loader, sleeper_loader, fftoday_loader=None) -> list[ExpertSource]:
     """Construct the default expert list, honoring injected loaders (tests)."""
     return [
         ExpertSource(
@@ -178,6 +188,14 @@ def _build_experts(nflcom_loader, sleeper_loader) -> list[ExpertSource]:
             project=_project_sleeper_to_ppr,
             skipped=frozenset({"K"}),  # offense + DST; K is totals-only (out of scope)
             note=_SLEEPER_NOTE,
+        ),
+        ExpertSource(
+            name="fftoday",
+            label="FFToday",
+            load=fftoday_loader or load_fftoday_with_gsis_id,
+            project=_project_sleeper_to_ppr,  # generic raw-stat -> PPR aggregator
+            skipped=frozenset({"K", "DST"}),  # offense-only archive
+            note=_FFTODAY_NOTE,
         ),
     ]
 
@@ -410,6 +428,7 @@ def main(
     model_preds_loader=None,
     nflcom_loader=None,
     sleeper_loader=None,
+    fftoday_loader=None,
 ) -> dict:
     """Run the model-vs-experts comparison, print + write JSON, return the result.
 
@@ -420,7 +439,7 @@ def main(
     eval_seasons = tuple(int(s) for s in eval_seasons)
     if model_preds_loader is None:
         model_preds_loader = _default_model_preds
-    experts = _build_experts(nflcom_loader, sleeper_loader)
+    experts = _build_experts(nflcom_loader, sleeper_loader, fftoday_loader)
 
     # The default model loader sources predictions from the pipeline's held-out
     # test_df, scored in the pipeline's configured format (PPR for shipped models).
