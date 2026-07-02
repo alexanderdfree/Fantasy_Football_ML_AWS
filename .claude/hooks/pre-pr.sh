@@ -127,8 +127,11 @@ run_and_capture() {
 
 # --- B1: deterministic verifiers ---
 if [ -n "$ruff" ]; then
-  run_and_capture "ruff check ." "$ruff" check .
-  run_and_capture "ruff format --check ." "$ruff" format --check .
+  # --no-cache: CI runs on a clean runner with no ruff cache; the local
+  # mtime+size cache can false-skip a same-size rewrite landing in the same
+  # mtime tick, letting the gate pass what CI would flag.
+  run_and_capture "ruff check ." "$ruff" check --no-cache .
+  run_and_capture "ruff format --check ." "$ruff" format --check --no-cache .
 else
   echo "pre-pr hook: ruff not found (install or activate .venv)" >&2
   fail=1
