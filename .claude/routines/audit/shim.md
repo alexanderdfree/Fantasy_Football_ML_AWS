@@ -16,9 +16,12 @@ Claude runtime values for this routine:
 Claude-only runtime/tool rules:
 
 - Use Claude's configured cloud routine tools and repository checkout.
-- For the fanout step, Claude Agent subagents are available. Worker count,
-  scope grouping, and batching are up to you — a worker may cover several
-  scopes; avoid over-spawning.
+- For the fanout step, Claude Agent subagents are available. Spawn every
+  worker on the same model this routine runs on — currently Fable: pass
+  `model: "fable"` on each Agent call rather than letting workers fall back
+  to the platform's default subagent model. Worker count, scope grouping,
+  and batching are up to you — a worker may cover several scopes; avoid
+  over-spawning.
 - Keep the run read-only on repo files. The only permitted writes are those
   allowed by `routines/audit/instructions.md`: `/tmp/*`, idempotent label
   creation, per-finding issue creation, comments on issues created in this run,
