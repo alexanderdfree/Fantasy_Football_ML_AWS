@@ -210,7 +210,13 @@ def test_record_and_sync_produces_one_consolidated_entry(tmp_path, monkeypatch):
 
     summaries = [_fake_summary("QB", 6.3), _fake_summary("K", 1.1)]
     pt._record_and_sync(
-        summaries, ["QB", "K"], note="parallel run", no_sync=False, total_wall_sec=137.0
+        summaries,
+        ["QB", "K"],
+        note="parallel run",
+        no_sync=False,
+        total_wall_sec=137.0,
+        # WR's cell failed: its fingerprint must NOT be recorded as evidence.
+        code_fingerprints={"QB": "f" * 64, "K": "e" * 64, "WR": "d" * 64},
     )
 
     entry = captured["entry"]
@@ -219,6 +225,9 @@ def test_record_and_sync_produces_one_consolidated_entry(tmp_path, monkeypatch):
     assert entry["run_id"] == "2026-01-01T00:00:00_abc1234"
     assert entry["note"] == "parallel run"
     assert entry["total_wall_sec"] == 137.0  # recorded automatically on every run
+    # fingerprints recorded, filtered to the RECORDED positions only — a failed
+    # cell's fingerprint must not masquerade as benchmark evidence (pre-PR B2).
+    assert entry["code_fingerprints"] == {"QB": "f" * 64, "K": "e" * 64}
     # per-position config folded in under lowercase keys
     assert entry["config"]["qb"] == {"name": "QB"} and entry["config"]["k"] == {"name": "K"}
     # default (no --no-sync) mirrors to S3 exactly once
@@ -505,7 +514,15 @@ def test_orchestrate_rolling_origin_dispatches_cells_and_merges(tmp_path, monkey
 
     recorded = {}
 
-    def _fake_record(summaries, positions, note, no_sync, total_wall_sec, rolling_origin=False):
+    def _fake_record(
+        summaries,
+        positions,
+        note,
+        no_sync,
+        total_wall_sec,
+        rolling_origin=False,
+        code_fingerprints=None,
+    ):
         recorded["summaries"] = summaries
         recorded["positions"] = positions
         recorded["rolling_origin"] = rolling_origin

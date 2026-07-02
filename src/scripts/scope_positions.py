@@ -91,6 +91,56 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
     return [pos for pos in ALL_POSITIONS if any(f.startswith(f"src/{pos.lower()}/") for f in files)]
 
 
+# --- Pre-PR benchmark-gate (B2) scoping -------------------------------------
+#
+# The B2 gate in .claude/hooks/pre-pr.sh needs a finer split than the train
+# trigger above: shared-code changes require benchmark evidence on at least
+# one position (they run the same code path for every position), while two
+# _GLOBAL_REGEX families are deliberately EXEMPT from the *local* benchmark
+# gate even though they retrain in CI:
+#
+#   - ``src/batch/**`` — Batch/ECS orchestration; not exercised by the local
+#     benchmark path at all, so demanding a local run proves nothing.
+#   - ``requirements.txt`` — a dep pin bump changes the *environment*, not the
+#     model code; the local venv may not even have the new pin installed yet.
+#
+# Exempt paths are still REPORTED (the hook prints them "exempt, not gated")
+# so the skip is visible, never silent. The per-position prefix rule is shared
+# with compute_positions, so any file under src/{pos}/ — including
+# __init__.py, diagnostic CLIs, and future additions — scopes that position.
+# The soundness invariant "every path that can scope a position into the gate
+# is inside that position's fingerprint manifest" is pinned by
+# tests/scripts/test_bench_fingerprint.py against
+# src.scripts.bench_fingerprint.GLOBAL_PATHS.
+_BENCH_SHARED_REGEX = re.compile(r"^src/(shared|data|features)/|^src/(__init__|config)\.py$")
+# Exempt-visibility: report EVERY src/batch/** + requirements.txt path (not
+# just the _GLOBAL_REGEX-matching subset) — the lookahead-excluded batch files
+# (launch.py / benchmark.py / *tune* / *ablate* / build_and_push.sh) are just
+# as un-gated locally, and a silent drop would contradict the "exempt paths
+# are reported, never silent" contract.
+_BENCH_EXEMPT_REGEX = re.compile(r"^src/batch/|^requirements\.txt$")
+
+
+def compute_benchmark_scope(changed_files: Iterable[str]) -> dict:
+    """Classify changed paths for the pre-PR benchmark gate.
+
+    Returns ``{"positions": [...], "shared": bool, "exempt": [...]}``:
+    ``positions`` = per-position dirs touched (benchmark evidence required for
+    each); ``shared`` = any shared/pipeline path touched (evidence required on
+    at least one position); ``exempt`` = paths the train trigger treats as
+    global but the local benchmark gate deliberately does not gate.
+    """
+    files = [f for f in changed_files if f and not f.startswith("tests/")]
+    exempt = [f for f in files if _BENCH_EXEMPT_REGEX.match(f)]
+    return {
+        "positions": [
+            pos for pos in ALL_POSITIONS if any(f.startswith(f"src/{pos.lower()}/") for f in files)
+        ],
+        "shared": any(_BENCH_SHARED_REGEX.match(f) for f in files),
+        "exempt": exempt,
+    }
+
+
 ALL_TEST_SHARDS: tuple[str, ...] = (*ALL_POSITIONS, "serving", "shared")
 
 _TEST_DOCS_REGEX = re.compile(
@@ -113,7 +163,7 @@ _TEST_SERVING_REGEX = re.compile(r"^src/serving/" r"|^tests/test_app[^/]*\.py$")
 _TEST_SHARED_REGEX = re.compile(
     r"^src/(batch|scripts|benchmarking|tuning|analysis)/"
     r"|^tests/(?!test_app[^/]*\.py$)[^/]+\.py$"
-    r"|^tests/(analysis|batch|scripts|integration|shared|tuning)/"
+    r"|^tests/(analysis|batch|hooks|scripts|integration|shared|tuning)/"
 )
 _TEST_PER_POSITION_REGEX = {
     pos: re.compile(rf"^(src/{pos.lower()}/|tests/{pos.lower()}/)") for pos in ALL_POSITIONS
@@ -155,11 +205,13 @@ def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["train", "test"], default="train")
+    parser.add_argument("--mode", choices=["train", "test", "benchmark"], default="train")
     args = parser.parse_args()
     files = [line.rstrip("\n") for line in sys.stdin if line.strip()]
     if args.mode == "test":
         sys.stdout.write(json.dumps(compute_test_shards(files)) + "\n")
+    elif args.mode == "benchmark":
+        sys.stdout.write(json.dumps(compute_benchmark_scope(files)) + "\n")
     else:
         positions = compute_positions(files)
         if positions:

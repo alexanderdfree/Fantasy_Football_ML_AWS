@@ -256,180 +256,131 @@ is_additive_and_safe() {
   return 0
 }
 
-positions=""
-add_pos() { positions="$positions $1"; }
-shared_changed=0
-skipped_files=""
-# Shared bucket: any file under src/shared/, src/data/, src/features/, or
-# top-level src/config.py. Mirrors src/scripts/scope_positions.py::_GLOBAL_REGEX
-# (minus src/batch/ and requirements.txt — Batch/ECS infra and dep pins are
-# scope_positions' "retrain all positions on next image" trigger but don't
-# affect the local model code being benchmarked, so the freshness gate skips
-# them). Glob `src/shared/*.py` instead of an enumerated list catches new
-# shared helpers added without a corresponding pre-pr.sh update — the prior
-# enumerated list missed e.g. feature_build.py, feature_cache.py, registry.py,
-# position.py, position_data.py, run_pipeline_factory.py.
+# The B2 brain lives in src/scripts/pre_pr_bench_check.py (unit-tested Python,
+# stdlib-only): scoping is single-sourced in scope_positions.compute_benchmark_scope
+# (per-position prefix rule + shared regex + explicit Batch/deps exemptions), and
+# evidence is CONTENT-FINGERPRINTED — a position passes when some
+# benchmark_history/*.json entry's code_fingerprints[POS] matches this HEAD's
+# fingerprint (see src/scripts/bench_fingerprint.py), so rebase/stash/checkout
+# mtime churn can no longer invalidate real evidence, and evidence recorded
+# against DIFFERENT code can no longer pass. Two legacy mtime tiers remain: a
+# self-retiring one for pre-fingerprint history entries and a permanent one for
+# bare `run_pipeline` artifacts under {pos}/outputs/models (with a nudge).
+# Shared-path changes still require evidence on at least ONE position (shared
+# code runs the same path for every position; the risky-token filter below is
+# the safety net for partial-effect changes — rationale preserved from the old
+# inline implementation).
+#
+# The hook keeps two cheap per-file filters before the evaluator, applied ONLY
+# to files the gate can actually scope (per-position dirs + the shared set) —
+# everything else under src/* (serving/tuning/analysis/scripts/benchmarking)
+# and the exempt-class paths (src/batch/**, requirements.txt) flow straight to
+# the evaluator, which classifies them in one cheap call (scoping stays
+# single-sourced in Python; this prefix list only bounds the EXPENSIVE per-file
+# work, and a miss here is conservative — the file still reaches the evaluator):
+#   tier 0: AST-inert (comments/docstrings/formatting only — provably inert)
+#   tier 1: is_additive_and_safe (additive-only, no risky tokens — see above)
+# Both filters need a real diff base; when none resolves (no origin/main/main/
+# origin/master/master), SKIP the filters and let everything through to the
+# evaluator — the conservative direction (previously `git diff -b "" HEAD`
+# fataled inside is_additive_and_safe and silently classified everything safe).
+# Evaluator protocol: exit 0 + stdout line 1 PASS|FAIL (+ detail lines). A
+# nonzero exit means the evaluator itself broke — warn loudly and FAIL OPEN
+# (parity with the missing-jq behavior above; a false block wedges the session).
+# All python output is CR-stripped: a native-Windows python emits CRLF, and a
+# stray \r would break both the grep -Fx inert matching and the PASS/FAIL parse
+# (same fix as the worktree-list capture above).
+py_bin=""
+for _p in python3 python; do
+  if command -v "$_p" >/dev/null 2>&1; then py_bin="$_p"; break; fi
+done
+
+candidates=""
 for f in $changed; do
   case "$f" in
-    src/qb/config.py|src/qb/features.py|src/qb/targets.py|src/qb/run_pipeline.py|src/qb/data.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos QB; fi ;;
-    src/rb/config.py|src/rb/features.py|src/rb/targets.py|src/rb/run_pipeline.py|src/rb/data.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos RB; fi ;;
-    src/wr/config.py|src/wr/features.py|src/wr/targets.py|src/wr/run_pipeline.py|src/wr/data.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos WR; fi ;;
-    src/te/config.py|src/te/features.py|src/te/targets.py|src/te/run_pipeline.py|src/te/data.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos TE; fi ;;
-    src/k/config.py|src/k/features.py|src/k/targets.py|src/k/run_pipeline.py|src/k/data.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos K; fi ;;
-    src/dst/config.py|src/dst/features.py|src/dst/targets.py|src/dst/run_pipeline.py|src/dst/data.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else add_pos DST; fi ;;
-    src/shared/*.py|src/data/*.py|src/features/*.py|src/config.py)
-      if is_additive_and_safe "$f"; then skipped_files="$skipped_files $f"; else shared_changed=1; fi ;;
+    src/*|requirements.txt) candidates="$candidates$f"$'\n' ;;
   esac
 done
-if [ -n "$skipped_files" ]; then
-  echo "pre-pr hook: benchmark gate skipped for additive-only files:$skipped_files" >&2
-fi
-# NOTE: ``shared_changed`` is intentionally NOT expanded to all 6 positions.
-# Shared pipeline files (src/shared/{pipeline,training,neural_net,...}.py) run
-# the *same* code path for every position; a regression on the fp32 path will
-# surface on ANY position you happen to verify locally. Requiring all 6 fresh
-# benchmarks forced ~10-13 min full sweeps for changes whose behavioural
-# equivalence is already provable from a single-position byte-identical
-# match. The risky-token check in ``is_additive_and_safe`` is the safety
-# net for changes that could affect only some positions (e.g. touching a
-# loss-config name); when that flags the file, ``shared_changed`` is 1 and
-# the at-least-one-position-fresh requirement below kicks in. Per-position
-# file changes still require *that* position's evidence — handled by the
-# ``positions`` loop unchanged.
 
-if [ -n "$positions" ] || [ "$shared_changed" -eq 1 ]; then
-  positions=$(printf '%s\n' $positions | sort -u | tr '\n' ' ')
-
-  # Reference mtime: newest mtime among any pipeline-affecting file in the
-  # tree. Mirrors the shared-files arm of the case-statement above — any path
-  # that can trigger ``shared_changed=1`` must contribute to ref_ts so its
-  # mtime invalidates stale benchmarks. Glob the dirs (vs an enumerated list)
-  # to stay in sync as helpers are added; the case-glob above uses the same
-  # globs, so the two stay aligned without manual list maintenance.
-  pipeline_files=()
-  for pf in src/shared/*.py src/data/*.py src/features/*.py src/config.py; do
-    [ -f "$pf" ] && pipeline_files+=("$pf")
-  done
-  for p in qb rb wr te k dst; do
-    for s in config features targets run_pipeline data; do
-      pipeline_files+=("src/$p/$s.py")
-    done
-  done
-  # Portable mtime in epoch seconds. GNU stat (Linux/WSL) uses ``-c %Y``; BSD
-  # stat (macOS) uses ``-f %m``. Probe the exact capability once — ``stat -c %Y .``
-  # succeeds on GNU and fails on BSD (``-c`` is an illegal option there) — and
-  # pick each platform's native syntax. Do NOT rely on ``-f``-first fallthrough:
-  # on GNU ``-f`` means --file-system and prints filesystem info (not the mtime)
-  # to stdout *without* failing over, which silently broke this gate on WSL.
-  if stat -c %Y . >/dev/null 2>&1; then
-    _mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+if [ -n "$candidates" ]; then
+  if [ -z "$py_bin" ]; then
+    echo "pre-pr hook: WARNING — python3 not found; skipping the benchmark gate (fail-open)" >&2
   else
-    _mtime() { stat -f %m "$1" 2>/dev/null || echo 0; }
-  fi
-  ref_ts=0
-  for pf in "${pipeline_files[@]}"; do
-    [ -f "$pf" ] || continue
-    t=$(_mtime "$pf")
-    if [ "$t" -gt "$ref_ts" ]; then ref_ts="$t"; fi
-  done
+    # Only gate-relevant files go to the AST tier — never-gated trees and
+    # exempt-class paths skip its 2x-git-show + ast.parse cost too (their
+    # inert verdicts were never consulted anyway).
+    filterable=""
+    for f in $candidates; do
+      case "$f" in
+        src/qb/*|src/rb/*|src/wr/*|src/te/*|src/k/*|src/dst/*|src/shared/*|src/data/*|src/features/*|src/config.py|src/__init__.py)
+          filterable="$filterable$f"$'\n' ;;
+      esac
+    done
 
-  missing=""
-  for pos in $positions; do
-    found=0
-    # 1) ``src/benchmarking/benchmark.py`` (and the Batch ``--download-only``
-    # path) write a multi-position JSON into ``benchmark_history/`` whose
-    # ``positions`` array enumerates which positions the run covered.
-    for bf in benchmark_history/*.json; do
-      [ -f "$bf" ] || continue
-      bts=$(_mtime "$bf")
-      if [ "$bts" -gt "$ref_ts" ]; then
-        if "$jq_bin" -e --arg p "$pos" '.positions | index($p)' "$bf" >/dev/null 2>&1; then
-          found=1
-          break
-        fi
+    inert=""
+    if [ -n "$base" ] && [ -n "$filterable" ]; then
+      inert_err=$(mktemp)
+      # Two-step capture (no trailing pipe) so the python exit status is the
+      # one tested — a `... | tr` pipeline would report tr's 0 and mask a crash.
+      if inert_raw=$(printf '%s' "$filterable" \
+        | "$py_bin" -m src.scripts.pre_pr_bench_check inert --base "$base" 2>"$inert_err"); then
+        inert=$(printf '%s' "$inert_raw" | tr -d '\r')
+      else
+        inert=""
+        echo "pre-pr hook: WARNING — AST-inert tier errored (files fall through to the stricter filters):" >&2
+        cat "$inert_err" >&2
+      fi
+      rm -f "$inert_err"
+    fi
+
+    kept=""
+    skipped_files=""
+    inert_files=""
+    for f in $candidates; do
+      case "$f" in
+        src/qb/*|src/rb/*|src/wr/*|src/te/*|src/k/*|src/dst/*|src/shared/*|src/data/*|src/features/*|src/config.py|src/__init__.py) ;;
+        *)
+          # Not filterable (exempt-class or never-gated tree): evaluator
+          # classifies/reports it; no per-file git/AST cost spent on it.
+          kept="$kept$f"$'\n'
+          continue ;;
+      esac
+      if [ -z "$base" ]; then
+        kept="$kept$f"$'\n'
+      elif [ -n "$inert" ] && printf '%s\n' "$inert" | grep -qFx -- "$f"; then
+        inert_files="$inert_files $f"
+      elif is_additive_and_safe "$f"; then
+        skipped_files="$skipped_files $f"
+      else
+        kept="$kept$f"$'\n'
       fi
     done
-    # 2) ``python -m src.{pos}.run_pipeline`` (single-position local run) does
-    # NOT write to ``benchmark_history/`` — it persists model artifacts and
-    # the matching scaler / per-target meta JSON under ``{pos}/outputs/models/``.
-    # Treat the artifact dir's mtime as fresh single-position evidence: the
-    # pipeline can't reach the save-artifacts phase without completing the
-    # full train + eval loop, so a fresh dir mtime is a strong "this position
-    # trained cleanly after the last pipeline edit" signal. Saves the 10-13
-    # min ``benchmarking.benchmark POS1 ... POSN`` full-sweep cost on PRs
-    # that touched a shared pipeline file but only need to verify a subset
-    # of positions locally.
-    if [ "$found" -eq 0 ]; then
-      lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
-      if [ -d "$lpos/outputs/models" ]; then
-        pos_outputs_ts=$(_mtime "$lpos/outputs/models")
-        if [ "$pos_outputs_ts" -gt "$ref_ts" ]; then
-          found=1
-        fi
-      fi
+    if [ -n "$inert_files" ]; then
+      echo "pre-pr hook: benchmark gate skipped for AST-inert (comment/docstring/format-only) files:$inert_files" >&2
     fi
-    if [ "$found" -eq 0 ]; then
-      missing="$missing $pos"
+    if [ -n "$skipped_files" ]; then
+      echo "pre-pr hook: benchmark gate skipped for additive-only files:$skipped_files" >&2
     fi
-  done
 
-  if [ -n "$missing" ]; then
-    echo "----- pre-pr hook: metric-regression gate FAILED -----" >&2
-    echo "pipeline files changed but no fresh evidence (benchmark_history/ JSON" >&2
-    echo "or {pos}/outputs/models/ artifacts) covers:$missing" >&2
-    echo "run one of:" >&2
-    for pos in $missing; do
-      lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
-      echo "  python -m src.${lpos}.run_pipeline   # single-position, fastest" >&2
-    done
-    echo "  python -m src.benchmarking.benchmark$missing   # all positions in one JSON" >&2
-    fail=1
-  fi
-
-  # Shared bucket: a touched shared pipeline file means the same code path
-  # ran for every position. Any one position's fresh evidence is enough to
-  # rule out a structural regression on that path — the risky-token check in
-  # ``is_additive_and_safe`` is the safety net for changes that could affect
-  # only a subset. Require at-least-one-position-fresh; report the case where
-  # nothing has been verified at all.
-  if [ "$shared_changed" -eq 1 ]; then
-    any_position_fresh=0
-    for pos in QB RB WR TE K DST; do
-      for bf in benchmark_history/*.json; do
-        [ -f "$bf" ] || continue
-        bts=$(_mtime "$bf")
-        if [ "$bts" -gt "$ref_ts" ]; then
-          if "$jq_bin" -e --arg p "$pos" '.positions | index($p)' "$bf" >/dev/null 2>&1; then
-            any_position_fresh=1
-            break 2
-          fi
-        fi
-      done
-      lpos=$(printf '%s' "$pos" | tr '[:upper:]' '[:lower:]')
-      if [ -d "$lpos/outputs/models" ]; then
-        pos_outputs_ts=$(_mtime "$lpos/outputs/models")
-        if [ "$pos_outputs_ts" -gt "$ref_ts" ]; then
-          any_position_fresh=1
-          break
-        fi
-      fi
-    done
-    if [ "$any_position_fresh" -eq 0 ]; then
-      echo "----- pre-pr hook: metric-regression gate FAILED -----" >&2
-      echo "shared pipeline file changed (src/shared/{pipeline,training,...}.py)" >&2
-      echo "but no position has fresh evidence (no benchmark_history/ JSON and" >&2
-      echo "no {pos}/outputs/models/ newer than the touched pipeline files)." >&2
-      echo "Verify on at least one position before opening the PR:" >&2
-      echo "  python -m src.dst.run_pipeline   # heaviest path, strongest signal" >&2
-      echo "  python -m src.k.run_pipeline     # fastest, smoke-only" >&2
-      fail=1
+    eval_err=$(mktemp)
+    if out_raw=$(printf '%s' "$kept" | "$py_bin" -m src.scripts.pre_pr_bench_check evaluate 2>"$eval_err"); then
+      out=$(printf '%s' "$out_raw" | tr -d '\r')
+      verdict=$(printf '%s\n' "$out" | head -n 1)
+      detail=$(printf '%s\n' "$out" | tail -n +2)
+      [ -n "$detail" ] && printf '%s\n' "$detail" >&2
+      case "$verdict" in
+        PASS) ;;
+        FAIL)
+          echo "----- pre-pr hook: metric-regression gate FAILED (see detail above) -----" >&2
+          fail=1 ;;
+        *)
+          echo "pre-pr hook: WARNING — unexpected benchmark-gate output '$verdict'; failing open" >&2 ;;
+      esac
+    else
+      echo "pre-pr hook: WARNING — benchmark-gate evaluator errored; failing open:" >&2
+      cat "$eval_err" >&2
     fi
+    rm -f "$eval_err"
   fi
 fi
 

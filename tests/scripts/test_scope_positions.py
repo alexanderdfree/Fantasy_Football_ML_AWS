@@ -536,3 +536,106 @@ class TestComputeTestShards:
 
     def test_empty_input(self):
         assert scope_positions.compute_test_shards([]) == []
+
+
+# --------------------------------------------------------------------------
+# compute_benchmark_scope — the pre-PR B2 gate's scoping (single source of
+# truth consumed by src/scripts/pre_pr_bench_check.py via .claude/hooks/pre-pr.sh)
+# --------------------------------------------------------------------------
+
+
+class TestComputeBenchmarkScope:
+    def _scope(self, files):
+        return scope_positions.compute_benchmark_scope(files)
+
+    def test_per_position_prefix_covers_every_file_shape(self):
+        """Unlike the old hook case-statement (5 enumerated basenames), ANY
+        file under src/{pos}/ scopes that position — __init__.py, diagnostic
+        CLIs, and future additions included."""
+        for f in (
+            "src/qb/config.py",
+            "src/qb/__init__.py",
+            "src/qb/diagnose_outliers.py",
+            "src/qb/heads.py",
+        ):
+            s = self._scope([f])
+            assert s["positions"] == ["QB"], f
+            assert not s["shared"]
+            assert s["exempt"] == []
+
+    def test_shared_paths_including_nested(self):
+        for f in (
+            "src/shared/pipeline.py",
+            "src/shared/nn/deep.py",
+            "src/data/sources/foo.py",
+            "src/features/engineer.py",
+            "src/config.py",
+            "src/__init__.py",
+        ):
+            s = self._scope([f])
+            assert s["shared"], f
+            assert s["positions"] == []
+
+    def test_exempt_paths_reported_not_gated(self):
+        s = self._scope(["src/batch/train.py", "requirements.txt"])
+        assert s["positions"] == []
+        assert not s["shared"]
+        assert s["exempt"] == ["src/batch/train.py", "requirements.txt"]
+
+    def test_all_batch_files_exempt_reported_including_lookahead_excluded(self):
+        """EVERY src/batch/** path is exempt-reported — including the ones the
+        train trigger's lookahead excludes (launch.py/benchmark.py/tune/ablate):
+        they are equally un-gated locally, and the exempt report is the
+        never-silent visibility contract."""
+        s = self._scope(["src/batch/launch.py", "src/batch/benchmark.py", "src/batch/tune_x.py"])
+        assert s["positions"] == []
+        assert not s["shared"]
+        assert s["exempt"] == [
+            "src/batch/launch.py",
+            "src/batch/benchmark.py",
+            "src/batch/tune_x.py",
+        ]
+
+    def test_tests_are_stripped(self):
+        s = self._scope(["tests/te/test_features.py", "tests/shared/test_training.py"])
+        assert s == {"positions": [], "shared": False, "exempt": []}
+
+    def test_mixed_change(self):
+        s = self._scope(
+            [
+                "src/te/features.py",
+                "src/rb/config.py",
+                "src/shared/pipeline.py",
+                "src/batch/train.py",
+                "docs/foo.md",
+            ]
+        )
+        assert s["positions"] == ["RB", "TE"]
+        assert s["shared"]
+        assert s["exempt"] == ["src/batch/train.py"]
+
+    def test_gated_set_is_subset_of_train_trigger(self):
+        """Everything the benchmark gate scopes must also retrain in CI —
+        the gate may be more lenient (exemptions) but never stricter than
+        the retrain trigger for shared paths."""
+        for f in ("src/shared/x.py", "src/data/y.py", "src/features/z.py", "src/config.py"):
+            assert scope_positions.compute_positions([f]) == ALL_SIX
+            assert self._scope([f])["shared"]
+
+    def test_cli_benchmark_mode(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "src.scripts.scope_positions", "--mode", "benchmark"],
+            input="src/te/features.py\nsrc/batch/train.py\n",
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
+        import json as _json
+
+        parsed = _json.loads(result.stdout)
+        assert parsed == {
+            "positions": ["TE"],
+            "shared": False,
+            "exempt": ["src/batch/train.py"],
+        }

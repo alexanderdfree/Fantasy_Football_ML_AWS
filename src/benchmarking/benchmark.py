@@ -23,6 +23,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.scripts.bench_fingerprint import collect_code_fingerprints
 from src.shared.benchmark_utils import (
     append_to_history,
     get_git_hash,
@@ -615,6 +616,10 @@ def main(argv=None):
         print(f"[dry-run] would run sequentially (-j 1): {positions}")
         return 0
 
+    # Fingerprint the code BEFORE training so a mid-run edit can't be
+    # laundered into benchmark evidence for code that never trained.
+    code_fps = collect_code_fingerprints(positions)
+
     summaries = []
     for pos in positions:
         t0 = time.time()
@@ -663,6 +668,16 @@ def main(argv=None):
         },
         "results": summaries,
     }
+    if code_fps:
+        # Re-fingerprint after training: an edit that landed mid-run and
+        # persisted to run end means some positions trained different code
+        # than the snapshot — omit rather than record laundered evidence.
+        # (Two-point check: an intra-run edit reverted before run end is not
+        # detectable here.)
+        if collect_code_fingerprints(positions) == code_fps:
+            entry["code_fingerprints"] = code_fps
+        else:
+            print("WARNING: gated code changed during the run; omitting code_fingerprints")
     # Additive marker so the History tab can badge walk-forward runs; old
     # readers (and single-split runs) simply lack the key.
     if rolling_origin_mode:
