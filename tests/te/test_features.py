@@ -182,11 +182,15 @@ class TestComputeTERates:
         df = pd.concat([te_a_kc, te_a_sf, te_b_kc], ignore_index=True)
         _compute_features(df)
 
-        a = df[df["player_id"] == "TE_A"]
-        wk7 = a[a["week"] == 7]["team_te_target_share_L3"].iloc[0]
+        a = df[df["player_id"] == "TE_A"].set_index("week")["team_te_target_share_L3"]
         # Stint-aware: window {5,6} fully inside the SF stint → 12/12 = 1.0.
         # (A non-stint denominator would give 18/24 = 0.75, mixing KC's wk4.)
-        assert pytest.approx(wk7, abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[7], abs=1e-9) == 1.0
+        # Stint boundary (old→new 0.5→0.0 at week 5): first game of the new
+        # stint has no prior-game window inside it → rolling NaN → safe_divide
+        # fills 0; week 6 (window {5}) is already all-SF → 1.0.
+        assert pytest.approx(a.loc[5], abs=1e-9) == 0.0
+        assert pytest.approx(a.loc[6], abs=1e-9) == 1.0
 
 
 @pytest.mark.unit
@@ -213,3 +217,22 @@ class TestFillTENansPriorSeason:
         assert pytest.approx(train["prior_season_mean_catch_rate"].iloc[2]) == train_mean
         assert pytest.approx(val["prior_season_mean_catch_rate"].iloc[0]) == train_mean
         assert pytest.approx(test["prior_season_mean_catch_rate"].iloc[0]) == train_mean
+
+    def test_carve_out_wiring_matches_production_config(self):
+        """Pin the activation preconditions the carve-out silently depends on:
+        the column is whitelisted (so the model consumes it), absent from
+        _SPECIFIC_FEATURES (so it needs the carve-out at all), and
+        _compute_features emits it under exactly this name — a rename or
+        whitelist change must fail HERE, not silently re-zero rookies."""
+        from src.te.config import POSITION_CONFIG
+        from src.te.features import get_feature_columns
+
+        col = "prior_season_mean_catch_rate"
+        assert col in get_feature_columns()
+        assert col not in POSITION_CONFIG.specific_features
+        df = _make_player_games(n_weeks=3)
+        df["prior_season_mean_receptions"] = 3.0
+        df["prior_season_mean_targets"] = 5.0
+        _compute_features(df)
+        assert col in df.columns
+        assert df[col].notna().all()

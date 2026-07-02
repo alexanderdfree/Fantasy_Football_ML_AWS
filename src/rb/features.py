@@ -95,15 +95,15 @@ def _compute_features(df: pd.DataFrame) -> None:
 
     grp = ["player_id", "season"]
 
-    def _sum(frame, col):
-        return rolling_agg(frame, col, grp, window=3)
+    def _sum(col):
+        return rolling_agg(df, col, grp, window=3)
 
-    rush_yds_roll = _sum(df, "rushing_yards")
-    carries_roll = _sum(df, "carries")
+    rush_yds_roll = _sum("rushing_yards")
+    carries_roll = _sum("carries")
     df["yards_per_carry_L3"] = safe_divide(rush_yds_roll, carries_roll)
 
-    rec_roll = _sum(df, "receptions")
-    tgt_roll = _sum(df, "targets")
+    rec_roll = _sum("receptions")
+    tgt_roll = _sum("targets")
     df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
 
     # weighted_opportunities_L3 dropped in the audit (r=0.940 with
@@ -176,27 +176,27 @@ def _compute_features(df: pd.DataFrame) -> None:
     df["opportunity_index_L3"] = rolling_agg(df, "_game_opp_idx", grp, window=3, agg="mean")
     df.drop(columns=["_game_opp_idx"], inplace=True)
 
-    rushing_epa_roll = _sum(df, "rushing_epa")
+    rushing_epa_roll = _sum("rushing_epa")
     df["rushing_epa_per_attempt_L3"] = safe_divide(rushing_epa_roll, carries_roll)
 
     # Split first-down rates (replaces combined first_down_rate_L3 to avoid
     # collinearity — combined rate ≈ weighted avg of the two).
-    rush_fd_roll = _sum(df, "rushing_first_downs")
+    rush_fd_roll = _sum("rushing_first_downs")
     df["rushing_first_down_rate_L3"] = safe_divide(rush_fd_roll, carries_roll)
 
-    recv_fd_roll = _sum(df, "receiving_first_downs")
+    recv_fd_roll = _sum("receiving_first_downs")
     df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
 
-    yac_roll = _sum(df, "receiving_yards_after_catch")
+    yac_roll = _sum("receiving_yards_after_catch")
     df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
 
-    recv_epa_roll = _sum(df, "receiving_epa")
+    recv_epa_roll = _sum("receiving_epa")
     df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
 
     # air_yards_per_target_L3: distinct from yac_per_reception (air yards =
     # intended depth, YAC = post-catch; low collinearity since backs can have
     # high YAC with low air yards or vice versa).
-    air_yds_roll = _sum(df, "receiving_air_yards")
+    air_yds_roll = _sum("receiving_air_yards")
     df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
 
     # Prior-season rate features (PR #191). PR #190 dropped the receptions

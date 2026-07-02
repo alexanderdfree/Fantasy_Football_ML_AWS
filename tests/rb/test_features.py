@@ -137,12 +137,18 @@ class TestComputeRBSpecific:
         df = pd.concat([rb_a_kc, rb_a_sf, rb_b_kc], ignore_index=True)
         _compute_features(df)
 
-        a = df[df["player_id"] == "RB_A"]
-        wk7 = a[a["week"] == 7]
+        a = df[df["player_id"] == "RB_A"].set_index("week")
         # Stint-aware: window {5,6} fully inside the SF stint → 20/20 = 1.0.
         # (A non-stint denominator would give 30/40 = 0.75, mixing KC's wk4.)
-        assert pytest.approx(wk7["team_rb_carry_share_L3"].iloc[0], abs=1e-9) == 1.0
-        assert pytest.approx(wk7["team_rb_target_share_L3"].iloc[0], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[7, "team_rb_carry_share_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[7, "team_rb_target_share_L3"], abs=1e-9) == 1.0
+        # Stint boundary (the fix's largest per-row change, old→new 0.5→0.0):
+        # week 5 is the first game of the new stint, so shift(1) has no
+        # prior-game inside the stint → rolling NaN → safe_divide fills 0.
+        # Week 6 (window {5}) is already all-SF → 1.0. Pin both so a
+        # min_periods / NaN-fill refactor can't silently move the boundary.
+        assert pytest.approx(a.loc[5, "team_rb_carry_share_L3"], abs=1e-9) == 0.0
+        assert pytest.approx(a.loc[6, "team_rb_carry_share_L3"], abs=1e-9) == 1.0
 
 
 @pytest.mark.unit
