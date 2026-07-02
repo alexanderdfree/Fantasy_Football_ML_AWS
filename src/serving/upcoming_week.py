@@ -501,7 +501,14 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # injuries_df AND rosters_df). Must be rosters_weekly — the seasonal frame is
     # ~1 row/player and registers no vacancies (#1277). Single season keeps the
     # fetch light; only the current (season, week) out-set feeds the served rows.
-    rosters_df = nfl_source.rosters_weekly([season])
+    # Optional enrichment: on a fetch failure degrade to None (the inheritance
+    # feature handles it — pre-#1277 behavior) rather than crash the whole
+    # refresh, matching the sibling live_sources.fetch_* network boundaries.
+    try:
+        rosters_df = nfl_source.rosters_weekly([season])
+    except Exception as e:  # noqa: BLE001 - network/data boundary
+        print(f"[upcoming_week] rosters_weekly({season}) failed: {e!r}; out-set -> injuries-only")
+        rosters_df = None
     # Don't surface projections for players ruled OUT (they won't play); keep
     # them in injuries_df so the role-inheritance feature still sizes vacancies.
     out_ids = set(injuries_df.loc[injuries_df["report_status"] == "Out", "gsis_id"])
