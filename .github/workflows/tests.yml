@@ -194,7 +194,7 @@ jobs:
       # cache across CI runs since completed-season schedules don't change.
       - name: Cache schedule parquet across CI runs
         id: sched-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: data/raw/schedules_2012_2025.parquet
           # v2: schedules now sourced via nflreadpy, not nfl_data_py.
