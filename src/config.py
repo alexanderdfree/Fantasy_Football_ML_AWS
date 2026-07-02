@@ -24,14 +24,9 @@ _BASE_SCORING = {
     "fumbles_lost": -2,
 }
 
-# Reception weights per format
-PPR_FORMATS = {
-    "standard": 0.0,
-    "half_ppr": 0.5,
-    "ppr": 1.0,
-}
-
 # Full scoring dicts per format
+# (reception weight per format lives in each SCORING_* dict's "receptions" key —
+# 0.0 / 0.5 / 1.0 — which is what predictions_to_fantasy_points consumes.)
 SCORING_STANDARD = {**_BASE_SCORING, "receptions": 0.0}
 SCORING_HALF_PPR = {**_BASE_SCORING, "receptions": 0.5}
 SCORING_PPR = {**_BASE_SCORING, "receptions": 1.0}

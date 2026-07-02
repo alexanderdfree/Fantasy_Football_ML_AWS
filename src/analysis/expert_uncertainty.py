@@ -76,10 +76,12 @@ OUTPUT_DIR_DEFAULT = "analysis_output"
 
 _NOTE = (
     "Residual σ = std(projection − actual), sample std (ddof=1); bias > 0 ⇒ the "
-    "source over-projects. NFL.com is genuine weekly snapshots; RotoWire (Sleeper) "
-    "history is of unverified provenance — it may be backfilled, which would understate "
-    "its σ — so read it as a sanity check, not gospel. K is NFL.com totals-only "
-    "(standard scoring); DST is RotoWire-only."
+    "source over-projects. Provenance: RotoWire (Sleeper) history is genuine weekly "
+    "projections in every year 2018–2025. NFL.com 2021–2023 are BACKFILLED (look-ahead: the archive "
+    "carries realized box scores, not projections — near-zero σ / R²≈0.99 in those "
+    "seasons), so they understate NFL.com's pooled σ and should be excluded from "
+    "multi-season NFL.com reliability (cf. expert_intervals.py's look-ahead detector). "
+    "K is NFL.com totals-only (standard scoring); DST is RotoWire-only."
 )
 
 

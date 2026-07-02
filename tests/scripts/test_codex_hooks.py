@@ -811,3 +811,35 @@ class TestCodexPromoteSplits:
         assert result.returncode == 0
         assert self._parent_splits(main) == {"STALE"}
         assert "splits promote: copied" not in result.stdout
+
+
+class TestMainWorktreePipefailSafe:
+    """Regression pin for #1369: agent_hooks_main_worktree must not abort under
+    the launcher's `set -euo pipefail`. The old `git ... | awk '...exit'` pipeline
+    made awk close git's stdout after line 1, so git took SIGPIPE (141) and, with
+    pipefail, propagated it to `set -e` — killing codex-fresh-worktree.sh before a
+    worktree was created."""
+
+    def _call(self, root: Path) -> subprocess.CompletedProcess[str]:
+        lib = PROJECT_ROOT / "scripts/agent-hooks-lib.sh"
+        script = f'set -euo pipefail; . "{lib}"; agent_hooks_main_worktree "$1"'
+        return subprocess.run(
+            [_bash(), "-c", script, "agent-hooks-test", str(root)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def test_returns_primary_worktree_under_pipefail(self, tmp_path: Path):
+        main = tmp_path / "main"
+        main.mkdir()
+        subprocess.run(["git", "init", "-b", "main", str(main)], check=True, capture_output=True)
+        result = self._call(main)
+        assert result.returncode == 0, result.stderr  # 141 (SIGPIPE) was the bug
+        assert Path(result.stdout.strip()).resolve() == main.resolve()
+
+    def test_no_abort_when_not_a_git_repo(self, tmp_path: Path):
+        # git worktree list fails here; the helper must swallow it, not abort (141/128).
+        result = self._call(tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == ""
