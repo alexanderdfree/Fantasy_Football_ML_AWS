@@ -32,6 +32,7 @@ import pandas as pd
 
 import src.serving.app as app_pkg
 from src.config import CACHE_DIR, SEASONS
+from src.data import nfl_source
 from src.data.loader import load_raw_data
 from src.data.preprocessing import preprocess
 from src.features.engineer import build_features
@@ -77,9 +78,15 @@ _CARRYFORWARD_ATTRS = (
     "contract_age",
 )
 # Defaults for rows still missing after carry-forward (rookies / new players) and
-# for current-health columns (which are about *this* week, not the past): mirror
-# _build_contextual_features' own defaults — rank 3 (backup), active, full practice.
-_CONTEXT_DEFAULTS = {"depth_chart_rank": 3.0, "game_status": 1.0, "practice_status": 2.0}
+# for current-health columns (which are about *this* week, not the past).
+# depth_chart_rank uses the TRAINING sentinel -1 (loader.py fills unknown ranks
+# with -1), which build_position_features remaps to the train-mean of real ranks
+# (~0 after standardization) — the same neutral value training gives unknown
+# players. A literal 3.0 is NOT remapped: it standardizes as a real rank-3
+# (buried), a train/serve mismatch that most hurt the depth-sensitive QB head
+# (#1270). game_status=1 (active) / practice_status=2 (full) ARE the neutral
+# train modes (96% / 95% of rows), so they stay.
+_CONTEXT_DEFAULTS = {"depth_chart_rank": -1.0, "game_status": 1.0, "practice_status": 2.0}
 
 # Memoized history (the build_features INPUT frame). nflverse history is stable,
 # so build it once per process and reuse across polls.
@@ -181,6 +188,7 @@ def build_upcoming_week_frame(
     slate: pd.DataFrame,
     roster: pd.DataFrame,
     injuries_df: pd.DataFrame | None = None,
+    rosters_df: pd.DataFrame | None = None,
     depth_chart_ranks: dict[str, float] | None = None,
     game_status_map: dict[str, float] | None = None,
     practice_status_map: dict[str, float] | None = None,
@@ -190,8 +198,12 @@ def build_upcoming_week_frame(
 
     Returns the ``build_features`` output rows for that (season, week) — the same
     engineered columns the training splits carry, so serving inference treats
-    them identically. ``injuries_df`` feeds the role-inheritance feature
-    (``None`` → it degrades to 0). ``depth_chart_ranks`` / ``game_status_map`` /
+    them identically. ``injuries_df`` (ESPN Out/Doubtful) and ``rosters_df``
+    (weekly RES/INA reserve/inactive, ``nfl_source.rosters_weekly``) together
+    size the role-inheritance vacancy out-set exactly as the training splits do
+    (refresh-splits passes both) — omitting ``rosters_df`` shrinks the out-set
+    and drifts ``inherited_opportunity`` / ``is_top_available`` (#1277).
+    Both ``None`` → the feature degrades to 0. ``depth_chart_ranks`` / ``game_status_map`` /
     ``practice_status_map`` / ``contract_features`` are the live role/health/
     contract signals applied in ``_fill_current_week_context`` (``None`` →
     carry-forward / defaults only).
@@ -199,7 +211,7 @@ def build_upcoming_week_frame(
     history = _load_history()
     skel = _build_skeleton(season, week, slate, roster, history.columns)
     combined = pd.concat([history, skel], ignore_index=True)
-    featurized = build_features(combined, injuries_df=injuries_df)
+    featurized = build_features(combined, injuries_df=injuries_df, rosters_df=rosters_df)
     sl = featurized[(featurized["season"] == season) & (featurized["week"] == week)].copy()
     return _fill_current_week_context(
         sl, history, depth_chart_ranks, game_status_map, practice_status_map, contract_features
@@ -386,11 +398,12 @@ def _input_signature(
     game_status_map: dict[str, float] | None = None,
     practice_status_map: dict[str, float] | None = None,
     contract_features: pd.DataFrame | None = None,
+    rosters_df: pd.DataFrame | None = None,
 ) -> str:
     """Stable hash of (models + slate lines + roster id-set + live depth chart +
-    injury/practice statuses + contracts) — recompute only on a real change
-    (model swap, line/roster move, depth-chart shuffle, injury/practice update,
-    contract change)."""
+    injury/practice statuses + contracts + weekly RES/INA out-set) — recompute
+    only on a real change (model swap, line/roster move, depth-chart shuffle,
+    injury/practice update, contract change, reserve/inactive move)."""
     try:
         model_fp = core._compute_models_fingerprint()
     except Exception:  # noqa: BLE001
@@ -411,9 +424,20 @@ def _input_signature(
         contract_part = f"{len(contract_features)}:{apy_sum}"
     else:
         contract_part = ""
+    if (
+        rosters_df is not None
+        and not rosters_df.empty
+        and {"status", "player_id", "week"} <= set(rosters_df.columns)
+    ):
+        side = rosters_df[rosters_df["status"].isin(["RES", "INA"])]
+        rosters_part = ",".join(
+            sorted((side["player_id"].astype(str) + ":" + side["week"].astype(str)).unique())
+        )
+    else:
+        rosters_part = ""
     blob = (
         f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|"
-        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}"
+        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}"
     )
     return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -472,6 +496,12 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         return read_cached_artifact()
 
     injuries_df = espn_live.fetch_injuries_df(season, week)
+    # Weekly rosters (RES/INA reserve/inactive) size the inheritance vacancy
+    # out-set the same way training's refresh-splits does (which passes both
+    # injuries_df AND rosters_df). Must be rosters_weekly — the seasonal frame is
+    # ~1 row/player and registers no vacancies (#1277). Single season keeps the
+    # fetch light; only the current (season, week) out-set feeds the served rows.
+    rosters_df = nfl_source.rosters_weekly([season])
     # Don't surface projections for players ruled OUT (they won't play); keep
     # them in injuries_df so the role-inheritance feature still sizes vacancies.
     out_ids = set(injuries_df.loc[injuries_df["report_status"] == "Out", "gsis_id"])
@@ -495,6 +525,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         game_status_map,
         practice_status_map,
         contract_features,
+        rosters_df=rosters_df,
     )
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
@@ -507,6 +538,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         slate,
         roster,
         injuries_df=injuries_df,
+        rosters_df=rosters_df,
         depth_chart_ranks=depth_chart_ranks,
         game_status_map=game_status_map,
         practice_status_map=practice_status_map,
