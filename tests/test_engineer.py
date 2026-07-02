@@ -557,6 +557,29 @@ def test_inheritance_out_set_normalizes_legacy_team_codes():
     g2 = _build_inheritance_features(df2, None, rosters_df=rosters).set_index(["player_id", "week"])
     assert g2.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
 
+    # 2012-2015 rosters use GAMEBOOK codes the shared relocation map never sees:
+    # the Rams roster code is "SL" (not "STL"), plus ARZ/BLT/CLV/HST. The
+    # out-set map must cover those too (#1269 review find — 5 teams × 2013-2015
+    # otherwise kept the silently-never-matches failure).
+    for roster_code, weekly_code in (("SL", "LA"), ("ARZ", "ARI")):
+        df_g = _rb_frame(weekly_code, 2014)
+        rosters_g = pd.DataFrame(
+            [
+                dict(
+                    player_id="A",
+                    position="RB",
+                    team=roster_code,
+                    season=2014,
+                    week=3,
+                    status="RES",
+                )
+            ]
+        )
+        g_g = _build_inheritance_features(df_g, None, rosters_df=rosters_g).set_index(
+            ["player_id", "week"]
+        )
+        assert g_g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8), roster_code
+
     # Modern codes pass through the normalization unchanged (identity on non-legacy).
     df3 = _rb_frame("KC", 2023)
     inj3 = pd.DataFrame(

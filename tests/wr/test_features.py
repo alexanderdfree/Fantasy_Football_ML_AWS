@@ -281,3 +281,21 @@ class TestFillWRNansPriorSeason:
         assert pytest.approx(train["prior_season_mean_catch_rate"].iloc[2]) == train_mean
         assert pytest.approx(val["prior_season_mean_catch_rate"].iloc[0]) == train_mean
         assert pytest.approx(test["prior_season_mean_catch_rate"].iloc[0]) == train_mean
+
+    def test_carve_out_wiring_matches_production_config(self):
+        """Pin the activation preconditions the carve-out silently depends on:
+        the column is whitelisted (so the model consumes it), absent from
+        _SPECIFIC_FEATURES (so it needs the carve-out at all), and
+        _compute_features emits it under exactly this name — a rename or
+        whitelist change must fail HERE, not silently re-zero rookies."""
+        from src.wr.features import get_feature_columns
+
+        col = "prior_season_mean_catch_rate"
+        assert col in get_feature_columns()
+        assert col not in SPECIFIC_FEATURES
+        df = make_wr_player_games(n_weeks=3)
+        df["prior_season_mean_receptions"] = 3.0
+        df["prior_season_mean_targets"] = 5.0
+        _compute_features(df)
+        assert col in df.columns
+        assert df[col].notna().all()

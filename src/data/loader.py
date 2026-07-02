@@ -358,8 +358,11 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
                 skipped.append(s)
                 print(f"WARNING: ESPN depth_charts fetch failed for {s} ({e}); skipping")
         if not parts:
-            # Don't poison the cache with an empty frame — let the next call retry.
-            return pd.DataFrame()
+            # Don't poison the cache with an empty frame — let the next call
+            # retry. Empty-with-columns so the downstream formation filter /
+            # merge still run and every row rides the -1 sentinel (a bare
+            # pd.DataFrame() would KeyError on the formation column).
+            return pd.DataFrame(columns=_DEPTH_CANONICAL_COLS)
         depth = pd.concat(parts, ignore_index=True)
         if skipped:
             # Partial coverage: an ESPN season failed to fetch. Return what we

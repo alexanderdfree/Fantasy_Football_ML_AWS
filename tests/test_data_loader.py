@@ -319,6 +319,12 @@ def test_load_raw_data_espn_depth_404_partial_not_cached(tmp_path, monkeypatch, 
     df = loader.load_raw_data([2024, 2025], cache_dir=str(tmp_path))
     # The run completes on the legacy (2024) coverage alone.
     assert "depth_chart_rank" in df.columns
+    # The missing season's player-week rows survive the merge and ride the -1
+    # sentinel — the safety net the guard's comment cites (an inner depth merge
+    # or a dropped fillna(-1) must fail here, not stay silently green).
+    rows_2025 = df[df["season"] == 2025]
+    assert len(rows_2025) > 0
+    assert (rows_2025["depth_chart_rank"] == -1).all()
     # Partial coverage → the depth cache is NOT written; the next call retries
     # the missing ESPN season instead of serving the partial frame from cache.
     assert not (tmp_path / "depth_charts_v2_2024_2025.parquet").exists()
