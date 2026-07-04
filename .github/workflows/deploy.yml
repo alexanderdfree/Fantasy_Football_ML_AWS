@@ -213,7 +213,7 @@ jobs:
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
         # major version comment. SHA = aws-actions/amazon-ecs-deploy-task-
         # definition v2 tip as of 2026-05-21.
-        uses: aws-actions/amazon-ecs-deploy-task-definition@a310a830f5c14e583e35d84e4e1ec7dd177c3c9c  # v2
+        uses: aws-actions/amazon-ecs-deploy-task-definition@c465972ecbd160473f22e683363b422a5412a3de  # v2
         with:
           task-definition: ${{ steps.render-task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
