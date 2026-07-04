@@ -13,5 +13,13 @@ input="$(cat)"
 root="$(codex_project_root "$input" "$jq_bin")"
 
 if [ -x "$root/scripts/agent-memory-sync.sh" ]; then
-  (cd "$root" && bash scripts/agent-memory-sync.sh all push) || true
+  # >&2: aws s3 sync prints `upload: ...` lines to STDOUT on a real push
+  # (--no-progress only hides the progress meter); anything on stdout ahead
+  # of the JSON below breaks the Stop-hook schema.
+  (cd "$root" && bash scripts/agent-memory-sync.sh all push) >&2 || true
 fi
+
+# Codex Stop hooks use a narrower output schema than SessionStart/PostToolUse:
+# no hookSpecificOutput/additionalContext is allowed. Emit a minimal allowed
+# object; all memory-sync output is on stderr (redirect above).
+"$jq_bin" -n '{continue: true, suppressOutput: true}'

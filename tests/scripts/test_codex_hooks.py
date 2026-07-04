@@ -632,6 +632,37 @@ class TestCodexHooks:
         assert "Run this Codex post-create workflow now, in order" not in additional_context
         assert "1. Rebase onto latest main" not in additional_context
 
+    def test_stop_hook_emits_valid_stop_output_when_memory_sync_is_noop(self, tmp_path: Path):
+        result = _run_hook(
+            ".codex/hooks/memory-sync-stop.sh",
+            {"cwd": str(tmp_path)},
+            tmp_path,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"continue": True, "suppressOutput": True}
+
+    def test_stop_hook_stdout_stays_pure_json_when_memory_sync_prints(self, tmp_path: Path):
+        # aws s3 sync prints `upload: ...` lines to STDOUT on a real push
+        # (--no-progress only hides the progress meter); the hook must route
+        # them to stderr or the Stop-hook JSON is invalid exactly when memory
+        # actually changed — the common case the no-op test above can't catch.
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        sync = scripts_dir / "agent-memory-sync.sh"
+        sync.write_text("#!/usr/bin/env bash\necho 'upload: memory/foo.md to s3://bucket/foo.md'\n")
+        sync.chmod(0o755)
+
+        result = _run_hook(
+            ".codex/hooks/memory-sync-stop.sh",
+            {"cwd": str(tmp_path)},
+            tmp_path,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {"continue": True, "suppressOutput": True}
+        assert "upload:" in result.stderr
+
     def test_post_pr_merge_hook_ignores_non_merge_commands(self):
         for command in (
             "git status --short",
