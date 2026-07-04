@@ -14,6 +14,6 @@ mord==0.7
 shap>=0.52.0,<0.53
 appdirs==1.4.4
 requests==2.34.2
-boto3==1.43.38
+boto3==1.43.40
 markdown==3.10.2
 bleach==6.4.0
