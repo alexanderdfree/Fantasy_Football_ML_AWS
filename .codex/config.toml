@@ -1,0 +1,12 @@
+# Repo-level Codex defaults. Keep this file free of hook trust hashes and auth
+# state. The catalog path mirrors this workstation's local 1M-window workaround.
+service_tier = "fast"
+model = "gpt-5.5"
+model_context_window = 1000000
+model_auto_compact_token_limit = 700000
+model_reasoning_effort = "xhigh"
+plan_mode_reasoning_effort = "xhigh"
+model_catalog_json = "/home/alex/.codex/my_catalog.json"
+
+[features]
+fast_mode = true
