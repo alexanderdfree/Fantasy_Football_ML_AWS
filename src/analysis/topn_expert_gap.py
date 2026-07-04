@@ -146,7 +146,9 @@ def parse_local_expert_spec(arg: str) -> LocalExpertSpec:
     if not name:
         raise ValueError("local expert name cannot be empty")
     label = name.replace("_", " ").replace("-", " ").title()
-    return LocalExpertSpec(name=name, path=Path(raw_path).expanduser(), pred_col=pred_col, label=label)
+    return LocalExpertSpec(
+        name=name, path=Path(raw_path).expanduser(), pred_col=pred_col, label=label
+    )
 
 
 def _read_projection_file(path: Path) -> pd.DataFrame:
@@ -463,9 +465,9 @@ def weekly_selection_rows(
     miss_rows: list[dict[str, Any]] = []
     for (season, week), base_wk in actual_df.groupby(["season", "week"], sort=True):
         base_wk = base_wk.dropna(subset=[ACTUAL_COL]).copy()
-        forecast_wk = source_df[
-            source_df["season"].eq(season) & source_df["week"].eq(week)
-        ].dropna(subset=[ACTUAL_COL, PRED_COL])
+        forecast_wk = source_df[source_df["season"].eq(season) & source_df["week"].eq(week)].dropna(
+            subset=[ACTUAL_COL, PRED_COL]
+        )
         if base_wk.empty or forecast_wk.empty:
             continue
         for top_n in top_ns:
