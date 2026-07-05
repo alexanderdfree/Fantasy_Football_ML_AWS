@@ -1,0 +1,15 @@
+{
+  "name": "ffp-dashboard-frontend",
+  "private": true,
+  "description": "React source for the serving dashboard. `npm run build` bundles src/main.jsx into ../static/js/app.js (the committed runtime artifact) — edit here, never the bundle.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

@@ -28,7 +28,7 @@ The rest of `src/` groups by purpose:
 - `src/data/` — cross-position data loading + temporal split (per-position `data.py` files wrap these): `loader.py`, `nflcom_loader.py`, `preprocessing.py`, `redzone_pbp.py`, `split.py`.
 - `src/features/engineer.py` — cross-position feature engineering coordinator.
 - `src/shared/evaluation.py` — position-aware visualization/aggregation layer plus the `compute_metrics(y_true, y_pred)` helper used by backtest and pipeline.
-- `src/serving/` — Flask app + assets.
+- `src/serving/` — Flask app + assets. The dashboard UI is React: **sources in `src/serving/frontend/` (edit these), committed esbuild bundle at `src/serving/static/js/app.js` (never edit; `cd src/serving/frontend && npm run build` regenerates — CI's `frontend-bundle` job fails a PR whose bundle is stale)**. See SETUP.md § "Frontend build" + ADR-0023.
 - `src/batch/` — training orchestration (AWS Batch path). New tuner/ablation files go in `src/tuning/`, **never** here — files under `src/batch/` trigger a full 6-position retrain via [src/scripts/scope_positions.py](src/scripts/scope_positions.py), except names containing `tune`/`ablate` and the exact basenames `launch.py` / `benchmark.py` (job submission / read-only aggregation). PR #280 burned ~4 GPU-jobs from a tuner-only change placed here.
 - `src/benchmarking/`, `src/tuning/` — Optuna + ablations.
 - `src/analysis/` — post-hoc analyses.

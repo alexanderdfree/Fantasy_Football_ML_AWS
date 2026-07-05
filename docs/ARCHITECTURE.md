@@ -105,6 +105,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D20 | [Batch GPU execution path for the shared A/B harness](adr/0020-batch-gpu-execution-path-for-ab-harness.md) | Accepted |
 | D21 | [Systematic knob + feature-family screens as stacked A/B-harness specs](adr/0021-systematic-doe-screens-on-ab-harness.md) | Proposed |
 | D22 | [Warm pre-pulled GPU AMI for Batch cold-start](adr/0022-warm-prepulled-ami-cold-start.md) | Accepted |
+| D23 | [React frontend built with esbuild into a committed bundle](adr/0023-react-frontend-esbuild-committed-bundle.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 

@@ -665,6 +665,15 @@ class TestStaticAssets:
         assert "combiner/i?img=${m[1]}&w=${size}`" in js
         assert "combiner/i?img=${m[1]}&w=${size}&h=${size}" not in js
 
+    def test_react_bundle_is_served_and_marked_generated(self, client):
+        """The dashboard bundle is a committed esbuild artifact (ADR-0023):
+        it must serve from the legacy app.js path and carry the do-not-edit
+        banner so a hand edit of the artifact is visually flagged."""
+        r = client.get("/static/js/app.js")
+        assert r.status_code == 200
+        body = r.get_data(as_text=True)
+        assert "Built from src/serving/frontend" in body
+
     def test_index_applies_saved_theme_before_paint(self, client):
         """The OLED theme must be applied by an inline <head> script BEFORE
         first paint — a post-load toggle would flash the midnight palette on

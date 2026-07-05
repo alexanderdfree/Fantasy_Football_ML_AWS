@@ -117,3 +117,8 @@ Dockerfile.*
 # Local dev databases / caches.
 *.sqlite
 *.sqlite3
+
+# Frontend build sources — the serving image ships only the committed bundle
+# (src/serving/static/js/app.js); no Node toolchain in the runtime image.
+node_modules/
+src/serving/frontend/
