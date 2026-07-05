@@ -237,7 +237,7 @@ jobs:
 
       - name: Set up uv
         # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
-        # major version comment. SHA = astral-sh/setup-uv v6.8.0.
+        # major version comment. SHA = astral-sh/setup-uv v8.2.0.
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true

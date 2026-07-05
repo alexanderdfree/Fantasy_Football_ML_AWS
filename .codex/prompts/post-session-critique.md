@@ -3,7 +3,7 @@ description: Capture a non-routine Codex session lesson for AGENTS.md or memory
 argument-hint: [WRITE_MEMORY=0|1]
 ---
 
-Run the Final-Project Codex post-session critique wrapper.
+Run the repo's Codex post-session critique wrapper.
 
 The authoritative instructions are version-controlled at `agent-workflows/post-session-critique/instructions.md`. That file, not this wrapper, defines when to run, when to skip, the reflection shape, and where durable lessons belong.
 

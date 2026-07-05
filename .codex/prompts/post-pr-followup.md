@@ -3,7 +3,7 @@ description: Continue after opening a PR with review, CI, and merge discipline
 argument-hint: [PR=<number>] [BASE=origin/main]
 ---
 
-Run the Final-Project Codex post-PR workflow.
+Run the repo's Codex post-PR workflow.
 
 Resolve `PR` from `gh pr view --json number,url` if not supplied. Resolve and hold the PR head branch with `gh pr view PR --json headRefName --jq .headRefName` before merging. If the current branch is not that PR head branch, switch to it first; if Git reports that branch is checked out in another worktree, stop and rerun from that worktree. Use `BASE` if supplied; otherwise use `origin/main`.
 

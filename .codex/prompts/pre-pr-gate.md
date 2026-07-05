@@ -3,7 +3,7 @@ description: Run the repo's deterministic pre-PR checks before gh pr create
 argument-hint: [BASE=origin/main]
 ---
 
-Run the Final-Project deterministic pre-PR gate manually.
+Run the repo's deterministic pre-PR gate manually.
 
 Use `BASE` if supplied; otherwise use `origin/main`.
 

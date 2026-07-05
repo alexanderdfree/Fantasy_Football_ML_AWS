@@ -945,7 +945,7 @@ Complete list of all configurable values:
 
 ```python
 # === Data ===
-SEASONS = list(range(2012, 2026))  # 2012-2025 (snap counts available from 2012+)
+SEASONS = list(range(2012, 2026))  # load 2012 for prior-season/rolling CONTEXT only
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 MIN_GAMES_PER_SEASON = 6
 CACHE_DIR = "data/raw"
