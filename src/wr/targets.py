@@ -51,8 +51,26 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
             + df["passing_tds"].fillna(0) * SCORING["passing_tds"]
             + df["interceptions"].fillna(0) * SCORING["interceptions"]
         )
+        # 2pt conversions (flat 2 pts each, no SCORING key) land in the
+        # upstream fantasy_points column but are NOT model targets — back
+        # them out so this *diagnostic* check doesn't spuriously WARN
+        # (mirrors src/rb/targets.py). Column-guarded: preprocessing
+        # zero-fills only the rushing/receiving 2pt columns. This touches
+        # only the discrepancy check, never the targets.
+        two_pt_component = pd.Series(0.0, index=df.index)
+        for col in (
+            "passing_2pt_conversions",
+            "rushing_2pt_conversions",
+            "receiving_2pt_conversions",
+        ):
+            if col in df.columns:
+                two_pt_component = two_pt_component + df[col].fillna(0) * 2
         discrepancy = (
-            df["fantasy_points"] - wr_component - rushing_component - passing_component
+            df["fantasy_points"]
+            - wr_component
+            - rushing_component
+            - passing_component
+            - two_pt_component
         ).abs()
         if (discrepancy > 0.01).any():
             n_bad = (discrepancy > 0.01).sum()
