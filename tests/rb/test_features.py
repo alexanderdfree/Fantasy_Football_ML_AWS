@@ -168,6 +168,15 @@ class TestComputeRBSpecific:
         # downstream fill_nans train-mean fill handles it in the pipeline).
         assert np.isnan(a.loc[5, "team_rb_carry_hhi_L3"])
         assert np.isnan(a.loc[5, "team_rb_target_hhi_L3"])
+        # opportunity_index_L3, stint-aware (#1467): opp weight = carries +
+        # 2*targets, so RB_A = 20 every week; solo-SF team = 20 → game opp-index
+        # 1.0, KC team = 40 → 0.5. Week 7's window {5,6} is all-SF → mean(1.0,
+        # 1.0) = 1.0. (The buggy player×season grouping mixed KC's wk4 0.5 in →
+        # mean(0.5, 1.0, 1.0) ≈ 0.8333.) Week 6 (window {5}) → 1.0; week 5 is the
+        # first SF game → rolling NaN (no safe_divide fill, like the HHI cols).
+        assert pytest.approx(a.loc[7, "opportunity_index_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[6, "opportunity_index_L3"], abs=1e-9) == 1.0
+        assert np.isnan(a.loc[5, "opportunity_index_L3"])
 
 
 @pytest.mark.unit

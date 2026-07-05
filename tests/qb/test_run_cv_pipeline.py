@@ -211,7 +211,7 @@ def cv_pipeline_run_with_lgbm(synthetic_cv_splits, tmp_path_factory):
             "lgbm_reg_alpha": 0.0,
             "lgbm_min_child_samples": 5,
             "lgbm_min_split_gain": 0.0,
-            "lgbm_objective": "huber",
+            "lgbm_objective": "regression",
         }
     )
 
