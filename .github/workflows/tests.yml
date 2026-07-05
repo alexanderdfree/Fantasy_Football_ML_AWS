@@ -50,9 +50,9 @@ jobs:
 
   detect:
     # Decide which shards to run so a PR touching only e.g. `src/qb/` doesn't
-    # spin up all 7 shards. Mirrors train-ec2.yml's detect job in spirit:
+    # spin up all 8 shards. Mirrors train-ec2.yml's detect job in spirit:
     # global infrastructure changes fan out to all shards; per-position
-    # changes scope down. Default to "all 7" on uncertainty.
+    # changes scope down. Default to "all 8" on uncertainty.
     runs-on: ubuntu-latest
     outputs:
       shards: ${{ steps.scope.outputs.shards }}
@@ -135,7 +135,7 @@ jobs:
   test:
     needs: detect
     # The detect step always emits at least one shard for code changes (it
-    # falls back to all 7 on uncertainty), but guard against an empty list
+    # falls back to all 8 on uncertainty), but guard against an empty list
     # so a future detect-rule bug surfaces as a skip rather than a crash.
     if: needs.detect.outputs.shards != '[]'
     runs-on: ubuntu-latest

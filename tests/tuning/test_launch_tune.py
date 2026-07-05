@@ -249,6 +249,41 @@ def test_dry_run_does_not_call_aws(monkeypatch, capsys):
     assert "--n-jobs" not in out
 
 
+def test_default_all_six_run_does_not_reject_k_dst(monkeypatch, capsys):
+    """GH #1439: the documented all-six invocation (no --stacked-seeds) must
+    NOT be pre-rejected. Under the CLI default, K/DST resolve to eager inside
+    submit_tune_job instead of raising at arg-validation. Regression guard: the
+    old code applied DEFAULT_STACKED_SEEDS as the argparse default and then
+    rejected any non-flat position, so `launch_tune` with no position filter
+    (all six) exited 2 before submitting anything."""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["launch_tune", "--parallel-backend", "auto", "--dry-run"],
+    )
+    # No SystemExit — the default run plans all six positions.
+    with patch("src.tuning.launch_tune.boto3") as mock_boto3:
+        launch_tune.main()
+        mock_boto3.client.assert_not_called()
+    out = capsys.readouterr().out
+    for pos in ("QB", "RB", "WR", "TE", "K", "DST"):
+        assert pos in out
+    # Flat positions plan a stacked width; K/DST are surfaced as eager.
+    assert "stacked=" in out  # at least one flat position stacks
+    assert " eager" in out  # K/DST resolved to eager, not rejected
+
+
+def test_explicit_stacked_seeds_still_rejects_k_dst(monkeypatch):
+    """GH #1439: an EXPLICIT --stacked-seeds >= 2 with K/DST selected is a real
+    user error (they can't vmap-stack) and must still fail fast — only the
+    silent default is exempt."""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["launch_tune", "--positions", "K", "--stacked-seeds", "24"],
+    )
+    with pytest.raises(SystemExit, match="QB/RB/WR/TE"):
+        launch_tune.main()
+
+
 def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "fake"}

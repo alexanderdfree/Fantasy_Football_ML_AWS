@@ -709,18 +709,20 @@ def run_batch_entry(position: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Timing A/B: FP16 + full-step graph (eager) vs FP32 + vmap (stacked)
+# Timing A/B: FP32+TF32 + full-step graph (eager) vs FP32 + vmap (stacked)
 # ---------------------------------------------------------------------------
 
 
 def apply_eager_graph_env(fixed_epochs: int) -> None:
-    """The production-style arm of the timing A/B: FP16 + full-step CUDA graph.
+    """The production-style arm of the timing A/B: FP32+TF32 + full-step CUDA graph.
 
     ``FF_NN_NORM=layer`` is held CONSTANT with the stacked arm so the only
-    moving axes are dtype (FP16 vs FP32) and execution (graphed-eager vs
-    vmap) — norm is a third axis deliberately pinned (LN-vs-BN is measured
-    noise, 8-seed A/B). ``FF_AMP_DTYPE=auto`` → FP16 on CUDA; ``FF_CUDA_GRAPH``
-    + ``FF_CUDA_GRAPH_FULL=1`` engage full-step capture on sm_80+.
+    moving axis is execution (graphed-eager vs vmap) — norm is a second axis
+    deliberately pinned (LN-vs-BN is measured noise, 8-seed A/B). Both arms are
+    the FP32 family: ``FF_AMP_DTYPE=auto`` is AMP-off FP32+TF32 on CUDA since
+    the 2026-06-22 default flip (FP16 is now opt-in via ``FF_AMP_DTYPE=fp16``),
+    and ``FF_CUDA_GRAPH`` + ``FF_CUDA_GRAPH_FULL=1`` engage full-step capture on
+    sm_80+.
     """
     os.environ["FF_NN_NORM"] = "layer"
     os.environ["FF_AMP_DTYPE"] = "auto"

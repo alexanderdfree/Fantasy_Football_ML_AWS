@@ -57,7 +57,10 @@ from src.batch.launch import (  # noqa: E402
     WAIT_TIMEOUT_SECONDS,
     wait_for_jobs,
 )
-from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS  # noqa: E402
+from src.tuning.ab_ensemble_seeds import (  # noqa: E402
+    DEFAULT_STACKED_SEEDS,
+    ENSEMBLE_POSITIONS,
+)
 from src.tuning.tune_nn_storage import (  # noqa: E402
     SCOPE_ROOTS,
     SEARCH_SPACE_VERSION,
@@ -154,6 +157,11 @@ def submit_tune_job(
     on first invocation (Spot resilience: study DB resumes via S3 if the
     job is retried after a Host EC2 interruption).
 
+    Note ``stacked_seeds`` defaults to 0 (eager) HERE — the CLI default of
+    ``DEFAULT_STACKED_SEEDS`` is applied by ``main()``, which under that
+    default lets K/DST flow through to this function's per-position eager
+    fallback instead of pre-rejecting them (GH #1439).
+
     ``stacked_seeds >= 2`` rides the FF_TUNE_STACKED_SEEDS env (train.py
     forwards a fixed argv, so flags can't reach tune_nn from here): each
     trial trains a vmap-stacked N-seed ensemble in the ensemble regime —
@@ -166,8 +174,6 @@ def submit_tune_job(
     reads the env as its ``--n-jobs`` default; an explicit ``--n-jobs``
     in a hand-built submission's command still wins over the env.
     """
-    from src.tuning.ab_ensemble_seeds import ENSEMBLE_POSITIONS
-
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
@@ -318,10 +324,14 @@ def _print_plan(
     print("  jobs:")
     for pos in positions:
         # n_jobs rides the job environment, not the command — train.py's
-        # --n-jobs is type=int and would reject the "auto" sentinel.
+        # --n-jobs is type=int and would reject the "auto" sentinel. K/DST
+        # can't vmap-stack, so submit_tune_job resolves them to eager even
+        # under a default-on stacked run — surface that per-position here.
+        pos_stacked = stacked_seeds if (stacked and pos.upper() in ENSEMBLE_POSITIONS) else 0
+        stacked_note = f" stacked={pos_stacked}x{stacked_epochs}" if pos_stacked >= 2 else " eager"
         print(
             f"    - {pos:<4} -> --mode=tune --n-trials={n_trials} "
-            f"--parallel-backend={parallel_backend} FF_TUNE_N_JOBS={n_jobs}"
+            f"--parallel-backend={parallel_backend} FF_TUNE_N_JOBS={n_jobs}{stacked_note}"
         )
 
 
@@ -384,14 +394,16 @@ def main():
     parser.add_argument(
         "--stacked-seeds",
         type=int,
-        default=DEFAULT_STACKED_SEEDS,
+        default=None,
         help=(
             "N >= 2: each trial trains a vmap-stacked N-seed ensemble "
             "(seed-averaged objective; rides FF_TUNE_STACKED_SEEDS through the "
             "fixed ENTRYPOINT; QB/RB/WR/TE only — K/DST run eager; studies land "
             f"in _ens{{N}}x{{E}} namespaces with graphs forced off). DEFAULT is "
             f"{DEFAULT_STACKED_SEEDS} (the measured per-seed optimum on the Batch "
-            "GPU fleet); pass 0 for eager trials."
+            "GPU fleet), under which any selected K/DST resolve to eager instead "
+            "of being rejected; an EXPLICIT --stacked-seeds>=2 with K/DST "
+            "selected is rejected. Pass 0 for eager trials."
         ),
     )
     parser.add_argument(
@@ -454,11 +466,18 @@ def main():
             raise SystemExit("--n-jobs must be >= 1")
     if args.attempt_timeout <= 0:
         raise SystemExit("--attempt-timeout must be > 0")
-    stacked_seeds = max(0, int(args.stacked_seeds))
+    # Distinguish an EXPLICIT --stacked-seeds from the default: argparse leaves
+    # None when the flag is omitted, which we resolve to DEFAULT_STACKED_SEEDS.
+    # Under the default, a selected K/DST is NOT pre-rejected here — it flows
+    # through to submit_tune_job's per-position eager fallback (matching the
+    # documented all-six invocation, GH #1439). An explicit --stacked-seeds>=2
+    # with K/DST selected is still rejected.
+    stacked_explicit = args.stacked_seeds is not None
+    stacked_seeds = max(0, int(args.stacked_seeds if stacked_explicit else DEFAULT_STACKED_SEEDS))
     if stacked_seeds == 1:
         raise SystemExit("--stacked-seeds needs N >= 2 (N=1 is just the eager objective)")
-    if stacked_seeds:
-        bad = [p for p in positions if p not in ("QB", "RB", "WR", "TE")]
+    if stacked_explicit and stacked_seeds:
+        bad = [p for p in positions if p not in ENSEMBLE_POSITIONS]
         if bad:
             raise SystemExit(f"--stacked-seeds supports QB/RB/WR/TE (flat-history); got {bad}")
     if args.scope == SCOPE_HISTORY:
