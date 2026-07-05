@@ -244,3 +244,94 @@ class TestResponseShape:
         body = r.get_json()
         assert "degraded_positions" in body
         assert body["degraded_positions"] == []
+
+
+# ---------------------------------------------------------------------------
+# #1442: a disk-hydrated DEGRADED cache must not skip the aggregate retry
+# ---------------------------------------------------------------------------
+
+
+class TestPositionsPending:
+    """Unit coverage for ``_positions_pending`` — the second miss the
+    ``_ensure_metrics`` fast path had to close for hydrated degraded caches
+    (#1442). A position is *pending* iff it is in neither ``positions_loaded``
+    nor ``positions_failed``; ``_try_hydrate_from_disk`` restores
+    ``position_load_errors`` and drops errored positions from
+    ``positions_loaded`` (so they retry) but never seeds ``positions_failed``,
+    so a hydrated errored position reads as pending here.
+    """
+
+    def test_absent_positions_loaded_is_not_pending(self, degraded_mode_app):
+        # True cold start (no positions_loaded key): the metrics fast path can't
+        # fire anyway, so pending must be False (no needless rebuild noise).
+        core.app_pkg._cache.pop("positions_loaded", None)
+        assert core._positions_pending() is False
+
+    def test_all_loaded_none_pending(self, degraded_mode_app):
+        core.app_pkg._cache["positions_loaded"] = set(_ALL_POS)
+        core.app_pkg._cache.pop("positions_failed", None)
+        assert core._positions_pending() is False
+
+    def test_hydrated_errored_position_is_pending(self, degraded_mode_app):
+        # Mimic a disk-hydrated degraded cache: QB errored, so it was dropped
+        # from positions_loaded and is NOT in positions_failed.
+        core.app_pkg._cache["positions_loaded"] = {p for p in _ALL_POS if p != "QB"}
+        core.app_pkg._cache.pop("positions_failed", None)
+        assert core._positions_pending() is True
+
+    def test_failed_position_is_not_pending(self, degraded_mode_app):
+        # A position that genuinely re-failed lands in positions_failed and is
+        # "resolved" — the fast path must hold thereafter (bounded retry).
+        core.app_pkg._cache["positions_loaded"] = {p for p in _ALL_POS if p != "QB"}
+        core.app_pkg._cache["positions_failed"] = {"QB"}
+        assert core._positions_pending() is False
+
+
+class TestHydratedDegradedCacheRetries:
+    def test_ensure_metrics_retries_pending_after_hydrate(self, degraded_mode_app):
+        """The #1442 regression: with ``metrics_by_format`` present and a
+        position *pending* (hydrated-degraded shape), ``_ensure_metrics`` must
+        NOT early-return on the hydrate hit — it must fall through to
+        ``_ensure_all_positions_loaded`` to retry the pending position and
+        recompute the aggregate, instead of serving the degraded aggregate
+        forever.
+        """
+        cache = core.app_pkg._cache
+        cache["metrics_by_format"] = {"ppr": {}}  # a (degraded) aggregate is present
+        cache["positions_loaded"] = {p for p in _ALL_POS if p != "QB"}  # QB pending
+        cache.pop("positions_failed", None)
+        cache["refresh_sentinel_mtime"] = {}
+
+        retried: list[bool] = []
+
+        with (
+            mock.patch.object(core, "_any_position_sentinel_advanced", return_value=False),
+            mock.patch.object(core, "_try_hydrate_from_disk", return_value=True),
+            mock.patch.object(
+                core, "_ensure_all_positions_loaded", side_effect=lambda: retried.append(True)
+            ),
+            mock.patch.object(core, "_compute_metrics_locked", return_value=None),
+        ):
+            core._ensure_metrics()
+
+        # The pending position forced the retry path rather than the hydrate
+        # short-circuit (which would leave `retried` empty).
+        assert retried == [True]
+
+    def test_ensure_metrics_fast_path_holds_when_nothing_pending(self, degraded_mode_app):
+        """Symmetric guard: a fully-loaded healthy cache with a fresh aggregate
+        must still short-circuit — the #1442 fix must not force a rebuild on
+        every call for a healthy container.
+        """
+        cache = core.app_pkg._cache
+        cache["metrics_by_format"] = {"ppr": {}}
+        cache["positions_loaded"] = set(_ALL_POS)  # nothing pending
+        cache.pop("positions_failed", None)
+
+        with (
+            mock.patch.object(core, "_any_position_sentinel_advanced", return_value=False),
+            mock.patch.object(
+                core, "_ensure_all_positions_loaded", side_effect=AssertionError("rebuilt")
+            ),
+        ):
+            core._ensure_metrics()  # must return via the fast path, no rebuild

@@ -73,6 +73,16 @@ CONTRACT_FEATURE_COLUMNS: tuple[str, ...] = (
     "contract_age",
 )
 
+# Cache-version sentinel for the deterministic same-year tie-break (#1397).
+# ``load_contracts`` writes this column into the contracts cache parquet and the
+# schema gate requires it, so a cache written before the tie-break fix (which
+# lacks the column) is rejected and regenerated with the deterministic winner —
+# the value-blind schema gate can't otherwise see that the *selected* contract
+# changed for a same-``year_signed`` pair. Mirrors K's ``_xp_venue_backfilled``
+# (src/k/data.py). It is a write-only cache marker: reads project it back out so
+# the merge-ready frame handed to the loader keeps its stable schema.
+_CONTRACT_TIEBREAK_SENTINEL: str = "_contract_tiebreak_deterministic"
+
 # Per-game external stats that :mod:`src.features.engineer` rolls into
 # ``prior_season_mean_{stat}`` aggregates for the static branch. Contracts are
 # already player-season state, so they are NOT aggregated here.
@@ -140,7 +150,11 @@ def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.Da
     """
     path = f"{cache_dir}/ff_opportunity_{_seasons_cache_signature(seasons)}.parquet"
     keep = ["player_id", "season", "week", *FF_OPP_FEATURE_COLUMNS]
-    if os.path.exists(path) and _cached_parquet_has_columns(path, FF_OPP_FEATURE_COLUMNS):
+    # Gate on the full merge-ready schema, not just the feature tuple: the loader
+    # left-joins this frame on (player_id, season, week), so a cache missing or
+    # renaming a merge key must bust — a value-blind column gate can't see a value
+    # change, but a changed key SET must invalidate. (#1435)
+    if os.path.exists(path) and _cached_parquet_has_columns(path, tuple(keep)):
         return _coerce_merge_keys(pd.read_parquet(path))
     try:
         df = nfl_source.ff_opportunity(list(seasons))
@@ -230,7 +244,10 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     """
     path = f"{cache_dir}/qbr_weekly_{_seasons_cache_signature(seasons)}.parquet"
     keep = ["player_id", "season", "week", *QBR_FEATURE_COLUMNS]
-    if os.path.exists(path) and _cached_parquet_has_columns(path, QBR_FEATURE_COLUMNS):
+    # Gate on the full merge-ready schema (keys + features), not just the feature
+    # tuple, so a cache missing/renaming a (player_id, season, week) merge key
+    # busts rather than KeyError-ing the loader join. (#1435)
+    if os.path.exists(path) and _cached_parquet_has_columns(path, tuple(keep)):
         return _coerce_merge_keys(pd.read_parquet(path))
     try:
         raw = _fetch_qbr_weekly_raw(seasons)
@@ -295,7 +312,27 @@ def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.D
     # earlier); ``contract_age``/``contract_years_remaining`` below still derive
     # from the true ``year_signed``.
     c["effective_season"] = c["year_signed"] + 1
-    c = c.sort_values("effective_season")
+    # Deterministic multi-key tie-break. OTC can carry two contracts with the
+    # same ``year_signed`` (hence the same ``effective_season``) for one player
+    # (a cut-and-re-sign, a restructure filed as a second row, …). ``merge_asof``
+    # with ``direction="backward"`` resolves a same-``effective_season`` tie to
+    # the LAST row in sort order, so ordering ascending by the contract-value
+    # columns makes the most valuable contract win — highest cap share, then most
+    # guaranteed money, then longest term: a stable, semantically-justified pick
+    # (the headline deal, not a placeholder duplicate). Without the extra keys the
+    # winner depended on the row order of the polars-backed OTC fetch, which
+    # carries no order guarantee and flips across library versions — the same
+    # non-determinism class already fixed for the id crosswalk (#823) and the
+    # snap-count dedup (#811). ``effective_season`` stays the primary key so
+    # ``merge_asof``'s sorted-key requirement still holds; ``na_position="first"``
+    # keeps a row with a known value ahead of a NaN one. Any residual tie is
+    # between rows identical on every value the output derives from
+    # (``year_signed``, ``years``, ``guaranteed``, ``apy_cap_pct``), so the result
+    # is value-deterministic regardless of which is picked. (#1397)
+    c = c.sort_values(
+        ["effective_season", "apy_cap_pct", "guaranteed", "years"],
+        na_position="first",
+    )
     grid = pd.DataFrame(
         [(g, s) for g in c["gsis_id"].unique() for s in seasons],
         columns=["gsis_id", "season"],
@@ -325,15 +362,30 @@ def derive_active_contracts(contracts: pd.DataFrame, seasons: list[int]) -> pd.D
 def load_contracts(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFrame:
     """Active-as-of-season contract attributes per (player_id, season), cached."""
     path = f"{cache_dir}/contracts_{_seasons_cache_signature(seasons)}.parquet"
-    if os.path.exists(path) and _cached_parquet_has_columns(path, CONTRACT_FEATURE_COLUMNS):
-        return _coerce_merge_keys(pd.read_parquet(path))
+    keep = ["player_id", "season", *CONTRACT_FEATURE_COLUMNS]
+    # Gate on the full merge-ready schema — the loader joins on (player_id,
+    # season), so a cache missing/renaming a key must bust (#1435) — PLUS the
+    # tie-break sentinel (#1397): a cache written before the deterministic
+    # same-year tie-break lacks the sentinel and is regenerated, so the corrected
+    # winner reaches the baked splits instead of the value-blind gate perpetuating
+    # the old row-order-dependent pick.
+    required = (*keep, _CONTRACT_TIEBREAK_SENTINEL)
+    if os.path.exists(path) and _cached_parquet_has_columns(path, required):
+        # Project the sentinel back out: it is a cache-version marker only, so the
+        # merge-ready frame the loader consumes keeps the stable (keys + features)
+        # schema regardless of the cache generation.
+        return _coerce_merge_keys(pd.read_parquet(path))[keep]
     try:
         raw = nfl_source.contracts()
     except Exception as e:
         # Supplementary signal: degrade to "no contract" (loader fills 0)
         # rather than crashing the shared load_raw_data pull.
         print(f"WARNING: contracts fetch failed ({e}); skipping")
-        return pd.DataFrame(columns=["player_id", "season", *CONTRACT_FEATURE_COLUMNS])
+        return pd.DataFrame(columns=keep)
     out = _coerce_merge_keys(derive_active_contracts(raw, list(seasons)))
-    atomic_write_parquet(out, path)
+    # Stamp the sentinel only into the cached copy so old caches bust; the frame
+    # returned to the loader stays sentinel-free (stable schema).
+    to_cache = out.copy()
+    to_cache[_CONTRACT_TIEBREAK_SENTINEL] = True
+    atomic_write_parquet(to_cache, path)
     return out

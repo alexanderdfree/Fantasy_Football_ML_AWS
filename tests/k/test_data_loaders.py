@@ -1321,6 +1321,100 @@ def test_load_data_redrives_is_dome_when_schedule_corrects_empty_roof(tmp_path, 
     row = df[(df["season"] == 2025) & (df["player_id"] == "K01")].iloc[0]
     assert row["roof"] == "dome"
     assert row["is_dome"] == 1, "is_dome must be re-derived to 1 after roof corrected to dome"
+    # #1392: the schedule-corrected dome must also pick up the 65 F / 0 mph dome
+    # convention (the PBP left weather NaN), not fall through to the outdoor
+    # train-mean fill downstream.
+    assert row["game_temp"] == 65.0
+    assert row["game_wind"] == 0.0
+
+
+@pytest.mark.unit
+def test_schedule_corrected_dome_gets_65_0_outdoor_nan_falls_through(tmp_path, monkeypatch):
+    """#1392: when the schedules merge corrects an empty PBP roof, a resolved
+    DOME game must pick up the 65 F / 0 mph dome convention (positive control),
+    while a resolved OUTDOOR game with NaN weather must be LEFT NaN so it still
+    falls through to the downstream train-mean fill (negative control) — the fix
+    must not blanket-rewrite every schedule-corrected row.
+    """
+    import numpy as np
+
+    import src.k.data as k_data
+    from src.config import SEASONS
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(k_data, "SEASONS", [2024, 2025])
+    monkeypatch.setattr(k_data, "MIN_GAMES", 1)
+
+    def _no_network(*args, **kwargs):
+        raise AssertionError("pbp_data must not be called when the cache hits")
+
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", _no_network)
+
+    pd.DataFrame([_kicker_pbp_cache_row("K00", 2024, 1)]).to_parquet(
+        tmp_path / "kicker_pbp_2024_2024.parquet"
+    )
+
+    # 2025 weekly: one KC kicker (schedule says dome) + one BUF kicker (schedule
+    # says outdoors). game_temp/game_wind are NaN-initialised by load_data.
+    weekly_path = tmp_path / f"weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "player_id": ["K01", "K02"],
+            "player_name": ["Kicker 01", "Kicker 02"],
+            "recent_team": ["KC", "BUF"],
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "position": ["K", "K"],
+            "season_type": ["REG", "REG"],
+            "fg_att": [3.0, 3.0],
+            "fg_made": [2.0, 2.0],
+            "fg_missed": [1.0, 1.0],
+            "pat_att": [3.0, 3.0],
+            "pat_made": [3.0, 3.0],
+            "pat_missed": [0.0, 0.0],
+        }
+    ).to_parquet(weekly_path)
+
+    # Two distinct 2025 games: KC@home is a dome, BUF@home is outdoors.
+    sched_path = tmp_path / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    pd.DataFrame(
+        {
+            "season": [2024, 2025, 2025],
+            "week": [1, 1, 1],
+            "home_team": ["KC", "KC", "BUF"],
+            "away_team": ["BUF", "DEN", "MIA"],
+            "spread_line": [-3.0, -3.0, -1.0],
+            "total_line": [47.0, 47.0, 44.0],
+            "game_type": ["REG", "REG", "REG"],
+            "roof": ["outdoors", "dome", "outdoors"],
+            "surface": ["grass", "matrixturf", "grass"],
+        }
+    ).to_parquet(sched_path)
+
+    # Reproduce the stale state the schedules merge later corrects: empty roof +
+    # stale is_dome=0, weather left NaN (the exact #1392 pre-fill condition).
+    def _stub_stale_backfill(df, seasons):
+        m = df["season"].isin(seasons)
+        df.loc[m, "roof"] = ""
+        df.loc[m, "is_dome"] = 0
+
+    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", _stub_stale_backfill)
+
+    df = k_data.load_data()
+
+    dome = df[(df["season"] == 2025) & (df["player_id"] == "K01")].iloc[0]
+    assert dome["roof"] == "dome"
+    assert dome["is_dome"] == 1
+    assert dome["game_temp"] == 65.0, "schedule-corrected dome must get 65 F"
+    assert dome["game_wind"] == 0.0, "schedule-corrected dome must get 0 mph wind"
+
+    outdoor = df[(df["season"] == 2025) & (df["player_id"] == "K02")].iloc[0]
+    assert outdoor["roof"] == "outdoors"
+    assert outdoor["is_dome"] == 0
+    # Negative control: the outdoor row's NaN weather is NOT rewritten to the dome
+    # constant — it stays NaN so the downstream train-mean fill still handles it.
+    assert np.isnan(outdoor["game_temp"]), "outdoor NaN weather must not be dome-filled"
+    assert np.isnan(outdoor["game_wind"]), "outdoor NaN weather must not be dome-filled"
 
 
 @pytest.mark.unit
