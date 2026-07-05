@@ -120,8 +120,9 @@ benchmark runs.
 
 Run from the repo root — the tuners look for a relative `data/raw/` (same as on macOS, not a
 Windows-specific quirk). The RTX 5080 is picked up automatically by the `torch.cuda.is_available()`
-device check ([src/shared/pipeline.py](src/shared/pipeline.py)); the attention NN trains in FP16,
-which is native (and full-throughput) on Blackwell. The remaining sections below (*Run benchmarks*,
+device check ([src/shared/pipeline.py](src/shared/pipeline.py)); the attention NN trains in FP32
+with TF32 matmuls by default (AMP off since the 2026-06-22 flip; FP16 is opt-in via
+`FF_AMP_DTYPE=fp16`). The remaining sections below (*Run benchmarks*,
 *Run tests*, *Lint*) work as written with the same `python -m …` / `pytest` / `ruff` commands. To
 get full use of the 9950X3D's cores, see the next subsection.
 
@@ -340,7 +341,7 @@ Start local Codex sessions through the fresh-worktree launcher:
 scripts/codex-fresh-worktree.sh
 ```
 
-It reuses the current directory only when it is already a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/Final-Project`. Otherwise it fetches `origin/main`, creates a fresh `codex/session-<id>` worktree under `${CODEX_HOME:-~/.codex}/worktrees/<id>/Final-Project`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and starts Codex with `--cd` pointed at the fresh worktree. Useful launcher options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`.
+It reuses the current directory only when it is already a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/<repo-basename>` (the basename is derived from the main checkout's — `Fantasy_Football_ML_AWS` here). Otherwise it fetches `origin/main`, creates a fresh `codex/session-<id>` worktree under `${CODEX_HOME:-~/.codex}/worktrees/<id>/<repo-basename>`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and starts Codex with `--cd` pointed at the fresh worktree. Useful launcher options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`.
 
 Codex custom slash prompts are local-user files, not repo-scoped files. The repo keeps wrapper templates in [`.codex/prompts/`](.codex/prompts/); shared cross-agent workflow behavior lives under [agent-workflows/](agent-workflows/). Install or refresh the actual `~/.codex/prompts/*.md` copies with:
 

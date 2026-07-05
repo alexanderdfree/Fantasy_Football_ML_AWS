@@ -14,7 +14,7 @@ Codex loads project hooks from `.codex/hooks.json` when the project is trusted. 
 - `.codex/hooks/pre-pr.sh` wraps the repo's existing `.claude/hooks/pre-pr.sh` with `CLAUDE_PROJECT_DIR` set to the Codex project root, so the deterministic PR gate stays single-sourced.
 - `.codex/hooks/post-pr-create.sh` emits a compact pointer to the prompt-backed post-PR review/CI/merge workflow after `gh pr create`; the workflow runs `scripts/codex-review-quiet.sh` so Codex/plugin loader warnings do not flood the chat context.
 - `.codex/hooks/post-pr-merge.sh` runs after `gh pr merge` (PostToolUse on Bash); it fast-forwards the parent/main checkout's `main` (guarded ff-only, skips a dirty / non-`main` parent) and promotes the merging worktree's locally-built `data/splits` to the parent when the merge touched splits-affecting code — the Codex mirror of Claude's `post-pr-merge.sh`.
-- `.codex/hooks/memory-sync-stop.sh` runs a best-effort `scripts/agent-memory-sync.sh all push` on `Stop`, pushing changed local Claude/Codex memory trees to their separate S3 prefixes.
+- `.codex/hooks/memory-sync-stop.sh` runs a best-effort `scripts/agent-memory-sync.sh all push` on `Stop`, pushing changed local Claude/Codex/Gemini memory trees to their separate S3 prefixes.
 
 Known limitation: Codex hooks are guardrails, not a complete enforcement boundary. They cover `apply_patch`, simple Bash hook events, and MCP calls that Codex exposes to hooks; they do not reliably intercept every possible shell-side file write. Keep using `apply_patch` for edits.
 
@@ -26,7 +26,7 @@ Start new local Codex sessions for this repo through:
 scripts/codex-fresh-worktree.sh
 ```
 
-The launcher reuses the current checkout only when it is a clean Codex-owned worktree under `${CODEX_HOME:-$HOME/.codex}/worktrees/*/Final-Project`. From the main checkout, a dirty worktree, or any other checkout shape, it creates `${CODEX_HOME:-$HOME/.codex}/worktrees/<id>/Final-Project` on `codex/session-<id>` from `origin/main`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and then runs `codex --cd <that-worktree>`.
+The launcher reuses the current checkout only when it is a clean Codex-owned worktree under `${CODEX_HOME:-$HOME/.codex}/worktrees/*/<repo-basename>` (the basename is derived from the main checkout's — `Fantasy_Football_ML_AWS` here). From the main checkout, a dirty worktree, or any other checkout shape, it creates `${CODEX_HOME:-$HOME/.codex}/worktrees/<id>/<repo-basename>` on `codex/session-<id>` from `origin/main`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and then runs `codex --cd <that-worktree>`.
 
 Useful options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`. Use `--` before Codex arguments when a prompt or Codex option could be confused with a launcher option.
 
@@ -71,4 +71,4 @@ Two specialized sibling wrappers follow the same tracked-only pattern and reuse 
 
 ## Auto-memory
 
-Claude and Codex memories are both machine-local recall caches, not sources of truth. They sync across the owner's machines via [scripts/agent-memory-sync.sh](scripts/agent-memory-sync.sh), but to separate S3 prefixes: `claude-memory/<repo>/memory/` and `codex-memory/<repo>/memories/`. Codex sync covers `${CODEX_HOME:-~/.codex}/memories/` only and excludes Codex's `.git` internals / SQLite runtime state. The project `SessionStart` hook pulls Codex memory; the `Stop` hook pushes both local memory trees if present, so cross-agent memory updates made locally reach both remotes. Durable, share-worthy project knowledge still belongs in [AGENTS.md](AGENTS.md).
+Claude and Codex memories are both machine-local recall caches, not sources of truth. They sync across the owner's machines via [scripts/agent-memory-sync.sh](scripts/agent-memory-sync.sh), but to separate S3 prefixes: `claude-memory/<repo>/memory/`, `codex-memory/<repo>/memories/`, and (since #1283) Gemini's `gemini-memory/<repo>/memory/`. Codex sync covers `${CODEX_HOME:-~/.codex}/memories/` only and excludes Codex's `.git` internals / SQLite runtime state. The project `SessionStart` hook pulls Codex memory; the `Stop` hook (`all push`) pushes all three local memory trees (Claude/Codex/Gemini) if present, so cross-agent memory updates made locally reach every remote. Durable, share-worthy project knowledge still belongs in [AGENTS.md](AGENTS.md).

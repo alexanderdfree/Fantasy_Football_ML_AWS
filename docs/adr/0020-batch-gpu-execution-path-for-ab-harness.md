@@ -12,9 +12,13 @@ resolved jobs for local environments only — 5080 CUDA `-j6`, 9950X3D 16-core
 pool, Mac sequential. A metric-path A/B with no local GPU available ran
 sequentially on a Mac CPU (~80 min, FP32/eager), which is not the path
 production trains on: the Batch fleet is g6/L4 (sm_89, g5/A10G fallback) with
-FP16 AMP and CUDA graphs autodetect-ON — and graphs are deliberately **not**
-numerically inert (ADR-0017), so an eager-CPU A/B can mis-rank variants the
-graphed GPU path would order differently.
+CUDA graphs autodetect-ON and — at the time of this decision — FP16 AMP,
+under which graphs are deliberately **not** numerically inert (ADR-0017), so
+an eager-CPU A/B can mis-rank variants the graphed GPU path would order
+differently. (Current status: since the 2026-06-22 flip the fleet default is
+FP32+TF32 with AMP off — FP16 is opt-in via `FF_AMP_DTYPE=fp16` — and the
+graphed path is per-step bit-exact / effectively inert on that default; see
+Changelog.)
 
 Constraints: production images build only from `main`
 ([batch-image.yml](../../.github/workflows/batch-image.yml)); a branch A/B
@@ -151,5 +155,13 @@ tests: [tests/tuning/test_ab_batch.py](../../tests/tuning/test_ab_batch.py),
   `ff-ab-job` clone + per-cell S3 checkpoint/resume, and aggregate through the
   ablation module's own `print_summary`. Motivated by `selfattn`, which can't
   vmap (dropped from the stacked `ab_attn_arch` spec) so it has no GPU home
-  otherwise; `--cuda-graph false` defaults to a clean eager FP16 A/B. Results
+  otherwise; `--cuda-graph false` defaults to a clean eager A/B (FP16 under
+  the then-default AMP regime; FP32+TF32 since 2026-06-22). Results
   land under `ablation_runs/{run_id}/`.
+- **2026-07-04** — Context updated to the current dtype regime: the fleet
+  default flipped to FP32+TF32 (AMP off) on 2026-06-22 (ADR-0017); FP16 —
+  the default this decision was written against — is now opt-in via
+  `FF_AMP_DTYPE=fp16`, and CUDA graphs are per-step bit-exact / effectively
+  inert on the FP32 default (non-inert only on the opt-in FP16 path).
+  Neither `launch_ab` nor `ab_batch` sets `FF_AMP_DTYPE`, so fleet A/Bs run
+  the FP32+TF32 default. Docs-only (#1446/#1447).
