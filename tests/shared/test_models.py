@@ -112,6 +112,75 @@ class TestTwoStageRidge:
         preds_after = model2.predict(X)
         np.testing.assert_allclose(preds_before, preds_after, atol=1e-6)
 
+    def test_save_and_load_roundtrip_non_default_threshold(self, zero_inflated_data, tmp_path):
+        """Constructor hyperparams survive a round trip (#1433).
+
+        save() used to persist only the four fitted objects, so a non-default
+        threshold silently reverted to the constructor default 0.5 on load.
+        """
+        X, y = zero_inflated_data
+        model = TwoStageRidge(clf_C=0.01, ridge_alpha=0.1, threshold=0.9)
+        model.fit(X, y)
+        preds_before = model.predict(X)
+
+        model_dir = str(tmp_path / "two_stage")
+        model.save(model_dir)
+
+        model2 = TwoStageRidge()  # default threshold=0.5, as the wrapper's load() constructs
+        model2.load(model_dir)
+        assert model2.threshold == 0.9
+        assert model2.clf_C == 0.01
+        assert model2.ridge_alpha == 0.1
+        np.testing.assert_allclose(preds_before, model2.predict(X), atol=1e-6)
+
+    def test_load_without_meta_sidecar_keeps_constructor_defaults(
+        self, zero_inflated_data, tmp_path
+    ):
+        """Pre-sidecar artifacts (no two_stage_meta.json) load with prior behavior."""
+        import os
+
+        X, y = zero_inflated_data
+        model = TwoStageRidge()
+        model.fit(X, y)
+        model_dir = str(tmp_path / "two_stage")
+        model.save(model_dir)
+        os.remove(f"{model_dir}/two_stage_meta.json")  # simulate an old artifact
+
+        model2 = TwoStageRidge()
+        model2.load(model_dir)
+        assert model2.threshold == 0.5
+        assert model2.clf_C == 0.001
+        assert model2.ridge_alpha == 0.01
+
+    def test_multi_target_wrapper_two_stage_threshold_roundtrip(self, zero_inflated_data, tmp_path):
+        """The wrapper's load() reconstructs ``TwoStageRidge()`` with default
+        args whenever classifier.pkl exists; the sidecar must restore the
+        configured non-default threshold through that path too (#1433)."""
+        X, y_zero_inflated = zero_inflated_data
+        y_dict = {
+            "rushing_yards": np.abs(X[:, 0] * 10 + 20).astype(np.float32),
+            "rushing_tds": y_zero_inflated,
+        }
+        model = RidgeMultiTarget(
+            target_names=["rushing_yards", "rushing_tds"],
+            alpha=1.0,
+            two_stage_targets={
+                "rushing_tds": {"clf_C": 0.01, "ridge_alpha": 0.1, "threshold": 0.9}
+            },
+        )
+        model.fit(X, y_dict)
+        preds_before = model.predict(X)
+
+        model_dir = str(tmp_path / "multi")
+        model.save(model_dir)
+
+        restored = RidgeMultiTarget(target_names=["rushing_yards", "rushing_tds"], alpha=1.0)
+        restored.load(model_dir)
+        assert restored._models["rushing_tds"].threshold == 0.9
+        np.testing.assert_allclose(
+            preds_before["rushing_tds"], restored.predict(X)["rushing_tds"], atol=1e-6
+        )
+
     def test_single_sample_prediction(self, zero_inflated_data):
         X, y = zero_inflated_data
         model = TwoStageRidge()
