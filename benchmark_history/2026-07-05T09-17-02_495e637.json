@@ -1,0 +1,191 @@
+{
+  "run_id": "2026-07-05T09:17:02_495e637",
+  "timestamp": "2026-07-05T09:17:02",
+  "git_hash": "495e637",
+  "note": "Batch Spot auto-run (495e637)",
+  "backend": "batch",
+  "instance_type": "g6.xlarge (L4, Spot, CUDA-graph)",
+  "positions": [
+    "RB"
+  ],
+  "results": [
+    {
+      "position": "RB",
+      "ridge_mae": 4.175,
+      "ridge_r2": 0.407,
+      "nn_mae": 4.162,
+      "nn_r2": 0.449,
+      "nn_wins_mae": true,
+      "nn_per_target": {
+        "rushing_tds": {
+          "mae": 0.32,
+          "r2": 0.129,
+          "rmse": 0.497
+        },
+        "receiving_tds": {
+          "mae": 0.107,
+          "r2": 0.038,
+          "rmse": 0.259
+        },
+        "rushing_yards": {
+          "mae": 18.472,
+          "r2": 0.413,
+          "rmse": 28.014
+        },
+        "receiving_yards": {
+          "mae": 9.281,
+          "r2": 0.26,
+          "rmse": 14.155
+        },
+        "receptions": {
+          "mae": 0.983,
+          "r2": 0.362,
+          "rmse": 1.394
+        },
+        "fumbles_lost": {
+          "mae": 0.077,
+          "r2": 0.023,
+          "rmse": 0.19
+        }
+      },
+      "ridge_per_target": {
+        "rushing_tds": {
+          "mae": 0.245,
+          "r2": -0.132,
+          "rmse": 0.566
+        },
+        "receiving_tds": {
+          "mae": 0.064,
+          "r2": -0.059,
+          "rmse": 0.271
+        },
+        "rushing_yards": {
+          "mae": 18.291,
+          "r2": 0.455,
+          "rmse": 27.006
+        },
+        "receiving_yards": {
+          "mae": 9.571,
+          "r2": 0.271,
+          "rmse": 14.044
+        },
+        "receptions": {
+          "mae": 1.01,
+          "r2": 0.373,
+          "rmse": 1.382
+        },
+        "fumbles_lost": {
+          "mae": 0.076,
+          "r2": 0.017,
+          "rmse": 0.191
+        }
+      },
+      "ridge_top12": 0,
+      "nn_top12": 0,
+      "ridge_rmse": 6.262,
+      "nn_rmse": 6.04,
+      "attn_nn_mae": 4.067,
+      "attn_nn_r2": 0.469,
+      "attn_nn_rmse": 5.926,
+      "attn_nn_per_target": {
+        "rushing_tds": {
+          "mae": 0.322,
+          "r2": 0.135,
+          "rmse": 0.495
+        },
+        "receiving_tds": {
+          "mae": 0.107,
+          "r2": 0.042,
+          "rmse": 0.258
+        },
+        "rushing_yards": {
+          "mae": 17.697,
+          "r2": 0.467,
+          "rmse": 26.695
+        },
+        "receiving_yards": {
+          "mae": 9.25,
+          "r2": 0.26,
+          "rmse": 14.151
+        },
+        "receptions": {
+          "mae": 0.975,
+          "r2": 0.294,
+          "rmse": 1.467
+        },
+        "fumbles_lost": {
+          "mae": 0.037,
+          "r2": -0.037,
+          "rmse": 0.196
+        }
+      },
+      "attn_nn_top12": 0,
+      "lgbm_mae": 4.198,
+      "lgbm_r2": 0.472,
+      "lgbm_rmse": 5.91,
+      "lgbm_per_target": {
+        "rushing_tds": {
+          "mae": 0.322,
+          "r2": 0.142,
+          "rmse": 0.493
+        },
+        "receiving_tds": {
+          "mae": 0.108,
+          "r2": 0.044,
+          "rmse": 0.258
+        },
+        "rushing_yards": {
+          "mae": 18.197,
+          "r2": 0.459,
+          "rmse": 26.892
+        },
+        "receiving_yards": {
+          "mae": 9.691,
+          "r2": 0.254,
+          "rmse": 14.207
+        },
+        "receptions": {
+          "mae": 1.014,
+          "r2": 0.385,
+          "rmse": 1.369
+        },
+        "fumbles_lost": {
+          "mae": 0.078,
+          "r2": 0.024,
+          "rmse": 0.19
+        }
+      },
+      "lgbm_top12": 0,
+      "elapsed_sec": 0.4,
+      "phase_seconds": {
+        "assert_gpu": 0.0,
+        "split.nn.assert_gpu": 0.3,
+        "split.nn.sync_raw_data": 1.7,
+        "split.nn.download_data": 0.7,
+        "split.nn.read_parquets": 0.6,
+        "split.nn.run_pipeline": 38.1,
+        "split.nn.copy_artifacts": 0.0,
+        "split.nn.pipeline.prepare_data": 29.2,
+        "split.nn.pipeline.nn_train": 6.2,
+        "split.nn.pipeline.attn_nn_train": 2.6,
+        "split.nn.pipeline.train_models_total": 8.8,
+        "split.nn.pipeline.save_artifacts": 0.0,
+        "split.nn.elapsed_sec": 42.5,
+        "split.cpu.assert_gpu": 0.0,
+        "split.cpu.sync_raw_data": 1.2,
+        "split.cpu.download_data": 0.3,
+        "split.cpu.read_parquets": 0.4,
+        "split.cpu.run_pipeline": 19.1,
+        "split.cpu.copy_artifacts": 0.0,
+        "split.cpu.pipeline.prepare_data": 14.4,
+        "split.cpu.pipeline.ridge_tune": 3.2,
+        "split.cpu.pipeline.ridge_fit": 0.3,
+        "split.cpu.pipeline.lgbm_train": 0.8,
+        "split.cpu.pipeline.train_models_total": 4.3,
+        "split.cpu.pipeline.save_artifacts": 0.0,
+        "split.cpu.elapsed_sec": 21.4
+      }
+    }
+  ],
+  "pr_number": 1474
+}
