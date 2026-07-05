@@ -72,24 +72,25 @@ Pull these from `src/serving/static/css/style.css` so the parent site and the Fa
 
 ```css
 :root {
-  --bg-primary:   #0f1117;  /* page background (dark navy) */
-  --bg-secondary: #1a1d27;
-  --bg-card:      #21242f;  /* cards / panels */
-  --bg-hover:     #282c3a;
-  --border:       #2e3347;
+  --bg-primary:   #070b14;  /* page background (midnight blue-black) */
+  --bg-secondary: #0e1422;
+  --bg-card:      #121a2c;  /* cards / panels */
+  --bg-hover:     #19223a;
+  --border:       #232d47;
   --text-primary:   #e8eaed;
   --text-secondary: #9aa0b0;
   --text-muted:     #6b7280;
-  --accent:           #22c55e;  /* primary accent — green */
-  --accent-secondary: #3b82f6;  /* secondary accent — blue */
+  --accent:           #3d8bff;  /* primary accent — electric blue */
+  --accent-secondary: #22d3ee;  /* secondary accent — electric cyan */
+  --positive:         #22c55e;  /* success/positive — green, decoupled from brand */
   --radius:    8px;
   --radius-lg: 12px;
 }
 ```
 - **Font stack (system fonts, no web-font dependency):**
   `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
-- **Header pattern:** bold accent-green wordmark + muted subtitle (mirrors Fantasy's `.logo` / `.subtitle` — `font-weight:700`, `color: var(--accent)`, `letter-spacing:-0.5px`).
-- Dark mode only; cards use `--bg-card` on `--bg-primary` with `--border`.
+- **Header pattern:** bold electric-blue wordmark with a soft glow (`text-shadow: 0 0 16px rgba(61,139,255,.38)`) + muted subtitle (mirrors Fantasy's `.logo` / `.subtitle` — `font-weight:700`, `color: var(--accent)`, `letter-spacing:-0.5px`).
+- Dark only, two modes: the default **midnight** palette above plus a pure-black **OLED night** mode (`html[data-theme="oled"]`, persisted in `localStorage("ffp-theme")`) that the dashboard header's sun/moon button toggles. Cards use `--bg-card` on `--bg-primary` with `--border`.
 
 ### 3.4 Hosting / deploy
 - **S3 bucket** for the static build. Prefer **private bucket + CloudFront Origin Access Control (OAC)** over the legacy S3 website-endpoint (OAC supports the redirect-via-CF-Function pattern and keeps the bucket private).

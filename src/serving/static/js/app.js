@@ -70,10 +70,31 @@ function sizedHeadshot(url, size) {
     return url;
 }
 
-// Chart.js defaults
-Chart.defaults.color = "#9aa0b0";
-Chart.defaults.borderColor = "#2e3347";
-Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+// Theme-aware chart palette. Chart text/grid colors live in the CSS custom
+// properties (which the OLED theme overrides), so read them from the active
+// theme instead of hardcoding hexes; re-applied by applyChartTheme() whenever
+// the theme toggles so rebuilt charts pick up the right grid/text colors.
+function cssVar(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+}
+
+function chartTheme() {
+    return {
+        text: cssVar("--text-secondary", "#9aa0b0"),
+        grid: cssVar("--border", "#232d47"),
+        font: cssVar("--font-sans", "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"),
+    };
+}
+
+function applyChartTheme() {
+    const t = chartTheme();
+    Chart.defaults.color = t.text;
+    Chart.defaults.borderColor = t.grid;
+    Chart.defaults.font.family = t.font;
+    return t;
+}
+applyChartTheme();
 
 async function fetchJSON(url) {
     const resp = await fetch(url);
@@ -89,14 +110,16 @@ async function fetchJSON(url) {
     return resp.json();
 }
 
+// Model series hues come from the design-system tokens (--model-*) so the CSS
+// and charts share a single source; identical in both themes, so read once.
 const COLORS = {
-    ridge: "#3b82f6",
-    nn: "#22c55e",
-    attn_nn: "#a855f7",
-    lgbm: "#f59e0b",
-    nflcom: "#06b6d4",
-    rotowire: "#ec4899",
-    actual: "#e8eaed",
+    ridge: cssVar("--model-ridge", "#3b82f6"),
+    nn: cssVar("--model-nn", "#22c55e"),
+    attn_nn: cssVar("--model-attn-nn", "#a855f7"),
+    lgbm: cssVar("--model-lgbm", "#f59e0b"),
+    nflcom: cssVar("--model-nflcom", "#06b6d4"),
+    rotowire: cssVar("--model-rotowire", "#ec4899"),
+    actual: cssVar("--model-actual", "#e8eaed"),
     ridgeBg: "rgba(59, 130, 246, 0.2)",
     nnBg: "rgba(34, 197, 94, 0.2)",
     attn_nnBg: "rgba(168, 85, 247, 0.2)",
@@ -167,6 +190,7 @@ async function init() {
     setupModal();
     setupSearch();
     setupColumnFilter();
+    setupThemeToggle();
     setupScoringToggle();
     setupHistoryControls();
     setupWikiClickHandler();
@@ -467,6 +491,52 @@ function renderColumnFilterMenu() {
 // secondary view is currently active. Model Architecture and the Wiki are
 // scoring-invariant so we don't reload them.
 // ---------------------------------------------------------------------------
+
+// Sun/moon header button flipping between the default midnight palette and the
+// pitch-black OLED night mode (html[data-theme="oled"]). The choice persists in
+// localStorage("ffp-theme") and is applied pre-paint by an inline <head> script;
+// live Chart.js instances resolve their colors at creation, so refresh them here.
+function setupThemeToggle() {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    const sunIco = document.getElementById("theme-ico-sun");
+    const moonIco = document.getElementById("theme-ico-moon");
+    const syncIcons = () => {
+        const oled = document.documentElement.getAttribute("data-theme") === "oled";
+        sunIco.classList.toggle("is-active", !oled);
+        moonIco.classList.toggle("is-active", oled);
+        btn.title = oled ? "OLED night mode — switch to midnight" : "Midnight mode — switch to OLED night";
+        btn.setAttribute("aria-pressed", oled ? "true" : "false");
+    };
+    syncIcons();
+    btn.addEventListener("click", () => {
+        const oled = document.documentElement.getAttribute("data-theme") === "oled";
+        if (oled) document.documentElement.removeAttribute("data-theme");
+        else document.documentElement.setAttribute("data-theme", "oled");
+        try { localStorage.setItem("ffp-theme", oled ? "midnight" : "oled"); } catch (e) { /* private mode */ }
+        syncIcons();
+        refreshChartsForTheme();
+    });
+}
+
+// Re-resolve the theme-dependent chart colors on every live Chart.js instance.
+// Chart.js snapshots option values at creation, so a theme flip must both reset
+// the global defaults (for future charts) and patch existing instances in place.
+function refreshChartsForTheme() {
+    const t = applyChartTheme();
+    [playerChart, positionMaeChart, positionR2Chart, weeklyMaeChart].forEach((chart) => {
+        if (!chart) return;
+        Object.values(chart.options.scales || {}).forEach((scale) => {
+            if (scale.grid && scale.grid.color) scale.grid.color = t.grid;
+            if (scale.title) scale.title.color = t.text;
+            scale.ticks = Object.assign({}, scale.ticks, { color: t.text });
+        });
+        const legend = chart.options.plugins && chart.options.plugins.legend;
+        if (legend) legend.labels = Object.assign({}, legend.labels, { color: t.text });
+        chart.update("none");
+    });
+}
+
 function setupScoringToggle() {
     const container = document.getElementById("scoring-filter");
     if (!container) return;
@@ -1169,7 +1239,7 @@ function renderPositionCharts(metrics) {
         options: {
             responsive: true,
             plugins: { title: { display: true, text: "MAE by Position (Lower is Better)", color: "#e8eaed" } },
-            scales: { y: { beginAtZero: true, grid: { color: "#2e3347" } }, x: { grid: { display: false } } },
+            scales: { y: { beginAtZero: true, grid: { color: chartTheme().grid } }, x: { grid: { display: false } } },
         },
     });
 
@@ -1180,7 +1250,7 @@ function renderPositionCharts(metrics) {
         options: {
             responsive: true,
             plugins: { title: { display: true, text: "R\u00B2 by Position (Higher is Better)", color: "#e8eaed" } },
-            scales: { y: { beginAtZero: true, grid: { color: "#2e3347" } }, x: { grid: { display: false } } },
+            scales: { y: { beginAtZero: true, grid: { color: chartTheme().grid } }, x: { grid: { display: false } } },
         },
     });
 }
@@ -1215,8 +1285,8 @@ function renderWeeklyChart(weekly) {
                 title: { display: true, text: "Weekly MAE Across Test Season (Lower is Better)", color: "#e8eaed" },
             },
             scales: {
-                y: { beginAtZero: true, grid: { color: "#2e3347" }, title: { display: true, text: "MAE", color: "#9aa0b0" } },
-                x: { grid: { color: "#2e3347" } },
+                y: { beginAtZero: true, grid: { color: chartTheme().grid }, title: { display: true, text: "MAE", color: chartTheme().text } },
+                x: { grid: { color: chartTheme().grid } },
             },
         },
     });
@@ -1300,8 +1370,8 @@ async function openPlayerModal(playerId, fallback = null) {
                 maintainAspectRatio: false,
                 plugins: { title: { display: true, text: "Weekly Fantasy Points: Actual vs Predicted", color: "#e8eaed" } },
                 scales: {
-                    y: { beginAtZero: true, grid: { color: "#2e3347" }, title: { display: true, text: "Fantasy Points", color: "#9aa0b0" } },
-                    x: { grid: { color: "#2e3347" } },
+                    y: { beginAtZero: true, grid: { color: chartTheme().grid }, title: { display: true, text: "Fantasy Points", color: chartTheme().text } },
+                    x: { grid: { color: chartTheme().grid } },
                 },
             },
         });

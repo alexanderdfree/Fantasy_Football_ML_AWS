@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fantasy Football Predictor</title>
+    <script>
+        /* Apply the saved color theme before first paint to avoid a flash. */
+        try { if (localStorage.getItem("ffp-theme") === "oled") document.documentElement.setAttribute("data-theme", "oled"); } catch (e) {}
+    </script>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <!-- Warm the player-headshot CDNs (NFL Cloudinary + ESPN) so the first photo
          fetch skips the cold DNS+TLS handshake. -->
@@ -26,6 +30,21 @@
             <span class="subtitle">Position-Specific ML Predictions</span>
         </div>
         <div class="header-right">
+            <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme">
+                <span class="theme-ico is-active" id="theme-ico-sun">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4"/>
+                        <path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/>
+                        <path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+                    </svg>
+                </span>
+                <span class="theme-divider" aria-hidden="true">/</span>
+                <span class="theme-ico" id="theme-ico-moon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+                    </svg>
+                </span>
+            </button>
             <div class="scoring-toggle pill-group" id="scoring-filter" role="radiogroup" aria-label="Scoring format">
                 <button class="pill active" data-value="ppr">Full PPR</button>
                 <button class="pill" data-value="half_ppr">Half PPR</button>
