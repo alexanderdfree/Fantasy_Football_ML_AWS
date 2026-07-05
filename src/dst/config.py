@@ -245,11 +245,12 @@ POSITION_CONFIG = PositionConfig(
     attn_patience=20,
     attn_cosine_eta_min=2e-5,
     # Per-game stats fed into the attention sequence. The 10 raw target
-    # stats plus 4 opponent-side per-game values (not rolling) so attention
-    # can weigh recent games against recent opponent strength. Derived
-    # combos (defensive_production, st_production, fantasy_points) are
-    # intentionally excluded — linear functions of the raw stats already
-    # in the sequence (would add collinear columns).
+    # stats plus 1 opponent-side per-game value (opp_qb_epa, not rolling;
+    # see the #649 note below) so attention can weigh recent games against
+    # recent opponent strength. Derived combos (defensive_production,
+    # st_production, fantasy_points) are intentionally excluded — linear
+    # functions of the raw stats already in the sequence (would add
+    # collinear columns).
     attn_history_stats=[
         # Own raw defensive + ST stats (mirror the 10 targets)
         "def_sacks",
@@ -294,8 +295,8 @@ POSITION_CONFIG = PositionConfig(
     attn_gate_weight=1.0,
     # Per-game opp-OFFENSE stats fed to the second attention branch. DST
     # is the one position whose parallel branch attends over the opposing
-    # offense (not defense) — the per-game `opp_scoring`/`opp_qb_epa`
-    # entries in attn_history_stats are point-in-time signals about what
+    # offense (not defense) — the per-game `opp_qb_epa` entry in
+    # attn_history_stats is a point-in-time signal about what
     # the opp did *vs this DST*; the parallel branch carries season-form.
     opp_attn_history_stats=[
         "off_pass_yards",

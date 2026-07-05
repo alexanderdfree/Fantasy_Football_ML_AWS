@@ -17,9 +17,11 @@ import torch
 _DEVICE_ENV = "FF_DEVICE"
 _VALID_DEVICES = ("auto", "cpu", "cuda", "mps")
 
-# Operator-facing AMP-precision override, analogous to FF_DEVICE. ``auto`` picks
-# the dtype by GPU compute capability (see ``amp_dtype``); the explicit values
-# pin it for A/B testing without code edits.
+# Operator-facing AMP-precision override, analogous to FF_DEVICE. ``auto``
+# (the default) disables AMP — FP32 storage + TF32 matmuls on CUDA since the
+# 2026-06-22 flip (see ``amp_dtype``); the explicit ``fp16``/``bf16``/``fp32``
+# values pin an override for A/B testing without code edits (only the ``bf16``
+# opt-in consults compute capability, for the sm_75 → FP16 fallback).
 _AMP_DTYPE_ENV = "FF_AMP_DTYPE"
 _VALID_AMP = ("auto", "bf16", "fp16", "fp32")
 

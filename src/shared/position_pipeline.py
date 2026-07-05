@@ -280,8 +280,10 @@ def build_pipeline_config(
     # on the non-K side. K opts in to ``attn_history_stats`` via the
     # nested+history branch (per-game aggregates feed alongside the inner
     # kick pool); attn_gated is still flat-only. ``head_losses`` is plumbed
-    # universally now (L-K4) — K's all-huber declaration is a no-op vs the
-    # default but keeps the contract consistent with the other positions.
+    # universally now (L-K4) — K declares all-MSE heads (since PR #870), and
+    # the declaration is LOAD-BEARING: MultiTargetLoss defaults a missing
+    # entry to "huber" (src/shared/training.py), so pruning it as "redundant"
+    # would silently flip K's four heads back to Huber loss.
     if pc.attn_history_stats:
         cfg["attn_history_stats"] = pc.attn_history_stats
     cfg["head_losses"] = pc.head_losses

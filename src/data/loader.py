@@ -446,9 +446,10 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         # ID-system churn or data-entry collisions), the snap-count merge below
         # would fan out and multiply each player-week row. Keep "first" — the
         # downstream consequence of dropping a real cross-reference is one
-        # player-week with NaN snap_pct (gracefully filled by the
-        # position-week median imputation), strictly better than silently
-        # double-counting.
+        # player-week with NaN snap_pct (zero-filled by engineer.py's
+        # snap_pct lag; the post-split impute_snap_pct is a no-op in the
+        # canonical flow — see preprocessing.py), strictly better than
+        # silently double-counting.
         # Deterministic pre-sort before keep="first": player_ids() is polars-
         # backed (no row-order guarantee), so without a sort the chosen gsis_id
         # for a colliding pfr_id flips across library versions. (#811)

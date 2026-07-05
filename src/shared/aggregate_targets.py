@@ -154,7 +154,8 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
     inverting the scoring semantics. See audit-318 (W.SHARED-PIPE finding 2).
 
     Note: this is piecewise-constant, so it has zero gradient w.r.t. the tier
-    input — PA/YA head updates come entirely from the per-target Huber loss.
+    input — PA/YA head updates come entirely from the per-target head loss
+    (MSE since #870; see ``head_losses`` in src/dst/config.py).
     """
     if isinstance(values, torch.Tensor):
         b = torch.tensor(boundaries, dtype=values.dtype, device=values.device)

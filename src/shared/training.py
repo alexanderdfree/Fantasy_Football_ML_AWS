@@ -28,9 +28,9 @@ _CUDA_GRAPH_RESTORE_BN_ENV = "FF_CUDA_GRAPH_RESTORE_BN"
 # worker startup adds hundreds of ms per loader on macOS dev boxes. The
 # previous ``NN_DATALOADER_NUM_WORKERS`` env var (with a CUDA-conditional
 # default) was load-bearing only on the CUDA DataLoader path that PR #309
-# obsoleted; the Batch job-definition still sets ``NN_DATALOADER_NUM_WORKERS=3``
-# in batch-image.yml but it is now a no-op the orchestrator can clear at
-# leisure.
+# obsoleted; PR #1302 dropped it from batch-image.yml, whose jq filter now
+# actively strips the var from the inherited job-definition env on every
+# re-register.
 
 
 def _env_truthy(name: str) -> bool:

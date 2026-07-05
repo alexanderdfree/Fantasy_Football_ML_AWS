@@ -25,7 +25,8 @@ Scope vs the eager script (which stays for the cross-position rollup and the dro
 Run::
 
     python -m src.tuning.ab_scheduler_type --list
-    python -m src.tuning.launch_ab --spec src.tuning.ab_scheduler_type   # GPU fleet, N=24 stacked
+    # GPU fleet, N=24 stacked — --stacked-seeds is required (launch_ab defaults to eager):
+    python -m src.tuning.launch_ab --spec src.tuning.ab_scheduler_type --stacked-seeds
     python -m src.tuning.ab_scheduler_type --positions QB RB WR TE        # skill-position sweep
 """
 
