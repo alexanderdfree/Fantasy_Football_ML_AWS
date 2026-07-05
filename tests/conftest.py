@@ -237,6 +237,11 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                     "season": 2025,
                     "week": week,
                     "headshot_url": "",
+                    # Age at kickoff + rookie flag (serving row contract v7).
+                    # Deterministic spread across the age buckets; DST rows are
+                    # team units with no roster identity -> NaN, mirroring prod.
+                    "age": np.nan if pos == "DST" else float(23 + i * 3),
+                    "is_rookie": np.nan if pos == "DST" else float(1.0 if i == 0 else 0.0),
                     "fantasy_points": actual,
                     "fantasy_points_standard": actual * fmt_multipliers["standard"],
                     "fantasy_points_half_ppr": actual * fmt_multipliers["half_ppr"],

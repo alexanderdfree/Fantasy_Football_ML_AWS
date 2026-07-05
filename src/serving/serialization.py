@@ -88,7 +88,21 @@ _PLAYER_ROW_COLS = [
     *(f"{prefix}_pred" for prefix in _ROW_PRED_PREFIXES),
     *(_pred_col(prefix, fmt) for prefix in _ROW_PRED_PREFIXES for fmt in _VALID_SCORING),
     "headshot_url",
+    "age",
+    "is_rookie",
 ]
+
+
+def _int_or_none(v):
+    """Whole-number cast for display fields (age), None for NaN/missing."""
+    f = _safe_num(v)
+    return int(f) if f is not None else None
+
+
+def _bool_or_none(v):
+    """Tri-state flag serializer: 1.0/0.0 floats (parquet-friendly) -> bool, NaN -> None."""
+    f = _safe_num(v)
+    return bool(f) if f is not None else None
 
 
 def _round_or_none(v):
@@ -121,6 +135,8 @@ def _records_to_player_rows(df, scoring="ppr"):
                 for prefix in _ROW_PRED_PREFIXES
             },
             "headshot": _safe_str(r.get("headshot_url", "")),
+            "age": _int_or_none(r.get("age")),
+            "is_rookie": _bool_or_none(r.get("is_rookie")),
         }
         for r in df[cols].to_dict(orient="records")
     ]

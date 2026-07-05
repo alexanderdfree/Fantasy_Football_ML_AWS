@@ -63,6 +63,44 @@
     --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
+    /* ---- Type scale / weights / tracking (design-system) ---- */
+    --font-size-2xs: 10px;
+    --font-size-xs: 11px;
+    --font-size-sm: 12px;
+    --font-size-base: 13px;
+    --font-size-md: 14px;
+    --font-size-lg: 16px;
+    --font-size-h3: 17px;
+    --font-size-h2: 20px;
+    --font-size-xl: 22px;
+    --font-size-2xl: 24px;
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --weight-bold: 700;
+    --tracking-logo: -0.5px;
+    --tracking-label: 0.8px;
+
+    /* ---- Spacing scale (loose 4px rhythm with half-steps) ---- */
+    --space-1: 4px;
+    --space-1-5: 6px;
+    --space-2: 8px;
+    --space-2-5: 10px;
+    --space-3: 12px;
+    --space-3-5: 14px;
+    --space-4: 16px;
+    --space-4-5: 18px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 28px;
+    --space-8: 32px;
+
+    /* ---- Motion / stacking ---- */
+    --transition-fast: 0.15s;
+    --transition: 0.2s;
+    --ease: ease;
+    --z-menu: 30;
+
     /* ---- Radius / shadow / structure ---- */
     --radius-sm: 4px;
     --radius: 8px;
@@ -1849,3 +1887,235 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 }
 .band-actual-label.band-actual-in { color: var(--positive); }
 .band-actual-label.band-actual-out { color: var(--amber); }
+
+
+/* === Design-system filter bar v2 (dropdown menus, auto-fit rows, fields) ===
+   Plain token-driven classes lifted from the design system's component CSS;
+   consumed by the React views' Columns/Filters menus, Age/Class filters, the
+   team labels, and the filtered-slice stat readout. */
+
+.field-label {
+    display: block;
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+    margin-bottom: var(--space-1-5);
+}
+
+.field-select {
+    padding: 7px 32px 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239aa0b0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
+.field-select:focus { border-color: var(--accent); }
+
+.text-field {
+    padding: 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    outline: none;
+    transition: border-color var(--transition);
+}
+.text-field:focus { border-color: var(--accent); }
+.text-field::placeholder { color: var(--text-muted); }
+.text-field[type="number"] { width: 90px; }
+
+/* ---- Dropdown menu (multi-select checkbox popover) ---- */
+.dropdown-menu { position: relative; display: inline-flex; }
+
+.dropdown-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    line-height: 1.45;
+    cursor: pointer;
+    outline: none;
+    white-space: nowrap;
+    transition: border-color var(--transition) var(--ease);
+}
+.dropdown-trigger:hover,
+.dropdown-trigger.open,
+.dropdown-trigger:focus-visible { border-color: var(--accent); }
+
+.dropdown-count {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-radius: var(--radius-pill);
+    padding: 1px 7px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+}
+
+.dropdown-caret {
+    width: 11px;
+    height: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: transform var(--transition) var(--ease);
+}
+.dropdown-trigger.open .dropdown-caret { transform: rotate(180deg); }
+
+.dropdown-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: var(--z-menu);
+    min-width: 210px;
+    max-height: 340px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: var(--space-1-5);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.dropdown-panel.align-right { left: auto; right: 0; }
+
+.dropdown-header {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+    padding: var(--space-1-5) var(--space-2-5) var(--space-2);
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2-5);
+    padding: 7px var(--space-2-5);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    user-select: none;
+    transition: background var(--transition) var(--ease), color var(--transition) var(--ease);
+}
+.dropdown-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.dropdown-item.is-locked { cursor: default; color: var(--text-muted); }
+.dropdown-item.is-locked:hover { background: transparent; }
+
+.dropdown-item input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.dropdown-check {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--transition) var(--ease), border-color var(--transition) var(--ease), color var(--transition) var(--ease);
+}
+.dropdown-check svg { width: 11px; height: 11px; display: block; }
+.dropdown-item input:checked + .dropdown-check {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.dropdown-item.is-locked input:checked + .dropdown-check {
+    background: var(--bg-card);
+    border-color: var(--border);
+    color: var(--text-muted);
+}
+
+.dropdown-item-label { flex: 1; }
+.dropdown-lock {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+}
+
+/* ---- Adaptive one-row filter bar (auto-fit + pinned right menus) ---- */
+.filters-row {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+}
+.filters-row .filter-group { flex: 0 0 auto; }
+.filter-menus {
+    margin-left: auto;
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-3);
+}
+.filters-row--measure {
+    position: fixed;
+    top: -9999px;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
+    flex-wrap: nowrap;
+    width: max-content;
+}
+
+/* ---- Filtered-slice stat readout (AVG ACTUAL / MOST ACCURATE / BEST MAE) ---- */
+.stat-block { display: flex; flex-direction: column; gap: 2px; }
+.stat-block-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+}
+.stat-block-value {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--weight-bold);
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+}
+.stat-block-value.neutral { color: var(--text-primary); }
+.stat-block-row { display: flex; gap: var(--space-6); }
+.filters-stats-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-3);
+}
+
+/* ---- Team abbreviation + logo (logo matches surrounding text size) ---- */
+.team-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+.team-logo {
+    width: 1.35em;
+    height: 1.35em;
+    object-fit: contain;
+    flex-shrink: 0;
+}

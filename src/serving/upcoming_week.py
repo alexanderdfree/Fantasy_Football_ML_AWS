@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 import src.serving.app as app_pkg
+import src.serving.roster_meta as roster_meta
 from src.config import CACHE_DIR, SEASONS
 from src.data import nfl_source
 from src.data.loader import load_raw_data
@@ -39,6 +40,8 @@ from src.features.engineer import build_features
 from src.serving import core, espn_live, live_sources
 from src.serving.serialization import (
     _MODEL_PRED_PREFIXES,
+    _bool_or_none,
+    _int_or_none,
     _pred_col,
     _round_or_none,
     _safe_num,
@@ -404,6 +407,8 @@ def _results_to_upcoming_rows(results: pd.DataFrame, scoring: str) -> list[dict]
                 "attn_nn_pred": _safe_num(r.get(pred_keys["attn_nn"])),
                 "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
                 "headshot": _safe_str(r.get("headshot_url", "")),
+                "age": _int_or_none(r.get("age")),
+                "is_rookie": _bool_or_none(r.get("is_rookie")),
             }
         )
     return rows
@@ -586,6 +591,9 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         contract_features=contract_features,
     )
     results = run_upcoming_inference(featurized, roster, slate, season, week)
+    # Age-at-kickoff + rookie flag for the frontend's Age/Rookies filters
+    # (same best-effort semantics as the season-leaders path).
+    results = roster_meta.attach_age_and_rookie(results)
     payload = _build_artifact(season, week, results)
     _write_artifact(payload)
     with _state_lock:

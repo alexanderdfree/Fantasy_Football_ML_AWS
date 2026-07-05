@@ -2,18 +2,37 @@
  * filters/sorts/paginates client-side over the preloaded rows; live-API mode
  * (no snapshot on this container) refetches /api/predictions on server-side
  * filter changes. Rows expand (via the ▸ caret) into a lazily-fetched
- * per-target breakdown; clicking elsewhere opens the week-trend modal. */
+ * per-target breakdown; clicking elsewhere opens the week-trend modal.
+ *
+ * Filter bar v2 (design system): auto-fit one-row bar with Position (incl.
+ * FLEX = RB/WR/TE), Week, Team, Age, Class (Rookies), and Min Proj. Pts,
+ * plus pinned Columns / Filters menus and a live filtered-slice stat readout.
+ * Age/Class only appear when the loaded rows carry `age` (stale snapshot
+ * artifacts predating the roster-meta fields degrade to the classic bar). */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJSON } from "../api.js";
 import { fmt, errDelta } from "../lib/format.js";
 import { PillGroup, PosBadge, PlayerCell, DeltaCell, Pagination } from "../components/common.jsx";
+import { AutoFitFilterBar, FilterSliceStats, AGE_BUCKETS, ageBucketFor } from "../components/FilterBar.jsx";
+import { TeamLabel } from "../components/TeamLabel.jsx";
+import { DropdownMenu } from "../ds/controls/DropdownMenu.jsx";
 
 const PAGE_SIZE = 50;
 const COLUMN_FILTER_STORAGE_KEY = "seasonLeaderColumns";
 
-const POSITION_OPTIONS = ["ALL", "QB", "RB", "WR", "TE", "K", "DST"].map((v) => ({
+const POSITION_OPTIONS = ["ALL", "QB", "RB", "WR", "TE", "FLEX", "K", "DST"].map((v) => ({
     value: v, label: v === "ALL" ? "All" : v,
 }));
+const FLEX_POSITIONS = new Set(["RB", "WR", "TE"]);
+
+const STAT_SOURCES = [
+    { key: "ridge_pred", label: "Ridge" },
+    { key: "nn_pred", label: "NN" },
+    { key: "attn_nn_pred", label: "Attn NN" },
+    { key: "lgbm_pred", label: "LGBM" },
+    { key: "nflcom_pred", label: "NFL.com" },
+    { key: "rotowire_pred", label: "RotoWire" },
+];
 
 /* Column registry — mirrors the vanilla TABLE_COLUMNS (keys, classes, sort
  * fields, default visibility, and the localStorage contract). */
@@ -70,7 +89,7 @@ function renderCell(col, p) {
     switch (col.key) {
         case "player": return <PlayerCell player={p} />;
         case "position": return <PosBadge position={p.position} />;
-        case "team": return p.team;
+        case "team": return <TeamLabel abbr={p.team} />;
         case "week": return p.week;
         case "actual": return <strong>{fmt(p.actual)}</strong>;
         case "ridge_pred": return fmt(p.ridge_pred);
@@ -152,53 +171,13 @@ function BreakdownRow({ playerId, week, colSpan }) {
     );
 }
 
-/* Columns show/hide dropdown (checkbox popover; closes on outside click). */
-function ColumnFilter({ visibleKeys, onToggle }) {
-    const [open, setOpen] = useState(false);
-    const wrapRef = useRef(null);
-    useEffect(() => {
-        if (!open) return undefined;
-        const onDoc = (e) => {
-            if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-        };
-        document.addEventListener("click", onDoc);
-        return () => document.removeEventListener("click", onDoc);
-    }, [open]);
-    const selected = TOGGLEABLE_COLUMNS.filter((c) => visibleKeys.has(c.key)).length;
-    return (
-        <div className="column-filter" id="column-filter" ref={wrapRef}>
-            <button
-                type="button"
-                id="column-filter-button"
-                className="column-filter-button"
-                aria-haspopup="true"
-                aria-expanded={open}
-                onClick={() => setOpen((v) => !v)}
-            >
-                {`Columns (${selected})`}
-            </button>
-            <div className="column-filter-menu" id="column-filter-menu" hidden={!open}>
-                {TOGGLEABLE_COLUMNS.map((c) => (
-                    <label key={c.key} className="column-filter-option">
-                        <input
-                            type="checkbox"
-                            value={c.key}
-                            checked={visibleKeys.has(c.key)}
-                            onChange={() => onToggle(c.key)}
-                        />
-                        <span>{c.label}</span>
-                    </label>
-                ))}
-            </div>
-        </div>
-    );
-}
-
 export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
     const { usingSnapshot, snapshotData, weeks, teams } = bootstrap;
     const [position, setPosition] = useState("ALL");
     const [week, setWeek] = useState("ALL");
     const [team, setTeam] = useState("ALL");
+    const [age, setAge] = useState("ALL");
+    const [rookieOnly, setRookieOnly] = useState(false);
     const [minPts, setMinPts] = useState("");
     const [sort, setSort] = useState({ key: "actual", order: "desc" });
     const [page, setPage] = useState(1);
@@ -212,14 +191,16 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
     const tableRef = useRef(null);
 
     // Live-API fallback: the server filters position/week/search/sort/scoring;
-    // team + min-points remain client-side (same as the vanilla app).
+    // team/age/class/min-points remain client-side. FLEX is a client-side
+    // union, so the server query falls back to ALL for it.
     useEffect(() => {
         if (usingSnapshot || !bootstrap.ready) return undefined;
         let cancelled = false;
         setLoading(true);
         setLoadError(false);
         const params = new URLSearchParams({
-            position, week, search,
+            position: position === "FLEX" ? "ALL" : position,
+            week, search,
             sort: sort.key, order: sort.order, scoring,
         });
         fetchJSON(`/api/predictions?${params}`)
@@ -241,6 +222,24 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
         : liveRows;
     const degraded = usingSnapshot ? (bootstrap.degraded || []) : liveDegraded;
 
+    // Stale artifacts predating the roster-meta fields carry no `age` — hide
+    // the Age/Class filters entirely rather than showing dead controls.
+    const hasAge = useMemo(() => allPlayers.some((p) => p.age != null), [allPlayers]);
+
+    const FILTER_ITEMS = useMemo(() => {
+        const items = [
+            { value: "position", label: "Position" },
+            { value: "week", label: "Week" },
+            { value: "team", label: "Team" },
+        ];
+        if (hasAge) {
+            items.push({ value: "age", label: "Age" });
+            items.push({ value: "class", label: "Class" });
+        }
+        items.push({ value: "minpts", label: "Min Proj. Pts" });
+        return items;
+    }, [hasAge]);
+
     // Keep the active sort on a visible column (hiding it falls back to Actual).
     const visibleColumns = TABLE_COLUMNS.filter((c) => c.always || visibleKeys.has(c.key));
     const sortCol = TABLE_COLUMNS.find((c) => c.sort === sort.key);
@@ -248,13 +247,20 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
         ? { key: "actual", order: "desc" }
         : sort;
 
-    const sorted = useMemo(() => {
+    const filtered = useMemo(() => {
         const q = (search || "").trim().toLowerCase();
         const minVal = parseFloat(minPts);
-        const filtered = allPlayers.filter((p) => {
-            if (position !== "ALL" && p.position !== position) return false;
+        const bucket = ageBucketFor(age);
+        return allPlayers.filter((p) => {
+            if (position === "FLEX") {
+                if (!FLEX_POSITIONS.has(p.position)) return false;
+            } else if (position !== "ALL" && p.position !== position) {
+                return false;
+            }
             if (week !== "ALL" && String(p.week) !== String(week)) return false;
             if (team !== "ALL" && p.team !== team) return false;
+            if (age !== "ALL" && !bucket.test(p.age)) return false;
+            if (rookieOnly && p.is_rookie !== true) return false;
             if (q && !(p.name || "").toLowerCase().includes(q)) return false;
             if (!isNaN(minVal)) {
                 const preds = [p.ridge_pred, p.nn_pred, p.attn_nn_pred, p.lgbm_pred, p.nflcom_pred, p.rotowire_pred]
@@ -263,7 +269,10 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
             }
             return true;
         });
-        return filtered.sort((a, b) => {
+    }, [allPlayers, position, week, team, age, rookieOnly, search, minPts]);
+
+    const sorted = useMemo(() => {
+        return [...filtered].sort((a, b) => {
             const va = sortValue(a, effectiveSort.key);
             const vb = sortValue(b, effectiveSort.key);
             if (va == null && vb == null) return 0;
@@ -274,7 +283,7 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
                 : va - vb;
             return effectiveSort.order === "desc" ? -cmp : cmp;
         });
-    }, [allPlayers, position, week, team, search, minPts, effectiveSort.key, effectiveSort.order]);
+    }, [filtered, effectiveSort.key, effectiveSort.order]);
 
     const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
     const safePage = Math.min(page, totalPages || 1);
@@ -285,16 +294,6 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
     const onSort = (key) => {
         setPage(1);
         setSort((s) => (s.key === key ? { key, order: s.order === "desc" ? "asc" : "desc" } : { key, order: "desc" }));
-    };
-
-    const toggleColumn = (key) => {
-        setVisibleKeys((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            saveVisibleColumnKeys(next);
-            return next;
-        });
     };
 
     const toggleExpanded = (rowKey) => {
@@ -311,40 +310,97 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
         if (tableRef.current) tableRef.current.scrollIntoView({ behavior: "smooth" });
     };
 
-    return (
-        <section id="view-predictions" className="view active">
-            <div className="filters-bar">
-                <div className="filters-row-top">
+    const resetFilter = (key) => {
+        if (key === "position") setPosition("ALL");
+        else if (key === "week") setWeek("ALL");
+        else if (key === "team") setTeam("ALL");
+        else if (key === "age") setAge("ALL");
+        else if (key === "class") setRookieOnly(false);
+        else if (key === "minpts") setMinPts("");
+    };
+
+    const renderControl = (key, measure) => {
+        const idSuffix = measure ? "-m" : "";
+        switch (key) {
+            case "position":
+                return (
                     <div className="filter-group">
-                        <label>Position</label>
+                        <label className="field-label">Position</label>
                         <PillGroup
-                            id="position-filter"
+                            id={measure ? undefined : "position-filter"}
                             options={POSITION_OPTIONS}
                             value={position}
                             onChange={(v) => { setPosition(v); setPage(1); }}
                         />
                     </div>
-                </div>
-                <div className="filters-row-bottom">
+                );
+            case "week":
+                return (
                     <div className="filter-group">
-                        <label>Week</label>
-                        <select id="week-filter" value={week} onChange={(e) => { setWeek(e.target.value); setPage(1); }}>
+                        <label className="field-label" htmlFor={`week-filter${idSuffix}`}>Week</label>
+                        <select
+                            id={`week-filter${idSuffix}`}
+                            className="field-select"
+                            value={week}
+                            onChange={(e) => { setWeek(e.target.value); setPage(1); }}
+                        >
                             <option value="ALL">All Weeks</option>
                             {(weeks || []).map((w) => <option key={w} value={w}>Week {w}</option>)}
                         </select>
                     </div>
+                );
+            case "team":
+                return (
                     <div className="filter-group">
-                        <label>Team</label>
-                        <select id="team-filter" value={team} onChange={(e) => { setTeam(e.target.value); setPage(1); }}>
+                        <label className="field-label" htmlFor={`team-filter${idSuffix}`}>Team</label>
+                        <select
+                            id={`team-filter${idSuffix}`}
+                            className="field-select"
+                            value={team}
+                            onChange={(e) => { setTeam(e.target.value); setPage(1); }}
+                        >
                             <option value="ALL">All Teams</option>
                             {(teams || []).map((t) => <option key={t} value={t}>{t}</option>)}
                         </select>
                     </div>
+                );
+            case "age":
+                return (
                     <div className="filter-group">
-                        <label>Min Proj. Pts</label>
+                        <label className="field-label" htmlFor={`age-filter${idSuffix}`}>Age</label>
+                        <select
+                            id={`age-filter${idSuffix}`}
+                            className="field-select"
+                            value={age}
+                            onChange={(e) => { setAge(e.target.value); setPage(1); }}
+                        >
+                            {AGE_BUCKETS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+                        </select>
+                    </div>
+                );
+            case "class":
+                return (
+                    <div className="filter-group">
+                        <label className="field-label">Class</label>
+                        <div className="pill-group">
+                            <button
+                                type="button"
+                                className={`pill${rookieOnly ? " active" : ""}`}
+                                onClick={() => { setRookieOnly((v) => !v); setPage(1); }}
+                            >
+                                Rookies
+                            </button>
+                        </div>
+                    </div>
+                );
+            case "minpts":
+                return (
+                    <div className="filter-group">
+                        <label className="field-label" htmlFor={`min-points-filter${idSuffix}`}>Min Proj. Pts</label>
                         <input
                             type="number"
-                            id="min-points-filter"
+                            id={`min-points-filter${idSuffix}`}
+                            className="text-field"
                             min="0"
                             step="any"
                             placeholder="0"
@@ -353,15 +409,59 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
                             onChange={(e) => { setMinPts(e.target.value); setPage(1); }}
                         />
                     </div>
-                    <div className="filter-group column-filter-group">
-                        <label>Columns</label>
-                        <ColumnFilter visibleKeys={visibleKeys} onToggle={toggleColumn} />
-                    </div>
-                    <div className="filter-meta">
-                        <span className="meta-badge">2025 Season</span>
-                    </div>
-                </div>
-            </div>
+                );
+            default:
+                return null;
+        }
+    };
+
+    // Columns menu: `locked` columns are always shown (rendered checked but
+    // disabled); rank never appears. Persisted under the legacy storage key.
+    const columnItems = [
+        { value: "player", label: "Player", disabled: true },
+        ...TOGGLEABLE_COLUMNS.map((c) => ({ value: c.key, label: c.label })),
+    ];
+    const columnValue = ["player", ...TOGGLEABLE_COLUMNS.filter((c) => visibleKeys.has(c.key)).map((c) => c.key)];
+    const onColumnsChange = (next) => {
+        const nextSet = new Set(TOGGLEABLE_COLUMNS.filter((c) => next.includes(c.key)).map((c) => c.key));
+        saveVisibleColumnKeys(nextSet);
+        setVisibleKeys(nextSet);
+    };
+
+    const renderMenus = ({ visibleFilters, onFiltersChange, measure }) => (
+        <>
+            <span className="meta-badge">2025 Season</span>
+            <DropdownMenu
+                fieldLabel="Columns"
+                label="Columns"
+                panelTitle="Show columns"
+                align="right"
+                id={measure ? undefined : "column-filter-button"}
+                items={columnItems}
+                value={columnValue}
+                onChange={onColumnsChange}
+            />
+            <DropdownMenu
+                fieldLabel="Filters"
+                label="Filters"
+                panelTitle="Show filters"
+                align="right"
+                items={FILTER_ITEMS}
+                value={visibleFilters}
+                onChange={onFiltersChange}
+            />
+        </>
+    );
+
+    return (
+        <section id="view-predictions" className="view active">
+            <AutoFitFilterBar
+                items={FILTER_ITEMS}
+                renderControl={renderControl}
+                renderMenus={renderMenus}
+                onResetFilter={resetFilter}
+                stats={<FilterSliceStats rows={filtered} sources={STAT_SOURCES} />}
+            />
 
             <div className="results-info">
                 <span id="results-count">
