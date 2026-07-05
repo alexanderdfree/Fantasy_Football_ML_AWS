@@ -34,6 +34,10 @@ const COLUMNS = [
     { key: "nn_pred", label: "NN", cls: "col-pred nn-col", sort: "nn_pred", defaultVisible: true },
     { key: "attn_nn_pred", label: "Attn NN", cls: "col-pred attn-nn-col", sort: "attn_nn_pred", defaultVisible: true },
     { key: "lgbm_pred", label: "LGBM", cls: "col-pred lgbm-col", sort: "lgbm_pred", defaultVisible: true },
+    // Expert columns render only when the artifact carries expert projections
+    // (feature-detected below; older artifacts predate the fields).
+    { key: "nflcom_pred", label: "NFL.com", cls: "col-pred nflcom-col", sort: "nflcom_pred", defaultVisible: true, expert: true },
+    { key: "rotowire_pred", label: "RotoWire", cls: "col-pred rotowire-col", sort: "rotowire_pred", defaultVisible: true, expert: true },
 ];
 const TOGGLEABLE_COLUMNS = COLUMNS.filter((c) => !c.always);
 
@@ -103,6 +107,10 @@ export function NextWeekView({ scoring, search, onPlayer }) {
 
     const teams = useMemo(() => [...new Set(allRows.map((p) => p.team).filter(Boolean))].sort(), [allRows]);
     const hasAge = useMemo(() => allRows.some((p) => p.age != null), [allRows]);
+    const hasExperts = useMemo(
+        () => allRows.some((p) => p.nflcom_pred != null || p.rotowire_pred != null),
+        [allRows],
+    );
 
     const FILTER_ITEMS = useMemo(() => {
         const items = [
@@ -132,7 +140,8 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             if (rookieOnly && p.is_rookie !== true) return false;
             if (q && !(p.name || "").toLowerCase().includes(q)) return false;
             if (!isNaN(minVal)) {
-                const preds = [p.nn_pred, p.attn_nn_pred, p.lgbm_pred].filter((v) => v != null);
+                const preds = [p.nn_pred, p.attn_nn_pred, p.lgbm_pred, p.nflcom_pred, p.rotowire_pred]
+                    .filter((v) => v != null);
                 if (!preds.length || Math.max(...preds) < minVal) return false;
             }
             return true;
@@ -150,7 +159,9 @@ export function NextWeekView({ scoring, search, onPlayer }) {
         });
     }, [allRows, position, team, age, rookieOnly, search, minPts, sort]);
 
-    const visibleColumns = COLUMNS.filter((c) => c.always || !hiddenCols.has(c.key));
+    const visibleColumns = COLUMNS.filter(
+        (c) => (c.always || !hiddenCols.has(c.key)) && (!c.expert || hasExperts),
+    );
 
     const resetFilter = (key) => {
         if (key === "position") setPosition("ALL");
@@ -243,7 +254,7 @@ export function NextWeekView({ scoring, search, onPlayer }) {
 
     const columnItems = [
         { value: "player", label: "Player", disabled: true },
-        ...TOGGLEABLE_COLUMNS.map((c) => ({ value: c.key, label: c.label })),
+        ...TOGGLEABLE_COLUMNS.filter((c) => !c.expert || hasExperts).map((c) => ({ value: c.key, label: c.label })),
     ];
     const columnValue = ["player", ...TOGGLEABLE_COLUMNS.filter((c) => !hiddenCols.has(c.key)).map((c) => c.key)];
     const onColumnsChange = (next) => {
@@ -291,6 +302,8 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             case "nn_pred": return fmt(p.nn_pred);
             case "attn_nn_pred": return fmt(p.attn_nn_pred);
             case "lgbm_pred": return fmt(p.lgbm_pred);
+            case "nflcom_pred": return fmt(p.nflcom_pred);
+            case "rotowire_pred": return fmt(p.rotowire_pred);
             default: return null;
         }
     };

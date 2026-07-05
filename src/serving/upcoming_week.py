@@ -35,9 +35,11 @@ import src.serving.roster_meta as roster_meta
 from src.config import CACHE_DIR, SEASONS
 from src.data import nfl_source
 from src.data.loader import load_raw_data
+from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.data.preprocessing import preprocess
 from src.features.engineer import build_features
 from src.serving import core, espn_live, live_sources
+from src.serving.expert_sources import load_sleeper_with_gsis_id
 from src.serving.serialization import (
     _MODEL_PRED_PREFIXES,
     _bool_or_none,
@@ -376,6 +378,87 @@ def run_upcoming_inference(
 
 
 # --------------------------------------------------------------------------
+# Expert projections for the upcoming slate (NFL.com + RotoWire)
+# --------------------------------------------------------------------------
+_UPCOMING_EXPERTS = ("nflcom", "rotowire")
+
+
+def _fetch_upcoming_expert_frames(
+    season: int, week: int, *, nflcom_loader=None, rotowire_loader=None
+):
+    """Best-effort raw expert projection frames for one (season, week).
+
+    Runs only in the CI artifact builder (serving just downloads the artifact).
+    NFL.com's archive publishes the current week's CSVs pre-game but not
+    guaranteed; Sleeper serves the upcoming week live. Either source failing
+    (or empty) degrades to None → the expert columns stay null → the frontend
+    renders "--" and hides the columns when both are absent.
+    """
+    if nflcom_loader is None:
+        nflcom_loader = load_nflcom_with_gsis_id
+    if rotowire_loader is None:
+        rotowire_loader = load_sleeper_with_gsis_id
+    raw_nflcom = None
+    try:
+        raw_nflcom = nflcom_loader([season], weeks=[week], force_refresh=True)
+    except Exception as e:  # noqa: BLE001 - expert data is optional
+        print(f"[upcoming_week] NFL.com projections unavailable: {e!r}")
+    if raw_nflcom is not None and (raw_nflcom.empty or "position" not in raw_nflcom.columns):
+        raw_nflcom = None
+    raw_rotowire = None
+    try:
+        raw_rotowire = rotowire_loader([season], weeks=[week], force_refresh=True)
+    except Exception as e:  # noqa: BLE001 - expert data is optional
+        print(f"[upcoming_week] RotoWire projections unavailable: {e!r}")
+    if raw_rotowire is not None and (raw_rotowire.empty or "position" not in raw_rotowire.columns):
+        raw_rotowire = None
+    return raw_nflcom, raw_rotowire
+
+
+def _expert_digest(raw_nflcom, raw_rotowire) -> str:
+    """Compact change-detection digest of the expert frames for _input_signature.
+
+    Row count + numeric-content sum per source: cheap, order-invariant, and
+    moves whenever a projection value or the covered player set changes.
+    """
+    parts = []
+    for name, df in (("nfl", raw_nflcom), ("rw", raw_rotowire)):
+        if df is None or df.empty:
+            parts.append(f"{name}:none")
+            continue
+        num = df.select_dtypes("number")
+        total = round(float(num.fillna(0).to_numpy().sum()), 2) if not num.empty else 0.0
+        parts.append(f"{name}:{len(df)}:{total}")
+    return "|".join(parts)
+
+
+def _apply_upcoming_experts(results: pd.DataFrame, raw_nflcom, raw_rotowire) -> None:
+    """Project + join the expert frames onto the upcoming results in place.
+
+    Mirrors core._apply_expert_predictions (same projector + key-join helpers)
+    scoped to the upcoming positions; per-source/position failures degrade to
+    null columns, never break the artifact build.
+    """
+    for source in _UPCOMING_EXPERTS:
+        for fmt in _VALID_SCORING:
+            results[_pred_col(source, fmt)] = np.nan
+    for fmt in _VALID_SCORING:
+        for pos in UPCOMING_POSITIONS:
+            if raw_nflcom is not None:
+                try:
+                    nfl = core.project_nflcom_to_fantasy(raw_nflcom, pos, fmt)
+                    core._assign_expert_totals(results, "nflcom", fmt, nfl, "nflcom_pred_total")
+                except Exception as e:  # noqa: BLE001 - one source/position can degrade
+                    print(f"[upcoming_week] NFL.com {pos}/{fmt} projection failed: {e!r}")
+            if raw_rotowire is not None:
+                try:
+                    rw = core._project_rotowire_to_fantasy(raw_rotowire, pos, fmt)
+                    core._assign_expert_totals(results, "rotowire", fmt, rw, "rotowire_pred_total")
+                except Exception as e:  # noqa: BLE001 - one source/position can degrade
+                    print(f"[upcoming_week] RotoWire {pos}/{fmt} projection failed: {e!r}")
+
+
+# --------------------------------------------------------------------------
 # Serialization
 # --------------------------------------------------------------------------
 def _results_to_upcoming_rows(results: pd.DataFrame, scoring: str) -> list[dict]:
@@ -406,6 +489,8 @@ def _results_to_upcoming_rows(results: pd.DataFrame, scoring: str) -> list[dict]
                 "nn_pred": _safe_num(r.get(pred_keys["nn"])),
                 "attn_nn_pred": _safe_num(r.get(pred_keys["attn_nn"])),
                 "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
+                "nflcom_pred": _safe_num(r.get(_pred_col("nflcom", scoring))),
+                "rotowire_pred": _safe_num(r.get(_pred_col("rotowire", scoring))),
                 "headshot": _safe_str(r.get("headshot_url", "")),
                 "age": _int_or_none(r.get("age")),
                 "is_rookie": _bool_or_none(r.get("is_rookie")),
@@ -438,6 +523,7 @@ def _input_signature(
     practice_status_map: dict[str, float] | None = None,
     contract_features: pd.DataFrame | None = None,
     rosters_df: pd.DataFrame | None = None,
+    expert_digest: str = "",
 ) -> str:
     """Stable hash of (models + slate lines + roster id-set + live depth chart +
     injury/practice statuses + contracts + weekly RES/INA out-set) — recompute
@@ -476,7 +562,7 @@ def _input_signature(
         rosters_part = ""
     blob = (
         f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|"
-        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}"
+        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}|{expert_digest}"
     )
     return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -562,6 +648,10 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     practice_status_map = live_sources.fetch_practice_status_map(season, week)
     contract_features = live_sources.fetch_contract_features(season)
 
+    # Expert projections for the slate (NFL.com + RotoWire), fetched up front so
+    # a projection update alone re-triggers the rebuild via the signature.
+    raw_nflcom, raw_rotowire = _fetch_upcoming_expert_frames(season, week)
+
     sig = _input_signature(
         season,
         week,
@@ -572,6 +662,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         practice_status_map,
         contract_features,
         rosters_df=rosters_df,
+        expert_digest=_expert_digest(raw_nflcom, raw_rotowire),
     )
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
@@ -594,6 +685,8 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # Age-at-kickoff + rookie flag for the frontend's Age/Rookies filters
     # (same best-effort semantics as the season-leaders path).
     results = roster_meta.attach_age_and_rookie(results)
+    # Expert columns for the homepage (best-effort; nulls when a feed is down).
+    _apply_upcoming_experts(results, raw_nflcom, raw_rotowire)
     payload = _build_artifact(season, week, results)
     _write_artifact(payload)
     with _state_lock:
