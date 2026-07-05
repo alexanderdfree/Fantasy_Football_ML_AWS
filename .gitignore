@@ -105,3 +105,7 @@ warmstart_runs/
 # Transient local analysis scratch dir (substrate parquets, one-off angle scripts,
 # investigation reports). Durable findings go to todo/; reusable code goes to src/.
 scratchpad/
+
+# Frontend toolchain (src/serving/frontend); the built bundle at
+# src/serving/static/js/app.js IS committed — sources build it via npm run build.
+src/serving/frontend/node_modules/

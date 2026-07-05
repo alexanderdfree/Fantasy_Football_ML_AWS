@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Privacy Policy - Alex's Fantasy Predictions</title>
+    <script>
+        /* Apply the saved color theme before first paint to avoid a flash. */
+        try { if (localStorage.getItem("ffp-theme") === "oled") document.documentElement.setAttribute("data-theme", "oled"); } catch (e) {}
+    </script>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/css/style.css">
 </head>

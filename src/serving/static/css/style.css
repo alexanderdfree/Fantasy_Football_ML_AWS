@@ -1,33 +1,159 @@
 /* === Reset & Base === */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Design tokens — Fantasy Football Predictor design system ("midnight" default).
+   Midnight blue-black elevation ramp, one electric-blue brand accent, cyan
+   secondary; green is decoupled from the brand and kept purely semantic
+   (positive deltas / success). Position + model hues are categorical — each
+   keeps its hue everywhere it appears. */
 :root {
-    --bg-primary: #0f1117;
-    --bg-secondary: #1a1d27;
-    --bg-card: #21242f;
-    --bg-hover: #282c3a;
-    --border: #2e3347;
+    /* ---- Surfaces (midnight blue-black ramp, lightest = most raised) ---- */
+    --bg-primary: #070b14;     /* page background */
+    --bg-secondary: #0e1422;   /* raised panels, header, cards bar */
+    --bg-tertiary: #070b14;    /* recessed chip/code fill */
+    --bg-card: #121a2c;        /* inset cards / meta badges */
+    --bg-hover: #19223a;       /* row + control hover, headshot placeholder */
+    --border: #232d47;         /* hairline borders, dividers */
+
+    /* ---- Text ---- */
     --text-primary: #e8eaed;
     --text-secondary: #9aa0b0;
     --text-muted: #6b7280;
-    --accent: #22c55e;
-    --accent-dim: rgba(34, 197, 94, 0.15);
-    --accent-secondary: #3b82f6;
-    --accent-secondary-dim: rgba(59, 130, 246, 0.15);
+
+    /* ---- Accent: primary = electric blue (brand), secondary = electric cyan ---- */
+    --accent: #3d8bff;
+    --accent-dim: rgba(61, 139, 255, 0.15);
+    --accent-secondary: #22d3ee;
+    --accent-secondary-dim: rgba(34, 211, 238, 0.15);
+    --glow-accent: 0 0 16px rgba(61, 139, 255, 0.38);
+
+    /* Positive / success stays GREEN, decoupled from the brand accent. */
+    --positive: #22c55e;
+    --positive-dim: rgba(34, 197, 94, 0.15);
+
+    /* ---- Semantic status ---- */
     --red: #ef4444;
     --red-dim: rgba(239, 68, 68, 0.15);
     --yellow: #eab308;
+    --yellow-dim: rgba(234, 179, 8, 0.12);
+    --amber: #f59e0b;
+
+    /* ---- Position accents (text + 15% tinted fill) ---- */
+    --pos-qb: #f87171;   --pos-qb-bg: rgba(239, 68, 68, 0.15);
+    --pos-rb: #4ade80;   --pos-rb-bg: rgba(34, 197, 94, 0.15);
+    --pos-wr: #60a5fa;   --pos-wr-bg: rgba(59, 130, 246, 0.15);
+    --pos-te: #facc15;   --pos-te-bg: rgba(234, 179, 8, 0.15);
+    --pos-k:  #c084fc;   --pos-k-bg:  rgba(168, 85, 247, 0.15);
+    --pos-dst:#fb923c;   --pos-dst-bg:rgba(244, 114, 57, 0.15);
+
+    /* ---- Model series (chart lines + prediction columns) ---- */
+    --model-ridge: #3b82f6;
+    --model-nn: #22c55e;
+    --model-attn-nn: #a855f7;
+    --model-lgbm: #f59e0b;
+    --model-nflcom: #06b6d4;
+    --model-rotowire: #ec4899;
+    --model-actual: #e8eaed;
+
+    /* ---- Scrims ---- */
+    --scrim: rgba(7, 11, 20, 0.8);          /* modal overlay */
+    --scrim-loading: rgba(7, 11, 20, 0.92); /* loading overlay */
+
+    /* ---- Typography (system stacks only — no webfonts) ---- */
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* ---- Type scale / weights / tracking (design-system) ---- */
+    --font-size-2xs: 10px;
+    --font-size-xs: 11px;
+    --font-size-sm: 12px;
+    --font-size-base: 13px;
+    --font-size-md: 14px;
+    --font-size-lg: 16px;
+    --font-size-h3: 17px;
+    --font-size-h2: 20px;
+    --font-size-xl: 22px;
+    --font-size-2xl: 24px;
+    --weight-regular: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --weight-bold: 700;
+    --tracking-logo: -0.5px;
+    --tracking-label: 0.8px;
+
+    /* ---- Spacing scale (loose 4px rhythm with half-steps) ---- */
+    --space-1: 4px;
+    --space-1-5: 6px;
+    --space-2: 8px;
+    --space-2-5: 10px;
+    --space-3: 12px;
+    --space-3-5: 14px;
+    --space-4: 16px;
+    --space-4-5: 18px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 28px;
+    --space-8: 32px;
+
+    /* ---- Motion / stacking ---- */
+    --transition-fast: 0.15s;
+    --transition: 0.2s;
+    --ease: ease;
+    --z-menu: 30;
+
+    /* ---- Radius / shadow / structure ---- */
+    --radius-sm: 4px;
     --radius: 8px;
     --radius-lg: 12px;
+    --radius-pill: 20px;
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --content-max: 1400px;
+}
+
+/* ---- OLED "pitch black" night mode (html[data-theme="oled"]) — pure-black
+   page eased for eye comfort: panels a hair above black, structure carried by
+   dim hairlines, inputs on a subtle gray fill, brightest text softened to cut
+   halation. The electric-blue accent and every categorical (position / model)
+   + status color are kept. Toggled by the header sun/moon button; persisted
+   in localStorage("ffp-theme") and applied pre-paint by an inline script. ---- */
+:root[data-theme="oled"] {
+    --bg-primary: #000000;
+    --bg-secondary: #0a0a0a;
+    --bg-tertiary: #000000;
+    --bg-card: #1a1a1a;
+    --bg-hover: #232323;
+    --border: #2a2a2a;
+    --text-primary: #dcdee3;
+    --accent-dim: rgba(61, 139, 255, 0.18);
+    --glow-accent: 0 0 14px rgba(61, 139, 255, 0.36);
+    --scrim: rgba(0, 0, 0, 0.85);
+    --scrim-loading: rgba(0, 0, 0, 0.92);
+}
+
+/* Drop the midnight halo so the OLED page background stays genuinely black. */
+:root[data-theme="oled"] body {
+    background-image: none;
+}
+
+/* OLED inputs get subtle gray fills (vs pure black) so they read gently. */
+:root[data-theme="oled"] .search-box input,
+:root[data-theme="oled"] select,
+:root[data-theme="oled"] .filter-group input[type="number"] {
+    background-color: var(--bg-card);
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg-primary);
+    font-family: var(--font-sans);
+    background-color: var(--bg-primary);
+    /* Midnight atmosphere: a faint electric-blue halo bleeding from the top.
+       Sits behind the solid card fills, so only gutters/margins catch it. */
+    background-image: radial-gradient(85% 55% at 50% -10%, rgba(61, 139, 255, 0.10), transparent 60%);
+    background-attachment: fixed;
     color: var(--text-primary);
     line-height: 1.5;
     min-height: 100vh;
+    transition: background-color 0.3s ease;
 }
 
 /* === Public policy/support pages === */
@@ -152,6 +278,68 @@ body {
     font-weight: 700;
     color: var(--accent);
     letter-spacing: -0.5px;
+    text-shadow: var(--glow-accent);
+    white-space: nowrap;
+}
+
+/* Theme toggle (sun / moon) — icon button left of the scoring switch. Both
+   icons stay visible, slash-divided: the active mode lights up in the brand
+   accent while the other dims — so it reads as a mode switch AND shows which
+   mode is currently on. */
+.theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 12px;
+    flex: 0 0 auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.theme-toggle:hover {
+    border-color: var(--accent);
+}
+
+.theme-toggle svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+.theme-toggle .theme-ico {
+    display: inline-flex;
+    color: var(--text-muted);
+    opacity: 0.45;
+    transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.theme-toggle .theme-ico.is-active {
+    color: var(--accent);
+    opacity: 1;
+}
+
+.theme-toggle .theme-divider {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    opacity: 0.55;
+    user-select: none;
+}
+
+/* Smooth cross-fade of the big surfaces when the color theme flips. */
+.header,
+.nav-tabs,
+.filters,
+.table-container,
+.metric-card,
+.pos-model-card,
+.approach-banner {
+    transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
 .subtitle {
@@ -237,7 +425,7 @@ body {
 .loading-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(15, 17, 23, 0.92);
+    background: var(--scrim-loading);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -300,9 +488,9 @@ body {
 
 /* Homepage (Next Week) projections banner — informational, not a warning. */
 .homepage-banner {
-    background: rgba(59, 130, 246, 0.10);
-    border: 1px solid rgba(59, 130, 246, 0.30);
-    border-left: 3px solid rgb(59, 130, 246);
+    background: rgba(61, 139, 255, 0.10);
+    border: 1px solid rgba(61, 139, 255, 0.30);
+    border-left: 3px solid var(--accent);
     color: var(--text-muted);
     padding: 10px 14px;
     border-radius: 6px;
@@ -634,15 +822,15 @@ tbody tr:last-child td {
     text-align: center;
 }
 
-.pos-QB { background: rgba(239, 68, 68, 0.15); color: #f87171; }
-.pos-RB { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
-.pos-WR { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
-.pos-TE { background: rgba(234, 179, 8, 0.15); color: #facc15; }
-.pos-K { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
-.pos-DST { background: rgba(244, 114, 57, 0.15); color: #fb923c; }
+.pos-QB { background: var(--pos-qb-bg); color: var(--pos-qb); }
+.pos-RB { background: var(--pos-rb-bg); color: var(--pos-rb); }
+.pos-WR { background: var(--pos-wr-bg); color: var(--pos-wr); }
+.pos-TE { background: var(--pos-te-bg); color: var(--pos-te); }
+.pos-K { background: var(--pos-k-bg); color: var(--pos-k); }
+.pos-DST { background: var(--pos-dst-bg); color: var(--pos-dst); }
 
 .delta-positive {
-    color: var(--accent);
+    color: var(--positive);
 }
 
 .delta-negative {
@@ -807,7 +995,7 @@ tbody tr:last-child td {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(15, 17, 23, 0.8);
+    background: var(--scrim);
     z-index: 200;
     align-items: center;
     justify-content: center;
@@ -1168,7 +1356,7 @@ tbody tr:last-child td {
     color: var(--text-secondary);
     font-size: 13px;
 }
-.arch-error { color: #f87171; }
+.arch-error { color: var(--pos-qb); }
 
 #arch-feature-accordions {
     border: 1px solid var(--border);
@@ -1514,7 +1702,7 @@ tr.history-row-expandable.expanded .history-caret { transform: rotate(90deg); }
    fill alpha is set inline per-pill (deeper = larger relative change); the class
    carries the border color and the dim fallback used by the legend swatch. An
    all-time-best value gets a solid blue that overrides the green/red tint. */
-.history-pill-improve { border-color: var(--accent); background: var(--accent-dim); }
+.history-pill-improve { border-color: var(--positive); background: var(--positive-dim); }
 .history-pill-regress { border-color: var(--red); background: var(--red-dim); }
 .history-pill-record { border-color: var(--accent-secondary); background: var(--accent-secondary-dim); }
 .history-pill-best { font-weight: 700; }
@@ -1609,7 +1797,7 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 .comparison-num { text-align: right; font-variant-numeric: tabular-nums; }
 .comparison-table thead th.comparison-num { text-align: right; }
 .comparison-empty { color: var(--text-muted); }
-.comparison-best { color: var(--accent); font-weight: 700; }
+.comparison-best { color: var(--positive); font-weight: 700; }
 .comparison-arch {
     display: block;
     font-size: 11px;
@@ -1654,8 +1842,8 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 }
 /* Coverage cell: colored by how close to nominal 80% it lands. */
 .interval-cov { font-weight: 700; }
-.interval-cov-ok { color: var(--accent); }
-.interval-cov-tight { color: #f59e0b; }   /* under-covers — band too tight */
+.interval-cov-ok { color: var(--positive); }
+.interval-cov-tight { color: var(--amber); }   /* under-covers — band too tight */
 .interval-cov-wide { color: var(--accent-secondary); }  /* over-covers — band too wide */
 .interval-cov-sub { display: block; font-size: 11px; font-weight: 400; color: var(--text-muted); margin-top: 2px; }
 .interval-totals {
@@ -1691,11 +1879,359 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
     position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%;
     transform: translate(-50%, -50%); border: 2px solid var(--bg-card);
 }
-.band-actual-in { background: var(--accent); }
-.band-actual-out { background: #f59e0b; }
+.band-actual-in { background: var(--positive); }
+.band-actual-out { background: var(--amber); }
 .band-foot {
     display: flex; justify-content: space-between; font-size: 11px;
     color: var(--text-muted); margin-top: 4px; font-variant-numeric: tabular-nums;
 }
-.band-actual-label.band-actual-in { color: var(--accent); }
-.band-actual-label.band-actual-out { color: #f59e0b; }
+.band-actual-label.band-actual-in { color: var(--positive); }
+.band-actual-label.band-actual-out { color: var(--amber); }
+
+
+/* === Design-system filter bar v2 (dropdown menus, auto-fit rows, fields) ===
+   Plain token-driven classes lifted from the design system's component CSS;
+   consumed by the React views' Columns/Filters menus, Age/Class filters, the
+   team labels, and the filtered-slice stat readout. */
+
+.field-label {
+    display: block;
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+    margin-bottom: var(--space-1-5);
+}
+
+.field-select {
+    padding: 7px 32px 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%239aa0b0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
+.field-select:focus { border-color: var(--accent); }
+
+.text-field {
+    padding: 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    outline: none;
+    transition: border-color var(--transition);
+}
+.text-field:focus { border-color: var(--accent); }
+.text-field::placeholder { color: var(--text-muted); }
+.text-field[type="number"] { width: 90px; }
+
+/* ---- Dropdown menu (multi-select checkbox popover) ---- */
+.dropdown-menu { position: relative; display: inline-flex; }
+
+.dropdown-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 7px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    line-height: 1.45;
+    cursor: pointer;
+    outline: none;
+    white-space: nowrap;
+    transition: border-color var(--transition) var(--ease);
+}
+.dropdown-trigger:hover,
+.dropdown-trigger.open,
+.dropdown-trigger:focus-visible { border-color: var(--accent); }
+
+.dropdown-count {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-radius: var(--radius-pill);
+    padding: 1px 7px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+}
+
+.dropdown-caret {
+    width: 11px;
+    height: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: transform var(--transition) var(--ease);
+}
+.dropdown-trigger.open .dropdown-caret { transform: rotate(180deg); }
+
+.dropdown-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: var(--z-menu);
+    min-width: 210px;
+    max-height: 340px;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: var(--space-1-5);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+.dropdown-panel.align-right { left: auto; right: 0; }
+
+.dropdown-header {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+    padding: var(--space-1-5) var(--space-2-5) var(--space-2);
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2-5);
+    padding: 7px var(--space-2-5);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    user-select: none;
+    transition: background var(--transition) var(--ease), color var(--transition) var(--ease);
+}
+.dropdown-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.dropdown-item.is-locked { cursor: default; color: var(--text-muted); }
+.dropdown-item.is-locked:hover { background: transparent; }
+
+.dropdown-item input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.dropdown-check {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--transition) var(--ease), border-color var(--transition) var(--ease), color var(--transition) var(--ease);
+}
+.dropdown-check svg { width: 11px; height: 11px; display: block; }
+.dropdown-item input:checked + .dropdown-check {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.dropdown-item.is-locked input:checked + .dropdown-check {
+    background: var(--bg-card);
+    border-color: var(--border);
+    color: var(--text-muted);
+}
+
+.dropdown-item-label { flex: 1; }
+.dropdown-lock {
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+}
+
+/* ---- Adaptive one-row filter bar (auto-fit + pinned right menus) ---- */
+.filters-row {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+}
+.filters-row .filter-group { flex: 0 0 auto; }
+.filter-menus {
+    margin-left: auto;
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-3);
+}
+.filters-row--measure {
+    position: fixed;
+    top: -9999px;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
+    flex-wrap: nowrap;
+    width: max-content;
+}
+
+/* ---- Filtered-slice stat readout (AVG ACTUAL / MOST ACCURATE / BEST MAE) ---- */
+.stat-block { display: flex; flex-direction: column; gap: 2px; }
+.stat-block-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+}
+.stat-block-value {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--weight-bold);
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+}
+.stat-block-value.neutral { color: var(--text-primary); }
+.stat-block-row { display: flex; gap: var(--space-6); }
+.filters-stats-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: var(--space-3);
+}
+
+/* ---- Team abbreviation + logo (logo matches surrounding text size) ---- */
+.team-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+.team-logo {
+    width: 1.35em;
+    height: 1.35em;
+    object-fit: contain;
+    flex-shrink: 0;
+}
+
+
+/* === Changelog & Timeline tab (design-system callout + release rail) === */
+
+.callout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+    padding: 18px 20px;
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-6);
+}
+.callout.accent {
+    background: var(--accent-dim);
+    border: 1px solid rgba(61, 139, 255, 0.25);
+}
+.callout.secondary {
+    background: var(--accent-secondary-dim);
+    border: 1px solid rgba(34, 211, 238, 0.25);
+}
+.callout-icon { flex-shrink: 0; margin-top: 2px; }
+.callout.accent .callout-icon { color: var(--accent); }
+.callout.secondary .callout-icon { color: var(--accent-secondary); }
+.callout-title {
+    font-size: 15px;
+    font-weight: var(--weight-semibold);
+    margin-bottom: var(--space-1);
+}
+.callout.accent .callout-title { color: var(--accent); }
+.callout.secondary .callout-title { color: var(--accent-secondary); }
+.callout-desc {
+    font-size: var(--font-size-base);
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.timeline-track-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
+    margin-bottom: var(--space-7);
+}
+.timeline-track-card .stat-block-row {
+    align-items: center;
+    flex-wrap: wrap;
+    row-gap: var(--space-4);
+}
+.timeline-track-card .meta-badge { margin-left: auto; }
+
+.release-controls { margin-bottom: var(--space-4); }
+.release-list { margin-bottom: var(--space-7); }
+.release-item {
+    display: grid;
+    grid-template-columns: 16px 1fr;
+    gap: var(--space-3);
+}
+.release-rail { display: flex; flex-direction: column; align-items: center; }
+.release-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    margin-top: 8px;
+    flex: 0 0 auto;
+    border: 2px solid var(--bg-primary);
+    box-shadow: 0 0 0 1px var(--border);
+}
+.release-line { width: 2px; flex: 1 1 auto; background: var(--border); margin: 4px 0; }
+.release-item:last-child .release-line { display: none; }
+.release-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
+    margin-bottom: var(--space-3);
+}
+.release-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2-5);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-2);
+}
+.release-title { font-size: var(--font-size-h3); font-weight: var(--weight-semibold); color: var(--text-primary); }
+.release-model { font-size: var(--font-size-sm); color: var(--text-muted); }
+.release-date { margin-left: auto; font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--text-muted); }
+.release-summary { margin: 0; font-size: var(--font-size-base); color: var(--text-secondary); line-height: 1.5; }
+.release-metrics { display: flex; gap: var(--space-6); margin-top: var(--space-3); }
+.release-metric { display: flex; flex-direction: column; gap: 2px; }
+.release-metric-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-label);
+    color: var(--text-muted);
+}
+.release-metric-value {
+    font-size: var(--font-size-md);
+    font-weight: var(--weight-semibold);
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.winner-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-weight: var(--weight-semibold);
+}
+.winner-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}

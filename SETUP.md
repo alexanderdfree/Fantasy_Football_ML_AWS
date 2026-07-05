@@ -262,6 +262,23 @@ python -m src.serving.app
 
 The dashboard loads pre-trained model artifacts from each position's `src/{pos}/outputs/models/` directory. If a position's models are missing, run the benchmark for that position first (see below) to populate them.
 
+## Frontend build (dashboard UI)
+
+The dashboard UI is a React app whose **sources live in [src/serving/frontend/](src/serving/frontend/)** and whose **built bundle is committed at `src/serving/static/js/app.js`** (see [docs/adr/0023-react-frontend-esbuild-committed-bundle.md](docs/adr/0023-react-frontend-esbuild-committed-bundle.md)). The serving runtime, Docker image, and pytest need no Node — only frontend *edits* do.
+
+```bash
+cd src/serving/frontend
+npm ci          # Node ≥ 20 (first time / after dependency changes)
+npm run build   # bundles src/main.jsx → ../static/js/app.js — COMMIT the bundle
+npm run watch   # rebuild on save during development
+```
+
+Rules of the road:
+- **Never edit `src/serving/static/js/app.js` directly** — it's a build artifact (the banner says so). Edit the `.jsx` sources and rebuild.
+- **Commit the rebuilt bundle together with the source change.** CI's `frontend-bundle` job rebuilds and fails the PR if the committed bundle is stale.
+- Chart.js is NOT bundled — it stays the vendored `window.Chart` global at `static/js/vendor/chart.umd.min.js` (pinned by tests).
+- The design-system component primitives live under `frontend/src/ds/` (Pill, DataTable, Callout, Modal, …); shared app helpers under `frontend/src/lib/` and `frontend/src/components/`.
+
 ## Run benchmarks
 
 ```bash

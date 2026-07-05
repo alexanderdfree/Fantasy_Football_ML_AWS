@@ -29,6 +29,7 @@ import src.dst.features as dst_features
 import src.k.data as k_data
 import src.k.features as k_features
 import src.serving.app as app_pkg
+import src.serving.roster_meta as roster_meta
 from src.config import (
     CACHE_DIR,
     MIN_GAMES_PER_SEASON,
@@ -895,6 +896,12 @@ def _load_base_data_locked():
     k_test = k_test_reindexed
     dst_test = dst_test_reindexed
 
+    # Age at kickoff + rookie flag from the synced rosters/schedules caches
+    # (best-effort: unavailable caches leave the columns NaN and the frontend
+    # hides the Age/Rookies filters). Feeds /api/predictions rows AND the
+    # snapshot.json artifact via serialization._records_to_player_rows.
+    results = roster_meta.attach_age_and_rookie(results)
+
     # Initialize ALL per-model, per-format prediction columns to NaN. A failed
     # or never-loaded model must leave its pred column NaN so the row is
     # excluded from overall MAE in _compute_metrics_locked and the frontend
@@ -1390,7 +1397,7 @@ _FINGERPRINT_JSON = "fingerprint.json"
 # The fix lives in serving code only, so the model fingerprint is unchanged and a
 # fresh container would otherwise re-hydrate the stale null-NFL.com cache. The
 # schema bump invalidates it so the corrected expert join repopulates the column.
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 6
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 7
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is

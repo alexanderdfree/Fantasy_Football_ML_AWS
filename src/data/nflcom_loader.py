@@ -527,6 +527,7 @@ def load_nflcom_with_gsis_id(
     cache_dir: str = CACHE_DIR,
     force_refresh: bool = False,
     *,
+    weeks: tuple[int, ...] | list[int] | None = None,
     rosters: pd.DataFrame | None = None,
     min_match_rate: float = 0.90,
     reader=pd.read_csv,
@@ -562,8 +563,14 @@ def load_nflcom_with_gsis_id(
     # sparse -> disambiguated hash) so a sparse season list can't collide on the
     # contiguous superset's cache file (the #488 defect class).
     seasons_sig = _seasons_cache_signature(seasons)
+    # `weeks` joined the cache key later (upcoming-week fetches ask for a
+    # single week): default-None keeps the historical filename so warm
+    # full-range caches stay valid; an explicit week range gets its own file
+    # (same collision rationale as load_nflcom_projections' weeks_sig).
+    weeks_part = f"_w{_weeks_cache_signature(tuple(weeks))}" if weeks is not None else ""
     cache_path = (
-        f"{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}_{seasons_sig}_{rate_sig}.parquet"
+        f"{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}"
+        f"_{seasons_sig}_{rate_sig}{weeks_part}.parquet"
     )
     # ``rosters`` is the one input not captured by the cache key (seasons +
     # version + match-rate). A caller-supplied override must bypass the cache
@@ -575,7 +582,7 @@ def load_nflcom_with_gsis_id(
         return pd.read_parquet(cache_path)
 
     proj = load_nflcom_projections(
-        seasons, cache_dir=cache_dir, force_refresh=force_refresh, reader=reader
+        seasons, weeks=weeks, cache_dir=cache_dir, force_refresh=force_refresh, reader=reader
     )
 
     if rosters is None:

@@ -20,6 +20,7 @@ import src.qb.config as qb_cfg
 import src.rb.config as rb_cfg
 import src.serving.app as app_pkg
 import src.serving.core as core
+import src.serving.timeline as timeline
 import src.te.config as te_cfg
 import src.wr.config as wr_cfg
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
@@ -383,6 +384,17 @@ def api_weekly_accuracy():
             "scoring": scoring,
         }
     )
+
+
+@app.route("/api/timeline")
+def api_timeline():
+    """Changelog & Timeline tab payload: the live weekly head-to-head log
+    (models + experts, winner, edge on common rows) plus the committed
+    release-changelog entries. See src/serving/timeline.py for semantics."""
+    scoring = _validate_scoring(request.args.get("scoring", "ppr"))
+    payload = timeline.compute_timeline(scoring)
+    payload["releases"] = timeline.load_release_changelog()
+    return jsonify(payload)
 
 
 @app.route("/api/position_details")

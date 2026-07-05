@@ -28,7 +28,7 @@ The rest of `src/` groups by purpose:
 - `src/data/` — cross-position data loading + temporal split (per-position `data.py` files wrap these): `loader.py`, `nflcom_loader.py`, `preprocessing.py`, `redzone_pbp.py`, `split.py`.
 - `src/features/engineer.py` — cross-position feature engineering coordinator.
 - `src/shared/evaluation.py` — position-aware visualization/aggregation layer plus the `compute_metrics(y_true, y_pred)` helper used by backtest and pipeline.
-- `src/serving/` — Flask app + assets.
+- `src/serving/` — Flask app + assets. The dashboard UI is React: **sources in `src/serving/frontend/` (edit these), committed esbuild bundle at `src/serving/static/js/app.js` (never edit; `cd src/serving/frontend && npm run build` regenerates — CI's `frontend-bundle` job fails a PR whose bundle is stale)**. See SETUP.md § "Frontend build" + ADR-0023.
 - `src/batch/` — training orchestration (AWS Batch path). New tuner/ablation files go in `src/tuning/`, **never** here — files under `src/batch/` trigger a full 6-position retrain via [src/scripts/scope_positions.py](src/scripts/scope_positions.py), except names containing `tune`/`ablate` and the exact basenames `launch.py` / `benchmark.py` (job submission / read-only aggregation). PR #280 burned ~4 GPU-jobs from a tuner-only change placed here.
 - `src/benchmarking/`, `src/tuning/` — Optuna + ablations.
 - `src/analysis/` — post-hoc analyses.
@@ -208,6 +208,7 @@ Hard-won lessons from prior sessions. One line each; provider-neutral. (Claude C
 - **GPU dtype × compute-capability:** `autocast(dtype=)` accepting an arg ≠ kernels support it — T4 (sm_75) is FP16-only; BF16 needs sm_80+. Check the matrix before enabling AMP.
 - **GPU arch is per-CUDA-wheel, not per-version:** sm_xx comes from the cuXXX wheel build (`2.12.0+cu130` adds Blackwell sm_120) — verify the wheel index, don't trust a version→GPU claim.
 - **AWS Batch UserData must be MIME multipart, not raw bash**, else the compute environment flips INVALID (recovery: republish + disable→update→enable).
+- **`src/serving/release_changelog.json` is the owner-curated model-release log** rendered by the dashboard's Changelog & Timeline tab (`/api/timeline`). When a notable model release lands (architecture change, tuning wave, full-fleet retrain milestone), append an entry `{version, date, family, model, title, summary, mae, r2, prev_mae, pr}` with metrics from the corresponding `benchmark_history/` run — schema is pinned by [tests/test_app_timeline.py](tests/test_app_timeline.py); the weekly head-to-head log on that tab is computed live and needs no upkeep.
 - **Local benchmark runs must mirror to S3** (`benchmark.py::_maybe_upload_to_s3`, env-gated, `--no-sync` opt-out) to reach the website History tab; don't lift that helper into `src/shared/` (fires a 6-position retrain).
 - **Diagnostics live in `src/analysis/`** (import shared helpers); editing `src/shared/` or `src/{pos}/` to wire in read-only tooling fires a 6-position retrain — expose a predicate fn for later drop-in.
 - **Split `fantasy_points` is skill-only** (≈0 for K, absent for DST); per-position label analysis from splits is QB/RB/WR/TE-only — K/DST totals exist only post-pipeline on `result["test_df"]`.
