@@ -1,0 +1,62 @@
+[
+  {
+    "version": "v2026.04.21",
+    "date": "2026-04-21",
+    "family": "attn_nn",
+    "model": "Attention NN",
+    "title": "Attention NN reaches all six positions",
+    "summary": "Kicker attention support lands (801b61a), completing the six-position attention rollout begun with DST — every position now trains the game-history attention variant alongside Ridge, the dense NN, and LightGBM.",
+    "mae": 5.154,
+    "r2": -0.142,
+    "prev_mae": null,
+    "pr": 59
+  },
+  {
+    "version": "v2026.05.20",
+    "date": "2026-05-20",
+    "family": "attn_nn",
+    "model": "Attention NN",
+    "title": "Full-fleet retrain on the Batch Spot fan-out",
+    "summary": "Six-position benchmark refresh on the parallel AWS Batch Spot path: mean Attention-NN MAE across positions improves 5.154 → 4.626 with aggregate R² turning solidly positive.",
+    "mae": 4.626,
+    "r2": 0.204,
+    "prev_mae": 5.154,
+    "pr": 236
+  },
+  {
+    "version": "v2026.05.29",
+    "date": "2026-05-29",
+    "family": "attn_nn",
+    "model": "Attention NN",
+    "title": "Feature + loss-head tuning wave",
+    "summary": "Accumulated feature-engineering and per-position loss-head tuning land in a full retrain: mean Attention-NN MAE 4.626 → 4.497.",
+    "mae": 4.497,
+    "r2": 0.242,
+    "prev_mae": 4.626,
+    "pr": 370
+  },
+  {
+    "version": "v2026.06.11",
+    "date": "2026-06-11",
+    "family": "attn_nn",
+    "model": "Attention NN",
+    "title": "Stacked-seed tuning round",
+    "summary": "Hyperparameters re-tuned under the N=24 stacked-seed regime (single-seed MAE is noise) and shipped through a full retrain: mean Attention-NN MAE 4.497 → 4.370, the best fleet-wide reading to date.",
+    "mae": 4.37,
+    "r2": 0.269,
+    "prev_mae": 4.497,
+    "pr": 1119
+  },
+  {
+    "version": "v2026.07.04",
+    "date": "2026-07-04",
+    "family": "attn_nn",
+    "model": "Attention NN",
+    "title": "Current production baseline",
+    "summary": "Latest full six-position retrain; mean Attention-NN MAE holds at 4.383 (within seed noise of the 2026-06-11 best) on the held-out test season.",
+    "mae": 4.383,
+    "r2": 0.269,
+    "prev_mae": 4.37,
+    "pr": 1460
+  }
+]

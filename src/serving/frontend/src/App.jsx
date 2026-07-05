@@ -19,8 +19,9 @@ import { ComparisonView } from "./views/Comparison.jsx";
 import { ArchitectureView } from "./views/Architecture.jsx";
 import { WikiView } from "./views/Wiki.jsx";
 import { HistoryView } from "./views/History.jsx";
+import { TimelineView } from "./views/Timeline.jsx";
 
-const TAB_VIEWS = ["homepage", "predictions", "model-performance", "comparison", "model-architecture", "wiki", "history"];
+const TAB_VIEWS = ["homepage", "predictions", "model-performance", "comparison", "model-architecture", "wiki", "history", "timeline"];
 const TAB_LABELS = {
     homepage: "Next Week",
     predictions: "Season Leaders",
@@ -29,6 +30,7 @@ const TAB_LABELS = {
     "model-architecture": "Model Architecture",
     wiki: "Wiki",
     history: "History",
+    timeline: "Changelog & Timeline",
 };
 
 function viewFromHash(hash) {
@@ -195,6 +197,7 @@ export function App() {
                 {view === "model-architecture" && <ArchitectureView {...viewProps} />}
                 {view === "wiki" && <WikiView {...viewProps} />}
                 {view === "history" && <HistoryView {...viewProps} />}
+                {view === "timeline" && <TimelineView {...viewProps} />}
             </main>
             {modal && (
                 <PlayerModal
