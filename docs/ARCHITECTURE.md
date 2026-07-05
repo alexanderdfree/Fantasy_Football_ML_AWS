@@ -59,7 +59,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
                        ensembled ──────▶ │
                                          ▼
          ┌──────────────────────┐  ┌────────────────────┐
-         │ 6× g6 Spot (Batch)   │  │ Flask app (serve)  │
+         │ 6× g6/g5 Spot (Batch)│  │ Flask app (serve)  │
          │ Dockerfile.train     │  │ Dockerfile (slim)  │
          │ one position / host  │  │ ECS, CPU-only      │
          │ ~15 min parallel     │  │                    │
@@ -71,7 +71,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 
 > **Rollback path:** the warm-EC2 implementation ([docs/ec2_design.md](ec2_design.md)) stays provisioned and is reactivated by `gh variable set BATCH_ACTIVE --body "false"` on the next push. D13 explains why the active default flipped to Batch; D7/D9 cover the warm-EC2 fallback.
 
-A training run is triggered by a push to `main`, which invokes [`.github/workflows/train-batch.yml`](../.github/workflows/train-batch.yml) (when `BATCH_ACTIVE=true`): the workflow submits six Batch jobs in parallel against the `ff-gpu-spot` Compute Environment — one per position on its own Spot g6.xlarge — blocks until they terminate, verifies fresh `manifest.json` entries landed in S3 per position (the legacy `model.tar.gz` mirror was removed in D13 layer C — freshness is now checked against the manifest and the artifact tarball each manifest points at), and commits a fresh `benchmark_history/{run_id}.json`. When `BATCH_ACTIVE != 'true'` the [warm-EC2 trainer](../.github/workflows/train-ec2.yml) fires instead and loops the six positions sequentially via SSM. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models from S3 and serves projections through a dashboard.
+A training run is triggered by a push to `main`, which invokes [`.github/workflows/train-batch.yml`](../.github/workflows/train-batch.yml) (when `BATCH_ACTIVE=true`): the workflow submits six Batch jobs in parallel against the `ff-gpu-spot` Compute Environment — one per position on its own Spot host, drawn from the single diversified g6.xlarge + g5.xlarge pool under `SPOT_PRICE_CAPACITY_OPTIMIZED` (D13) — blocks until they terminate, verifies fresh `manifest.json` entries landed in S3 per position (the legacy `model.tar.gz` mirror was removed in D13 layer C — freshness is now checked against the manifest and the artifact tarball each manifest points at), and commits a fresh `benchmark_history/{run_id}.json`. When `BATCH_ACTIVE != 'true'` the [warm-EC2 trainer](../.github/workflows/train-ec2.yml) fires instead and loops the six positions sequentially via SSM. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models from S3 and serves projections through a dashboard.
 
 ---
 
@@ -110,7 +110,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 
 **What becomes easier.**
 - *Parallel iteration per position.* A change to RB features affects only RB's training job, only RB's models, only RB's tests. D2 (multi-head), D6 (allowlist), and D13 (parallel Batch jobs on the active path) compose into position-independent evolution.
-- *Reproducible serving.* The Flask image is immutable and SHA-tagged (D10); models are baked in, not pulled at runtime. No "it worked yesterday" class of bugs.
+- *Reproducible serving.* The Flask image is immutable and SHA-tagged (D10); model artifacts are deliberately excluded from the image and synced from S3 at container boot (gunicorn `on_starting` → `sync_models_from_s3`), pinned by D11's always-stable manifest pointer. No "it worked yesterday" class of bugs.
 - *Audit trail for leakage.* The allowlist (D6) plus the temporal split (D1) plus the ±4σ clip (D5) means any new feature has to survive three independent checks before it affects training.
 - *Visibility into perf regressions.* Phase-level timings emitted under D12 make a slow-down at any pipeline stage visible in the next benchmark JSON without an explicit perf-test job.
 - *Bounded blast radius for a bad artifact.* D11's smoke-test gate + always-stable manifest pointer means a NaN-emitting or shape-mismatched model lands in `current`/`history` but never replaces the live `stable` pointer; rollback is a single `promote.py` invocation against the manifest, no S3 surgery required.

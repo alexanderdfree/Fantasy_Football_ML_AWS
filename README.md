@@ -85,21 +85,21 @@ Full training on GPU runs in CI: by default a push to `main` fans out six Spot G
 
 ## Evaluation
 
-Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination), top-12 hit rate (agreement with the actual weekly top 12 at the position, PPR scoring). Numbers from [benchmark_history/2026-05-29T11-00-49_9de4d84.json](benchmark_history/2026-05-29T11-00-49_9de4d84.json) — the latest full six-position Batch (Spot) run (commit `9de4d84`, PR #367) after the K nested attention (`801b61a`), DST raw-stat migration (`cc0c627`), RB feature audit cycle (PRs #190–#192), and the K/DST aggregate-metric fix (`0c66171`).
+Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination). Numbers from [benchmark_history/2026-07-04T22-33-39_6590a2a.json](benchmark_history/2026-07-04T22-33-39_6590a2a.json) — the latest full six-position Batch (Spot) run (commit `6590a2a`, PR #1460). The split Batch merge writer does not record the top-12 hit rate (it stamps 0 for every family), so that column is omitted; the last run with real top-12 values is [benchmark_history/2026-05-29T11-00-49_9de4d84.json](benchmark_history/2026-05-29T11-00-49_9de4d84.json).
 
-| Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) | Top-12 (best) |
-|---|---|---|---|---|---|---|---|
-| QB  | 6.539 | **6.514** | 6.585 | 6.693 | MultiHeadNet | 0.275  | 0.500 |
-| RB  | 4.502 | 4.302 | **4.179** | 4.195 | Attention NN | 0.418  | 0.431 |
-| WR  | 4.779 | 4.256 | 4.292 | **4.238** | LightGBM     | 0.361  | 0.356 |
-| TE  | 3.726 | 3.515 | **3.508** | 3.595 | Attention NN | 0.325  | 0.468 |
-| K   | **4.008** | 4.167 | 4.221 | 4.133 | Ridge        | 0.018  | 0.468 |
-| DST | 5.203 | 5.115 | **5.107** | 5.271 | Attention NN | 0.061  | 0.565 |
+| Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) |
+|---|---|---|---|---|---|---|
+| QB  | 5.877 | 5.853 | **5.705** | 5.763 | Attention NN | 0.400 |
+| RB  | 4.181 | **4.042** | 4.064 | 4.198 | MultiHeadNet | 0.468 |
+| WR  | 4.128 | 4.033 | **3.971** | 4.129 | Attention NN | 0.346 |
+| TE  | 3.393 | **3.362** | 3.368 | 3.436 | MultiHeadNet | 0.341 |
+| K   | **3.997** | 4.081 | 4.157 | 4.034 | Ridge        | 0.025 |
+| DST | 5.085 | 5.089 | **5.033** | 5.095 | Attention NN | 0.108 |
 
 **Takeaways:**
-- **LightGBM wins WR only; the NN families take QB, RB, TE, and DST.** In the latest run LightGBM is the front-runner at WR (4.238 MAE) but slips to last at QB (6.693, behind the plain MultiHeadNet at 6.514) and is edged at RB by the Attention NN (4.179 vs 4.195). The RB feature audit cycle (drop 14 redundant features, restore prior-season signals, add 3 orthogonal upstream aggregates) closed the model variants to within run-to-run noise at RB.
-- **Attention NN wins RB, TE, and DST.** Sequence + interaction structure pays off across the reception- and count-driven targets. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
-- **K and DST report near-zero aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that every model family barely beats predicting the per-player mean (best R² ≈ 0.02 at K, ≈ 0.06 at DST; several families go slightly negative). K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. The per-position winners are decided by tiny margins well inside run-to-run variance (Ridge edges K at 4.008 MAE; the Attention NN edges DST at 5.107) — no family is a clear winner here. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
+- **The NN families take every position except K.** In the latest run the Attention NN leads QB (5.705), WR (3.971), and DST (5.033); the plain MultiHeadNet leads RB (4.042) and TE (3.362); Ridge holds K. LightGBM wins no position on MAE but posts the best R² at QB (0.403) and TE (0.362) — most per-position margins sit within run-to-run noise.
+- **Attention NN wins QB, WR, and DST.** Sequence + interaction structure pays off across the reception- and count-driven targets. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
+- **K and DST report near-zero aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that every model family barely beats predicting the per-player mean (best R² ≈ 0.03 at K, ≈ 0.1 at DST; K's NN families go slightly negative). K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. The per-position winners are decided by tiny margins well inside run-to-run variance (Ridge edges K at 3.997 MAE; the Attention NN edges DST at 5.033) — no family is a clear winner here. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
 - **Aggregate MAE rose for K and DST compared to the pre-`0c66171` table.** The earlier table reported K=3.6 and DST=3.8 against a partially-wrong unit space (unsigned sum for K, missing PA/YA tier lookup for DST). The corrected aggregator produces the real fantasy-point error: K MAE ≈ 4.0, DST MAE ≈ 5.1 (best models). The dashboard always showed correct values; only the eval-table aggregate was wrong.
 - Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position breakdowns in the linked benchmark JSON.
 
@@ -217,7 +217,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 ### GitHub CI/CD
 
 ```
-push to main ──▶ tests.yml   (7-shard pytest matrix · per-flag Codecov · 80% target)
+push to main ──▶ tests.yml   (8-shard pytest matrix · per-flag Codecov · 80% target)
              │
              │                                            BATCH_ACTIVE=true
              ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g6→g5 (parallel)
