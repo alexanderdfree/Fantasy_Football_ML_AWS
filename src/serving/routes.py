@@ -703,11 +703,14 @@ def api_benchmark_history():
 
     Reads every top-level ``*.json`` under ``benchmark_history/``. Filesystem
     is the source of truth — the container is kept fresh by
-    ``sync_benchmark_history_from_s3()`` at boot. On the active Batch path
-    (``train-batch.yml``, ``BATCH_ACTIVE=true``) the forced ECS refresh was
-    removed in PR #330, so a fresh sync happens on the next natural task roll /
-    in-flight model-refresh; the rollback EC2 path (``train-ec2.yml``) still
-    forces a redeploy via ``aws ecs update-service --force-new-deployment``.
+    ``sync_benchmark_history_from_s3()`` at boot plus the in-flight
+    benchmark-history poller (``start_benchmark_history_poller``, default 30s,
+    ``FF_BENCHMARK_SYNC_INTERVAL_S``). On the active Batch path
+    (``train-batch.yml``, ``BATCH_ACTIVE=true``) the post-train ``ecs_rollout``
+    job also forces a redeploy via ``aws ecs update-service
+    --force-new-deployment`` (removed in PR #330, re-added after the 2026-06-15
+    attn-NN staleness incident); the rollback EC2 path (``train-ec2.yml``)
+    forces the same redeploy.
 
     ``target_labels`` / ``target_units`` are static lookup maps the History
     tab's detailed mode uses to render per-target MAE rows ("Passing Yards …

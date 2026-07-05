@@ -208,7 +208,7 @@ Behaviour-preserving cleanup of `opportunity_index_L3`'s per-game ratio computat
 - yards: w = 0.133 (= 2/15)
 - TDs / fumbles / receptions: w = 1.0
 
-Encoded the `2.0/δ` invariant inline in [config.py:250-260](../src/rb/config.py) so future contributors who change a Huber δ re-derive the matching weight. NN FP MAE recovered from 5.21 → 4.23 (-0.98 pt/game). Ridge / LGBM unaffected (per-target, independent).
+Encoded the `2.0/δ` invariant inline in [config.py:250-260](../src/rb/config.py) so future contributors who change a Huber δ re-derive the matching weight. NN FP MAE recovered from 5.21 → 4.23 (-0.98 pt/game). Ridge / LGBM unaffected (per-target, independent). *(Superseded by the PR #870 Huber→MSE switch: the yards heads are now MSE with w = `1/δ`.)*
 
 ### 2026-04 — `51cb2e3` / PR #15 target-migration: RB raw-stat targets + dual-gate TD
 **This is the foundational target migration.** Switched RB predictions from fantasy-point components (`rushing_floor`, `receiving_floor`, `td_points`) to raw NFL stats:
@@ -266,7 +266,7 @@ Every position predicts raw NFL stats. Fantasy points are computed *after* predi
 
 ### 4. Loss weights are tuned inverse-to-Huber-delta
 
-`LOSS_WEIGHTS[t] ≈ 2.0 / HUBER_DELTAS[t]`. Source: PR #21, [CLAUDE.md](../CLAUDE.md), [config.py:250-260](../src/rb/config.py). Why: without this, yards heads (δ=15) dominate count heads (δ=0.5) by ~2500× per sample.
+`LOSS_WEIGHTS[t] ≈ 1 / HUBER_DELTAS[t]` for the MSE yards heads since the PR #870 Huber→MSE switch (`2.0/δ` in the pre-#870 Huber era, PR #21). Source: [AGENTS.md](../AGENTS.md), [config.py:250-260](../src/rb/config.py). Why: without the coupling, yards heads (δ=15) dominate count heads (δ=0.5) by ~2500× per sample.
 
 ### 5. Always diff training vs inference paths
 

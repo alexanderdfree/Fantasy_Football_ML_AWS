@@ -11,13 +11,21 @@ Use `BASE` if supplied; otherwise use `origin/main`.
 2. Run `ruff check .`.
 3. Run `ruff format --check .`.
 4. Run `pytest -m unit -q`.
-5. Inspect `git diff --name-only BASE...HEAD` for position pipeline edits:
-   - `src/{qb,rb,wr,te,k,dst}/{config,features,targets,run_pipeline}.py`
-   - `src/shared/*.py`, `src/data/*.py`, `src/features/*.py`, `src/config.py`
-6. If model-affecting pipeline files changed, require fresh evidence newer than those edits:
-   - `python -m src.<pos>.run_pipeline` for each affected position, or
-   - `python -m src.benchmarking.benchmark <POS ...>` when a benchmark JSON is needed.
-   For shared pipeline changes, at least one fresh position run is acceptable unless the diff affects position-specific behavior.
+5. Scope `git diff --name-only BASE...HEAD` the way the hook does
+   (`src/scripts/scope_positions.py::compute_benchmark_scope`; `tests/` paths are ignored):
+   - ANY file under `src/{qb,rb,wr,te,k,dst}/` scopes that position (benchmark evidence required for it).
+   - `src/shared/**`, `src/data/**`, `src/features/**`, `src/config.py`, `src/__init__.py` = the shared arm (evidence required on at least one position).
+   - `src/batch/**` and `requirements.txt` are exempt-but-reported (no benchmark evidence).
+6. For each scoped position, require benchmark evidence matched by content fingerprint, not mtime:
+   some `benchmark_history/*.json` entry's `code_fingerprints[POS]` must match the branch HEAD's
+   fingerprint (`src/scripts/bench_fingerprint.py`) — produce it with
+   `python -m src.benchmarking.benchmark <POS ...>`. A bare `python -m src.<pos>.run_pipeline` run
+   also passes via the permanent `{pos}/outputs/models` mtime fallback (accepted with a nudge).
+   AST-inert edits (a gated file whose ENTIRE BASE..HEAD diff is comments/docstrings/formatting)
+   and additive-only-no-risky-token edits bypass this step; `[docs-only]` (step 1) bypasses both gates.
+   For shared-arm changes, any one position's evidence is acceptable unless the diff affects
+   position-specific behavior (e.g. a K/DST-only branch inside `src/shared/`) — then benchmark
+   that position; the fingerprint gate is position-blind for `src/shared/**` and cannot catch this.
 7. Run `/prompts:pre-pr-judge` before `gh pr create` unless the change is trivial.
 
 Report the exact commands run, pass/fail status, and any remaining gate friction.

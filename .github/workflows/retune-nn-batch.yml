@@ -7,8 +7,8 @@ name: Retune NN on Batch (Spot)
 # 64 since 2026-06-11, so a tune fleet no longer starves a concurrent train
 # fan-out). Inside each position job, the tuner passes
 # --parallel-backend auto; inside the g6/L4 or g5/A10G Linux container the
-# detect-platform path resolves that to NVIDIA CUDA MPS. Default is 3 workers
-# plus FF_CUDA_GRAPH=1.
+# detect-platform path resolves that to NVIDIA CUDA MPS. The default worker
+# count is "auto" (CPU count, RAM-clamped in-container) plus FF_CUDA_GRAPH=1.
 #
 # NO ECS refresh, NO benchmark_history commit: tuning produces config
 # *recommendations* (printed as paste-ready QB_ATTN_* / QB_NN_* constants),

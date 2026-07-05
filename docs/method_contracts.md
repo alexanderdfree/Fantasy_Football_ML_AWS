@@ -734,13 +734,15 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=5e-5)
 criterion = MultiTargetLoss(
     # Representative subset — full target list is POSITION_CONFIG.targets
     target_names=["rushing_yards", "receiving_yards", "receptions", "rushing_tds"],
-    # RB loss_weights: yards use 2.0/delta rebalance; Poisson/hurdle heads use 1.0
-    loss_weights={"rushing_yards": 0.133, "receiving_yards": 0.133,
+    # RB loss_weights: MSE yards heads use 1/delta (post-#870); Poisson/hurdle heads use 1.0
+    loss_weights={"rushing_yards": 0.0667, "receiving_yards": 0.0667,
                   "receptions": 1.0, "rushing_tds": 1.0},
-    # RB huber_deltas only cover the Huber heads (yards)
+    # RB huber_deltas: retained characteristic error scale the MSE weights (1/delta)
+    # derive from — no RB head trains on Huber since the Huber->MSE switch (#870)
     huber_deltas={"rushing_yards": 15.0, "receiving_yards": 15.0},
-    # receptions -> hurdle_negbin, rushing_tds -> poisson_nll (not Huber)
-    head_losses={"receptions": "hurdle_negbin", "rushing_tds": "poisson_nll"},
+    # yards -> mse (#870); receptions -> hurdle_negbin; rushing_tds -> poisson_nll
+    head_losses={"rushing_yards": "mse", "receiving_yards": "mse",
+                 "receptions": "hurdle_negbin", "rushing_tds": "poisson_nll"},
     gated_targets=["receptions", "rushing_tds", "receiving_tds"],
 )
 # Scheduler varies by position: OneCycleLR (TE, K) or CosineWarmRestarts (QB, RB, WR, DST)
@@ -844,7 +846,8 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 ```
 
 (Per-position aggregation is no longer a standalone helper — it's inlined into
-`src/serving/core.py::_compute_metrics_locked`, which loops `POSITIONS` and
+`src/serving/core.py::_compute_metrics_locked`, which loops `_ALL_POSITIONS`
+(from `src.serving.metadata`) and
 calls `compute_metrics` directly. The old `compute_positional_metrics(df, …)`
 helper was deleted to avoid an intermediate DataFrame round-trip.)
 

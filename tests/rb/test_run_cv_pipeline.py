@@ -49,9 +49,9 @@ def _load_cv_splits(n_players: int = 25) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Slice the engineered parquets to (full_df, test_df) for CV.
 
     ``expanding_window_folds`` defaults to ``CV_VAL_SEASONS = [2021, 2022,
-    2023, 2024]`` so each fold trains on prior seasons (>= 2012) and
+    2023, 2024]`` so each fold trains on prior seasons (>= 2013) and
     validates on a single later season. ``full_df`` must therefore span
-    2012-2024 (train.parquet covers 2012-2023; val.parquet covers 2024);
+    2013-2024 (train.parquet covers 2013-2023; val.parquet covers 2024);
     ``test_df`` is the 2025 holdout. ``n_players`` defaults to 25 to keep
     the 4-fold + final-holdout NN train budget under 180s on CPU.
     """

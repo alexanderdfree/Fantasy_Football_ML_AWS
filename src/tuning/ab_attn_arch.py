@@ -32,7 +32,8 @@ truth), minus the dropped ``entropy`` and ``selfattn`` arms.
 Run::
 
     python -m src.tuning.ab_attn_arch --list                         # show the grid, run nothing
-    python -m src.tuning.launch_ab --spec src.tuning.ab_attn_arch     # GPU fleet, N=24 stacked
+    # GPU fleet, N=24 stacked — --stacked-seeds is required (launch_ab defaults to eager):
+    python -m src.tuning.launch_ab --spec src.tuning.ab_attn_arch --stacked-seeds
     python -m src.tuning.ab_attn_arch --positions RB --no-stacked-seeds --seeds 42  # eager smoke
     python -m src.tuning.ab_attn_arch --positions QB                  # gated 2nd-position stress
 """
