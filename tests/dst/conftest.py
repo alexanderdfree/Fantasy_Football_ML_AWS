@@ -276,10 +276,11 @@ def _build_tiny_dataset(seed: int = 42) -> pd.DataFrame:
                         "opp_qb_int_rate_L5": float(rng.normal(0.025, 0.015)),
                         "opp_qb_sack_rate_L5": float(rng.normal(0.07, 0.02)),
                         "opp_qb_rush_yds_L5": float(rng.normal(15, 10)),
-                        # Per-game opp stats (attention history sequence)
-                        "opp_scoring": float(max(0, rng.normal(22, 10))),
-                        "opp_fumbles": float(max(0, rng.poisson(0.7))),
-                        "opp_interceptions": float(max(0, rng.poisson(0.8))),
+                        # Per-game opp stat (attention history sequence). Only
+                        # opp_qb_epa survives: opp_scoring / opp_fumbles /
+                        # opp_interceptions were dropped in #649 (redundant with
+                        # points_allowed / def_fumble_rec / def_ints) and their
+                        # producing merges removed in #1393.
                         "opp_qb_epa": float(rng.normal(0, 5)),
                     }
                 )

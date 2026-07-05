@@ -14,7 +14,11 @@ def build_data() -> pd.DataFrame:
       - Points allowed: from schedule game scores (complete for all teams/seasons)
       - Sacks forced: derived from opponent offensive sacks suffered (complete)
       - INTs forced: derived from opponent offensive INTs thrown (complete)
-      - Fumble recoveries: derived from opponent fumbles lost (complete)
+      - Fumble recoveries (def_fumble_rec): from nflverse stats_team's
+        ``fumble_recovery_opp`` (the direct opponent-fumble-recovery count).
+        This captures special-teams recoveries (muffed punts, kickoff fumbles)
+        and excludes touchback / out-of-end-zone fumbles — both of which the
+        old opponent-offensive-fumbles-lost derivation got wrong (#1427).
       - def_tds / def_safeties / def_fumbles_forced: from nflverse stats_team
         (full history, much better fill than per-player aggregation)
       - def_blocked_kicks: opponent's fg_blocked + pat_blocked from stats_team
@@ -119,11 +123,15 @@ def build_data() -> pd.DataFrame:
     # --- 4. Defensive stats derived from opponent's offensive data ---
     # Sacks forced = opponent QBs/players sacks suffered
     # INTs forced = opponent QBs interceptions thrown
-    # Fumble recoveries = opponent fumbles lost
+    # (def_fumble_rec is NOT derived here — it comes from team_stats'
+    #  fumble_recovery_opp in section 5; the opponent-offensive-fumbles-lost
+    #  sum both missed special-teams recoveries and overcounted touchback
+    #  fumbles, #1427.)
     #
     # ``weekly`` is local to ``build_data`` (loaded from parquet above), so we
     # add the two scratch columns in-place instead of copying the full frame —
     # the helper is ``weekly``-internal, no external caller observes it.
+    # ``_total_fumbles_lost`` still feeds the team_turnovers agg below.
     weekly["_total_fumbles_lost"] = (
         weekly["sack_fumbles_lost"].fillna(0)
         + weekly["rushing_fumbles_lost"].fillna(0)
@@ -135,19 +143,29 @@ def build_data() -> pd.DataFrame:
         .agg(
             def_sacks=("sacks", "sum"),
             def_ints=("interceptions", "sum"),
-            def_fumble_rec=("_total_fumbles_lost", "sum"),
         )
         .reset_index()
     )
-    def_from_offense.columns = ["team", "season", "week", "def_sacks", "def_ints", "def_fumble_rec"]
+    def_from_offense.columns = ["team", "season", "week", "def_sacks", "def_ints"]
 
-    # --- 5. Defensive TDs, safeties, forced fumbles from team-week stats ---
+    # --- 5. Defensive TDs, safeties, forced fumbles, fumble recoveries
+    #        from team-week stats ---
     # nflverse stats_team carries these directly for every team-week across
     # the full history — avoids the fill gap that per-player aggregation hits
-    # pre-2025.
+    # pre-2025. ``fumble_recovery_opp`` is the authoritative D/ST fumble-recovery
+    # count (includes special-teams recoveries, excludes touchback fumbles) and
+    # replaces the old opponent-offensive-fumbles-lost derivation (#1427).
     def_team_stats = team_stats[
-        ["team", "season", "week", "def_tds", "def_safeties", "def_fumbles_forced"]
-    ].copy()
+        [
+            "team",
+            "season",
+            "week",
+            "def_tds",
+            "def_safeties",
+            "def_fumbles_forced",
+            "fumble_recovery_opp",
+        ]
+    ].rename(columns={"fumble_recovery_opp": "def_fumble_rec"})
 
     # --- 5b. Opponent-derived columns from team_stats ---
     # yards_allowed = opponent's passing_yards + rushing_yards
@@ -195,19 +213,10 @@ def build_data() -> pd.DataFrame:
         weekly.groupby(["recent_team", "season", "week"])
         .agg(
             team_turnovers=("_total_turnovers", "sum"),
-            team_fumbles=("_total_fumbles_lost", "sum"),
-            team_interceptions=("interceptions", "sum"),
         )
         .reset_index()
     )
-    team_turnovers.columns = [
-        "team",
-        "season",
-        "week",
-        "team_turnovers",
-        "team_fumbles",
-        "team_interceptions",
-    ]
+    team_turnovers.columns = ["team", "season", "week", "team_turnovers"]
 
     # 7c. Team sacks allowed (as offense) — how vulnerable is this OL?
     team_sacks_allowed = (
@@ -338,26 +347,13 @@ def build_data() -> pd.DataFrame:
     # Opposing QB quality features
     dst_df = dst_df.merge(opp_qb, on=["opponent_team", "season", "week"], how="left")
 
-    # --- Per-game opponent stats (for attention history sequence) ---
-    # These are raw per-game values (NOT rolling means) used by the DST
-    # attention branch to learn its own temporal weighting over games. The
-    # L3/L5 rolling opp features above stay for Ridge / base NN.
-    opp_game_scoring = team_scoring[["team", "season", "week", "team_score"]].copy()
-    opp_game_scoring.columns = ["opponent_team", "season", "week", "opp_scoring"]
-    dst_df = dst_df.merge(opp_game_scoring, on=["opponent_team", "season", "week"], how="left")
-
-    opp_game_turnovers = team_turnovers[
-        ["team", "season", "week", "team_fumbles", "team_interceptions"]
-    ].copy()
-    opp_game_turnovers.columns = [
-        "opponent_team",
-        "season",
-        "week",
-        "opp_fumbles",
-        "opp_interceptions",
-    ]
-    dst_df = dst_df.merge(opp_game_turnovers, on=["opponent_team", "season", "week"], how="left")
-
+    # --- Per-game opponent stat (for attention history sequence) ---
+    # A raw per-game value (NOT a rolling mean) used by the DST attention branch
+    # to learn its own temporal weighting over games. The L3/L5 rolling opp
+    # features above stay for Ridge / base NN. Only opp_qb_epa survives here:
+    # opp_scoring / opp_fumbles / opp_interceptions were dropped in #649 (each
+    # was column-identical to points_allowed / def_fumble_rec / def_ints already
+    # in the sequence), and the producing merges were removed in #1393.
     opp_game_qb = qb_team[["team", "season", "week", "qb_passing_epa"]].copy()
     opp_game_qb.columns = ["opponent_team", "season", "week", "opp_qb_epa"]
     dst_df = dst_df.merge(opp_game_qb, on=["opponent_team", "season", "week"], how="left")
@@ -400,7 +396,7 @@ def build_data() -> pd.DataFrame:
             stat = dst_df[col].median() if agg == "median" else dst_df[col].mean()
         return stat
 
-    # league-average points-allowed (train-only) reused by the opp_scoring fills
+    # league-average points-allowed (train-only) reused by the opp_scoring_L{3,5} fills
     train_pts_allowed_mean = _train_stat("points_allowed", "mean")
     for col in ["spread_line", "total_line"]:
         dst_df[col] = dst_df[col].fillna(_train_stat(col, "median"))
@@ -422,12 +418,8 @@ def build_data() -> pd.DataFrame:
     for col in ["opp_qb_int_rate_L5", "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5"]:
         dst_df[col] = dst_df[col].fillna(_train_stat(col, "median"))
 
-    # Per-game opp columns (attention history) — fill scoring with the
-    # league-average (train-only) points-allowed, and turnover / QB-EPA columns
-    # with 0, so the first-week-of-season attention sequence isn't degenerate.
-    dst_df["opp_scoring"] = dst_df["opp_scoring"].fillna(train_pts_allowed_mean)
-    dst_df["opp_fumbles"] = dst_df["opp_fumbles"].fillna(0)
-    dst_df["opp_interceptions"] = dst_df["opp_interceptions"].fillna(0)
+    # Per-game opp column (attention history) — fill QB-EPA with 0 so the
+    # first-week-of-season attention sequence isn't degenerate.
     dst_df["opp_qb_epa"] = dst_df["opp_qb_epa"].fillna(0)
 
     # Add pipeline-compatible columns

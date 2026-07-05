@@ -101,6 +101,11 @@ def _make_team_stats(seed: int = 1) -> pd.DataFrame:
                         "def_tds": int(rng.integers(0, 2)),
                         "def_safeties": 0,
                         "def_fumbles_forced": int(rng.integers(0, 3)),
+                        # Direct D/ST fumble-recovery count (#1427). Non-zero so a
+                        # correct build sources it here rather than re-deriving the
+                        # (all-zero, in this fixture) opponent-offense fumbles-lost
+                        # sum — exercising the mismatch case.
+                        "fumble_recovery_opp": int(rng.integers(0, 4)),
                         "passing_yards": float(rng.integers(150, 400)),
                         "rushing_yards": float(rng.integers(50, 180)),
                         "fg_blocked": 0,
@@ -197,9 +202,6 @@ def test_build_dst_data_schema(synthetic_parquets):
         "opp_qb_int_rate_L5",
         "opp_qb_sack_rate_L5",
         "opp_qb_rush_yds_L5",
-        "opp_scoring",
-        "opp_fumbles",
-        "opp_interceptions",
         "opp_qb_epa",
         "player_id",
         "player_display_name",
@@ -210,6 +212,35 @@ def test_build_dst_data_schema(synthetic_parquets):
     }
     missing = required - set(df.columns)
     assert not missing, f"missing derived columns: {sorted(missing)}"
+
+
+@pytest.mark.unit
+def test_build_dst_data_fumble_rec_from_team_stats(synthetic_parquets):
+    """def_fumble_rec must come from team_stats.fumble_recovery_opp (the direct
+    opponent-fumble-recovery count), NOT the opponent offensive fumbles-lost
+    component sum (#1427).
+
+    The weekly fixture sets every offensive fumbles-lost column to 0, so the
+    old component-sum derivation would make def_fumble_rec == 0 for every row.
+    team_stats carries non-zero fumble_recovery_opp, so a correct build sources
+    the direct column and the two disagree — the exact mismatch class in #1427
+    (special-teams recoveries the offense-only sum misses; touchback fumbles it
+    overcounts).
+    """
+    from src.dst.data import build_data
+
+    df = build_data()
+    ts = _make_team_stats()  # same deterministic frame the fixture stubbed in
+    merged = df.merge(
+        ts[["team", "season", "week", "fumble_recovery_opp"]],
+        on=["team", "season", "week"],
+        how="left",
+    )
+    # Direct-sourced: def_fumble_rec equals fumble_recovery_opp on every row.
+    assert (merged["def_fumble_rec"] == merged["fumble_recovery_opp"]).all()
+    # Positive control: the old component-sum derivation (all-zero here) would
+    # disagree on at least one row — proving this isn't a 0-vs-0 identity.
+    assert (merged["fumble_recovery_opp"] > 0).any()
 
 
 @pytest.mark.unit
@@ -242,9 +273,6 @@ def test_build_dst_data_no_nans_in_fills(synthetic_parquets):
         "opp_qb_int_rate_L5",
         "opp_qb_sack_rate_L5",
         "opp_qb_rush_yds_L5",
-        "opp_scoring",
-        "opp_fumbles",
-        "opp_interceptions",
         "opp_qb_epa",
     ]
     for col in fill_cols:
