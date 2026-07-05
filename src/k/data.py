@@ -482,6 +482,21 @@ def load_data() -> pd.DataFrame:
         k_df.loc[needs_redrv, "is_dome"] = (
             k_df.loc[needs_redrv, "roof"].isin(["dome", "closed"]).astype(int)
         )
+        # Rows the schedule backfill just resolved to a dome (is_dome==1) keep
+        # whatever game_temp/game_wind the (empty-roof) PBP left behind — usually
+        # NaN, since a dome game has no recorded weather. Left NaN, those rows
+        # fall through to fill_nans_with_train_means (src/k/features.py) and pick
+        # up the ~outdoor train mean, producing an inconsistent
+        # (is_dome=1, outdoor-mean weather) triple fed to the static + attention
+        # branches. Apply the same 65 F / 0 mph dome convention the two upstream
+        # rewrites use (reconstruct_kicker_weekly_from_pbp:300-302 and
+        # _backfill_2025_pbp_columns:547-549), scoped to these just-corrected
+        # dome rows and only where the value is still NaN — so a genuine outdoor
+        # NaN is untouched and still falls through to the train-mean fill. (#1392)
+        redrv_dome = needs_redrv & (k_df["is_dome"] == 1)
+        for _wcol, _dome_val in (("game_temp", 65.0), ("game_wind", 0.0)):
+            if _wcol in k_df.columns:
+                k_df.loc[redrv_dome & k_df[_wcol].isna(), _wcol] = _dome_val
 
     # Sentinel so the downstream shared ``merge_schedule_features`` (called by
     # both training pipeline and serving) becomes a no-op for K — K does its
