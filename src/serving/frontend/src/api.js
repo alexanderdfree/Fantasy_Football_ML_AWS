@@ -3,6 +3,14 @@
 
 export async function fetchJSON(url) {
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    if (!resp.ok) {
+        // Preserve the HTTP status on the thrown error so callers can tell an
+        // expected 404 (e.g. /api/player for a rookie with no backtest history)
+        // apart from a real server-side failure (500, etc.) instead of
+        // conflating every non-ok response into one benign fallback (#1437).
+        const err = new Error(`API error: ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
     return resp.json();
 }

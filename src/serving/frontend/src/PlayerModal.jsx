@@ -49,7 +49,7 @@ function TrendChart({ weekly, theme }) {
 
 export function PlayerModal({ playerId, fallback, scoring, theme, onClose }) {
     const [data, setData] = useState(null);
-    const [failed, setFailed] = useState(false);
+    const [failed, setFailed] = useState(false); // false | "notfound" | "error"
 
     useEffect(() => {
         if (!playerId) return undefined;
@@ -60,7 +60,11 @@ export function PlayerModal({ playerId, fallback, scoring, theme, onClose }) {
             .then((d) => { if (!cancelled) setData(d); })
             .catch((e) => {
                 console.error("Failed to load player:", e);
-                if (!cancelled) setFailed(true);
+                // A 404 is the expected "not in the backtest results cache"
+                // case (rookie/backup with no prior-season game log). Any other
+                // failure (500, network, parse) must NOT be masked as
+                // no-history — keep it a visible error card (#1437).
+                if (!cancelled) setFailed(e.status === 404 ? "notfound" : "error");
             });
         return () => { cancelled = true; };
     }, [playerId, scoring]);
@@ -74,15 +78,16 @@ export function PlayerModal({ playerId, fallback, scoring, theme, onClose }) {
 
     if (!playerId) return null;
 
-    // Three render states: loaded, failed-with-fallback (identity card), failed.
-    const identity = data || (failed && fallback
+    // Render states: loaded, 404-with-fallback (identity card), failed.
+    const useFallback = failed === "notfound" && fallback;
+    const identity = data || (useFallback
         ? { name: fallback.name || "—", position: fallback.position, team: fallback.team, headshot: fallback.headshot }
         : failed
             ? { name: "Error loading player", position: "", team: "", headshot: null }
             : null);
 
     const posTeam = identity ? [identity.position, identity.team].filter(Boolean).join(" - ") : "";
-    const note = failed && fallback ? "No prior-season game log to chart yet." : "";
+    const note = useFallback ? "No prior-season game log to chart yet." : "";
 
     return (
         <div id="player-modal" className="modal open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>

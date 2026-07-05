@@ -289,7 +289,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                     <>
                         <div className="section-header">About this comparison</div>
                         <ul className="comparison-note-list">
-                            <li><strong>Seasons.</strong> Our model trains on 2012–2023, validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
+                            <li><strong>Seasons.</strong> Our model trains on 2013–2023 (2012 is loaded for prior-season context only), validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
                             <li><strong>Scoring.</strong> Full PPR (1 pt / reception). Projections and actuals run through the same scoring formula, so it's apples-to-apples. RMSE is shown alongside MAE because expert projections implicitly target squared error.</li>
                             <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly fantasy-point totals; the best cell in each row is highlighted.</li>
                             <li><strong>NFL.com.</strong> {nflNote}</li>

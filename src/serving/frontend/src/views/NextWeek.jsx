@@ -81,6 +81,11 @@ export function NextWeekView({ scoring, search, onPlayer }) {
                     if (!cancelled) setUpcoming({ state: "warming", data: null });
                     return;
                 }
+                // Any other non-ok status (e.g. Flask's JSON 500 error handler)
+                // is a real failure, not an artifact — reject it here so it hits
+                // the catch and renders the error state, instead of parsing an
+                // error body as data (#1436).
+                if (!resp.ok) throw new Error(`API error: ${resp.status}`);
                 const payload = await resp.json();
                 if (!payload || payload.available === false) {
                     if (!cancelled) setUpcoming({ state: "offseason", data: null });

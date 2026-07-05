@@ -181,7 +181,7 @@ export function ArchitectureView(props) {
                 <li><strong>Gradient clipping:</strong> <code>clip_grad_norm_(max_norm=1.0)</code> each step.</li>
                 <li><strong>Schedulers:</strong> <code>CosineAnnealingWarmRestarts</code>, <code>OneCycleLR</code>, or <code>ReduceLROnPlateau</code> (per-position).</li>
                 <li><strong>Early stopping:</strong> tracks <code>val_mae_total</code>; restores the best <code>state_dict</code> when patience expires.</li>
-                <li><strong>Data split:</strong> Train 2012–2023, Val 2024, Test 2025 (Kickers: 2015+ only, post-PAT rule change).</li>
+                <li><strong>Data split:</strong> Train 2013–2023, Val 2024, Test 2025 (2012 loaded for prior-season context only; Kickers: 2015+ only, post-PAT rule change).</li>
                 <li><strong>Artifacts:</strong> <code>{"{pos}_multihead_nn.pt"}</code>, <code>{"{pos}_attention_nn.pt"}</code>, <code>nn_scaler.pkl</code>, Ridge/LightGBM models — tarred and uploaded to S3.</li>
             </ul>
 
