@@ -54,7 +54,9 @@ EXTRA_DROPS = {
     "prior_season_mean_receptions",
     "prior_season_std_receptions",
     "prior_season_max_receptions",
-    # Carry-related rolling — WRs rarely carry; carry_share is more informative
+    # Carry-related rolling — WRs rarely carry. (carry_share_L3/L5 were later
+    # dropped from the WR whitelist entirely as sparse noise in PR #1320, so
+    # they no longer need an EXTRA_DROPS entry here.)
     "rolling_mean_carries_L3",
     "rolling_std_carries_L3",
     "rolling_max_carries_L3",
@@ -65,8 +67,6 @@ EXTRA_DROPS = {
     "prior_season_mean_carries",
     "prior_season_std_carries",
     "prior_season_max_carries",
-    # carry_share L5 — r=0.97 with carry_share_L3
-    "carry_share_L5",
 }
 
 

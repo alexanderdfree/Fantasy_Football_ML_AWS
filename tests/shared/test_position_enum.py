@@ -129,3 +129,35 @@ def test_position_target_map_keys_are_valid_positions():
     for key in POSITION_TARGET_MAP:
         # Will raise ValueError if not a real Position.
         Position(key)
+
+
+# --------------------------------------------------------------------------
+# Drift guards: hard-coded position copies must track Position.values()
+# (same pattern as tests/scripts/test_scope_positions.py — the copies stay
+# plain strings to avoid retrain-triggering src edits; the tests pin them)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_src_config_positions_matches_position_enum():
+    """GH #1428: ``src.config.POSITIONS`` is the global raw-row allowlist
+    (``src/data/preprocessing.py`` filters on it pre-split), kept as an
+    independent hard-coded copy of the canonical ``Position`` enum. A
+    position added to the enum but not there would be silently dropped
+    before any model-specific loading — pin the copy to the enum,
+    list-order-exact."""
+    from src.config import POSITIONS
+
+    assert Position.values() == POSITIONS
+
+
+@pytest.mark.unit
+def test_run_pipeline_factory_tiny_allowlist_matches_position_enum():
+    """GH #1429: ``run_pipeline_factory._ALL_POSITIONS`` gates the
+    ``python -m src.<pos>.run_pipeline --tiny`` CLI path. A position added
+    to the enum/registry would dispatch fine through normal registry lookup
+    while ``--tiny`` raised "Unknown position" — pin the private allowlist
+    to the enum."""
+    from src.shared import run_pipeline_factory
+
+    assert tuple(Position.values()) == run_pipeline_factory._ALL_POSITIONS

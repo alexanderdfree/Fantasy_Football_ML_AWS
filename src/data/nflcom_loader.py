@@ -9,7 +9,9 @@ Provides two public entry points:
     load_nflcom_projections(seasons, ...) -> pd.DataFrame
         One row per (player_name, position, season, week). Raw stats are mapped
         to our internal target names (passing_yards, rushing_tds, etc.). Cached
-        to ``data/raw/nflcom_projections_v1_{min}_{max}.parquet``.
+        to ``data/raw/nflcom_projections_v1_{seasons_sig}_{weeks_sig}.parquet``
+        (a contiguous season range renders as ``{min}_{max}``; a sparse list
+        adds a disambiguating hash — see ``_seasons_cache_signature``).
 
     load_nflcom_with_gsis_id(seasons, ...) -> pd.DataFrame
         Same frame, joined to ``player_id`` (gsis_id) via roster lookup. Cached
@@ -36,6 +38,7 @@ import pandas as pd
 from src.config import CACHE_DIR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
+from src.data.external_sources import _seasons_cache_signature
 
 NFLCOM_BASE = "https://raw.githubusercontent.com/hvpkod/NFL-Data/main/NFL-data-Players"
 NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
@@ -391,9 +394,11 @@ def load_nflcom_projections(
 ) -> pd.DataFrame:
     """Fetch + cache projected CSVs for one or more seasons.
 
-    Cache: ``{cache_dir}/nflcom_projections_{_CACHE_VERSION}_{min}_{max}.parquet``.
-    Subsequent calls with the same season range and ``force_refresh=False``
-    skip the network entirely.
+    Cache: ``{cache_dir}/nflcom_projections_{_CACHE_VERSION}_{seasons_sig}_{weeks_sig}.parquet``
+    (a contiguous season range renders as ``{min}_{max}`` — byte-identical to the
+    legacy key — while a sparse list adds a disambiguating hash so it can't
+    collide with the contiguous superset's cache). Subsequent calls with the
+    same season range and ``force_refresh=False`` skip the network entirely.
 
     Network behaviour mirrors ``src/data/loader.py``: ``pd.read_parquet/csv(url)``
     with no ``requests`` dependency. Per-(year, week, position) HTTP errors are
@@ -409,9 +414,13 @@ def load_nflcom_projections(
     # the earlier frame's week coverage. The full week range is canonicalized
     # (de-duped + ordered) so equivalent-but-unsorted inputs hash to one key.
     weeks_sig = _weeks_cache_signature(weeks_to_try)
+    # Signature the seasons dimension too (contiguous -> byte-identical {min}_{max},
+    # sparse -> disambiguated hash) so a sparse list like [2015, 2025] can't collide
+    # on the contiguous superset's cache file and silently return partial coverage
+    # (the #488 defect class, fixed here to mirror loader.py/external_sources.py).
+    seasons_sig = _seasons_cache_signature(seasons)
     cache_path = (
-        f"{cache_dir}/nflcom_projections_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{weeks_sig}.parquet"
+        f"{cache_dir}/nflcom_projections_{_CACHE_VERSION}_{seasons_sig}_{weeks_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)
@@ -534,7 +543,9 @@ def load_nflcom_with_gsis_id(
       - Top-5 unmatched names logged for inspection.
       - Raises ``RuntimeError`` if the global match rate < ``min_match_rate``.
 
-    Cache: ``{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}_{min}_{max}.parquet``.
+    Cache: ``{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}_{seasons_sig}_{rate_sig}.parquet``
+    (a contiguous season range renders as ``{min}_{max}``; a sparse list adds a
+    disambiguating hash — see ``_seasons_cache_signature``).
     """
     if not seasons:
         raise ValueError("seasons must be a non-empty list of ints")
@@ -547,9 +558,12 @@ def load_nflcom_with_gsis_id(
     # (stricter) threshold had passed. Quantize to whole percent so equivalent
     # floats (0.90 vs 0.9000001) share one cache file.
     rate_sig = f"mr{int(round(min_match_rate * 100))}"
+    # Signature the seasons dimension (contiguous -> byte-identical {min}_{max},
+    # sparse -> disambiguated hash) so a sparse season list can't collide on the
+    # contiguous superset's cache file (the #488 defect class).
+    seasons_sig = _seasons_cache_signature(seasons)
     cache_path = (
-        f"{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{rate_sig}.parquet"
+        f"{cache_dir}/nflcom_projections_joined_{_CACHE_VERSION}_{seasons_sig}_{rate_sig}.parquet"
     )
     # ``rosters`` is the one input not captured by the cache key (seasons +
     # version + match-rate). A caller-supplied override must bypass the cache

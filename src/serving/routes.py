@@ -548,7 +548,7 @@ def api_model_architecture():
         return jsonify(
             {
                 "overview": {
-                    "framework": "PyTorch 2.12 + CUDA 12.6 (AWS Batch)",
+                    "framework": "PyTorch 2.12 + CUDA 13.0 (AWS Batch)",
                     "device": "CUDA if available, else CPU",
                     "data_splits": (
                         f"Train {min(TRAIN_SEASONS)}-{max(TRAIN_SEASONS)}, "

@@ -282,12 +282,36 @@ class TwoStageRidge:
         joblib.dump(self.clf, f"{model_dir}/classifier.pkl")
         joblib.dump(self.scaler_reg, f"{model_dir}/scaler_reg.pkl")
         joblib.dump(self.reg, f"{model_dir}/ridge_model.pkl")
+        # Persist the constructor hyperparams — predict() gates on
+        # ``self.threshold``, so without this sidecar a non-default threshold
+        # silently reverts to the constructor default (0.5) after a round
+        # trip (the multi-target wrapper's load() reconstructs
+        # ``TwoStageRidge()`` with all-default args). Named distinctly from
+        # the gated classifier's ``td_classifier_meta.json`` so the wrapper's
+        # on-disk model-type inference is unaffected.
+        meta = {
+            "clf_C": self.clf_C,
+            "ridge_alpha": self.ridge_alpha,
+            "threshold": self.threshold,
+        }
+        with open(f"{model_dir}/two_stage_meta.json", "w") as f:
+            json.dump(meta, f)
 
     def load(self, model_dir):
         self.scaler_clf = joblib.load(f"{model_dir}/scaler_clf.pkl")
         self.clf = joblib.load(f"{model_dir}/classifier.pkl")
         self.scaler_reg = joblib.load(f"{model_dir}/scaler_reg.pkl")
         self.reg = joblib.load(f"{model_dir}/ridge_model.pkl")
+        # Restore the constructor hyperparams written by save(). Older
+        # artifacts predate the sidecar — keep the current attrs (the
+        # constructor defaults), preserving prior behavior for them.
+        meta_path = f"{model_dir}/two_stage_meta.json"
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                meta = json.load(f)
+            self.clf_C = meta["clf_C"]
+            self.ridge_alpha = meta["ridge_alpha"]
+            self.threshold = meta["threshold"]
 
 
 class OrdinalTDClassifier:
@@ -1052,10 +1076,20 @@ class TabPFNMultiTarget:
         os.makedirs(tabpfn_dir, exist_ok=True)
         for name, model in self._models.items():
             joblib.dump(model, f"{tabpfn_dir}/{name}.pkl")
+        # Mirror RidgeModel.save's stale-PCA cleanup: a prior PCA-enabled run
+        # may have left scaler.pkl/pca.pkl in this directory. A no-PCA save
+        # must remove them, or load() would resurrect the stale transform and
+        # route predict() through a PCA the saved regressors weren't fit with.
+        scaler_path = f"{tabpfn_dir}/scaler.pkl"
+        pca_path = f"{tabpfn_dir}/pca.pkl"
         if self.scaler is not None:
-            joblib.dump(self.scaler, f"{tabpfn_dir}/scaler.pkl")
+            joblib.dump(self.scaler, scaler_path)
+        elif os.path.exists(scaler_path):
+            os.remove(scaler_path)
         if self.pca is not None:
-            joblib.dump(self.pca, f"{tabpfn_dir}/pca.pkl")
+            joblib.dump(self.pca, pca_path)
+        elif os.path.exists(pca_path):
+            os.remove(pca_path)
         meta = {
             "target_names": self.target_names,
             "device": self.device,
@@ -1091,6 +1125,14 @@ class TabPFNMultiTarget:
             self.non_negative_targets = set(meta["non_negative_targets"])
         scaler_path = f"{tabpfn_dir}/scaler.pkl"
         pca_path = f"{tabpfn_dir}/pca.pkl"
-        self.scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
-        self.pca = joblib.load(pca_path) if os.path.exists(pca_path) else None
+        if self.pca_n_components:
+            self.scaler = joblib.load(scaler_path) if os.path.exists(scaler_path) else None
+            self.pca = joblib.load(pca_path) if os.path.exists(pca_path) else None
+        else:
+            # Metadata says this artifact was fit without PCA — ignore any
+            # stranded sidecars (a pre-cleanup save could have left them, see
+            # save() above); predict() must not route X through a transform
+            # the saved regressors weren't fit with.
+            self.scaler = None
+            self.pca = None
         self._models = {name: joblib.load(f"{tabpfn_dir}/{name}.pkl") for name in self.target_names}

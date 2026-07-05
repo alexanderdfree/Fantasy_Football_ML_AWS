@@ -395,6 +395,8 @@ fi
 # entrypoint when Codex wraps this hook.
 if [ "${CODEX_PRE_PR_WRAPPER:-}" = "1" ]; then
   echo "pre-pr hook: deterministic checks passed. if /prompts:pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — wrapper .codex/prompts/pre-pr-judge.md; shared behavior agent-workflows/pre-pr-judge/instructions.md)." >&2
+elif [ "${GEMINI_PRE_PR_WRAPPER:-}" = "1" ]; then
+  echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — activate_skill(name=\"pre-pr-judge\"), wrapper .agents/skills/pre-pr-judge/SKILL.md; shared behavior agent-workflows/pre-pr-judge/instructions.md)." >&2
 else
   echo "pre-pr hook: deterministic checks passed. if pre-pr-judge has not run this session, invoke it before this PR opens (catches scope creep — wrapper .claude/skills/pre-pr-judge/SKILL.md; shared behavior agent-workflows/pre-pr-judge/instructions.md)." >&2
 fi

@@ -1055,6 +1055,27 @@ def _splits_stat_key() -> tuple:
     )
 
 
+def _attn_saved_static_cols(cfg, attn_feature_cols):
+    """Resolve the exact column list the attention scaler was fit on, for
+    persisting checkpoint/scaler metadata. Mirrors the two trainer paths:
+
+    * ``attn_static_from_df=True`` (K): ``_train_nested_attention_nn`` fits
+      on ``attn_feature_cols`` as-is (already ``cfg["attn_static_features"]``).
+    * ``attn_static_from_df=False`` (flat — QB/RB/WR/TE/DST):
+      ``_train_attention_nn`` filters X internally via
+      ``get_attn_static_columns(feature_cols, attn_static_features)`` before
+      fitting the scaler, so mirror that filter here.
+
+    Reusing ``attn_feature_cols`` unconditionally would over-report
+    ``n_features`` for the flat path and trip ``assert_scaler_matches`` at
+    serving load (serving computes the filtered list before enforcing the
+    scaler/checkpoint hashes — src/serving/core.py).
+    """
+    if cfg.get("attn_static_from_df", False):
+        return attn_feature_cols
+    return get_attn_static_columns(attn_feature_cols, cfg["attn_static_features"])
+
+
 def _train_attention_holdout(
     position,
     cfg,
@@ -1862,12 +1883,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                         f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
                     )
                     if attn_model is not None:
-                        if cfg.get("attn_static_from_df", False):
-                            attn_static_cols = attn_feature_cols
-                        else:
-                            attn_static_cols = get_attn_static_columns(
-                                attn_feature_cols, cfg["attn_static_features"]
-                            )
+                        attn_static_cols = _attn_saved_static_cols(cfg, attn_feature_cols)
                         torch.save(
                             wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
                             f"{output_dir}/models/{pos_lower}_attention_nn.pt",
@@ -2008,21 +2024,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
 
         if attn_model is not None:
-            # Persist the exact column list the attention scaler was fit on.
-            # Mirror the two trainer paths:
-            #   * attn_static_from_df=True  (K): _train_nested_attention_nn fits
-            #     on attn_feature_cols as-is (already cfg["attn_static_features"]).
-            #   * attn_static_from_df=False (QB/RB/WR/TE): _train_attention_nn
-            #     filters X internally via get_attn_static_columns(feature_cols,
-            #     attn_static_features) before fitting, so we mirror that here.
-            # Reusing attn_feature_cols unconditionally would over-report
-            # n_features for the latter path and trip assert_scaler_matches.
-            if cfg.get("attn_static_from_df", False):
-                attn_static_cols = attn_feature_cols
-            else:
-                attn_static_cols = get_attn_static_columns(
-                    attn_feature_cols, cfg["attn_static_features"]
-                )
+            # Persist the exact column list the attention scaler was fit on
+            # (flat path re-filter vs from-df passthrough — see helper).
+            attn_static_cols = _attn_saved_static_cols(cfg, attn_feature_cols)
             torch.save(
                 wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
                 f"{output_dir}/models/{pos_lower}_attention_nn.pt",
@@ -2412,7 +2416,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     attn_test_preds = None
     attn_model = None
     attn_nn_scaler = None
-    attn_static_cols = None
+    attn_feature_cols = None
     if cfg.get("train_attention_nn", False):
         print(f"\n=== {pos} Attention Multi-Head Neural Net (Final Holdout) ===")
         (
@@ -2421,7 +2425,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
             attn_test_preds,
             attn_nn_metrics,
             _attn_history,
-            attn_static_cols,
+            attn_feature_cols,
         ) = _train_attention_holdout(
             position,
             cfg,
@@ -2555,9 +2559,14 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
 
     # Persist the attention NN too (mirrors run_pipeline) — without this a
     # CV-built model dir is missing ``{pos}_attention_nn.pt`` and serving/upload
-    # for the attention model fails. ``attn_static_cols`` is the exact column
-    # list the attention scaler was fit on (returned by _train_attention_holdout).
+    # for the attention model fails. ``attn_feature_cols`` returned by
+    # _train_attention_holdout is the FULL base feature list on the flat path
+    # (attn_static_from_df=False) while the scaler was fit on the
+    # get_attn_static_columns-filtered subset — resolve the exact fitted list
+    # before saving, exactly like run_pipeline, or the saved metadata
+    # over-reports n_features and trips assert_scaler_matches at load (#1432).
     if attn_model is not None:
+        attn_static_cols = _attn_saved_static_cols(cfg, attn_feature_cols)
         torch.save(
             wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
             f"{output_dir}/models/{pos_lower}_attention_nn.pt",

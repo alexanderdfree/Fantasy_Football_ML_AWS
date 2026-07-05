@@ -150,6 +150,65 @@ class TestTabPFNMultiTarget:
         assert restored.non_negative_targets == set(TARGETS)
         assert restored.target_names == TARGETS
 
+    def test_no_pca_save_removes_stale_pca_sidecars(self, monkeypatch, tabpfn_data, tmp_path):
+        """PCA-on save -> no-PCA save into the SAME dir must not leave stale
+        scaler.pkl/pca.pkl for load() to resurrect (#1434) — otherwise a
+        reloaded no-PCA model would route predict() through a transform the
+        saved regressors weren't fit with (mirrors RidgeModel.save's cleanup).
+        """
+        import os
+
+        X, y = tabpfn_data
+        model_dir = str(tmp_path / "m")
+
+        pca_model = TabPFNMultiTarget(target_names=TARGETS, pca_n_components=3)
+        _patch_fake(monkeypatch, pca_model)
+        pca_model.fit(X, y)
+        pca_model.save(model_dir)
+        assert os.path.exists(f"{model_dir}/tabpfn/scaler.pkl")
+        assert os.path.exists(f"{model_dir}/tabpfn/pca.pkl")
+
+        plain = TabPFNMultiTarget(target_names=TARGETS)  # pca_n_components=None
+        _patch_fake(monkeypatch, plain)
+        plain.fit(X, y)
+        before = plain.predict(X)
+        plain.save(model_dir)
+        assert not os.path.exists(f"{model_dir}/tabpfn/scaler.pkl")
+        assert not os.path.exists(f"{model_dir}/tabpfn/pca.pkl")
+
+        restored = TabPFNMultiTarget(target_names=TARGETS)
+        restored.load(model_dir)
+        assert restored.scaler is None and restored.pca is None
+        after = restored.predict(X)
+        for t in TARGETS:
+            np.testing.assert_allclose(before[t], after[t], atol=1e-6)
+
+    def test_load_ignores_stranded_sidecars_when_meta_says_no_pca(
+        self, monkeypatch, tabpfn_data, tmp_path
+    ):
+        """Belt-and-braces for #1434: an artifact whose meta says
+        pca_n_components=None must not restore scaler/pca even if a
+        pre-cleanup save stranded the sidecar files on disk."""
+        import joblib
+        from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
+
+        X, y = tabpfn_data
+        model_dir = str(tmp_path / "m")
+        plain = TabPFNMultiTarget(target_names=TARGETS)
+        _patch_fake(monkeypatch, plain)
+        plain.fit(X, y)
+        plain.save(model_dir)
+        # Strand sidecars the way a pre-cleanup PCA-on save would have.
+        scaler = StandardScaler().fit(X)
+        joblib.dump(scaler, f"{model_dir}/tabpfn/scaler.pkl")
+        joblib.dump(PCA(n_components=3).fit(scaler.transform(X)), f"{model_dir}/tabpfn/pca.pkl")
+
+        restored = TabPFNMultiTarget(target_names=TARGETS)
+        restored.load(model_dir)
+        assert restored.scaler is None
+        assert restored.pca is None
+
     def test_new_regressor_forwards_tuning_kwargs(self, monkeypatch):
         # The wrapper must forward the tuning levers to the real TabPFNRegressor.
         # ``tabpfn`` isn't installed in CI, so inject a fake module that records the

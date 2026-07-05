@@ -33,6 +33,10 @@ from src.te.config import CONFIG_TINY, POSITION_CONFIG
 
 LGBM_MIN_CHILD_SAMPLES = POSITION_CONFIG.lgbm_min_child_samples
 LGBM_NUM_LEAVES = POSITION_CONFIG.lgbm_num_leaves
+# Route the objective through POSITION_CONFIG like the other LGBM knobs so the
+# regression check follows production (PR #870 switched TE huber -> "regression";
+# the hard-coded "huber" here was a leftover — GH #1426).
+LGBM_OBJECTIVE = POSITION_CONFIG.lgbm_objective
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
@@ -130,7 +134,7 @@ def te_lgbm_mae(te_training_tensors):
             subsample=0.9,
             colsample_bytree=0.9,
             min_child_samples=min(LGBM_MIN_CHILD_SAMPLES, 10),
-            objective="huber",
+            objective=LGBM_OBJECTIVE,
             seed=42,
         )
         lgbm.fit(

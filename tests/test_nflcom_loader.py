@@ -259,6 +259,49 @@ def test_load_projections_cache_key_varies_with_weeks(tmp_path):
     ], files
 
 
+def test_load_projections_cache_key_disambiguates_sparse_seasons(tmp_path):
+    """#1398: a sparse season list must not collide on the contiguous
+    superset's cache file (the #488 defect class). ``[2023, 2025]`` and the
+    contiguous ``[2023, 2024, 2025]`` share min/max but must write distinct
+    cache files — otherwise a later full-range call silently returns the
+    2-season partial frame.
+    """
+
+    def sparse_reader(url: str) -> pd.DataFrame:
+        # Serve the QB fixture for week 1 of any of the three seasons; 404 else.
+        if "/1/projected/QB_projected.csv" in url and any(
+            f"/{y}/1/" in url for y in (2023, 2024, 2025)
+        ):
+            return pd.read_csv(FIXTURE_QB)
+        raise HTTPError(url, 404, "Not Found", hdrs=None, fp=None)
+
+    # Sparse [2023, 2025] -> hashed signature (NOT the bare 2023_2025).
+    load_nflcom_projections(
+        seasons=[2023, 2025], weeks=[1], cache_dir=str(tmp_path), reader=sparse_reader
+    )
+    # Contiguous superset [2023, 2024, 2025] -> plain 2023_2025 signature.
+    load_nflcom_projections(
+        seasons=[2023, 2024, 2025], weeks=[1], cache_dir=str(tmp_path), reader=sparse_reader
+    )
+    files = sorted(p.name for p in tmp_path.glob("nflcom_projections_v1_*.parquet"))
+    # Two distinct files: the contiguous key is the legacy {min}_{max}; the
+    # sparse key carries the disambiguating {len}_{hash} suffix.
+    assert len(files) == 2, files
+    assert f"nflcom_projections_{_CACHE_VERSION}_2023_2025_w1-1.parquet" in files
+    sparse = [f for f in files if f.startswith(f"nflcom_projections_{_CACHE_VERSION}_2023_2025_2_")]
+    assert len(sparse) == 1, files
+
+
+def test_load_projections_contiguous_cache_key_is_legacy_min_max(tmp_path):
+    """#1398: the contiguous-range fix must be byte-identical to the legacy
+    ``{min}_{max}`` key so existing caches (and the filename pins below) stay
+    valid — the fix only *adds* a suffix for sparse lists."""
+    load_nflcom_projections(
+        seasons=[2024], weeks=[1], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only
+    )
+    assert (tmp_path / f"nflcom_projections_{_CACHE_VERSION}_2024_2024_w1-1.parquet").exists()
+
+
 def test_load_projections_force_refresh_bypasses_cache(tmp_path):
     load_nflcom_projections(
         seasons=[2024], weeks=[1], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only

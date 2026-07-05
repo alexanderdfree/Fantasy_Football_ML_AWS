@@ -37,12 +37,19 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
         preds = {t: df[t].values for t in POSITION_CONFIG.targets}
         te_points = predictions_to_fantasy_points("TE", preds, "ppr")
         residual = df["fantasy_points"] - te_points
+        # 2pt conversions (flat 2 pts each) land in the upstream
+        # fantasy_points column but are NOT model targets — back them out so
+        # this *diagnostic* check doesn't spuriously WARN (mirrors
+        # src/rb/targets.py). Touches only the residual check, never targets.
         for col, weight in (
             ("passing_yards", 0.04),
             ("passing_tds", 4),
             ("interceptions", -2),
             ("rushing_yards", 0.1),
             ("rushing_tds", 6),
+            ("passing_2pt_conversions", 2),
+            ("rushing_2pt_conversions", 2),
+            ("receiving_2pt_conversions", 2),
         ):
             if col in df.columns:
                 residual = residual - df[col].fillna(0) * weight
