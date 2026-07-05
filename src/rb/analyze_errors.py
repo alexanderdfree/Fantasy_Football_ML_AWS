@@ -4,7 +4,9 @@ Runs the RB pipeline, then slices prediction errors by game context,
 player usage, opponent quality, and scoring patterns. The full pipeline
 runs on every invocation, so this module is gated behind
 ``if __name__ == "__main__"`` — importing it must NOT fire ``main()`` or
-the pipeline. There is no CI hook and no automated test coverage; this is
+the pipeline. CI coverage is limited to the import-smoke guard in
+``tests/rb/test_analyze_errors_smoke.py`` (import + signature pins, run in the
+RB unit shard); ``main()`` itself never runs in CI, so functionally this is
 an ad-hoc diagnostic for human operators.
 
 Usage:

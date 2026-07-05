@@ -1,14 +1,20 @@
-"""Unit tests for the opt-in CUDA-graph training path (``FF_CUDA_GRAPH``) and the
-investigation knobs kept alongside it (``FF_NN_NORM``, ``FF_FORCE_DROPOUT_ZERO``,
-``FF_NN_FIXED_EPOCHS``).
+"""Unit tests for the CUDA-graph training path (``FF_CUDA_GRAPH``,
+``FF_CUDA_GRAPH_FULL``, ``FF_CUDA_GRAPH_OPT``) and the investigation knobs kept
+alongside it (``FF_NN_NORM``, ``FF_FORCE_DROPOUT_ZERO``, ``FF_NN_FIXED_EPOCHS``).
 
-All four default to off / BatchNorm so production stays byte-identical. CI runs
-on CPU, where ``cuda_graph_enabled()`` is False and ``make_graphed_callables`` is
-never reached — so these tests pin the *gating contract* and the CPU/flag-off
-no-ops, plus the CPU-observable effects of the norm / dropout / fixed-epoch
-knobs. The GPU A/B that established the speed/inertness tradeoff (per-step
-bit-exact, but FP16+GradScaler amplifies the multi-step trajectory ~0.5%) lives
-in todo/gpu_launch_bound_levers.md (Lever A).
+The graph knobs autodetect ON for CUDA sm_80+ (reversed from opt-in by
+#889/#952; full-step and optimizer-tail capture promoted by #1171/#1314) — a
+falsy env value (``0``/``false``/``off``) is the force-off override — while the
+hardware floor keeps CPU/CI (no CUDA) always off and byte-identical to the
+eager path. The three investigation knobs still default to off / BatchNorm. CI
+runs on CPU, where ``cuda_graph_enabled()`` is False and
+``make_graphed_callables`` is never reached — so these tests pin the *gating
+contract* and the CPU/flag-off no-ops, plus the CPU-observable effects of the
+norm / dropout / fixed-epoch knobs. On the FP32+TF32 production default (AMP
+off since 2026-06-22) graphs are per-step bit-exact and effectively inert;
+only the opt-in ``FF_AMP_DTYPE=fp16`` path is non-inert (FP16+GradScaler
+amplifies the multi-step trajectory ~0.5%) — GPU A/B history in
+todo/gpu_launch_bound_levers.md (Lever A).
 """
 
 from __future__ import annotations

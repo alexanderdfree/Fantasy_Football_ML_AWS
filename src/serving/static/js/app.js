@@ -1490,7 +1490,8 @@ let comparisonMetric = "mae";
 const COMPARISON_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
 // Our four model architectures, then the static expert sources. Keys match the
 // per-model blocks in the /api/comparison payload (model prefixes) and the expert
-// cell keys. Shared by the accuracy tables and the residual-σ reliability table.
+// cell keys. Shared (via COMPARISON_SOURCES) by the accuracy tables and the
+// quartile-bias table.
 const MODEL_SOURCES = [
     { key: "ridge", label: "Ridge" },
     { key: "nn", label: "Neural Net" },

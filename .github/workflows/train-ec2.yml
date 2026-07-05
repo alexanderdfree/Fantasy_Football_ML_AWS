@@ -1,8 +1,9 @@
 name: Train on EC2
 
-# Active training path — fires after batch-image.yml pushes a fresh image to
-# ECR, then sends an SSM Run Command to the warm g6.xlarge. See
-# docs/ec2_design.md.
+# EC2 rollback training path (runs only when BATCH_ACTIVE != 'true';
+# train-batch.yml is the active path) — fires after batch-image.yml pushes a
+# fresh image to ECR, then sends an SSM Run Command to the warm g6.xlarge.
+# See docs/ec2_design.md.
 
 on:
   workflow_run:
