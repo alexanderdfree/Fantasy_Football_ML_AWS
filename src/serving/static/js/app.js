@@ -77,7 +77,15 @@ Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Rob
 
 async function fetchJSON(url) {
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    if (!resp.ok) {
+        // Preserve the HTTP status on the thrown error so callers can tell an
+        // expected 404 (e.g. /api/player for a rookie with no backtest history)
+        // apart from a real server-side failure (500, etc.) instead of
+        // conflating every non-ok response into one benign fallback (#1437).
+        const err = new Error(`API error: ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
     return resp.json();
 }
 
@@ -560,6 +568,11 @@ async function loadHomepage() {
             renderHomepageMessage("Building this week's projections… check back in a minute.");
             return;
         }
+        // Any other non-ok status (e.g. Flask's JSON 500 error handler) is a
+        // real failure, not an artifact — reject it here so it hits the catch
+        // and renders the error state, instead of parsing an error body as data
+        // and showing an "undefined" week label over an empty table (#1436).
+        if (!resp.ok) throw new Error(`API error: ${resp.status}`);
         const data = await resp.json();
         if (!data || data.available === false) {
             upcomingState = "offseason";
@@ -1297,10 +1310,13 @@ async function openPlayerModal(playerId, fallback = null) {
         modalOpen = true;
     } catch (e) {
         console.error("Failed to load player:", e);
-        if (fallback) {
-            // The player isn't in the backtest results cache — a rookie / backup
-            // with no prior-season game log, common for upcoming-week homepage
-            // rows. Show their identity (from the row) instead of an error.
+        if (fallback && e.status === 404) {
+            // A 404 is the expected "not in the backtest results cache" case — a
+            // rookie / backup with no prior-season game log, common for
+            // upcoming-week homepage rows. Show their identity (from the row)
+            // instead of an error. Any other failure (500, network, parse) must
+            // NOT be masked as no-history — fall through to the error card so a
+            // real server-side problem stays visible (#1437).
             document.getElementById("modal-name").textContent = fallback.name || "—";
             document.getElementById("modal-pos-team").textContent =
                 [fallback.position, fallback.team].filter(Boolean).join(" - ");
@@ -1675,7 +1691,7 @@ function renderComparisonNotes() {
     el.innerHTML = `
         <div class="section-header">About this comparison</div>
         <ul class="comparison-note-list">
-            <li><strong>Seasons.</strong> Our model trains on 2012–2023, validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
+            <li><strong>Seasons.</strong> Our model trains on 2013–2023 (2012 is loaded for prior-season context only), validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
             <li><strong>Scoring.</strong> Full PPR (1 pt / reception). Projections and actuals run through the same scoring formula, so it's apples-to-apples. RMSE is shown alongside MAE because expert projections implicitly target squared error.</li>
             <li><strong>Our models.</strong> ${modelLine}MAE/RMSE/R² are on weekly fantasy-point totals; the best cell in each row is highlighted.</li>
             <li><strong>NFL.com.</strong> ${escapeHtml(nflNote)}</li>

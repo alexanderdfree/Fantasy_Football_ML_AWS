@@ -1751,10 +1751,18 @@ def _persist_cache_to_disk():
 
 
 def _ensure_metrics():
-    if "metrics_by_format" in app_pkg._cache and not _any_position_sentinel_advanced():
+    if (
+        "metrics_by_format" in app_pkg._cache
+        and not _any_position_sentinel_advanced()
+        and not _positions_pending()
+    ):
         return
     with app_pkg._cache_lock:
-        if "metrics_by_format" in app_pkg._cache and not _any_position_sentinel_advanced():
+        if (
+            "metrics_by_format" in app_pkg._cache
+            and not _any_position_sentinel_advanced()
+            and not _positions_pending()
+        ):
             return
         # A sentinel advanced under us — drop the cached aggregate so it
         # rebuilds against the freshly-loaded per-position predictions. The
@@ -1778,7 +1786,20 @@ def _ensure_metrics():
         # un-invalidating the refresh. Recompute from the (now re-applied)
         # per-position preds instead and let _compute_metrics_locked overwrite
         # the disk cache with fresh content.
-        if not sentinel_advanced and _try_hydrate_from_disk():
+        # A disk-hydrated cache can restore ``position_load_errors`` and drop the
+        # errored positions from ``positions_loaded`` so they retry (#834), but
+        # it never seeds ``positions_failed`` — so those positions are "pending"
+        # (see ``_positions_pending``). Returning on the hydrate hit alone would
+        # serve the degraded/NaN aggregate forever, because every aggregate entry
+        # point funnels through here and the fast path above can never see the
+        # excluded positions (``_any_position_sentinel_advanced`` iterates only
+        # ``positions_loaded``). Only short-circuit when nothing is pending;
+        # otherwise fall through to retry the pending positions once at hydrate
+        # time and recompute the aggregate. A genuine re-failure lands the
+        # position in ``positions_failed`` (stamped by
+        # ``_ensure_all_positions_loaded``), so the fast path holds thereafter —
+        # no retry storm. (#1442)
+        if not sentinel_advanced and _try_hydrate_from_disk() and not _positions_pending():
             return
         _ensure_all_positions_loaded()
         _compute_metrics_locked()
@@ -1795,6 +1816,40 @@ def _any_position_sentinel_advanced() -> bool:
     # "Set changed size during iteration". (#1014)
     loaded = tuple(app_pkg._cache.get("positions_loaded", ()))
     return any(refresh_sentinel_mtime(pos) > stored.get(pos, -1.0) for pos in loaded)
+
+
+def _positions_pending() -> bool:
+    """True iff some position is in neither ``positions_loaded`` nor
+    ``positions_failed`` — i.e. it still needs a (re)load attempt.
+
+    This is the second miss the ``_ensure_metrics`` fast path had to close for
+    disk-hydrated degraded caches (#1442). ``_try_hydrate_from_disk`` restores
+    ``position_load_errors`` and removes the errored positions from
+    ``positions_loaded`` so they can retry (#834), but it does NOT seed
+    ``positions_failed`` — so a hydrated errored position reads as *pending*
+    here, which lets ``_ensure_metrics`` fall through to
+    ``_ensure_all_positions_loaded`` and retry it once at hydrate time instead
+    of serving the degraded aggregate indefinitely. After a genuine re-failure
+    the position lands in ``positions_failed`` (stamped in
+    ``_ensure_all_positions_loaded``), so it stops being pending and the fast
+    path holds — bounded retry, no storm.
+
+    A fully-loaded healthy container has every position in ``positions_loaded``
+    and nothing pending, so this stays cheap and never forces a needless
+    rebuild. When ``positions_loaded`` is absent entirely (a true cold start
+    before any load), return False: the fast path can't fire anyway because
+    ``metrics_by_format`` is absent, and treating that as pending would only add
+    noise.
+    """
+    loaded = app_pkg._cache.get("positions_loaded")
+    if loaded is None:
+        return False
+    # Snapshot to frozensets: a concurrent load under _cache_lock can mutate
+    # these while this lock-free fast path reads them (mirrors the
+    # "Set changed size during iteration" guard in _any_position_sentinel_advanced).
+    loaded = frozenset(loaded)
+    failed = frozenset(app_pkg._cache.get("positions_failed", ()))
+    return any(pos not in loaded and pos not in failed for pos in _ALL_POSITIONS)
 
 
 def _invalidate_metrics_cache(*, reason: str) -> None:
