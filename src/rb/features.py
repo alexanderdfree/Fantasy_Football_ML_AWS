@@ -185,7 +185,15 @@ def _compute_features(df: pd.DataFrame) -> None:
         out=np.zeros_like(_player_w_opps, dtype=float),
         where=_team_w_opps > 0,
     )
-    df["opportunity_index_L3"] = rolling_agg(df, "_game_opp_idx", grp, window=3, agg="mean")
+    # opportunity_index_L3 stint-aware (#1467): same trade rationale as the
+    # share/HHI rollings above — a mid-season-traded RB would otherwise average
+    # the OLD team's opportunity share into the first ≤3 games at the new team.
+    # _game_opp_idx lives on df; df_merged is row-order-identical (1-to-1
+    # merge), so copy it across, roll with stint_grp, assign back via .values.
+    df_merged["_game_opp_idx"] = df["_game_opp_idx"].values
+    df["opportunity_index_L3"] = rolling_agg(
+        df_merged, "_game_opp_idx", stint_grp, window=3, agg="mean"
+    ).values
     df.drop(columns=["_game_opp_idx"], inplace=True)
 
     rushing_epa_roll = _sum("rushing_epa")
