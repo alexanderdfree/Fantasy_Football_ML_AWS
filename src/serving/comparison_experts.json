@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-15T02:45:35.741867+00:00",
+  "generated_at": "2026-07-05T09:04:02.294403+00:00",
   "scoring": "ppr",
   "test_seasons": [
     2025
@@ -98,16 +98,16 @@
     "DST": [
       "SEA",
       "HOU",
-      "DEN",
       "MIN",
       "CLE",
+      "DEN",
       "JAX",
-      "LA",
       "PHI",
       "NE",
+      "LA",
       "LAC",
       "BUF",
-      "NO"
+      "ATL"
     ]
   },
   "top30_ids": {
@@ -171,8 +171,8 @@
       "00-0039165",
       "00-0040784",
       "00-0040583",
-      "00-0035685",
       "00-0039384",
+      "00-0035685",
       "00-0040236"
     ],
     "WR": [
@@ -274,34 +274,34 @@
     "DST": [
       "SEA",
       "HOU",
-      "DEN",
       "MIN",
       "CLE",
+      "DEN",
       "JAX",
-      "LA",
       "PHI",
       "NE",
+      "LA",
       "LAC",
       "BUF",
-      "NO",
       "ATL",
+      "NO",
       "PIT",
       "CAR",
-      "DET",
       "CHI",
-      "KC",
+      "DET",
       "TB",
+      "KC",
       "GB",
       "LV",
       "BAL",
-      "IND",
       "MIA",
+      "IND",
       "SF",
       "TEN",
       "ARI",
+      "WAS",
       "NYG",
-      "CIN",
-      "WAS"
+      "CIN"
     ]
   },
   "subsets": {
@@ -374,9 +374,9 @@
       "DST": {
         "nflcom": null,
         "rotowire": {
-          "mae": 5.1175,
-          "rmse": 6.5559,
-          "r2": 0.0994,
+          "mae": 5.1331,
+          "rmse": 6.5937,
+          "r2": 0.1042,
           "n": 544
         }
       }
@@ -450,9 +450,9 @@
       "DST": {
         "nflcom": null,
         "rotowire": {
-          "mae": 4.966,
-          "rmse": 6.5173,
-          "r2": 0.0468,
+          "mae": 5.1283,
+          "rmse": 6.7569,
+          "r2": -0.0063,
           "n": 204
         }
       }
@@ -526,9 +526,9 @@
       "DST": {
         "nflcom": null,
         "rotowire": {
-          "mae": 5.063,
-          "rmse": 6.5167,
-          "r2": 0.0958,
+          "mae": 5.082,
+          "rmse": 6.5616,
+          "r2": 0.0996,
           "n": 510
         }
       }
@@ -547,16 +547,16 @@
     ],
     "scoring": "ppr",
     "residual_convention": "projection_minus_actual",
-    "note": "Residual \u03c3 = std(projection \u2212 actual), sample std (ddof=1); bias > 0 \u21d2 the source over-projects. NFL.com is genuine weekly snapshots; RotoWire (Sleeper) history is of unverified provenance \u2014 it may be backfilled, which would understate its \u03c3 \u2014 so read it as a sanity check, not gospel. K is NFL.com totals-only (standard scoring); DST is RotoWire-only.",
+    "note": "Residual \u03c3 = std(projection \u2212 actual), sample std (ddof=1); bias > 0 \u21d2 the source over-projects. Provenance: RotoWire (Sleeper) history is genuine weekly projections in every year 2018\u20132025. NFL.com 2021\u20132023 are BACKFILLED (look-ahead: the archive carries realized box scores, not projections \u2014 near-zero \u03c3 / R\u00b2\u22480.99 in those seasons); such seasons are auto-excluded from the pooled \u03c3 and 'seasons' (detector shared with expert_intervals.py; they stay in per_season flagged look_ahead and are listed in excluded_seasons). K is NFL.com totals-only (standard scoring); DST is RotoWire-only.",
     "positions": {
       "QB": {
         "nflcom": {
-          "n": 3106,
-          "mae": 3.3132,
-          "rmse": 5.9674,
-          "r2": 0.5597,
-          "bias": -1.0798,
-          "sigma": 5.8699,
+          "n": 1285,
+          "mae": 5.5421,
+          "rmse": 7.3868,
+          "r2": 0.3547,
+          "bias": -0.4987,
+          "sigma": 7.3728,
           "per_season": {
             "2021": {
               "n": 612,
@@ -564,7 +564,8 @@
               "rmse": 6.1399,
               "r2": 0.5432,
               "bias": -2.7957,
-              "sigma": 5.4709
+              "sigma": 5.4709,
+              "look_ahead": true
             },
             "2022": {
               "n": 585,
@@ -572,7 +573,8 @@
               "rmse": 5.411,
               "r2": 0.6055,
               "bias": -1.667,
-              "sigma": 5.1522
+              "sigma": 5.1522,
+              "look_ahead": true
             },
             "2023": {
               "n": 624,
@@ -580,7 +582,8 @@
               "rmse": 0.6829,
               "r2": 0.994,
               "bias": -0.0433,
-              "sigma": 0.6821
+              "sigma": 0.6821,
+              "look_ahead": true
             },
             "2024": {
               "n": 621,
@@ -600,11 +603,13 @@
             }
           },
           "seasons": [
-            2021,
-            2022,
-            2023,
             2024,
             2025
+          ],
+          "excluded_seasons": [
+            2021,
+            2022,
+            2023
           ]
         },
         "rotowire": {
@@ -694,12 +699,12 @@
       },
       "RB": {
         "nflcom": {
-          "n": 7173,
-          "mae": 2.5835,
-          "rmse": 5.0851,
-          "r2": 0.6,
-          "bias": -0.9917,
-          "sigma": 4.9878,
+          "n": 3011,
+          "mae": 4.039,
+          "rmse": 5.8277,
+          "r2": 0.4833,
+          "bias": -0.333,
+          "sigma": 5.8192,
           "per_season": {
             "2021": {
               "n": 1381,
@@ -707,7 +712,8 @@
               "rmse": 6.753,
               "r2": 0.3187,
               "bias": -3.4619,
-              "sigma": 5.8002
+              "sigma": 5.8002,
+              "look_ahead": true
             },
             "2022": {
               "n": 1423,
@@ -715,7 +721,8 @@
               "rmse": 3.76,
               "r2": 0.7791,
               "bias": -0.9343,
-              "sigma": 3.6434
+              "sigma": 3.6434,
+              "look_ahead": true
             },
             "2023": {
               "n": 1358,
@@ -723,7 +730,8 @@
               "rmse": 0.3054,
               "r2": 0.9985,
               "bias": -0.0005,
-              "sigma": 0.3055
+              "sigma": 0.3055,
+              "look_ahead": true
             },
             "2024": {
               "n": 1434,
@@ -743,11 +751,13 @@
             }
           },
           "seasons": [
-            2021,
-            2022,
-            2023,
             2024,
             2025
+          ],
+          "excluded_seasons": [
+            2021,
+            2022,
+            2023
           ]
         },
         "rotowire": {
@@ -837,12 +847,12 @@
       },
       "WR": {
         "nflcom": {
-          "n": 11537,
-          "mae": 2.0366,
-          "rmse": 4.3555,
-          "r2": 0.6753,
-          "bias": -0.4436,
-          "sigma": 4.3331,
+          "n": 4779,
+          "mae": 4.0985,
+          "rmse": 5.8831,
+          "r2": 0.3884,
+          "bias": -0.2969,
+          "sigma": 5.8762,
           "per_season": {
             "2021": {
               "n": 2290,
@@ -850,7 +860,8 @@
               "rmse": 3.3429,
               "r2": 0.8116,
               "bias": -0.7911,
-              "sigma": 3.2486
+              "sigma": 3.2486,
+              "look_ahead": true
             },
             "2022": {
               "n": 2170,
@@ -858,7 +869,8 @@
               "rmse": 3.5618,
               "r2": 0.7879,
               "bias": -0.8372,
-              "sigma": 3.4628
+              "sigma": 3.4628,
+              "look_ahead": true
             },
             "2023": {
               "n": 2298,
@@ -866,7 +878,8 @@
               "rmse": 0.3843,
               "r2": 0.9975,
               "bias": -0.0305,
-              "sigma": 0.3832
+              "sigma": 0.3832,
+              "look_ahead": true
             },
             "2024": {
               "n": 2281,
@@ -886,11 +899,13 @@
             }
           },
           "seasons": [
-            2021,
-            2022,
-            2023,
             2024,
             2025
+          ],
+          "excluded_seasons": [
+            2021,
+            2022,
+            2023
           ]
         },
         "rotowire": {
@@ -980,12 +995,12 @@
       },
       "TE": {
         "nflcom": {
-          "n": 5701,
-          "mae": 1.7179,
-          "rmse": 3.6835,
-          "r2": 0.6161,
-          "bias": -0.595,
-          "sigma": 3.6355,
+          "n": 2431,
+          "mae": 3.3654,
+          "rmse": 4.9057,
+          "r2": 0.328,
+          "bias": -0.7634,
+          "sigma": 4.8469,
           "per_season": {
             "2021": {
               "n": 1089,
@@ -993,7 +1008,8 @@
               "rmse": 2.6197,
               "r2": 0.8111,
               "bias": -0.6259,
-              "sigma": 2.545
+              "sigma": 2.545,
+              "look_ahead": true
             },
             "2022": {
               "n": 1115,
@@ -1001,7 +1017,8 @@
               "rmse": 3.1901,
               "r2": 0.7036,
               "bias": -0.7722,
-              "sigma": 3.0967
+              "sigma": 3.0967,
+              "look_ahead": true
             },
             "2023": {
               "n": 1066,
@@ -1009,7 +1026,8 @@
               "rmse": 0.1621,
               "r2": 0.9992,
               "bias": 0.0056,
-              "sigma": 0.162
+              "sigma": 0.162,
+              "look_ahead": true
             },
             "2024": {
               "n": 1150,
@@ -1029,11 +1047,13 @@
             }
           },
           "seasons": [
-            2021,
-            2022,
-            2023,
             2024,
             2025
+          ],
+          "excluded_seasons": [
+            2021,
+            2022,
+            2023
           ]
         },
         "rotowire": {
@@ -1186,75 +1206,75 @@
         "nflcom": null,
         "rotowire": {
           "n": 4206,
-          "mae": 5.2622,
-          "rmse": 6.6326,
-          "r2": 0.097,
-          "bias": 0.6686,
-          "sigma": 6.5996,
+          "mae": 5.2826,
+          "rmse": 6.6586,
+          "r2": 0.1006,
+          "bias": 0.5384,
+          "sigma": 6.6376,
           "per_season": {
             "2018": {
               "n": 488,
-              "mae": 5.3864,
-              "rmse": 6.6279,
-              "r2": 0.1038,
-              "bias": 0.8259,
-              "sigma": 6.583
+              "mae": 5.4223,
+              "rmse": 6.657,
+              "r2": 0.1072,
+              "bias": 0.6988,
+              "sigma": 6.627
             },
             "2019": {
               "n": 488,
-              "mae": 5.7649,
-              "rmse": 7.1422,
-              "r2": 0.0988,
-              "bias": 0.6521,
-              "sigma": 7.1197
+              "mae": 5.7366,
+              "rmse": 7.1413,
+              "r2": 0.108,
+              "bias": 0.525,
+              "sigma": 7.1293
             },
             "2020": {
               "n": 512,
-              "mae": 5.2501,
-              "rmse": 6.6378,
-              "r2": 0.0714,
-              "bias": 1.3514,
-              "sigma": 6.5051
+              "mae": 5.2619,
+              "rmse": 6.6399,
+              "r2": 0.0778,
+              "bias": 1.2381,
+              "sigma": 6.5299
             },
             "2021": {
               "n": 544,
-              "mae": 5.3276,
-              "rmse": 6.7129,
-              "r2": 0.0913,
-              "bias": 0.3639,
-              "sigma": 6.7092
+              "mae": 5.3506,
+              "rmse": 6.7517,
+              "r2": 0.0904,
+              "bias": 0.2463,
+              "sigma": 6.7534
             },
             "2022": {
               "n": 542,
-              "mae": 4.8124,
-              "rmse": 6.1661,
-              "r2": 0.0494,
-              "bias": 0.6312,
-              "sigma": 6.1394
+              "mae": 4.8471,
+              "rmse": 6.1888,
+              "r2": 0.0502,
+              "bias": 0.4762,
+              "sigma": 6.1761
             },
             "2023": {
               "n": 544,
-              "mae": 5.4173,
-              "rmse": 6.8765,
-              "r2": 0.0896,
-              "bias": 0.2546,
-              "sigma": 6.8781
+              "mae": 5.4526,
+              "rmse": 6.9225,
+              "r2": 0.09,
+              "bias": 0.1002,
+              "sigma": 6.9282
             },
             "2024": {
               "n": 544,
-              "mae": 5.0835,
-              "rmse": 6.3464,
-              "r2": 0.1261,
-              "bias": 0.9587,
-              "sigma": 6.2793
+              "mae": 5.1147,
+              "rmse": 6.3764,
+              "r2": 0.1293,
+              "bias": 0.8337,
+              "sigma": 6.3275
             },
             "2025": {
               "n": 544,
-              "mae": 5.1175,
-              "rmse": 6.5559,
-              "r2": 0.0994,
-              "bias": 0.3659,
-              "sigma": 6.5517
+              "mae": 5.1331,
+              "rmse": 6.5937,
+              "r2": 0.1042,
+              "bias": 0.2446,
+              "sigma": 6.5953
             }
           },
           "seasons": [
