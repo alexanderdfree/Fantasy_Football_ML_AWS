@@ -3,7 +3,7 @@ description: Triage agent audit issues into tier-by-risk Codex PRs
 argument-hint: [ISSUES="<numbers or range>"] [DRY_RUN=1]
 ---
 
-Run the Final-Project Codex solve-issues wrapper.
+Run the repo's Codex solve-issues wrapper.
 
 The authoritative instructions are version-controlled at `agent-workflows/solve-issues/instructions.md`. That file, not this wrapper, defines issue parsing, Mode A/B, FIX/LEAVE categories, regress-risk handling, tier bundling, approval gates, and close/merge rules.
 

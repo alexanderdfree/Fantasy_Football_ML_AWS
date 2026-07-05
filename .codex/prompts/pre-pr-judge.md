@@ -3,7 +3,7 @@ description: Vet the current branch against the original task before opening a P
 argument-hint: [ORIGINAL_TASK="<quoted task>"] [BASE=origin/main]
 ---
 
-Run the Final-Project Codex pre-PR judge wrapper.
+Run the repo's Codex pre-PR judge wrapper.
 
 The authoritative instructions are version-controlled at `agent-workflows/pre-pr-judge/instructions.md`. That file, not this wrapper, defines the mission, skip rules, rebase requirement, verdict shape, and WARN handling.
 
