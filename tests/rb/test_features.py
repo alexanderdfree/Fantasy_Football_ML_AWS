@@ -129,6 +129,12 @@ class TestComputeRBSpecific:
         ``player×season`` grouping spanned the trade (window weeks 4,5,6 →
         player 30 / team 20+10+10=40 = 0.75), so this value separates the fix
         from the bug — mirrors the WR test (#674).
+
+        The HHI rollings must be stint-aware too (#1425): per-game HHI is
+        0.5² + 0.5² = 0.5 in the KC weeks and 1.0 in the solo-SF weeks, so
+        the stint-aware week-7 mean over window {5,6} is exactly 1.0 while
+        the buggy player×season grouping averaged KC's week 4 in —
+        mean(0.5, 1.0, 1.0) ≈ 0.8333.
         """
         rb_a_kc = make_player_games("RB_A", n_weeks=4, carries=10, targets=5, recent_team="KC")
         rb_a_sf = make_player_games("RB_A", n_weeks=3, carries=10, targets=5, recent_team="SF")
@@ -149,6 +155,19 @@ class TestComputeRBSpecific:
         # min_periods / NaN-fill refactor can't silently move the boundary.
         assert pytest.approx(a.loc[5, "team_rb_carry_share_L3"], abs=1e-9) == 0.0
         assert pytest.approx(a.loc[6, "team_rb_carry_share_L3"], abs=1e-9) == 1.0
+        # HHI rollings, stint-aware (#1425): week 7's window {5,6} is all-SF
+        # → mean(1.0, 1.0) = 1.0. (The buggy player×season grouping mixed
+        # KC's wk4 HHI 0.5 in → ≈0.8333.) Week 6 (window {5}) → 1.0.
+        assert pytest.approx(a.loc[7, "team_rb_carry_hhi_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[7, "team_rb_target_hhi_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[6, "team_rb_carry_hhi_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[6, "team_rb_target_hhi_L3"], abs=1e-9) == 1.0
+        # Stint cold-start boundary: week 5 is the first SF game, so shift(1)
+        # has no prior in-stint game → rolling NaN. Unlike the shares above
+        # there is no safe_divide 0-fill on the HHI rollings, so pin NaN (the
+        # downstream fill_nans train-mean fill handles it in the pipeline).
+        assert np.isnan(a.loc[5, "team_rb_carry_hhi_L3"])
+        assert np.isnan(a.loc[5, "team_rb_target_hhi_L3"])
 
 
 @pytest.mark.unit

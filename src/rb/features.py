@@ -160,8 +160,20 @@ def _compute_features(df: pd.DataFrame) -> None:
         "game_target_share"
     ].transform(lambda x: (x**2).sum())
 
-    df["team_rb_carry_hhi_L3"] = rolling_agg(df, "game_carry_hhi", grp, window=3, agg="mean")
-    df["team_rb_target_hhi_L3"] = rolling_agg(df, "game_target_hhi", grp, window=3, agg="mean")
+    # Stint-aware HHI rollings (#1425): same trade rationale as the share
+    # rollings above — the player×season grouping PR #1385 left here would
+    # average the OLD team's backfield concentration into a traded RB's first
+    # ≤3 games at the new team. The game_*_hhi cols live on df; df_merged is
+    # row-order-identical (1-to-1 merge), so copy them across, roll with
+    # stint_grp, and assign back positionally via .values (indexes differ).
+    df_merged["game_carry_hhi"] = df["game_carry_hhi"].values
+    df_merged["game_target_hhi"] = df["game_target_hhi"].values
+    df["team_rb_carry_hhi_L3"] = rolling_agg(
+        df_merged, "game_carry_hhi", stint_grp, window=3, agg="mean"
+    ).values
+    df["team_rb_target_hhi_L3"] = rolling_agg(
+        df_merged, "game_target_hhi", stint_grp, window=3, agg="mean"
+    ).values
 
     # opportunity_index_L3 (weighted opp share). Same ``np.divide(..., where=)``
     # pattern as the game-level shares above for the same reason.
