@@ -269,13 +269,18 @@ def build_pipeline_config(
         cfg["attn_cosine_t_mult"] = pc.attn_cosine_t_mult
     if pc.attn_onecycle_pct_start is not None:
         cfg["attn_onecycle_pct_start"] = pc.attn_onecycle_pct_start
-    # attn_project_kv is plumbed by RB/K/DST (matches original CONFIG dicts);
-    # the skill positions skip it because their flat attention path defaults False.
-    if pos in (Position.RB, Position.K, Position.DST):
-        cfg["attn_project_kv"] = pc.attn_project_kv
-    # attn_gated_fusion plumbed by RB/DST; K's nested path doesn't consume it.
-    if pos in (Position.RB, Position.DST):
-        cfg["attn_gated_fusion"] = pc.attn_gated_fusion
+    # attn_project_kv / attn_gated_fusion are plumbed for ALL six positions so
+    # the training cfg mirrors the served kwargs, which forward
+    # ``pc.attn_project_kv`` / ``pc.attn_gated_fusion`` unconditionally
+    # (``registry._{flat,nested}_attn_kwargs_static``). They used to ride along
+    # only for RB/K/DST (project_kv) / RB/DST (gated_fusion), leaving the
+    # QB/WR/TE PositionConfig fields silently dead at train time — the condq
+    # train/serve drift class (#1198 gotcha b, #1396). Value-identical today:
+    # every position sets both ``False``, matching the ``cfg.get(..., False)``
+    # defaults in the ``src/shared/neural_net.py`` factories. K's nested
+    # factory ignores ``attn_gated_fusion``, same as its served kwargs.
+    cfg["attn_project_kv"] = pc.attn_project_kv
+    cfg["attn_gated_fusion"] = pc.attn_gated_fusion
     # attn_history_stats / attn_gated / gate_* — flat attention consumers only
     # on the non-K side. K opts in to ``attn_history_stats`` via the
     # nested+history branch (per-game aggregates feed alongside the inner

@@ -40,6 +40,30 @@ def test_build_pipeline_config_includes_all_required_keys(position: str) -> None
 
 @pytest.mark.unit
 @pytest.mark.parametrize("position", POSITIONS)
+def test_build_pipeline_config_plumbs_attn_arch_flags_for_all_positions(position: str) -> None:
+    """#1396: the training cfg must carry ``attn_project_kv`` /
+    ``attn_gated_fusion`` for EVERY position, matching the served kwargs that
+    forward ``pc.attn_project_kv`` / ``pc.attn_gated_fusion`` unconditionally
+    (``registry._{flat,nested}_attn_kwargs_static``). They used to ride along
+    only for RB/K/DST (project_kv) / RB/DST (gated_fusion), leaving QB/WR/TE's
+    fields silently dead at train time — the condq train/serve drift class
+    (#1198 gotcha b). Pins the cfg-side to the PositionConfig field so a future
+    non-False value can't re-open the gap for a subset of positions."""
+    pc_mod = importlib.import_module(f"src.{position.lower()}.config")
+    pc = pc_mod.POSITION_CONFIG
+    cfg = build_pipeline_config(position, pc)
+    # Emitted for every position, value-identical to the field serving forwards.
+    assert cfg["attn_project_kv"] == pc.attn_project_kv
+    assert cfg["attn_gated_fusion"] == pc.attn_gated_fusion
+    # The neural_net factories read these via cfg.get(..., False); the emitted
+    # value must equal what the factory would resolve, so the served checkpoint
+    # shape matches the trained one.
+    assert cfg["attn_project_kv"] == cfg.get("attn_project_kv", False)
+    assert cfg["attn_gated_fusion"] == cfg.get("attn_gated_fusion", False)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", POSITIONS)
 def test_build_pipeline_config_overrides_merge_last(position: str) -> None:
     """Caller-supplied overrides win against the factory's defaults — this is
     the mechanism K uses to inject its runtime ``attn_history_builder_fn``.

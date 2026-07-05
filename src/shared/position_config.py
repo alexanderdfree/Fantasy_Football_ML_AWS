@@ -15,9 +15,8 @@ Field defaults capture the most-common value across the six positions, so
 each position config only has to spell out where it deviates. Adding a new
 position becomes a single ``PositionConfig(...)`` constructor call.
 
-Use :func:`alpha_grid` and the ``DEFAULT_OPP_DEF_HISTORY_STATS`` /
-``derive_attn_static_features`` helpers below to remove the obvious
-structural duplication across configs.
+Use the :func:`alpha_grid` and :func:`derive_attn_static_features` helpers
+below to remove the obvious structural duplication across configs.
 """
 
 from __future__ import annotations
@@ -38,19 +37,6 @@ def alpha_grid(low: float, high: float, n: int = 15) -> list[float]:
     """Log-spaced Ridge alpha grid, rounded to 4 decimal places."""
     return [round(x, 4) for x in np.logspace(low, high, n)]
 
-
-# Per-game opposing-defense stats fed to the parallel attention branch for
-# QB / RB / WR / TE. DST overrides with offense-side stats; K omits the
-# branch entirely. Centralised here so adding a new defensive aggregate is a
-# single-line edit.
-DEFAULT_OPP_DEF_HISTORY_STATS: list[str] = [
-    "def_sacks",
-    "def_pass_yds_allowed",
-    "def_pass_td_allowed",
-    "def_ints",
-    "def_rush_yds_allowed",
-    "def_pts_allowed",
-]
 
 DEFAULT_OPP_ATTN_MAX_SEQ_LEN: int = 17
 DEFAULT_ENET_L1_RATIOS: tuple[float, ...] = (0.3, 0.5, 0.7)

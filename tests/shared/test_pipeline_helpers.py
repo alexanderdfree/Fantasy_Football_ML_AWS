@@ -4,8 +4,9 @@ These functions aren't exercised by the position-level E2E tests because
 E2E goes through ``run_pipeline`` which only hits the onecycle+ridge path.
 Direct tests target the uncovered branches: onecycle/cosine/plateau
 scheduler dispatch + the unknown-scheduler ValueError, ElasticNet
-alpha/l1_ratio CV tuner (coarse + fine pass), and the ``_read_split``
-parquet helper.
+alpha/l1_ratio CV tuner (coarse + fine pass), the ``_read_split``
+parquet helper, and the ``_attn_saved_static_cols`` attention-artifact
+metadata resolver (#1432).
 """
 
 from __future__ import annotations
@@ -259,6 +260,40 @@ def test_tune_enet_cv_no_refinement_when_refine_points_zero():
 # --------------------------------------------------------------------------
 # _build_expanding_cv_folds
 # --------------------------------------------------------------------------
+
+
+# --------------------------------------------------------------------------
+# _attn_saved_static_cols — attention checkpoint/scaler metadata (#1432)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_attn_saved_static_cols_filters_flat_path():
+    """Flat path (``attn_static_from_df`` unset/False — QB/RB/WR/TE/DST):
+    ``_train_attention_nn`` fit the scaler on the get_attn_static_columns-
+    filtered subset, so the saved metadata must be that subset (in base
+    feature order), NOT the full base feature list ``_train_attention_holdout``
+    returns — otherwise ``n_features`` over-reports and
+    ``assert_scaler_matches`` fails at serving load. This is the resolver
+    ``run_pipeline`` AND ``run_cv_pipeline`` both save through."""
+    from src.shared.pipeline import _attn_saved_static_cols
+
+    feature_cols = ["prior_a", "rolling_b", "matchup_c", "ewma_d"]
+    cfg = {"attn_static_features": ["matchup_c", "prior_a"]}
+    # Filtered to the whitelist, preserving feature_cols order.
+    assert _attn_saved_static_cols(cfg, feature_cols) == ["prior_a", "matchup_c"]
+
+
+@pytest.mark.unit
+def test_attn_saved_static_cols_from_df_passthrough():
+    """from-df path (``attn_static_from_df=True`` — K): the nested trainer fit
+    on ``attn_feature_cols`` as-is (already ``cfg["attn_static_features"]``),
+    so the resolver must NOT re-filter."""
+    from src.shared.pipeline import _attn_saved_static_cols
+
+    cols = ["kick_dist_a", "kick_dist_b"]
+    cfg = {"attn_static_from_df": True, "attn_static_features": ["kick_dist_a"]}
+    assert _attn_saved_static_cols(cfg, cols) == cols
 
 
 @pytest.mark.unit
