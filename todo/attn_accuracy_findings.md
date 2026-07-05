@@ -145,6 +145,7 @@ ATTN's relative standing shifts with how much in-season history has accumulated:
 2. **The universal regression-to-mean (Q4 −7 to −8) is the single biggest error
    source**, far larger than any model choice. A ceiling-aware loss head or a
    quantile/upside calibration would move overall accuracy more than swapping
-   models. Tune per the `LOSS_WEIGHTS ≈ 2.0/δ` coupling, not independently.
+   models. Tune per the loss-weight↔δ coupling (`1/δ` for the MSE yards heads
+   since PR #870), not independently.
 3. **DST is where attention genuinely pays off** — a candidate position for any
    future attention-architecture investment.

@@ -41,7 +41,7 @@ nflverse API ─┐
                                                 ▼
                              ┌────────────────────────────────┐
                              │ GPU training (BATCH_ACTIVE)    │◀── GitHub Actions
-                             │  true  → 6× Spot g6→g5 (Batch) │    push to main
+                             │  true  → 6× Spot g6/g5 (Batch) │    push to main
                              │          (default; ~15 min)    │
                              │  false → warm OD g6 (SSM)      │
                              │          (rollback; ~120 min)  │
@@ -85,9 +85,9 @@ Full training on GPU runs in CI: by default a push to `main` fans out six Spot G
 
 ## Evaluation
 
-Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination). Numbers from [benchmark_history/2026-07-04T22-33-39_6590a2a.json](benchmark_history/2026-07-04T22-33-39_6590a2a.json) — the latest full six-position Batch (Spot) run (commit `6590a2a`, PR #1460). The split Batch merge writer does not record the top-12 hit rate (it stamps 0 for every family), so that column is omitted; the last run with real top-12 values is [benchmark_history/2026-05-29T11-00-49_9de4d84.json](benchmark_history/2026-05-29T11-00-49_9de4d84.json).
+Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy points), R² (coefficient of determination). Numbers from [benchmark_history/2026-07-04T22-33-39_6590a2a.json](benchmark_history/2026-07-04T22-33-39_6590a2a.json) — the latest full six-position Batch (Spot) run (commit `6590a2a`, PR #1460). The split Batch merge writer does not record the top-12 hit rate (it stamps 0 for every family), so that column is omitted; the last run with real top-12 values (top-12 hit rate = agreement with the actual weekly top 12 at the position, PPR scoring) is [benchmark_history/2026-05-29T11-00-49_9de4d84.json](benchmark_history/2026-05-29T11-00-49_9de4d84.json).
 
-| Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (best) |
+| Position | Ridge MAE | NN MAE | Attn NN MAE | LGBM MAE | Best | R² (MAE winner) |
 |---|---|---|---|---|---|---|
 | QB  | 5.877 | 5.853 | **5.705** | 5.763 | Attention NN | 0.400 |
 | RB  | 4.181 | **4.042** | 4.064 | 4.198 | MultiHeadNet | 0.468 |
@@ -97,8 +97,8 @@ Holdout: 2025 season. Metric definitions: MAE (mean absolute error in fantasy po
 | DST | 5.085 | 5.089 | **5.033** | 5.095 | Attention NN | 0.108 |
 
 **Takeaways:**
-- **The NN families take every position except K.** In the latest run the Attention NN leads QB (5.705), WR (3.971), and DST (5.033); the plain MultiHeadNet leads RB (4.042) and TE (3.362); Ridge holds K. LightGBM wins no position on MAE but posts the best R² at QB (0.403) and TE (0.362) — most per-position margins sit within run-to-run noise.
-- **Attention NN wins QB, WR, and DST.** Sequence + interaction structure pays off across the reception- and count-driven targets. The attention pool's positional encoding catches recent-game weighting that pure rolling features lose.
+- **The NN families take every position except K.** In the latest run the Attention NN leads QB (5.705), WR (3.971), and DST (5.033); the plain MultiHeadNet leads RB (4.042) and TE (3.362); Ridge holds K. LightGBM wins no position on MAE but posts the best R² at QB (0.403), WR (0.385), and TE (0.362), and ties the Attention NN for best at RB (0.473) — most per-position margins sit within run-to-run noise.
+- **Attention NN wins QB, WR, and DST on MAE.** The per-game history sequence + learned-query pooling captures recent-form weighting that pure rolling features lose; margins over the runner-up families are small.
 - **K and DST report near-zero aggregate R².** This is the real signal, not a measurement bug: commit `0c66171` (PR #178) fixed the K/DST evaluation aggregator to use the same signed/tiered logic the serving layer uses, and the result is that every model family barely beats predicting the per-player mean (best R² ≈ 0.03 at K, ≈ 0.1 at DST; K's NN families go slightly negative). K is the harder of the two — kickers genuinely have weak week-over-week signal at the available sample size. The per-position winners are decided by tiny margins well inside run-to-run variance (Ridge edges K at 3.997 MAE; the Attention NN edges DST at 5.033) — no family is a clear winner here. This is consistent with the [docs/expert_comparison.md](docs/expert_comparison.md) finding that published expert projections also have low R² on these positions.
 - **Aggregate MAE rose for K and DST compared to the pre-`0c66171` table.** The earlier table reported K=3.6 and DST=3.8 against a partially-wrong unit space (unsigned sum for K, missing PA/YA tier lookup for DST). The corrected aggregator produces the real fantasy-point error: K MAE ≈ 4.0, DST MAE ≈ 5.1 (best models). The dashboard always showed correct values; only the eval-table aggregate was wrong.
 - Error analysis and per-target breakdown: [docs/expert_comparison.md](docs/expert_comparison.md) and the per-position breakdowns in the linked benchmark JSON.
@@ -172,7 +172,7 @@ GitHub Actions
    │                              ▼ workflow_run
    │        ┌──────────────────────────────────────────────┐
    │        │ BATCH_ACTIVE=true (default):                 │
-   │        │   train-batch.yml → 6× Spot g6→g5            │
+   │        │   train-batch.yml → 6× Spot g6/g5            │
    │        │     (one position per host, parallel)        │
    │        │     src.batch.launch submits, polls, downloads│
    │        │   ~15 min wall-clock                         │
@@ -220,7 +220,7 @@ deploy.yml ──▶ ECR ──▶ ECS Fargate (arm64) ──▶ ALB + ACM HTTPS
 push to main ──▶ tests.yml   (8-shard pytest matrix · per-flag Codecov · 80% target)
              │
              │                                            BATCH_ACTIVE=true
-             ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g6→g5 (parallel)
+             ├──▶ batch-image.yml ──┬─▶ train-batch.yml ──▶ 6× Spot g6/g5 (parallel)
              │                      │                       (~15 min full retrain)
              │                      │
              │                      │                            BATCH_ACTIVE=false

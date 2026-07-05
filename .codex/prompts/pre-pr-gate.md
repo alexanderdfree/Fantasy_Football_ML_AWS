@@ -23,6 +23,9 @@ Use `BASE` if supplied; otherwise use `origin/main`.
    also passes via the permanent `{pos}/outputs/models` mtime fallback (accepted with a nudge).
    AST-inert edits (a gated file whose ENTIRE BASE..HEAD diff is comments/docstrings/formatting)
    and additive-only-no-risky-token edits bypass this step; `[docs-only]` (step 1) bypasses both gates.
+   For shared-arm changes, any one position's evidence is acceptable unless the diff affects
+   position-specific behavior (e.g. a K/DST-only branch inside `src/shared/`) — then benchmark
+   that position; the fingerprint gate is position-blind for `src/shared/**` and cannot catch this.
 7. Run `/prompts:pre-pr-judge` before `gh pr create` unless the change is trivial.
 
 Report the exact commands run, pass/fail status, and any remaining gate friction.

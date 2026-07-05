@@ -27,12 +27,15 @@ def _config(pos: str):
 # ---------------------------------------------------------------------------
 # Invariant 1: LOSS_WEIGHTS[t] * HUBER_DELTAS[t] ≈ 2.0 per Huber head.
 # ---------------------------------------------------------------------------
-# Why: CLAUDE.md "Loss weights are tuned inverse-to-Huber-delta".
+# Why: AGENTS.md "Loss weights are tuned inverse-to-Huber-delta".
 # TODO.md Fixed archive entry "Huber delta asymmetry across targets starved
 # count heads" documents the regression: pre-rebalance, yards targets
 # (delta in [15, 30]) dominated count heads (delta in [0.25, 0.5]) ~20-2500x
 # per sample, collapsing the count heads to the mean. The fix paired
 # LOSS_WEIGHTS ≈ 2.0 / HUBER_DELTAS across RB / QB / WR / TE.
+# Post-#870 (Huber→MSE switch) the yards heads are MSE at 1/δ and no current
+# head declares a Huber loss, so this guard is dormant — it exists to catch a
+# future Huber head reintroduced without the matching 2.0/δ weight.
 # Without this guard, future Huber-delta tuning will silently re-introduce
 # the same imbalance.
 

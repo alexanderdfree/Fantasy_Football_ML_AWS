@@ -26,8 +26,10 @@ capture. Differences vs the LightGBM tuner:
 Out of scope (v1)
 -----------------
 * **Loss-config search** (`head_losses`, `loss_weights`, `huber_deltas`,
-  `gated_targets`): per CLAUDE.md, `LOSS_WEIGHTS ≈ 2.0 / HUBER_DELTAS` is a
-  coupling, not two independent axes. Searching deltas + deriving weights also
+  `gated_targets`): per AGENTS.md, `LOSS_WEIGHTS` is coupled to `HUBER_DELTAS`
+  (`1/δ` for the MSE yards heads since the PR #870 Huber→MSE switch; `2.0/δ`
+  in the pre-#870 Huber era) — a coupling, not two independent axes.
+  Searching deltas + deriving weights also
   blows up search dimensionality past what ~30 trials resolve. Hand-tune loss
   config via the `ablate_rb_gate.py` pattern.
 * **`ATTN_STATIC_FEATURES`**: structural feature choice, not a hyperparam.
