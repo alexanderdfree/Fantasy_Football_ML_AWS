@@ -106,6 +106,27 @@ def test_load_projections_injected_reader(tmp_path):
     assert len(cached) == len(df)
 
 
+def test_cache_key_distinguishes_sampled_from_contiguous_seasons(tmp_path):
+    # v1 keyed the cache on min/max season only, so a sampled [2013, 2015] pull
+    # silently satisfied a later [2013, 2014, 2015] request — wrong data, no error.
+    sampled = load_fftoday_projections(
+        [2013, 2015], weeks=(1,), cache_dir=str(tmp_path), reader=_fake_reader
+    )
+    assert set(sampled["season"]) == {2013, 2015}
+
+    fetched: list[str] = []
+
+    def counting_reader(url: str) -> str:
+        fetched.append(url)
+        return _fake_reader(url)
+
+    full = load_fftoday_projections(
+        [2013, 2014, 2015], weeks=(1,), cache_dir=str(tmp_path), reader=counting_reader
+    )
+    assert fetched, "contiguous request must not be served from the sampled-seasons cache"
+    assert set(full["season"]) == {2013, 2014, 2015}
+
+
 def test_min_season_guard():
     with pytest.raises(ValueError, match="archive starts at"):
         load_fftoday_projections([2009], weeks=(1,), reader=_fake_reader)

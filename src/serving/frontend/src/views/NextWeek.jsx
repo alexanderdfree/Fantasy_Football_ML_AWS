@@ -41,13 +41,19 @@ const COLUMNS = [
 ];
 const TOGGLEABLE_COLUMNS = COLUMNS.filter((c) => !c.always);
 
-// Best available model projection for a row (Attention NN preferred — best
-// WR/RB model — falling back across the others), used for the default sort.
+// Best-ranking model projection for a row, used for the default sort. Per-position
+// head *selection* (ADR-0003-compatible — selection, not ensembling): LightGBM
+// ranks RB/WR better than the attention head (beats it on lineup regret in 4/4
+// rolling-origin seasons vs RotoWire — todo/expert-gap-investigation-2026-06.md §3);
+// other positions keep the attention-first chain. Display columns are unaffected.
 // Ridge is deliberately absent: it's hidden on this view.
+const LGBM_RANKED_POSITIONS = new Set(["RB", "WR"]);
 function upcomingProjection(p) {
-    if (p.attn_nn_pred != null) return p.attn_nn_pred;
-    if (p.lgbm_pred != null) return p.lgbm_pred;
-    return p.nn_pred;
+    const order = LGBM_RANKED_POSITIONS.has(p.position)
+        ? [p.lgbm_pred, p.attn_nn_pred, p.nn_pred]
+        : [p.attn_nn_pred, p.lgbm_pred, p.nn_pred];
+    const best = order.find((v) => v != null);
+    return best != null ? best : null;
 }
 
 function sortValue(p, key) {

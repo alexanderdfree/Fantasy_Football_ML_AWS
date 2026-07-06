@@ -244,6 +244,8 @@ DST landed via commit `cc0c627` with a 10-target attention model (sacks, INTs, f
 
 5. **TD variance remains the structural ceiling at QB.** Per-target QB MAE is dominated by `passing_yards` (68 yds = 2.7 fantasy pts) and `passing_tds` (0.89 TDs = 3.5 fantasy pts at 4 pts/TD). The TD head is the single largest contributor and has the lowest R² of any QB target — week-to-week QB TD output is closer to noise than to a learnable signal at this player-pool size.
 
+6. **Acting on the gap:** the sequenced work plan for closing the expert edge — per-position best-ranker head selection (shipped: the NextWeek "rank" sort uses LightGBM for RB/WR), the FFToday third benchmark (backfill vet **CLEAN** on a 2013/2019/2024 sample, 2026-07-06 — full-archive head-to-head pending), the B2 PROE/pace RB ordering screen, and the bias-calibration cohort work — lives in [todo/expert-edge-action-plan.md](../todo/expert-edge-action-plan.md).
+
 ---
 
 ## Sources

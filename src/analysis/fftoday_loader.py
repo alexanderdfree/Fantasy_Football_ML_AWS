@@ -61,7 +61,22 @@ FFTODAY_POS_IDS: dict[str, int] = {"QB": 10, "RB": 20, "WR": 30, "TE": 40}
 FFTODAY_POSITIONS: tuple[str, ...] = tuple(FFTODAY_POS_IDS)
 
 FFTODAY_DEFAULT_WEEKS = tuple(range(1, 19))
-_CACHE_VERSION = "v1"
+# v2: cache keys disambiguate non-contiguous season lists (v1 keyed on min/max
+# only, so a sampled [2013, 2019, 2024] pull silently satisfied a later
+# [2013..2024] request — wrong data, no error).
+_CACHE_VERSION = "v2"
+
+
+def _seasons_sig(seasons: list[int]) -> str:
+    """Cache-key fragment for a season list; non-contiguous lists get a count
+    suffix so they can't collide with the full range (mirrors ``weeks_sig``)."""
+    uniq = sorted(set(seasons))
+    lo, hi = uniq[0], uniq[-1]
+    if uniq == list(range(lo, hi + 1)):
+        return f"{lo}_{hi}"
+    return f"{lo}_{hi}-n{len(uniq)}"
+
+
 _MIN_SEASON = 2010  # FFToday weekly-projection archive floor.
 
 _RETRY_BACKOFF_S = 0.5
@@ -255,7 +270,7 @@ def load_fftoday_projections(
     )
     cache_path = (
         f"{cache_dir}/fftoday_projections_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{weeks_sig}.parquet"
+        f"_{_seasons_sig(seasons)}_{weeks_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)
@@ -311,7 +326,7 @@ def load_fftoday_with_gsis_id(
     rate_sig = f"mr{int(round(min_match_rate * 100))}"
     cache_path = (
         f"{cache_dir}/fftoday_projections_joined_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{rate_sig}.parquet"
+        f"_{_seasons_sig(seasons)}_{rate_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh and rosters is None:
         return pd.read_parquet(cache_path)
