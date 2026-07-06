@@ -35,9 +35,12 @@ import os
 import numpy as np
 import pandas as pd
 
-from src.data import nfl_source
-from src.data.cache_io import atomic_write_parquet
-from src.data.external_sources import _seasons_cache_signature
+# NB: keep module-level imports to os/numpy/pandas/ab_harness only. launch_ab
+# imports this spec on the lightweight GitHub launcher runner (to size the grid)
+# where the training deps are absent — a top-level `from src.data import
+# nfl_source` pulls nflreadpy and crashes the launcher (ModuleNotFoundError).
+# The PBP/cache helpers are imported inside _build_team_week_table, which only
+# runs inside the full-deps Batch container. Pinned by test_ab_proe_pace.
 from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["QB", "RB", "WR", "TE"]  # frame injection is QB/RB/WR/TE-only
@@ -140,7 +143,12 @@ def _season_to_date_shift(games: pd.DataFrame) -> pd.DataFrame:
 
 def _build_team_week_table(seasons: list[int], cache_dir: str | None = None) -> pd.DataFrame:
     """Cached (recent_team, season, week) → season-to-date PROE/pace features."""
+    # Deferred (see the module-header note): these pull training deps absent on
+    # the launcher runner, and only this function runs in the Batch container.
     from src.config import CACHE_DIR
+    from src.data import nfl_source
+    from src.data.cache_io import atomic_write_parquet
+    from src.data.external_sources import _seasons_cache_signature
 
     cache_dir = cache_dir or CACHE_DIR
     os.makedirs(cache_dir, exist_ok=True)

@@ -40,6 +40,28 @@ def test_variant_names_are_fleet_only_safe():
         assert re.fullmatch(r"[A-Za-z0-9_]+", name)
 
 
+def test_module_level_imports_are_launcher_safe():
+    """launch_ab imports this spec on the lightweight runner (no training deps)
+    to size the grid, so no module-level import may pull src.data / nflreadpy —
+    those must be deferred into _build_team_week_table (runs only in-container).
+    Regression guard for the #1479 smoke ModuleNotFoundError: nflreadpy."""
+    import ast
+    import pathlib
+
+    src = pathlib.Path(spec.__file__).read_text()
+    banned = ("src.data", "nflreadpy")
+    for node in ast.parse(src).body:  # module body only — deferred imports are nested
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""]
+        for name in names:
+            assert not any(name == b or name.startswith(b + ".") for b in banned), (
+                f"module-level import {name!r} is launcher-hostile; defer it into a function"
+            )
+
+
 # ---------- team-game aggregation -------------------------------------------
 
 
