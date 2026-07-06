@@ -33,19 +33,27 @@ The ≥2013 archive that extends the ordering diagnostic back a decade (current 
 pre-kickoff only 2024+ NFL.com / 2018+ RotoWire). Loader shipped + wired
 ([src/analysis/fftoday_loader.py](../src/analysis/fftoday_loader.py) →
 `analysis_expert_comparison._build_experts`, PR #1376). Steps, in order:
-1. ~~Per-source backfill vet (mandatory before trust)~~ — **DONE 2026-07-06, verdict CLEAN.** The
-   hvpkod near-exact-match test (`expert_intervals.lookahead_seasons`) on a live-scraped
-   2013/2019/2024 sample (QB/RB/WR/TE, n=8,375 joined rows; actuals = the S3-mirrored
-   `weekly_2012_2025.parquet` scored through `_position_actuals`): near-exact fractions
-   **2.5–9.4%** (flag threshold 30%), residual σ **5.8–9.3** per season (a backfilled feed reads
-   σ≈0), zero flagged seasons. Genuine ex-ante forecasts. Side finding: FFToday **over-projects WR**
-   (pooled bias +2.34; other positions +0.3–0.6).
-2. Full multi-season pull (2013–2025; archive floor 2010; QB/RB/WR/TE, no K/DST in the comparison).
+1. ~~Per-source backfill vet (mandatory before trust)~~ — **DONE 2026-07-06, verdict CLEAN on the
+   FULL archive.** The hvpkod near-exact-match test (`expert_intervals.lookahead_seasons`) over all
+   13 seasons 2013–2025 × QB/RB/WR/TE (n=36,788 joined rows; actuals = the S3-mirrored
+   `weekly_2012_2025.parquet` scored through `_position_actuals`): per-season near-exact fractions
+   **2.5–9.4%** (flag threshold 30%), residual σ **5.6–9.3** (a backfilled feed reads σ≈0),
+   **zero flagged seasons**. Genuine ex-ante forecasts. Side finding: FFToday **over-projects WR**
+   (pooled bias +2.66; other positions +0.4–0.7).
+2. ~~Full multi-season pull~~ — **DONE 2026-07-06:** 2013–2025, 38,275 rows, 99.0% gsis match.
    **Gotcha fixed en route:** the loader cache keyed on min/max season only, so the sampled
    2013/2019/2024 pull silently satisfied a full 2013–2024 request — cache key now disambiguates
    non-contiguous lists (`_seasons_sig`, `_CACHE_VERSION` v2, regression-tested).
-3. Same-sample head-to-head + extend the iso_edge/rank-skill diagnostic to the 2013+ substrate; publish
-   in [docs/expert_comparison.md](../docs/expert_comparison.md).
+3. ~~Same-sample head-to-head + publish~~ — **DONE 2026-07-06**, published in
+   [docs/expert_comparison.md](../docs/expert_comparison.md) § "Third expert: FFToday". Model =
+   served attention NN via `artifact_eval.build_test_df_from_artifacts` (Ridge-identity validation
+   Δ=0.0000 all four positions). Result (PPR 2025, FFToday's deeper covered slate): **model beats
+   FFToday on TE** (Δ −0.181, CI [−0.32, −0.05], DM p=0.03 — first significant same-sample win vs
+   an expert at a skill position), leans better on WR (−0.144, NS), ties QB (+0.163) and RB (+0.097).
+   Expert-strength ordering: NFL.com > RotoWire > FFToday.
+4. **Remaining:** extend the iso_edge / rank-skill ordering diagnostic to the 2013+ FFToday substrate
+   (needs rolling-origin per-season model retrains — GPU-fleet work, pairs naturally with the Phase 2
+   screen below).
 - **ToS: internal benchmark only** — restricted redistribution; never a serving tab, never a feature.
 - (FantasyPros stays out: current-season-only pool, survivorship-biased history — see the
   [new-sources correction](new-sources-research-2026-06.md).)
