@@ -63,15 +63,51 @@ The RB ordering edge + bust-avoidance concentrates in **established-alpha RBs** 
 unlike WR's external CB gap — may be forecastable from workload/role/game-script. Top candidate:
 **B2 team PROE + neutral pace** ([new-sources-research §B2](new-sources-research-2026-06.md) — $0,
 2013-verified from already-ingested PBP, leakage-clean with a season-to-date-through-W-1 group-shift lag).
-- Screen via `ab_harness` frame-injection (QB/RB/WR/TE), ≥3 seeds (5–8 if the delta sits in the band),
-  judged on **rank metrics** — NDCG / recall@k / mean-rank / lineup regret on the shared
-  RotoWire-covered slate + the D1 established-alpha and D4 culprit slices — **not MAE** (the edge being
-  chased is ordering). Batch-fleet path per ADR-0020 if no local GPU.
-- Ship gate: rank-metric win on RB (direction holds ≥2/3 seeds) with overall MAE flat → wire loader
-  (`src/data/`), `engineer.py` merge, `INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES` (team-level
-  season-to-date rates are static-eligible; **not** a windowed player stat), fixtures, retrain PR with
-  benchmark evidence. Flat/negative → `[TESTED, REJECTED]` archive entry (draft-capital precedent).
-- Runner-up if B2 is flat: **E2 O-line continuity** (orthogonal, from already-ingested PFR snaps).
+- **Spec SHIPPED 2026-07-06:** [src/tuning/ab_proe_pace.py](../src/tuning/ab_proe_pace.py) +
+  [tests/tuning/test_ab_proe_pace.py](../tests/tuning/test_ab_proe_pace.py). Four season-to-date
+  team-week rates (`team_proe_std`, `team_neutral_pass_rate_std`, `team_neutral_sec_per_play_std`,
+  `team_plays_pg_std`) built in-spec from `nfl_source.pbp_data` (schema-gated; cached
+  `data/raw/proe_pace_teamweek_*`), W-1 expanding-mean lag (openers NaN → fill_nans), left-join on
+  `[recent_team, season, week]`, whitelisted into `get_feature_columns_fn` + `attn_static_features`
+  (season-to-date rates are static-eligible). Metric = per-model **rank metrics** (hit@12, Spearman,
+  regret@12 + position-lineup regret via the investigation's `_LINEUP_N`, elite_top24 slice) with MAE
+  as the Ridge-sentinel guard. Grid: QB/RB/WR/TE × {baseline, proe_pace} × seeds {42,123,7} = 24 cells.
+- **Fleet run DONE 2026-07-06 → TESTED, REJECTED** (run `ab_proe_pace-20260706T094353Z-3cc5f0a`, 24/24
+  cells ok, eager L4). Smoke caught + fixed a launcher-import bug first (`nflreadpy` pulled at module
+  top crashed the grid-sizing import; deferred into `_build_team_week_table`, commit `3cc5f0a`), then
+  the full grid ran clean. **Verdict: benchmark-flat on every served head.** The feature takes (RB
+  Ridge MAE 4.1807→4.1723, sentinel ✓) but on the served RB ranker (**LightGBM every rank metric is
+  inside the seed band** — hit@12 Δ+0.003 σ0.009, regret@12 Δ+0.72 σ1.72, regret@24 Δ+0.27 σ0.89, MAE
+  flat); the attention head is flat-to-slightly-worse (regret@12 +1.6 ≈6σ). Only **Ridge deep-lineup
+  regret** improves consistently (RB regret@24 −3.76, WR −0.76/−1.60, QB −0.63, deterministic) — a
+  non-served head, and its top-12 regret worsens. No decision-relevant ordering gain on the LightGBM/
+  attention heads that serve RB/WR. Full write-up + table: [todo/fixed-archive.md](fixed-archive.md)
+  `[TESTED, REJECTED] B2 team PROE / pace …`. The `ab_proe_pace` spec + team-week PBP builder are kept
+  as reusable tooling; **nothing wired into production configs**.
+## Phase 2b — E2 O-line continuity (B2 runner-up) → CONFIRMED for TE
+Starting-five stability from the PFR snap counts the repo ingests but discards. Spec
+[src/tuning/ab_oline_continuity.py](../src/tuning/ab_oline_continuity.py): three season-to-date
+team-week features (`oline_distinct_starters_std`, `oline_prev_overlap_std`, `oline_stable_streak_std`),
+W-1-lagged, OL matched by position token `{T,G,C,OL,OT,OG}`, legacy team codes normalized via
+`schedule_team_code_normalization()`.
+- **Screen (2025, 24 cells, run `ab_oline_continuity-…105238Z`) → borderline-positive.** Unlike B2,
+  the **attention head's** deep-lineup regret improved consistently, landing on the served TE/QB rankers
+  (TE regret@12 −2.25 3/3, QB −2.82 2/3), MAE flat; the served RB/WR (LightGBM) rankers flat. Owner
+  chose the RotoWire-slate confirm pass.
+- **Confirm (rolling-origin 2022–2025 × RotoWire-covered slate, 24 cells, run
+  `ab_oline_confirm-…112527Z`, [src/tuning/ab_oline_confirm.py](../src/tuning/ab_oline_confirm.py)) →
+  TE CONFIRMED.** E2 lowers the **attention** head's optimal-lineup regret on the RotoWire slate in:
+  **TE 3/4 origins** (Δ 2023 −3.9, 2024 −4.7, 2025 −0.5; 2022 +1.4) — and in 2/4 origins E2 pushes the
+  TE attention head *below* RotoWire's regret. **RB 3/4** (−3.9/−6.4/−3.9) but RB is LightGBM-served
+  (mixed) and E2 doesn't close the gap to RotoWire → real gain, stranded on a non-served head.
+  **QB 1/4 → NOT confirmed** (the weaker screen signal was noise). RotoWire slate built from Sleeper ×
+  the rosters sleeper→gsis bridge (`data/raw/rotowire_slate_ppr_2018_2025.parquet`, on S3).
+- **Verdict:** E2 is a genuine, cross-season-validated win **for TE on its served (attention) ranker** —
+  the first Phase-2 lever to pass its confirm gate. **Ship decision (owner):** a TE ship-PR wiring the
+  three O-line features into TE's `INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES` (+ the team-week loader
+  into `src/data/` + `engineer.py`, fixtures) fires a TE retrain + benchmark-evidence gate — its own PR.
+  RB is a secondary consideration (attention gain but LightGBM-served — reconsidering RB's served ranker
+  would be a separate call). Specs + RotoWire slate kept as reusable tooling; **nothing wired yet.**
 
 ## Phase 3 — cohort-bias calibrations (bias, not MAE; judged on the tracked `cohorts` block)
 - ~~Games-gap A/B (`career_weeks_since_last_game`)~~ — **executed + tested-rejected on the fleet by
