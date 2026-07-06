@@ -72,17 +72,21 @@ unlike WR's external CB gap — may be forecastable from workload/role/game-scri
   (season-to-date rates are static-eligible). Metric = per-model **rank metrics** (hit@12, Spearman,
   regret@12 + position-lineup regret via the investigation's `_LINEUP_N`, elite_top24 slice) with MAE
   as the Ridge-sentinel guard. Grid: QB/RB/WR/TE × {baseline, proe_pace} × seeds {42,123,7} = 24 cells.
-- **Fleet run PENDING:** eager (metric needs all four heads), ADR-0020 flow — build the branch image
-  (`batch-image.yml`), **smoke `--positions RB --only proe_pace --seeds 42` (2 cells) and verify
-  `ok:true` + the Ridge sentinel shows the feature took**, then fan out all 24 cells; read
-  `summary.json` under `s3://ff-predictor-training/ab_runs/{run_id}/` (custom metrics are not echoed
-  to the console).
-- Decision gate: RB rank-metric direction (hit12/regret/spearman) holds on ≥2/3 seeds for the attn
-  and/or LightGBM head with overall MAE flat → **confirm on the RotoWire-covered slate**
-  (rolling-origin, `ab_rolling_origin_rotowire` pattern) before any ship-PR (loader in `src/data/`,
-  `engineer.py`, whitelists, fixtures, retrain + benchmark evidence). Flat/negative →
-  `[TESTED, REJECTED]` archive entry (draft-capital precedent). In-band delta → bump to 5–8 seeds.
-- Runner-up if B2 is flat: **E2 O-line continuity** (orthogonal, from already-ingested PFR snaps).
+- **Fleet run DONE 2026-07-06 → TESTED, REJECTED** (run `ab_proe_pace-20260706T094353Z-3cc5f0a`, 24/24
+  cells ok, eager L4). Smoke caught + fixed a launcher-import bug first (`nflreadpy` pulled at module
+  top crashed the grid-sizing import; deferred into `_build_team_week_table`, commit `3cc5f0a`), then
+  the full grid ran clean. **Verdict: benchmark-flat on every served head.** The feature takes (RB
+  Ridge MAE 4.1807→4.1723, sentinel ✓) but on the served RB ranker (**LightGBM every rank metric is
+  inside the seed band** — hit@12 Δ+0.003 σ0.009, regret@12 Δ+0.72 σ1.72, regret@24 Δ+0.27 σ0.89, MAE
+  flat); the attention head is flat-to-slightly-worse (regret@12 +1.6 ≈6σ). Only **Ridge deep-lineup
+  regret** improves consistently (RB regret@24 −3.76, WR −0.76/−1.60, QB −0.63, deterministic) — a
+  non-served head, and its top-12 regret worsens. No decision-relevant ordering gain on the LightGBM/
+  attention heads that serve RB/WR. Full write-up + table: [todo/fixed-archive.md](fixed-archive.md)
+  `[TESTED, REJECTED] B2 team PROE / pace …`. The `ab_proe_pace` spec + team-week PBP builder are kept
+  as reusable tooling; **nothing wired into production configs**.
+- **Runner-up (not started — a fresh screen the owner can request):** **E2 O-line continuity**
+  (starting-five stability from already-ingested PFR snaps; orthogonal to team pass-volume) via the
+  same `ab_harness` → fleet flow.
 
 ## Phase 3 — cohort-bias calibrations (bias, not MAE; judged on the tracked `cohorts` block)
 - ~~Games-gap A/B (`career_weeks_since_last_game`)~~ — **executed + tested-rejected on the fleet by
