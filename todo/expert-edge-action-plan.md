@@ -63,14 +63,25 @@ The RB ordering edge + bust-avoidance concentrates in **established-alpha RBs** 
 unlike WR's external CB gap — may be forecastable from workload/role/game-script. Top candidate:
 **B2 team PROE + neutral pace** ([new-sources-research §B2](new-sources-research-2026-06.md) — $0,
 2013-verified from already-ingested PBP, leakage-clean with a season-to-date-through-W-1 group-shift lag).
-- Screen via `ab_harness` frame-injection (QB/RB/WR/TE), ≥3 seeds (5–8 if the delta sits in the band),
-  judged on **rank metrics** — NDCG / recall@k / mean-rank / lineup regret on the shared
-  RotoWire-covered slate + the D1 established-alpha and D4 culprit slices — **not MAE** (the edge being
-  chased is ordering). Batch-fleet path per ADR-0020 if no local GPU.
-- Ship gate: rank-metric win on RB (direction holds ≥2/3 seeds) with overall MAE flat → wire loader
-  (`src/data/`), `engineer.py` merge, `INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES` (team-level
-  season-to-date rates are static-eligible; **not** a windowed player stat), fixtures, retrain PR with
-  benchmark evidence. Flat/negative → `[TESTED, REJECTED]` archive entry (draft-capital precedent).
+- **Spec SHIPPED 2026-07-06:** [src/tuning/ab_proe_pace.py](../src/tuning/ab_proe_pace.py) +
+  [tests/tuning/test_ab_proe_pace.py](../tests/tuning/test_ab_proe_pace.py). Four season-to-date
+  team-week rates (`team_proe_std`, `team_neutral_pass_rate_std`, `team_neutral_sec_per_play_std`,
+  `team_plays_pg_std`) built in-spec from `nfl_source.pbp_data` (schema-gated; cached
+  `data/raw/proe_pace_teamweek_*`), W-1 expanding-mean lag (openers NaN → fill_nans), left-join on
+  `[recent_team, season, week]`, whitelisted into `get_feature_columns_fn` + `attn_static_features`
+  (season-to-date rates are static-eligible). Metric = per-model **rank metrics** (hit@12, Spearman,
+  regret@12 + position-lineup regret via the investigation's `_LINEUP_N`, elite_top24 slice) with MAE
+  as the Ridge-sentinel guard. Grid: QB/RB/WR/TE × {baseline, proe_pace} × seeds {42,123,7} = 24 cells.
+- **Fleet run PENDING:** eager (metric needs all four heads), ADR-0020 flow — build the branch image
+  (`batch-image.yml`), **smoke `--positions RB --only proe_pace --seeds 42` (2 cells) and verify
+  `ok:true` + the Ridge sentinel shows the feature took**, then fan out all 24 cells; read
+  `summary.json` under `s3://ff-predictor-training/ab_runs/{run_id}/` (custom metrics are not echoed
+  to the console).
+- Decision gate: RB rank-metric direction (hit12/regret/spearman) holds on ≥2/3 seeds for the attn
+  and/or LightGBM head with overall MAE flat → **confirm on the RotoWire-covered slate**
+  (rolling-origin, `ab_rolling_origin_rotowire` pattern) before any ship-PR (loader in `src/data/`,
+  `engineer.py`, whitelists, fixtures, retrain + benchmark evidence). Flat/negative →
+  `[TESTED, REJECTED]` archive entry (draft-capital precedent). In-band delta → bump to 5–8 seeds.
 - Runner-up if B2 is flat: **E2 O-line continuity** (orthogonal, from already-ingested PFR snaps).
 
 ## Phase 3 — cohort-bias calibrations (bias, not MAE; judged on the tracked `cohorts` block)
