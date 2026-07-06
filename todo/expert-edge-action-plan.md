@@ -84,9 +84,30 @@ unlike WR's external CB gap — may be forecastable from workload/role/game-scri
   attention heads that serve RB/WR. Full write-up + table: [todo/fixed-archive.md](fixed-archive.md)
   `[TESTED, REJECTED] B2 team PROE / pace …`. The `ab_proe_pace` spec + team-week PBP builder are kept
   as reusable tooling; **nothing wired into production configs**.
-- **Runner-up (not started — a fresh screen the owner can request):** **E2 O-line continuity**
-  (starting-five stability from already-ingested PFR snaps; orthogonal to team pass-volume) via the
-  same `ab_harness` → fleet flow.
+## Phase 2b — E2 O-line continuity (B2 runner-up) → CONFIRMED for TE
+Starting-five stability from the PFR snap counts the repo ingests but discards. Spec
+[src/tuning/ab_oline_continuity.py](../src/tuning/ab_oline_continuity.py): three season-to-date
+team-week features (`oline_distinct_starters_std`, `oline_prev_overlap_std`, `oline_stable_streak_std`),
+W-1-lagged, OL matched by position token `{T,G,C,OL,OT,OG}`, legacy team codes normalized via
+`schedule_team_code_normalization()`.
+- **Screen (2025, 24 cells, run `ab_oline_continuity-…105238Z`) → borderline-positive.** Unlike B2,
+  the **attention head's** deep-lineup regret improved consistently, landing on the served TE/QB rankers
+  (TE regret@12 −2.25 3/3, QB −2.82 2/3), MAE flat; the served RB/WR (LightGBM) rankers flat. Owner
+  chose the RotoWire-slate confirm pass.
+- **Confirm (rolling-origin 2022–2025 × RotoWire-covered slate, 24 cells, run
+  `ab_oline_confirm-…112527Z`, [src/tuning/ab_oline_confirm.py](../src/tuning/ab_oline_confirm.py)) →
+  TE CONFIRMED.** E2 lowers the **attention** head's optimal-lineup regret on the RotoWire slate in:
+  **TE 3/4 origins** (Δ 2023 −3.9, 2024 −4.7, 2025 −0.5; 2022 +1.4) — and in 2/4 origins E2 pushes the
+  TE attention head *below* RotoWire's regret. **RB 3/4** (−3.9/−6.4/−3.9) but RB is LightGBM-served
+  (mixed) and E2 doesn't close the gap to RotoWire → real gain, stranded on a non-served head.
+  **QB 1/4 → NOT confirmed** (the weaker screen signal was noise). RotoWire slate built from Sleeper ×
+  the rosters sleeper→gsis bridge (`data/raw/rotowire_slate_ppr_2018_2025.parquet`, on S3).
+- **Verdict:** E2 is a genuine, cross-season-validated win **for TE on its served (attention) ranker** —
+  the first Phase-2 lever to pass its confirm gate. **Ship decision (owner):** a TE ship-PR wiring the
+  three O-line features into TE's `INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES` (+ the team-week loader
+  into `src/data/` + `engineer.py`, fixtures) fires a TE retrain + benchmark-evidence gate — its own PR.
+  RB is a secondary consideration (attention gain but LightGBM-served — reconsidering RB's served ranker
+  would be a separate call). Specs + RotoWire slate kept as reusable tooling; **nothing wired yet.**
 
 ## Phase 3 — cohort-bias calibrations (bias, not MAE; judged on the tracked `cohorts` block)
 - ~~Games-gap A/B (`career_weeks_since_last_game`)~~ — **executed + tested-rejected on the fleet by
