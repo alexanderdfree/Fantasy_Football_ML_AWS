@@ -119,10 +119,9 @@ export function NextWeekView({ scoring, search, onPlayer }) {
 
     const teams = useMemo(() => [...new Set(allRows.map((p) => p.team).filter(Boolean))].sort(), [allRows]);
     const hasAge = useMemo(() => allRows.some((p) => p.age != null), [allRows]);
-    const expertHasData = useMemo(() => ({
-        nflcom_pred: allRows.some((p) => p.nflcom_pred != null),
-        rotowire_pred: allRows.some((p) => p.rotowire_pred != null),
-    }), [allRows]);
+    const expertHasData = useMemo(() => Object.fromEntries(
+        COLUMNS.filter((c) => c.expert).map((c) => [c.key, allRows.some((p) => p[c.key] != null)]),
+    ), [allRows]);
 
     const FILTER_ITEMS = useMemo(() => {
         const items = [
