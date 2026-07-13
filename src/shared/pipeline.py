@@ -1908,6 +1908,31 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             result["lgbm_metrics"] = lgbm_metrics
         if tabpfn_metrics is not None:
             result["tabpfn_metrics"] = tabpfn_metrics
+        # Ranking metrics for the families this run DID train. The split Batch
+        # branches short-circuit here, and until this attach they returned no
+        # ``*_ranking`` at all — so from the 2026-06-11 BATCH_SPLIT_ACTIVE flip
+        # (ADR-0019) every merged benchmark_history row recorded a silent
+        # ``{model}_top12 = 0`` while MAE/R² stayed real. Guarded on
+        # ``aggregate_fn``: a reduced config without an aggregator (synthetic
+        # test configs) skips ranking and ``summarize_pipeline_result`` then
+        # surfaces top12 as null, not 0.
+        agg_fn = cfg.get("aggregate_fn")
+        if agg_fn is not None:
+            ranked_test = pos_test.copy()
+            for ranking_key, pred_col, preds, label in (
+                ("ridge_ranking", "pred_ridge_total", ridge_test_preds, "Ridge"),
+                ("nn_ranking", "pred_nn_total", nn_test_preds, "NN"),
+                ("elasticnet_ranking", "pred_enet_total", enet_test_preds, "ElasticNet"),
+                ("attn_nn_ranking", "pred_attn_nn_total", attn_nn_test_preds, "Attention NN"),
+                ("lgbm_ranking", "pred_lgbm_total", lgbm_test_preds, "LightGBM"),
+                ("tabpfn_ranking", "pred_tabpfn_total", tabpfn_test_preds, "TabPFN"),
+            ):
+                if preds is None:
+                    continue
+                ranked_test[pred_col] = agg_fn(preds)
+                ranking = compute_ranking_metrics(ranked_test, pred_col=pred_col)
+                result[ranking_key] = ranking
+                print(f"{label} Top-12 Hit Rate: {ranking['season_avg_hit_rate']:.3f}")
         return result
 
     # --- Comparison ---

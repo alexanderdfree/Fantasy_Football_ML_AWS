@@ -406,6 +406,24 @@ def test_summarize_passes_through_elapsed_and_phases():
     assert s["phase_seconds"] == {"train": 60, "eval": 10}
 
 
+@pytest.mark.unit
+def test_summarize_missing_ranking_surfaces_none_not_zero():
+    """A result with metrics but no ``*_ranking`` blocks — the shape every
+    Batch split branch produced from the 2026-06-11 BATCH_SPLIT_ACTIVE flip
+    (ADR-0019) until the pipeline-side ranking attach — must surface top12 as
+    ``None`` (JSON null), never the old silent ``0`` that read as a real
+    0.000 hit rate for a month of history rows."""
+    r = _basic_result()
+    del r["ridge_ranking"]
+    del r["nn_ranking"]
+    r["attn_nn_metrics"] = {"total": {"mae": 4.3, "r2": 0.4}}
+    r["lgbm_metrics"] = {"total": {"mae": 4.6, "r2": 0.34}}
+    s = summarize_pipeline_result("QB", r)
+    for key in ("ridge_top12", "nn_top12", "attn_nn_top12", "lgbm_top12"):
+        assert key in s, key
+        assert s[key] is None, f"{key} must be None when ranking is absent, got {s[key]!r}"
+
+
 # --------------------------------------------------------------------------
 # print_comparison_table
 # --------------------------------------------------------------------------
@@ -472,6 +490,38 @@ def test_print_comparison_with_all_variants(capsys):
     assert "Attn" in out
     assert "LGBM" in out
     assert "Cross-Validation Metrics" in out
+
+
+@pytest.mark.unit
+def test_print_comparison_renders_none_top12_as_dash(capsys):
+    """``None`` top12 values (rows whose run recorded no ranking block, e.g.
+    pre-fix split-path artifacts) render as an em-dash — the table must not
+    crash on the None and must not print a fake 0.000. A remaining numeric
+    model still wins the Best column."""
+    s = _canned_summary("QB")
+    s["nn_top12"] = None  # ridge keeps 0.42
+    print_comparison_table([s], header="NoneTop12", show_time=False)
+    out = capsys.readouterr().out
+    # Scope to the Top-12 section — per-target tables legitimately contain
+    # substrings like "20.000" that a whole-output check would false-positive on.
+    top12_section = out.split("Top-12 Hit Rate")[1].split("Per-Target")[0]
+    assert "—" in top12_section
+    assert "0.420" in top12_section  # the numeric model still renders
+    assert "0.000" not in top12_section
+
+
+@pytest.mark.unit
+def test_print_comparison_all_none_top12_does_not_crash(capsys):
+    """Every model's top12 None (a fully ranking-less run): the Top-12 section
+    renders dashes and skips the best-model pick instead of raising on
+    ``max()`` over Nones."""
+    s = _canned_summary("QB")
+    s["ridge_top12"] = None
+    s["nn_top12"] = None
+    print_comparison_table([s], header="AllNone", show_time=False)
+    out = capsys.readouterr().out
+    assert "Top-12" in out
+    assert "—" in out
 
 
 # --------------------------------------------------------------------------

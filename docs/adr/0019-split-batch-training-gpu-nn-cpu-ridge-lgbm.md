@@ -72,6 +72,16 @@ the changelog; unsetting the variable is the instant rollback to monolithic.
 
 ## Changelog
 
+- 2026-07-13 · **Split branches now report `*_ranking`** (top-12 hit rate /
+  Spearman): the branch short-circuit in `src/shared/pipeline.py` skipped
+  `compute_ranking_metrics` entirely, so every split-mode history row since the
+  2026-06-11 default flip recorded `{model}_top12 = 0` (the summary's silent
+  0-default; MAE/R² were unaffected). Rankings are now computed per trained
+  family in the branch jobs and forwarded by the merge (whose metrics assembly
+  moved to the pure, unit-tested `_merged_split_metrics`); a missing ranking
+  surfaces as `null`, never 0. The 06-11 "byte-identical" validation below
+  compared per-model MAE/R², not the full summary row — which is how this
+  slipped through.
 - 2026-06-11 · **Split mode enabled as the production default**
   (`BATCH_SPLIT_ACTIVE=true`) after the first full 6-position split run
   (workflow 27324790653, image `ed14915b`, seed 42): 18 jobs (6 nn → GPU queue

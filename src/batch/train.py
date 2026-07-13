@@ -864,6 +864,54 @@ def _read_json_file(path: str) -> dict:
         return json.load(f)
 
 
+def _merged_split_metrics(
+    position: str,
+    split_run_id: str,
+    nn_metrics: dict,
+    cpu_metrics: dict,
+    phase_seconds: dict[str, float],
+    t_total: float,
+) -> dict:
+    """Combine the two branch ``benchmark_metrics.json`` payloads into the
+    merged artifact's metrics dict.
+
+    Pure (no S3 / filesystem) so the shape the merge job publishes — including
+    the ``*_ranking`` blocks behind every ``{model}_top12`` in
+    benchmark_history, which the split branches silently dropped from
+    2026-06-11 until the pipeline-side ranking attach — is pinned by unit
+    tests (tests/batch/test_train.py).
+    """
+    metrics = {
+        "position": position,
+        "split_merged": True,
+        "split_run_id": split_run_id,
+        "seed": nn_metrics.get("seed", cpu_metrics.get("seed")),
+        "elapsed_sec": round(time.monotonic() - t_total, 1),
+        "phase_seconds": dict(phase_seconds),
+    }
+    for branch, branch_metrics in (("nn", nn_metrics), ("cpu", cpu_metrics)):
+        for key, value in branch_metrics.items():
+            if key.endswith("_metrics") or key.endswith("_ranking"):
+                if key in metrics:
+                    raise RuntimeError(f"Duplicate metric key during split merge: {key}")
+                metrics[key] = value
+        for phase, secs in (branch_metrics.get("phase_seconds") or {}).items():
+            metrics["phase_seconds"][f"split.{branch}.{phase}"] = secs
+        if branch_metrics.get("elapsed_sec") is not None:
+            metrics["phase_seconds"][f"split.{branch}.elapsed_sec"] = branch_metrics["elapsed_sec"]
+
+    # The NN branch carries the GPU/capture facts (Ridge/LGBM run CPU-only).
+    # Derive the keys FROM _hardware_metadata (values still come from nn_metrics)
+    # so a new field can't silently drop out of the merged artifact — exactly
+    # how cuda_graph_full_active (the 2026-06-15 full-step rebaseline marker,
+    # ADR-0017) was lost from production History rows until 2026-06-19. We use
+    # only its .keys(); the merge job's own platform is irrelevant here.
+    for key in ("git_sha", *_hardware_metadata()):
+        if key in nn_metrics:
+            metrics[key] = nn_metrics[key]
+    return metrics
+
+
 def _merge_split_artifacts(
     s3_bucket: str,
     position: str,
@@ -901,34 +949,9 @@ def _merge_split_artifacts(
         nn_metrics = _read_json_file(os.path.join(nn_dir, "benchmark_metrics.json"))
         cpu_metrics = _read_json_file(os.path.join(cpu_dir, "benchmark_metrics.json"))
 
-    metrics = {
-        "position": position,
-        "split_merged": True,
-        "split_run_id": split_run_id,
-        "seed": nn_metrics.get("seed", cpu_metrics.get("seed")),
-        "elapsed_sec": round(time.monotonic() - t_total, 1),
-        "phase_seconds": dict(phase_seconds),
-    }
-    for branch, branch_metrics in (("nn", nn_metrics), ("cpu", cpu_metrics)):
-        for key, value in branch_metrics.items():
-            if key.endswith("_metrics") or key.endswith("_ranking"):
-                if key in metrics:
-                    raise RuntimeError(f"Duplicate metric key during split merge: {key}")
-                metrics[key] = value
-        for phase, secs in (branch_metrics.get("phase_seconds") or {}).items():
-            metrics["phase_seconds"][f"split.{branch}.{phase}"] = secs
-        if branch_metrics.get("elapsed_sec") is not None:
-            metrics["phase_seconds"][f"split.{branch}.elapsed_sec"] = branch_metrics["elapsed_sec"]
-
-    # The NN branch carries the GPU/capture facts (Ridge/LGBM run CPU-only).
-    # Derive the keys FROM _hardware_metadata (values still come from nn_metrics)
-    # so a new field can't silently drop out of the merged artifact — exactly
-    # how cuda_graph_full_active (the 2026-06-15 full-step rebaseline marker,
-    # ADR-0017) was lost from production History rows until 2026-06-19. We use
-    # only its .keys(); the merge job's own platform is irrelevant here.
-    for key in ("git_sha", *_hardware_metadata()):
-        if key in nn_metrics:
-            metrics[key] = nn_metrics[key]
+    metrics = _merged_split_metrics(
+        position, split_run_id, nn_metrics, cpu_metrics, phase_seconds, t_total
+    )
 
     metrics_path = os.path.join(model_dir, "benchmark_metrics.json")
     with open(metrics_path, "w") as f:
