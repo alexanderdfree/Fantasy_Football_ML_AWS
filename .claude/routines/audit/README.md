@@ -85,7 +85,14 @@ takes effect the moment it lands on `main` — no dashboard push needed.
 
 ## Firing it manually
 
-The recurring cron is disabled; the routine only runs when fired by hand:
+The recurring cron is disabled; the routine only runs when fired by hand.
+
+**Locally (no cloud run):** invoke the [`/audit` skill](../../skills/audit/SKILL.md)
+in a Claude Code session — same shared instructions, same labels; it audits
+`origin/main` (via a temporary detached worktree when the session checkout isn't
+clean main).
+
+**Cloud (dashboard run):**
 
 1. Invoke `/schedule` (loads the `RemoteTrigger` tool).
 2. `RemoteTrigger run trigger_id=trig_013gKH4q2g2TToBbCr4QDQcJ` — one immediate
