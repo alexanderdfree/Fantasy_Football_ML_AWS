@@ -44,7 +44,10 @@ checkout of `main` at HEAD):
   is that HEAD. Never audit a dirty or diverged checkout.
 - For the fanout step, spawn Claude Agent subagents; let workers inherit the
   session's model (omit `model:`). Worker count, scope grouping, and batching are up
-  to you — a worker may cover several scopes; avoid over-spawning.
+  to you — a worker may cover several scopes; avoid over-spawning. Workers do NOT
+  inherit a changed working root: when auditing from a temp worktree, put its
+  absolute path in every worker prompt and have workers read/`git log` under that
+  path only, else they silently scan the session branch instead of `origin/main`.
 - Keep the run read-only on repo files. The only permitted writes are those allowed
   by the resolved instructions file: `/tmp/*` bookkeeping (the session scratchpad is
   an acceptable substitute — the paths are internal), idempotent label creation,
