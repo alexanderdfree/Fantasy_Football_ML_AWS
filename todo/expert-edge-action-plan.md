@@ -5,12 +5,17 @@
 
 # Expert-edge action plan (2026-07)
 
-**Where we stand (2025 test + 2022–2025 rolling-origin, PPR):** experts beat the model on **RB/WR**
-(RotoWire ΔMAE +0.217/+0.132, p≤0.003), tie TE/DST, split QB (lose to NFL.com, tie RotoWire), and the
-model **wins K** and ties/wins the top-12 elite tier. The durable expert edge is a **rank-ordering edge
-at RB + WR + TE** (iso_edge +0.168/+0.161/+0.123, CIs exclude 0) that **no monotone calibration can
-close** (tested, rejected); the QB residual is **current-week starter news** (#1134); the WR/TE deep gap
-is **player-level coverage data, blocked ≥2013** (#1210). Full derivation:
+**Where we stand (2025 test + 2022–2025 rolling-origin, PPR; MAE re-checked 2026-07-13 on the
+2026-07-05 served artifacts):** the experts' *MAE* edge is gone — the served model **ties all three
+experts at QB/RB/WR/TE** (QB vs NFL.com Δ +0.133, CI [−0.09, +0.36]; the earlier "lose to NFL.com"
+Δ +0.84 was the pre-regen stale-QB-artifact era, and the RB/WR RotoWire MAE losses +0.217/+0.132 are
+now +0.075/+0.011, p ≥ 0.20 — [docs/expert_comparison.md](../docs/expert_comparison.md) carries the
+refreshed tables), ties DST, **wins K**, beats FFToday on TE, and ties/wins the top-12 elite tier.
+What survives is the tail + ordering: RotoWire keeps a significant **RMSE edge at RB/WR**
+(Δ +0.23/+0.25, DM p ≤ 8.4e-4) and the durable **rank-ordering edge at RB + WR + TE** (iso_edge
++0.168/+0.161/+0.123, CIs exclude 0) that **no monotone calibration can close** (tested, rejected);
+the QB residual is **current-week starter news** (#1134); the WR/TE deep gap is **player-level
+coverage data, blocked ≥2013** (#1210). Full derivation:
 [todo/expert-gap-investigation-2026-06.md](expert-gap-investigation-2026-06.md).
 
 Ruled out — do not re-propose without new evidence: monotone/isotonic recalibration, team-level

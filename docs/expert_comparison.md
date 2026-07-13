@@ -36,6 +36,8 @@ From the 2026-05-29 benchmark run (`benchmark_history/2026-05-29T11-00-49_9de4d8
 | LightGBM | 6.693 | 0.242 | 4.195 | **0.425** | **4.238** | 0.361 | 3.595 | 0.317 | 4.133 | -0.051 | 5.271 | 0.016 |
 | **Best (MAE)** | NN 6.514 | NN 0.275 | Attn NN 4.179 | LGBM 0.425 | LGBM 4.238 | NN 0.368 | Attn NN 3.508 | NN 0.336 | Ridge 4.008 | Ridge 0.018 | Attn NN 5.107 | NN 0.084 |
 
+> **Vintage note (2026-07-13):** this table is a dated snapshot, kept for the per-target breakdown below. The June–July 2026 retrains moved the fleet — QB most of all: attention-NN QB MAE 6.585 here → **5.791** on the current benchmark run (`benchmark_history/2026-07-05T09-04-24_b8d6c00.json`, the retrain generation serving deploys), after the stale-QB served-artifact regen ([todo/expert-gap-investigation-2026-06.md](../todo/expert-gap-investigation-2026-06.md) §2/§6) and subsequent retrains. The expert head-to-head sections below evaluate the **current served artifacts**, not this snapshot.
+
 **Per-target MAE breakdown** (Attention NN, in native stat units):
 
 | Position | Per-target MAE |
@@ -95,20 +97,20 @@ Unlike the FFA-tracked sources above (which publish only relative accuracy ranki
 
 ### Side-by-side With Our Model (PPR, 2025)
 
-Pairing the NFL.com MAEs above with the per-position best from "Our Model Performance":
+Pairing the NFL.com MAEs above with the per-position best from the **current** fleet (the 2026-07-05 benchmark run `benchmark_history/2026-07-05T09-04-24_b8d6c00.json` — the retrain generation serving deploys; see the vintage note above for why this table no longer sources the dated 2026-05-29 snapshot):
 
 | Position | Our MAE (best model) | NFL.com MAE | Delta |
 |----------|---:|---:|---:|
-| **QB** | 6.514 (Multi-Head NN) | 5.713 | NFL.com leads by 0.80 |
-| **RB** | 4.179 (Attention NN) | 4.110 | NFL.com leads by 0.07 (≈ tied) |
-| **WR** | 4.238 (LightGBM) | 3.983 | NFL.com leads by 0.26 |
-| **TE** | 3.508 (Attention NN) | 3.390 | NFL.com leads by 0.12 |
-| **K**  | 4.008 (Ridge) | 4.358 | We lead by 0.35 |
-| **DST** | 5.107 (Attention NN) | — | (no NFL.com DST data) |
+| **QB** | 5.741 (LightGBM) | 5.713 | ≈ tied (NFL.com by 0.03) |
+| **RB** | 4.067 (Attention NN) | 4.110 | ≈ tied (we lead by 0.04) |
+| **WR** | 3.973 (Attention NN) | 3.983 | ≈ tied (we lead by 0.01) |
+| **TE** | 3.331 (Multi-Head NN) | 3.390 | ≈ tied (we lead by 0.06) |
+| **K**  | 3.997 (Ridge) | 4.358 | We lead by 0.36 |
+| **DST** | 5.092 (Attention NN) | — | (no NFL.com DST data) |
 
-QB is the position where NFL.com beats us by the largest margin (~0.8 MAE pts); RB and TE are within ~0.1 pts (below the run-to-run variance we typically see between benchmark snapshots), and WR is ~0.26 pts behind. K is the only position where we beat NFL.com cleanly — partly because their kicker projection schema is per-distance-bucket FG attempts that doesn't aggregate well, and partly because our K model now keys directly off cached PBP after the `fg_yards_made` schema fix in [#227](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/227).
+No position now shows a material MAE gap to NFL.com. QB — for most of this document's history the position where NFL.com led by ~0.8 MAE pts — is within 0.03 after the stale-QB served-artifact fix and the June–July retrains; that old gap was partly a measurement artifact (the pre-regen QB artifacts; see the significance-tested section below) and partly an older model generation. RB/WR/TE sit within ±0.06 (below the run-to-run variance we typically see between benchmark snapshots), and K remains the position we win cleanly — partly because NFL.com's kicker projection schema is per-distance-bucket FG attempts that doesn't aggregate well, and partly because our K model keys directly off cached PBP after the `fg_yards_made` schema fix in [#227](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/227).
 
-The QB gap is consistent with the structural QB limitation noted under "Position-by-Position Analysis": touchdown variance dominates QB error, and a curated expert projection that incorporates context (matchup, narrative, etc.) can suppress that volatility better than a stats-driven model trained on broader player pools.
+The same-sample significance tests below confirm the eyeball read: QB/RB/WR/TE are all statistical MAE ties against NFL.com. The expert edge that *does* survive on current artifacts is not MAE but the boom/bust tail and rank ordering at RB/WR (ΔRMSE + Spearman — see the RotoWire table and [todo/expert-edge-action-plan.md](../todo/expert-edge-action-plan.md)); touchdown variance still dominates QB error for everyone, model and experts alike.
 
 **Caveats:**
 - Single test season (2025). 2024 was used for hyperparameter tuning, so it's not a clean held-out comparison; the analysis script is multi-season-capable and will pool across years automatically as `TEST_SEASONS` grows.
@@ -117,7 +119,7 @@ The QB gap is consistent with the structural QB limitation noted under "Position
 
 ### Significance-tested head-to-head (`analysis_expert_comparison.py`)
 
-The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison against **each expert** (NFL.com and Sleeper/RotoWire — see below). For a given expert it joins our model's held-out per-player-week predictions to that expert on the **intersection** where both project, scores both against the same ground-truth `fantasy_points` column (genuinely *paired* errors), and adds:
+The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison against **each expert** (NFL.com, Sleeper/RotoWire, and FFToday — see below). For a given expert it joins our model's held-out per-player-week predictions to that expert on the **intersection** where both project, scores both against the same ground-truth `fantasy_points` column (genuinely *paired* errors), and adds:
 
 - **MAE and RMSE** for each side (see the loss-vs-metric caveat above for why both).
 - **Ranking** quality — top-K hit-rate and Spearman ρ — because fantasy is a selection problem and rank metrics are loss-agnostic.
@@ -125,16 +127,16 @@ The baseline table above scores NFL.com against actuals across every NFL.com-mat
 
 Because it restricts to the model ∩ NFL.com sample, its per-position N and NFL.com MAE differ slightly from the baseline table above (which is on the full NFL.com-matched set).
 
-**Illustrative QB 2025 output** (n = 663 common player-weeks; model = production Attention NN):
+**QB 2025 head-to-head** (n = 663 common player-weeks; model = the served attention NN, scored from the 2026-07-05 predictions-cache snapshot; regenerated 2026-07-13):
 
 | Metric | Model | NFL.com | Δ (model − expert) | 95% CI | DM p |
 |--------|---:|---:|---:|:--:|---:|
-| MAE | 6.596 | 5.756 | +0.840 | [0.54, 1.15] | 8.6e-7 |
-| RMSE | 8.235 | 7.702 | +0.534 | [0.13, 0.88] | 0.011 |
-| Top-12 hit rate | 0.468 | 0.491 | — | — | — |
-| Spearman ρ | 0.480 | 0.536 | — | — | — |
+| MAE | 5.888 | 5.756 | +0.133 | [-0.09, 0.36] | 0.24 |
+| RMSE | 7.393 | 7.702 | -0.309 | [-0.67, 0.02] | 0.040 |
+| Top-12 hit rate | 0.491 | 0.491 | — | — | — |
+| Spearman ρ | 0.530 | 0.536 | — | — | — |
 
-The ΔMAE CI excludes zero and DM p ≪ 0.05, so NFL.com's QB edge is **statistically real**, not benchmark-snapshot noise — and it holds on RMSE too (the metric tilted *toward* the expert's squared-error objective) and on both ranking metrics. This is the rigorous version of the QB gap discussed above. Run it with `python -m src.analysis.analysis_expert_comparison` (defaults to PPR / `TEST_SEASONS` / all positions; writes both experts to the nested `experts` block of `analysis_output/expert_comparison.json`, regenerated on demand and not committed).
+The ΔMAE CI spans zero and DM p = 0.24: **QB is a statistical tie**, and on RMSE — the metric tilted *toward* the expert's squared-error objective — the model actually leans *better* (Δ −0.31, DM p = 0.040, bootstrap CI just grazing zero), with the ranking metrics dead even (top-12 hit rate identical to three decimals). Earlier revisions of this table showed a decisive NFL.com QB edge (model MAE 6.596 vs 5.756, Δ +0.840, DM p = 8.6e-7, "statistically real"): that number was computed against the **pre-regen stale QB serving artifacts** — the artifact-vs-data drift `artifact_eval`'s Ridge-tell validation later caught and `regen_served_artifacts` fixed (see [todo/expert-gap-investigation-2026-06.md](../todo/expert-gap-investigation-2026-06.md) §2/§6) — plus an older model generation; the regen and the June–July retrains moved served QB from ~6.6 to 5.83 full-pool MAE. Run it with `python -m src.analysis.analysis_expert_comparison` (defaults to PPR / `TEST_SEASONS` / all positions; writes every expert to the nested `experts` block of `analysis_output/expert_comparison.json`, regenerated on demand and not committed).
 
 ### Second expert: Sleeper (RotoWire)
 
@@ -142,17 +144,17 @@ A second expert is wired into the same tool: **RotoWire projections via Sleeper'
 
 **Provenance check (the gate before trusting it).** Sleeper doesn't document whether its historical projections are the as-of-kickoff snapshot or a later backfill — and a backfill would inflate RotoWire's apparent accuracy via look-ahead. So we score RotoWire against 2025 actuals — on the players it *actually* projects (Sleeper returns a row for every rostered player; the unprojected placeholders are dropped, else they'd be scored as confident 0.0s and deflate the MAE) — and confirm the error sits in the *plausible expert range*: MAE **QB 6.21, RB 4.32, WR 4.20, TE 3.57** — close to NFL.com's (5.71 / 4.11 / 3.98 / 3.39), a touch higher (RotoWire is marginally less accurate and projects a more selective pool). A backfill would show near-zero error; instead these are genuine pre-game projections (e.g. Lamar Jackson, 2025 Wk1: a fractional **1.78** projected passing TDs, not an integer actual).
 
-**Model vs RotoWire (PPR, 2025)** (model = production Attention NN; offense MAEs are on RotoWire's own — more selective — player pool, so the N and model MAE differ from the NFL.com illustration above). **DST is included because Sleeper provides it and NFL.com does not** — so this is the model's *only* DST head-to-head (team-keyed; all 10 DST targets map, with `special_teams_tds` ← Sleeper's `st_td`):
+**Model vs RotoWire (PPR, 2025)** (model = the served attention NN, scored from the 2026-07-05 predictions-cache snapshot, regenerated 2026-07-13; offense MAEs are on RotoWire's own — more selective — player pool, so the N and model MAE differ from the NFL.com table above). **DST is included because Sleeper provides it and NFL.com does not** — so this is the model's *only* DST head-to-head (team-keyed; all 10 DST targets map, with `special_teams_tds` ← Sleeper's `st_td`). ΔRMSE is shown because that is where RotoWire's surviving edge lives:
 
-| Pos | n | Model MAE | RW MAE | ΔMAE | 95% CI | DM p |
-|-----|---:|---:|---:|---:|:--:|---:|
-| QB | 545 | 6.362 | 6.243 | +0.119 | [-0.17, 0.43] | 0.38 |
-| RB | 1447 | 4.545 | 4.328 | +0.217 | [0.06, 0.37] | 0.003 |
-| WR | 2295 | 4.360 | 4.228 | +0.132 | [0.03, 0.23] | 0.002 |
-| TE | 1165 | 3.629 | 3.611 | +0.018 | [-0.07, 0.12] | 0.71 |
-| DST | 544 | 5.144 | 5.117 | +0.026 | [-0.19, 0.23] | 0.76 |
+| Pos | n | Model MAE | RW MAE | ΔMAE | 95% CI | DM p | ΔRMSE | RMSE DM p |
+|-----|---:|---:|---:|---:|:--:|---:|---:|---:|
+| QB | 545 | 6.382 | 6.243 | +0.139 | [-0.06, 0.39] | 0.14 | +0.126 | 0.21 |
+| RB | 1447 | 4.403 | 4.328 | +0.075 | [-0.07, 0.21] | 0.20 | **+0.231** | **8.4e-4** |
+| WR | 2295 | 4.238 | 4.228 | +0.011 | [-0.08, 0.10] | 0.81 | **+0.245** | **5.2e-6** |
+| TE | 1165 | 3.547 | 3.611 | -0.063 | [-0.15, 0.03] | 0.17 | +0.068 | 0.25 |
+| DST | 544 | 5.092 | 5.133 | -0.041 | [-0.17, 0.10] | 0.49 | -0.006 | 0.92 |
 
-RotoWire is marginally *less* accurate than NFL.com (QB 6.24 vs 5.76). Both experts agree the model **trails on RB and WR** (CIs exclude zero) and **ties on TE** (CI spans zero); the model also **ties RotoWire on DST** (Δ +0.03, p = 0.76) — a head-to-head NFL.com can't provide. They differ on **QB**: the model trails NFL.com (Δ +0.90, significant) but **ties RotoWire** (Δ +0.12, p = 0.38) — because RotoWire is itself weaker on QB, the model matches it there. Two experts converging on the RB/WR/TE verdict — and bracketing the QB result — is a more robust read than either alone.
+RotoWire is marginally *less* accurate than NFL.com (QB 6.24 vs 5.76). On the current served artifacts the model **ties RotoWire on MAE at every covered position** — including RB and WR, where earlier revisions of this table (computed against the pre-regen model generation) recorded statistically significant losses (Δ +0.217 / +0.132, p ≤ 0.003; now Δ +0.075 / +0.011, p ≥ 0.20) — and QB now reads the same against both experts (a tie; the old "trails NFL.com, ties RotoWire" split was the stale-QB-artifact era, see above). What survives, and decisively, is RotoWire's **RMSE edge at RB and WR** (Δ +0.23 / +0.25, DM p ≤ 8.4e-4), with Spearman ρ trailing at both (0.715 vs 0.749; 0.620 vs 0.654): a boom/bust-tail + rank-ordering edge, the same shape the multi-season rolling-origin study pinned down and monotone recalibration cannot close ([todo/expert-gap-investigation-2026-06.md](../todo/expert-gap-investigation-2026-06.md) §1a/§3). NFL.com shows the same residual shape at WR (ΔRMSE +0.12, DM p = 0.015, on a WR MAE dead-tie). MAE parity with the ordering gap still open is exactly why the action plan targets RB/WR *ordering*, not calibration.
 
 ### Third expert: FFToday (the ≥2013 archive)
 
@@ -162,7 +164,7 @@ RotoWire is marginally *less* accurate than NFL.com (QB 6.24 vs 5.76). Both expe
 
 **Full-pool accuracy vs actuals (PPR, 2013–2025 pooled):** MAE **QB 6.13, RB 5.95, WR 7.16, TE 5.02**; signed bias +0.72 / +0.58 / **+2.66** / +0.39. Two reads: FFToday projects a much *deeper* slate than NFL.com/RotoWire (bench-depth rows included), so these levels are **not comparable** to the other experts' pool-specific MAEs — and FFToday systematically **over-projects WR** by ~2.7 pts/game, by far its largest bias.
 
-**Model vs FFToday (PPR, 2025)** (model = production Attention NN, reconstructed from the served artifacts with the Ridge-identity validation passing at Δ=0.0000 per position; same-sample inner join on FFToday's covered slate — deeper than RotoWire's, hence the higher model MAEs than the RotoWire table):
+**Model vs FFToday (PPR, 2025)** (model = production Attention NN, reconstructed from the served artifacts with the Ridge-identity validation passing at Δ=0.0000 per position — re-verified identical from the 2026-07-05 predictions-cache snapshot on 2026-07-13; same-sample inner join on FFToday's covered slate — deeper than RotoWire's, hence the higher model MAEs than the RotoWire table):
 
 | Pos | n | Model MAE | FFT MAE | ΔMAE | 95% CI | DM p |
 |-----|---:|---:|---:|---:|:--:|---:|
@@ -171,7 +173,7 @@ RotoWire is marginally *less* accurate than NFL.com (QB 6.24 vs 5.76). Both expe
 | WR | 886 | 5.952 | 6.096 | **-0.144** | [-0.36, 0.07] | 0.168 |
 | TE | 689 | 4.506 | 4.687 | **-0.181** | **[-0.32, -0.05]** | **0.030** |
 
-Against the weakest of the three experts, the model **ties QB and RB** (CIs span zero), **leans better on WR** (Δ −0.14, not significant), and **beats FFToday on TE outright** (CI excludes zero, DM p = 0.03) — the model's first statistically significant same-sample win over a human expert at a skill position. The expert-strength ordering this implies (NFL.com > RotoWire > FFToday, with the model sitting between RotoWire and FFToday overall) is consistent with the per-expert verdicts above and sharpens the roadmap's focus: the gap to close is specifically the *stronger* experts' RB/WR ordering edge.
+Against the weakest of the three experts, the model **ties QB and RB** (CIs span zero), **leans better on WR** (Δ −0.14, not significant), and **beats FFToday on TE outright** (CI excludes zero, DM p = 0.03) — the model's first statistically significant same-sample win over a human expert at a skill position. The expert-strength ordering this implies (NFL.com > RotoWire > FFToday) is consistent with the per-expert verdicts above; on the current served artifacts the model sits at MAE parity with NFL.com and RotoWire and ahead of FFToday at TE (with a WR lean), which sharpens the roadmap's focus: the gap left to close is specifically the *stronger* experts' RB/WR tail + ordering edge.
 
 ---
 
@@ -257,7 +259,7 @@ DST landed via commit `cc0c627` with a 10-target attention model (sacks, INTs, f
 
 2. **No single architecture wins everywhere.** Multi-Head NN wins QB; Attention NN wins RB / TE / DST; LightGBM wins WR; Ridge wins K. This is the strongest signal yet that maintaining a diverse model portfolio is worth the training cost — the per-position routing in `src.benchmarking.benchmark` picks the actual best architecture per position rather than locking in one family.
 
-3. **The stronger experts beat the model on RB/WR; QB depends on which expert; TE now splits by expert strength.** NFL.com, RotoWire (via Sleeper), and FFToday all publish scoring-grade raw projections we can join to actuals. On 2025 the paired significance test (player-clustered bootstrap CI + Diebold-Mariano) shows the model **trails NFL.com and RotoWire on RB and WR** (CIs exclude zero) and **ties both on TE** (CIs span zero) — but **beats the weaker FFToday on TE outright** (Δ −0.18, DM p = 0.03, the model's first significant same-sample win at a skill position) while tying it on QB/RB and leaning better on WR. On **QB the experts split**: the model trails the stronger NFL.com (Δ +0.90, significant) but **ties RotoWire** (Δ +0.12, p = 0.38) and FFToday (Δ +0.16, p = 0.12). On **DST** — a head-to-head only Sleeper enables — the model **ties RotoWire** (Δ +0.03, p = 0.76). We beat NFL.com on K. Net: expert strength orders NFL.com > RotoWire > FFToday, and the model sits between RotoWire and FFToday. Four scripts back this: `src/analysis/analysis_nflcom_baseline.py` (NFL.com vs actuals), `src/analysis/sleeper_loader.py` (RotoWire ingest + a provenance/look-ahead gate), `src/analysis/fftoday_loader.py` (FFToday archive ingest, vet-gated), and `src/analysis/analysis_expert_comparison.py` (same-sample model-vs-each-expert with ranking + paired bootstrap / Diebold-Mariano significance). Reports regenerate on demand; none is committed.
+3. **No expert holds a significant MAE edge at any position on the current served artifacts; the experts' surviving edge is the boom/bust tail + rank ordering at RB/WR.** NFL.com, RotoWire (via Sleeper), and FFToday all publish scoring-grade raw projections we can join to actuals. On 2025 (served attention NN, 2026-07-05 predictions-cache snapshot, regenerated 2026-07-13) the paired significance test (player-clustered bootstrap CI + Diebold-Mariano) shows **every ΔMAE CI spanning zero at QB/RB/WR/TE against all three experts** — including QB vs NFL.com (Δ +0.133, p = 0.24), where earlier revisions reported a decisive loss (Δ +0.840, p = 8.6e-7) that traced to the pre-regen stale QB serving artifacts ([todo/expert-gap-investigation-2026-06.md](../todo/expert-gap-investigation-2026-06.md) §2/§6), and RB/WR vs RotoWire (Δ +0.075 / +0.011, p ≥ 0.20), previously significant losses from the same era. The only significant MAE separations now run **in the model's favor**: TE vs FFToday (Δ −0.18, DM p = 0.03, the model's first significant same-sample win at a skill position) and K vs NFL.com (Δ −0.165, DM p = 0.04). The model **ties RotoWire on DST** (Δ −0.04, p = 0.49) — a head-to-head only Sleeper enables. What remains statistically real for the experts is the **RMSE + ordering edge at RB/WR**: vs RotoWire ΔRMSE +0.23 / +0.25 (DM p ≤ 8.4e-4) with Spearman trailing at both, and vs NFL.com ΔRMSE +0.12 at WR (p = 0.015) — the boom/bust-tail + rank-ordering gap the multi-season rolling-origin study replicates every season. Expert strength still orders NFL.com > RotoWire > FFToday. Four scripts back this: `src/analysis/analysis_nflcom_baseline.py` (NFL.com vs actuals), `src/analysis/sleeper_loader.py` (RotoWire ingest + a provenance/look-ahead gate), `src/analysis/fftoday_loader.py` (FFToday archive ingest, vet-gated), and `src/analysis/analysis_expert_comparison.py` (same-sample model-vs-each-expert with ranking + paired bootstrap / Diebold-Mariano significance). Reports regenerate on demand; none is committed.
 
 4. **Other expert sites largely publish relative rankings, not per-game error.** FantasyPros ranks experts 1st/2nd/3rd by position — its "accuracy gap" is converted to z-scores before aggregation, so no raw MAE/RMSE is surfaced. FFA *does* compute the full error suite: its [2013 post](https://fantasyfootballanalytics.net/2013/05/the-best-fantasy-football-projections.html) published raw R²/MAE/RMSE (e.g., NFL.com RMSE 62.47, FantasyPros 45.36), but those are **single-league, full-season totals** (not per-game), and its current per-game MAE/RMSE lives behind the FFA Insider paywall. So a like-for-like *per-game* numeric comparison against those sources isn't possible from free, citable data — though our results fall within the ranges where professional projection systems operate. (DFS/industry sources — 4for4, Establish The Run, Subvertadown, PFF — publish "most accurate" marketing with no citable raw error metric.)
 
