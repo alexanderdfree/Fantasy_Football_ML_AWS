@@ -282,3 +282,38 @@ def test_routine_hook_scope_covers_all_providers(name: str) -> None:
             f"but not {gemini_hooks}; all three providers wire the same guardrail hooks "
             "(audit P2), so the audit scope must enumerate every provider hook dir."
         )
+
+
+# --- Claude's local audit entrypoint (the /audit skill) -----------------------
+# Codex and Gemini fire audits locally straight from their tracked routine
+# prompts (.codex/automations/<n>/prompt.md / .agents/routines/<n>/prompt.md),
+# but Claude's routine wrapper (shim.md) is deployed to the claude.ai dashboard
+# and assumes a cloud checkout, so its runnable local twin is the /audit skill.
+# Claude-only by design — not a provider-parity break.
+
+LOCAL_AUDIT_SKILL = ".claude/skills/audit/SKILL.md"
+
+
+def test_local_audit_skill_exists() -> None:
+    assert (PROJECT_ROOT / LOCAL_AUDIT_SKILL).is_file(), (
+        f"missing {LOCAL_AUDIT_SKILL}: the local /audit skill is Claude's runnable "
+        "twin of the dashboard-deployed routine shims."
+    )
+
+
+@pytest.mark.parametrize("name", ROUTINE_NAMES)
+def test_local_audit_skill_maps_every_routine(name: str) -> None:
+    # The skill arg-dispatches across ALL shared audit routines; a new
+    # routines/<name>/instructions.md must gain a mapping row in the skill.
+    text = _read(LOCAL_AUDIT_SKILL)
+    target = f"routines/{name}/instructions.md"
+    assert target in text, f"{LOCAL_AUDIT_SKILL} does not map shared routine '{name}' ({target})"
+
+
+def test_local_audit_skill_has_audit_keys() -> None:
+    text = _read(LOCAL_AUDIT_SKILL)
+    missing = [k for k in REQUIRED_ROUTINE_KEYS if f"{k}=" not in text]
+    assert not missing, f"{LOCAL_AUDIT_SKILL} missing AUDIT_* keys: {missing}"
+    assert "AUDIT_LABEL=claude-audit" in text, (
+        f"{LOCAL_AUDIT_SKILL} must file under claude-audit like the Claude routine shims"
+    )

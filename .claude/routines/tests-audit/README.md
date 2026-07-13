@@ -95,7 +95,11 @@ To stand it up:
 
 ## Firing it manually
 
-Once deployed, the recurring cron is disabled; fire by hand:
+**Locally (works today, no deploy needed):** invoke [`/audit tests`](../../skills/audit/SKILL.md)
+in a Claude Code session — the local skill wrapper reads the same shared
+instructions and files under the same labels.
+
+**Cloud (once deployed):** the recurring cron is disabled; fire by hand:
 
 1. Invoke `/schedule` (loads the `RemoteTrigger` tool).
 2. `RemoteTrigger run trigger_id=<this routine's trigger>` — one immediate run.
