@@ -6,10 +6,10 @@
 # Expert-edge action plan (2026-07)
 
 **Where we stand (2025 test + 2022–2025 rolling-origin, PPR; MAE re-checked 2026-07-13 on the
-2026-07-05 served artifacts):** the experts' *MAE* edge is gone — the served model **ties all three
-experts at QB/RB/WR/TE** (QB vs NFL.com Δ +0.133, CI [−0.09, +0.36]; the earlier "lose to NFL.com"
+2026-07-05 served artifacts):** the experts' *MAE* edge is gone — the served model **ties or beats all
+three experts at QB/RB/WR/TE** (QB vs NFL.com Δ +0.133, CI [−0.09, +0.36]; the earlier "lose to NFL.com"
 Δ +0.84 was the pre-regen stale-QB-artifact era, and the RB/WR RotoWire MAE losses +0.217/+0.132 are
-now +0.075/+0.011, p ≥ 0.20 — [docs/expert_comparison.md](../docs/expert_comparison.md) carries the
+now +0.075/+0.011, p = 0.20/0.81 — [docs/expert_comparison.md](../docs/expert_comparison.md) carries the
 refreshed tables), ties DST, **wins K**, beats FFToday on TE, and ties/wins the top-12 elite tier.
 What survives is the tail + ordering: RotoWire keeps a significant **RMSE edge at RB/WR**
 (Δ +0.23/+0.25, DM p ≤ 8.4e-4) and the durable **rank-ordering edge at RB + WR + TE** (iso_edge
