@@ -8,6 +8,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -661,6 +662,122 @@ class TestMetricExtraction:
         )
         assert "ridge_metrics" not in metrics
         assert metrics["nn_metrics"]["total"]["mae"] == 5.5
+
+
+class TestMergedSplitMetrics:
+    """The merge job's metrics contract: branch benchmark_metrics.json pairs →
+    the merged payload src/batch/benchmark.py summarizes into history rows.
+
+    Regression pins for the 2026-06-11..2026-07 silent-zero window: every
+    Batch-split history row recorded ``{model}_top12 = 0`` because the split
+    branches returned pipeline results without ``*_ranking`` and the summary
+    defaulted to 0. The branch fixtures here mirror the post-fix artifact
+    shape (``_extract_metrics`` output + split/hardware stamps).
+    """
+
+    def _nn_branch_metrics(self) -> dict:
+        return {
+            "position": "WR",
+            "split_branch": "nn",
+            "split_run_id": "run-1",
+            "seed": 42,
+            "git_sha": "abc1234def567",
+            "nn_metrics": {"total": {"mae": 5.5, "r2": 0.31, "rmse": 7.0}},
+            "attn_nn_metrics": {"total": {"mae": 5.3, "r2": 0.35, "rmse": 6.8}},
+            "nn_ranking": {"season_avg_hit_rate": 0.44, "season_avg_spearman": 0.41},
+            "attn_nn_ranking": {"season_avg_hit_rate": 0.48, "season_avg_spearman": 0.45},
+            "elapsed_sec": 120.0,
+            "phase_seconds": {"run_pipeline": 100.0},
+            "gpu_name": "NVIDIA L4",
+            "sm": 89,
+            "cuda_graph_active": True,
+            "cuda_graph_full_active": True,
+        }
+
+    def _cpu_branch_metrics(self) -> dict:
+        return {
+            "position": "WR",
+            "split_branch": "cpu",
+            "split_run_id": "run-1",
+            "seed": 42,
+            "git_sha": "abc1234def567",
+            "ridge_metrics": {"total": {"mae": 5.6, "r2": 0.29, "rmse": 7.1}},
+            "lgbm_metrics": {"total": {"mae": 5.4, "r2": 0.33, "rmse": 6.9}},
+            "ridge_ranking": {"season_avg_hit_rate": 0.41, "season_avg_spearman": 0.4},
+            "lgbm_ranking": {"season_avg_hit_rate": 0.46, "season_avg_spearman": 0.44},
+            "elapsed_sec": 90.0,
+            "phase_seconds": {"run_pipeline": 80.0},
+        }
+
+    def test_merged_metrics_carry_all_four_rankings(self):
+        from src.batch.train import _merged_split_metrics
+
+        merged = _merged_split_metrics(
+            "WR",
+            "run-1",
+            self._nn_branch_metrics(),
+            self._cpu_branch_metrics(),
+            {"merge_split_artifacts": 5.0},
+            time.monotonic(),
+        )
+        for key in ("ridge_ranking", "nn_ranking", "attn_nn_ranking", "lgbm_ranking"):
+            assert key in merged, key
+        assert merged["nn_ranking"]["season_avg_hit_rate"] == 0.44
+        assert merged["split_merged"] is True
+        assert merged["git_sha"] == "abc1234def567"
+        assert merged["gpu_name"] == "NVIDIA L4"
+        assert merged["cuda_graph_full_active"] is True
+        assert merged["phase_seconds"]["split.nn.run_pipeline"] == 100.0
+        assert merged["phase_seconds"]["split.cpu.elapsed_sec"] == 90.0
+
+    def test_merged_split_result_summarizes_to_nonzero_top12(self):
+        """The full lost chain, end to end: branch metrics → merge → summary
+        row. Every ``{model}_top12`` must be the branch's real nonzero hit
+        rate — this is exactly the path that wrote 0 for a month."""
+        from src.batch.train import _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        merged = _merged_split_metrics(
+            "WR",
+            "run-1",
+            self._nn_branch_metrics(),
+            self._cpu_branch_metrics(),
+            {},
+            time.monotonic(),
+        )
+        s = summarize_pipeline_result("WR", merged)
+        assert s["ridge_top12"] == 0.41
+        assert s["nn_top12"] == 0.44
+        assert s["attn_nn_top12"] == 0.48
+        assert s["lgbm_top12"] == 0.46
+        for key in ("ridge_top12", "nn_top12", "attn_nn_top12", "lgbm_top12"):
+            assert s[key] is not None and s[key] > 0, key
+
+    def test_merged_result_without_rankings_summarizes_to_none(self):
+        """Pre-fix branch artifacts (no ``*_ranking``) must surface as None in
+        the summary — the silent-0 default can never come back."""
+        from src.batch.train import _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        nn = self._nn_branch_metrics()
+        cpu = self._cpu_branch_metrics()
+        for branch_metrics in (nn, cpu):
+            for key in [k for k in branch_metrics if k.endswith("_ranking")]:
+                del branch_metrics[key]
+        merged = _merged_split_metrics("WR", "run-1", nn, cpu, {}, time.monotonic())
+        s = summarize_pipeline_result("WR", merged)
+        for key in ("ridge_top12", "nn_top12", "attn_nn_top12", "lgbm_top12"):
+            assert key in s, key
+            assert s[key] is None, f"{key} must be None, got {s[key]!r}"
+
+    def test_duplicate_metric_key_across_branches_raises(self):
+        from src.batch.train import _merged_split_metrics
+
+        nn = self._nn_branch_metrics()
+        cpu = self._cpu_branch_metrics()
+        cpu["nn_metrics"] = {"total": {"mae": 1.0}}
+        with pytest.raises(RuntimeError, match="Duplicate metric key"):
+            _merged_split_metrics("WR", "run-1", nn, cpu, {}, time.monotonic())
 
 
 class TestSplitBranchHelpers:

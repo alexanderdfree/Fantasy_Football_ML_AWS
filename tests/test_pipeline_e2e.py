@@ -210,3 +210,53 @@ def test_pipeline_trains_elasticnet_when_enabled(tmp_path_factory):
             assert "alpha" in info
             assert "l1_ratio" in info
             assert "converged" in info
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("branch", ["cpu", "nn"])
+def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
+    """Split Batch branch runs (``cfg["_artifact_branch"]``) short-circuit
+    before the full evaluation block but must still report ``{model}_ranking``
+    for the families they trained. From the 2026-06-11 BATCH_SPLIT_ACTIVE flip
+    (ADR-0019) until the short-circuit's ranking attach, branch results carried
+    no rankings at all, so every merged benchmark_history row silently recorded
+    ``{model}_top12 = 0`` while MAE/R² stayed real.
+    """
+    splits_root = Path(__file__).resolve().parents[1] / "data" / "splits"
+    require_splits(splits_root)
+
+    cfg = build_tiny_config("QB")
+    cfg["_artifact_branch"] = branch
+    if branch == "cpu":
+        # Production's cpu branch trains Ridge + LightGBM; the tiny config
+        # keeps LightGBM off, and the ranking attach is per-family, so Ridge
+        # alone covers the short-circuit path.
+        cfg["train_base_nn"] = False
+        cfg["train_attention_nn"] = False
+        cfg["train_ridge"] = True
+    else:
+        cfg["train_base_nn"] = True
+        cfg["train_attention_nn"] = False
+        cfg["train_ridge"] = False
+        cfg["train_lightgbm"] = False
+
+    splits = load_tiny_splits("QB")
+    workdir = tmp_path_factory.mktemp(f"e2e_QB_split_{branch}")
+    result = run_pipeline_in_tmp("QB", cfg, splits, workdir, seed=42)
+
+    # The short-circuit was actually taken (full-eval extras absent) — without
+    # this, a future default flip could run the full path and vacuously pass.
+    assert "test_df" not in result
+
+    present, absent = (
+        ("ridge_ranking", "nn_ranking") if branch == "cpu" else ("nn_ranking", "ridge_ranking")
+    )
+    assert present in result, f"{branch} branch result lost its ranking block"
+    assert absent not in result, f"{branch} branch must not fake a ranking for an untrained model"
+
+    ranking = result[present]
+    assert 0.0 <= ranking["season_avg_hit_rate"] <= 1.0
+    # The tiny QB slice keeps ~50 players, so weeks reach the top-12 cutoff and
+    # the weekly loop actually scores — the hit rate above is a computed value,
+    # not the empty-weeks 0.0 fallback.
+    assert ranking["weekly"], "no week reached top_k rows; tiny fixture too small to pin ranking"

@@ -107,6 +107,21 @@ def _rmse_field(prefix: str, total: dict) -> dict:
     return {f"{prefix}_rmse": round(rmse, 3)} if rmse is not None else {}
 
 
+def _top12_value(result: dict, ranking_key: str) -> float | None:
+    """``season_avg_hit_rate`` rounded to 3 dp, or ``None`` when ``result``
+    carries no ranking block under ``ranking_key``.
+
+    ``None`` (JSON ``null``) instead of a silent ``0``: the Batch split
+    nn/cpu/merge path returned pipeline results without ``*_ranking`` from the
+    2026-06-11 BATCH_SPLIT_ACTIVE flip (ADR-0019) until the ranking attach in
+    ``src/shared/pipeline.py``'s short-circuit, and the old ``0`` default made
+    every merged history row look like a real 0.000 hit rate for a month. A
+    missing ranking must be visibly missing.
+    """
+    rate = (result.get(ranking_key) or {}).get("season_avg_hit_rate")
+    return None if rate is None else round(rate, 3)
+
+
 def summarize_pipeline_result(position: str, result: dict) -> dict:
     """Extract a flat summary row from a position pipeline result dict.
 
@@ -125,8 +140,8 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         "nn_wins_mae": nn["mae"] < ridge["mae"],
         "nn_per_target": _per_target(result["nn_metrics"]),
         "ridge_per_target": _per_target(result["ridge_metrics"]),
-        "ridge_top12": round(result.get("ridge_ranking", {}).get("season_avg_hit_rate", 0), 3),
-        "nn_top12": round(result.get("nn_ranking", {}).get("season_avg_hit_rate", 0), 3),
+        "ridge_top12": _top12_value(result, "ridge_ranking"),
+        "nn_top12": _top12_value(result, "nn_ranking"),
     }
     summary.update(_rmse_field("ridge", ridge))
     summary.update(_rmse_field("nn", nn))
@@ -136,30 +151,21 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["elasticnet_r2"] = round(enet["r2"], 3)
         summary.update(_rmse_field("elasticnet", enet))
         summary["elasticnet_per_target"] = _per_target(result["elasticnet_metrics"])
-        summary["elasticnet_top12"] = round(
-            result.get("elasticnet_ranking", {}).get("season_avg_hit_rate", 0),
-            3,
-        )
+        summary["elasticnet_top12"] = _top12_value(result, "elasticnet_ranking")
     if "attn_nn_metrics" in result:
         attn = result["attn_nn_metrics"]["total"]
         summary["attn_nn_mae"] = round(attn["mae"], 3)
         summary["attn_nn_r2"] = round(attn["r2"], 3)
         summary.update(_rmse_field("attn_nn", attn))
         summary["attn_nn_per_target"] = _per_target(result["attn_nn_metrics"])
-        summary["attn_nn_top12"] = round(
-            result.get("attn_nn_ranking", {}).get("season_avg_hit_rate", 0),
-            3,
-        )
+        summary["attn_nn_top12"] = _top12_value(result, "attn_nn_ranking")
     if "lgbm_metrics" in result:
         lgbm = result["lgbm_metrics"]["total"]
         summary["lgbm_mae"] = round(lgbm["mae"], 3)
         summary["lgbm_r2"] = round(lgbm["r2"], 3)
         summary.update(_rmse_field("lgbm", lgbm))
         summary["lgbm_per_target"] = _per_target(result["lgbm_metrics"])
-        summary["lgbm_top12"] = round(
-            result.get("lgbm_ranking", {}).get("season_avg_hit_rate", 0),
-            3,
-        )
+        summary["lgbm_top12"] = _top12_value(result, "lgbm_ranking")
     if "cv_metrics" in result:
         cv = result["cv_metrics"]
         summary["cv_ridge_mae_mean"] = round(cv["ridge"]["total"]["mae_mean"], 3)
@@ -258,22 +264,30 @@ def print_comparison_table(summaries: list, *, header: str, show_time: bool = Tr
 
     print(f"\n{'Top-12 Hit Rate':>5}")
     print("-" * w)
+    dash = "—"
+
+    def _t12(v) -> str:
+        # None = the run recorded no ranking block for that model (e.g. a
+        # pre-fix split-path artifact) — render an em-dash, never a fake 0.000.
+        return f"{v:>9.3f}" if isinstance(v, (int, float)) else f"{dash:>9}"
+
     for s in summaries:
-        models = {"Ridge": s["ridge_top12"], "NN": s["nn_top12"]}
-        if "elasticnet_top12" in s:
-            models["ENet"] = s["elasticnet_top12"]
-        if "attn_nn_top12" in s:
-            models["Attn"] = s["attn_nn_top12"]
-        if "lgbm_top12" in s:
-            models["LGBM"] = s["lgbm_top12"]
-        best = max(models, key=models.get)
-        line = f"{s['position']:<5} {s['ridge_top12']:>9.3f} {s['nn_top12']:>9.3f}"
+        models = {"Ridge": s.get("ridge_top12"), "NN": s.get("nn_top12")}
         if has_enet:
-            line += f" {s.get('elasticnet_top12', 0):>9.3f}"
+            models["ENet"] = s.get("elasticnet_top12")
         if has_attn:
-            line += f" {s.get('attn_nn_top12', 0):>9.3f}"
+            models["Attn"] = s.get("attn_nn_top12")
         if has_lgbm:
-            line += f" {s.get('lgbm_top12', 0):>9.3f}"
+            models["LGBM"] = s.get("lgbm_top12")
+        numeric = {k: v for k, v in models.items() if isinstance(v, (int, float))}
+        best = max(numeric, key=numeric.get) if numeric else dash
+        line = f"{s['position']:<5} {_t12(models['Ridge'])} {_t12(models['NN'])}"
+        if has_enet:
+            line += f" {_t12(models['ENet'])}"
+        if has_attn:
+            line += f" {_t12(models['Attn'])}"
+        if has_lgbm:
+            line += f" {_t12(models['LGBM'])}"
         line += f" {best:>9}"
         print(line)
     print("=" * w)
