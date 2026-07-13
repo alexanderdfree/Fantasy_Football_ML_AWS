@@ -1,8 +1,8 @@
 {
-  "run_id": "2026-07-13T10:14:44_63684ce1",
-  "timestamp": "2026-07-13T10:14:44",
-  "git_hash": "63684ce1",
-  "note": "pre-PR evidence: split-branch *_ranking restore + top12 null-not-zero (fix for split-mode top12=0 since 2026-06-11)",
+  "run_id": "2026-07-13T10:23:03_3530c1ad",
+  "timestamp": "2026-07-13T10:23:03",
+  "git_hash": "3530c1ad",
+  "note": "post-review evidence refresh: split-branch *_ranking restore (PR #1486)",
   "positions": [
     "K"
   ],
@@ -158,16 +158,16 @@
       },
       "lgbm_top12": 0.468,
       "phase_seconds": {
-        "prepare_data": 0.1,
+        "prepare_data": 0.0,
         "ridge_tune": 0.2,
         "ridge_fit": 0.0,
         "lgbm_train": 0.2,
-        "nn_train": 5.9,
-        "attn_nn_train": 11.6,
-        "train_models_total": 17.5,
+        "nn_train": 5.3,
+        "attn_nn_train": 10.9,
+        "train_models_total": 16.2,
         "backtest": 0.2,
         "save_artifacts": 0.0,
-        "figures": 1.2
+        "figures": 1.1
       },
       "cohorts": {
         "week1": {
@@ -192,10 +192,10 @@
           }
         }
       },
-      "elapsed_sec": 49.0
+      "elapsed_sec": 27.8
     }
   ],
   "code_fingerprints": {
-    "K": "fb5ee188a3ab1109ed992910963d03d0677ae709df1e69ca9a34660e13fef2dd"
+    "K": "f0ddfafbcda9cb5cbd468aed6d89f5e45c5bc9428b4d42309d7aa6a537995477"
   }
 }
