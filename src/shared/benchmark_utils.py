@@ -118,7 +118,7 @@ def _top12_value(result: dict, ranking_key: str) -> float | None:
     every merged history row look like a real 0.000 hit rate for a month. A
     missing ranking must be visibly missing.
     """
-    rate = result.get(ranking_key, {}).get("season_avg_hit_rate")
+    rate = (result.get(ranking_key) or {}).get("season_avg_hit_rate")
     return None if rate is None else round(rate, 3)
 
 
