@@ -1,6 +1,6 @@
 numpy==2.4.6  # held: numpy 2.5.0 forces shap->numba->llvmlite back to an ancient llvmlite with no py3.12 wheel
 pandas==3.0.3
-pyarrow==24.0.0
+pyarrow==25.0.0
 nflreadpy==0.1.5
 polars==1.42.1
 scikit-learn==1.9.0
@@ -14,6 +14,6 @@ mord==0.7
 shap>=0.52.0,<0.53
 appdirs==1.4.4
 requests==2.34.2
-boto3==1.43.40
+boto3==1.43.48
 markdown==3.10.2
 bleach==6.4.0
