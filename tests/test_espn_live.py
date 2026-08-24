@@ -456,6 +456,12 @@ def test_parse_fantasy_projections_selects_week_and_drops_placeholders():
     recs = espn_live._parse_fantasy_projections(payload, 2026, 1)
     by_id = {r["espn_id"]: r for r in recs}
     assert set(by_id) == {"100", "200"}
+    # Malformed receptions value degrades to 0.0 rather than raising.
+    garbled = {
+        "players": [_fantasy_player(700, 3, [_fantasy_stat(2026, 1, 1, 1, 9.0, {"53": "n/a"})])]
+    }
+    (rec,) = espn_live._parse_fantasy_projections(garbled, 2026, 1)
+    assert rec["receptions"] == 0.0
     assert by_id["100"]["position"] == "QB"
     assert by_id["100"]["ppr_total"] == 19.23
     assert by_id["100"]["receptions"] == 0.0

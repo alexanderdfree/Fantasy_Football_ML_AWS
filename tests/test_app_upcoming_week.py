@@ -424,6 +424,17 @@ def test_apply_upcoming_experts_joins_espn():
 
 
 @pytest.mark.unit
+def test_apply_upcoming_experts_espn_failure_degrades_to_null(capsys):
+    # A malformed ESPN frame (missing espn_receptions) must degrade to null
+    # columns with a logged warning, never break the artifact build.
+    results = pd.DataFrame({"player_id": ["00-WR"], "season": [2026], "week": [1]})
+    bad = pd.DataFrame({"player_id": ["00-WR"], "season": [2026], "week": [1]})
+    upcoming_week._apply_upcoming_experts(results, None, None, bad)
+    assert results[_pred_col("espn", "ppr")].isna().all()
+    assert "ESPN ppr projection failed" in capsys.readouterr().out
+
+
+@pytest.mark.unit
 def test_expert_digest_covers_espn():
     base = upcoming_week._expert_digest(None, None, None)
     assert "espn:none" in base
