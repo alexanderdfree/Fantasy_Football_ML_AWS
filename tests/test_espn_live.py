@@ -393,6 +393,115 @@ def test_next_unplayed_week_partial_failures_without_week_raises(monkeypatch):
 
 
 @pytest.mark.unit
+def test_get_json_passes_extra_headers_without_adding_ua(monkeypatch):
+    """The fantasy API needs X-Fantasy-Filter; extra headers must pass through
+    while the no-custom-User-Agent contract still holds."""
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, timeout=None):
+        captured["req"] = req
+        return _Resp()
+
+    monkeypatch.setattr(espn_live.urllib.request, "urlopen", fake_urlopen)
+    espn_live._get_json("https://example.com/x", headers={"X-Fantasy-Filter": '{"a":1}'})
+    assert captured["req"].get_header("X-fantasy-filter") == '{"a":1}'
+    assert not captured["req"].has_header("User-agent")
+
+
+def _fantasy_stat(season, week, source, split, total, stats=None):
+    return {
+        "seasonId": season,
+        "scoringPeriodId": week,
+        "statSourceId": source,
+        "statSplitTypeId": split,
+        "appliedTotal": total,
+        "stats": stats or {},
+    }
+
+
+def _fantasy_player(espn_id, pos_id, stats):
+    return {"player": {"id": espn_id, "defaultPositionId": pos_id, "stats": stats}}
+
+
+@pytest.mark.unit
+def test_parse_fantasy_projections_selects_week_and_drops_placeholders():
+    payload = {
+        "players": [
+            # QB with a genuine W1 projection (no receptions stat -> 0.0).
+            _fantasy_player(100, 1, [_fantasy_stat(2026, 1, 1, 1, 19.23)]),
+            # WR with a projection + receptions (id 53).
+            _fantasy_player(200, 3, [_fantasy_stat(2026, 1, 1, 1, 19.97, {"53": 7.0087})]),
+            # Only season-split (splitTypeId 0) + actuals (sourceId 0) -> skipped.
+            _fantasy_player(
+                300, 2, [_fantasy_stat(2026, 0, 1, 0, 250.0), _fantasy_stat(2026, 1, 0, 1, 12.0)]
+            ),
+            # 0.00 deep-bench placeholder -> "no genuine projection", dropped.
+            _fantasy_player(400, 2, [_fantasy_stat(2026, 1, 1, 1, 0.0)]),
+            # Defense (posId 16) -> out of scope.
+            _fantasy_player(500, 16, [_fantasy_stat(2026, 1, 1, 1, 8.0)]),
+            # Prior-season W1 entry only -> skipped.
+            _fantasy_player(600, 3, [_fantasy_stat(2025, 1, 1, 1, 15.0)]),
+        ]
+    }
+    recs = espn_live._parse_fantasy_projections(payload, 2026, 1)
+    by_id = {r["espn_id"]: r for r in recs}
+    assert set(by_id) == {"100", "200"}
+    assert by_id["100"]["position"] == "QB"
+    assert by_id["100"]["ppr_total"] == 19.23
+    assert by_id["100"]["receptions"] == 0.0
+    assert by_id["200"]["position"] == "WR"
+    assert by_id["200"]["receptions"] == pytest.approx(7.0087)
+
+
+@pytest.mark.unit
+def test_fetch_fantasy_projections_maps_gsis_and_shapes_frame(monkeypatch):
+    payload = {
+        "players": [
+            _fantasy_player(100, 1, [_fantasy_stat(2026, 1, 1, 1, 19.23)]),
+            _fantasy_player(200, 3, [_fantasy_stat(2026, 1, 1, 1, 19.97, {"53": 7.0})]),
+            # No crosswalk entry -> dropped with a logged count.
+            _fantasy_player(999, 3, [_fantasy_stat(2026, 1, 1, 1, 9.0)]),
+        ]
+    }
+    captured = {}
+
+    def fake_get_json(url, headers=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        return payload
+
+    monkeypatch.setattr(espn_live, "_get_json", fake_get_json)
+    monkeypatch.setattr(espn_live, "espn_to_gsis_map", lambda: {"100": "00-QB", "200": "00-WR"})
+    df = espn_live.fetch_fantasy_projections(2026, 1)
+    assert "leaguedefaults/3" in captured["url"] and "scoringPeriodId=1" in captured["url"]
+    assert "X-Fantasy-Filter" in captured["headers"]
+    assert sorted(df["player_id"]) == ["00-QB", "00-WR"]
+    row = df.set_index("player_id").loc["00-WR"]
+    assert (row["season"], row["week"]) == (2026, 1)
+    assert row["espn_ppr_total"] == pytest.approx(19.97)
+    assert row["espn_receptions"] == pytest.approx(7.0)
+
+
+@pytest.mark.unit
+def test_fetch_fantasy_projections_empty_on_failure(monkeypatch):
+    def boom(url, headers=None):
+        raise RuntimeError("fantasy API down")
+
+    monkeypatch.setattr(espn_live, "_get_json", boom)
+    assert espn_live.fetch_fantasy_projections(2026, 1).empty
+
+
+@pytest.mark.unit
 def test_fetch_slate_handles_missing_odds(monkeypatch):
     """#1400 regression: one odds-less game must not TypeError the whole slate."""
     games = [

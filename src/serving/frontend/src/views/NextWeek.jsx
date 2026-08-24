@@ -39,6 +39,7 @@ const COLUMNS = [
     // it can be absent while RotoWire is live; older artifacts predate both fields).
     { key: "nflcom_pred", label: "NFL.com", cls: "col-pred nflcom-col", sort: "nflcom_pred", defaultVisible: true, expert: true },
     { key: "rotowire_pred", label: "RotoWire", cls: "col-pred rotowire-col", sort: "rotowire_pred", defaultVisible: true, expert: true },
+    { key: "espn_pred", label: "ESPN", cls: "col-pred espn-col", sort: "espn_pred", defaultVisible: true, expert: true },
 ];
 const TOGGLEABLE_COLUMNS = COLUMNS.filter((c) => !c.always);
 
@@ -151,7 +152,7 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             if (rookieOnly && p.is_rookie !== true) return false;
             if (q && !(p.name || "").toLowerCase().includes(q)) return false;
             if (!isNaN(minVal)) {
-                const preds = [p.nn_pred, p.attn_nn_pred, p.lgbm_pred, p.nflcom_pred, p.rotowire_pred]
+                const preds = [p.nn_pred, p.attn_nn_pred, p.lgbm_pred, p.nflcom_pred, p.rotowire_pred, p.espn_pred]
                     .filter((v) => v != null);
                 if (!preds.length || Math.max(...preds) < minVal) return false;
             }
@@ -315,6 +316,7 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             case "lgbm_pred": return fmt(p.lgbm_pred);
             case "nflcom_pred": return fmt(p.nflcom_pred);
             case "rotowire_pred": return fmt(p.rotowire_pred);
+            case "espn_pred": return fmt(p.espn_pred);
             default: return null;
         }
     };
