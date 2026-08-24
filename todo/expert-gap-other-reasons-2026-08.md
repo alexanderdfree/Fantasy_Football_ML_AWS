@@ -141,6 +141,13 @@ Ordered by plausibility × testability within each section.
   expected-starter prior exp-FP, `qb_change_flag`). Judge on a QB-change-week receiving
   cohort (bias + rank), never overall MAE (n is small). Extends #1102/#1104/#1106
   within-position work to cross-position.
+- **Status: screen BUILT (this PR), not yet run** —
+  [src/tuning/ab_qb_context_receivers.py](../src/tuning/ab_qb_context_receivers.py)
+  (`baseline` / `+qb_out` / `+qb_quality` / `+both` × WR/TE/RB, qbout-cohort metric;
+  unit-tested). Run `python -m src.tuning.ab_qb_context_receivers` on a GPU box (smoke one
+  `--positions WR --only +qb_out --seeds 42` cell first), or the Batch fleet via
+  `launch_ab --spec src.tuning.ab_qb_context_receivers` (dispatch `batch-image.yml` on the
+  branch first, ADR-0020).
 
 ## C. Framing — why "still beating" may persist regardless
 
