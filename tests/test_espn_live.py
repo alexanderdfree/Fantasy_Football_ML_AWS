@@ -296,6 +296,103 @@ def _inj_ath(espn_id):
 
 
 @pytest.mark.unit
+def test_get_json_sends_no_custom_user_agent(monkeypatch):
+    """2026-08 incident pin: ESPN's WAF 403s custom (``ff-predictor/1.0``) and
+    spoofed-browser UAs from non-browser clients, but passes honest tool UAs —
+    ``_get_json`` must NOT re-add a custom User-Agent (urllib's default goes out)."""
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, timeout=None):
+        captured["req"] = req
+        return _Resp()
+
+    monkeypatch.setattr(espn_live.urllib.request, "urlopen", fake_urlopen)
+    assert espn_live._get_json("https://example.com/x") == {}
+    assert not captured["req"].has_header("User-agent")
+
+
+@pytest.mark.unit
+def test_fetch_games_default_degrades_but_raise_on_error_raises(monkeypatch):
+    def boom(url):
+        raise RuntimeError("ESPN GET failed after 3 tries (403)")
+
+    monkeypatch.setattr(espn_live, "_get_json", boom)
+    assert espn_live.fetch_games(2026, 1) == []  # legacy defensive default
+    with pytest.raises(RuntimeError):
+        espn_live.fetch_games(2026, 1, raise_on_error=True)
+
+
+@pytest.mark.unit
+def test_next_unplayed_week_outage_raises_not_offseason(monkeypatch):
+    """The 2026-08 silent-stale pin: when every scoreboard probe errors (ESPN
+    403-ing the CI runner), ``next_unplayed_week`` must raise
+    ``EspnUnreachableError`` rather than return None ("verified offseason") —
+    None kept CI green while serving froze on a 20-day-old artifact."""
+    calls = []
+
+    def boom(url):
+        calls.append(url)
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(espn_live, "_get_json", boom)
+    with pytest.raises(espn_live.EspnUnreachableError):
+        espn_live.next_unplayed_week(2026)
+    # Early abort: a hard outage must not grind through all 2x18 weekly probes.
+    assert len(calls) == espn_live._CONSECUTIVE_FAILURE_ABORT
+
+
+@pytest.mark.unit
+def test_next_unplayed_week_verified_offseason_returns_none(monkeypatch):
+    # Every probe SUCCEEDS and none has a scheduled game -> verified offseason.
+    monkeypatch.setattr(espn_live, "fetch_games", lambda s, w, raise_on_error=False: [])
+    assert espn_live.next_unplayed_week(2026, lookahead_seasons=0) is None
+
+
+@pytest.mark.unit
+def test_next_unplayed_week_tolerates_isolated_failures(monkeypatch):
+    # Two isolated probe failures (below the consecutive-abort threshold), then
+    # a played week, then a scheduled one -> blips don't mask the real answer.
+    seq = iter(["err", "err", "played", "sched"])
+
+    def fake(season, week, raise_on_error=False):
+        kind = next(seq)
+        if kind == "err":
+            raise RuntimeError("blip")
+        return [{"is_scheduled": kind == "sched"}]
+
+    monkeypatch.setattr(espn_live, "fetch_games", fake)
+    assert espn_live.next_unplayed_week(2026) == (2026, 4)
+
+
+@pytest.mark.unit
+def test_next_unplayed_week_partial_failures_without_week_raises(monkeypatch):
+    # Failures interleaved with successful-but-empty probes (never hitting the
+    # consecutive abort) and no scheduled week found: offseason can't be
+    # verified, so returning None would be a guess -> raise.
+    state = {"n": 0}
+
+    def fake(season, week, raise_on_error=False):
+        state["n"] += 1
+        if state["n"] % 2:
+            raise RuntimeError("blip")
+        return []
+
+    monkeypatch.setattr(espn_live, "fetch_games", fake)
+    with pytest.raises(espn_live.EspnUnreachableError):
+        espn_live.next_unplayed_week(2026, lookahead_seasons=0)
+
+
+@pytest.mark.unit
 def test_fetch_slate_handles_missing_odds(monkeypatch):
     """#1400 regression: one odds-less game must not TypeError the whole slate."""
     games = [

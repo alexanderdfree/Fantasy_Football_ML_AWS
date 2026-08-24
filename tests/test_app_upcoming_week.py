@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.serving import upcoming_week
+from src.serving import espn_live, upcoming_week
 from src.serving.serialization import _pred_col
 from src.shared import weather_features
 
@@ -370,6 +370,84 @@ def test_s3_sync_and_upload_noop_without_bucket(monkeypatch, tmp_path):
 @pytest.mark.unit
 def test_download_poller_disabled_at_zero_interval():
     assert upcoming_week.start_artifact_download_poller(interval_s=0) is None
+
+
+@pytest.mark.unit
+def test_refresh_propagates_unreachable_and_keeps_artifact(monkeypatch, tmp_path):
+    """2026-08 incident pin: an ESPN outage must propagate loudly out of the
+    refresh, NOT overwrite the (possibly last-good) artifact with an
+    'offseason' unavailable payload."""
+    monkeypatch.setattr(upcoming_week.core, "_PREDICTIONS_CACHE_DIR", str(tmp_path))
+    good = {"available": True, "season": 2026, "week": 1}
+    upcoming_week._write_artifact(good)
+
+    def boom(season):
+        raise espn_live.EspnUnreachableError("all scoreboard probes failed")
+
+    monkeypatch.setattr(upcoming_week.espn_live, "next_unplayed_week", boom)
+    with pytest.raises(espn_live.EspnUnreachableError):
+        upcoming_week.refresh_upcoming_week_cache(force=True)
+    assert upcoming_week.read_cached_artifact() == good
+
+
+@pytest.mark.unit
+def test_publish_artifact_raises_when_configured_upload_fails(monkeypatch, tmp_path):
+    """A configured bucket + failed upload = builder failure (red CI), and the
+    signature stays uncommitted so the next run re-publishes."""
+    monkeypatch.setattr(upcoming_week.core, "_PREDICTIONS_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "some-bucket")
+    monkeypatch.setattr(upcoming_week, "upload_artifact_to_s3", lambda: False)
+    monkeypatch.setattr(upcoming_week, "_last_signature", None)
+    with pytest.raises(RuntimeError):
+        upcoming_week._publish_artifact({"available": True}, "sig-1")
+    assert upcoming_week._last_signature is None
+    # The local artifact WAS written — the upload, not the build, failed.
+    assert upcoming_week.read_cached_artifact() == {"available": True}
+
+
+@pytest.mark.unit
+def test_publish_artifact_best_effort_without_bucket(monkeypatch, tmp_path):
+    # No bucket (local/dev/tests): publish stays best-effort and commits the sig.
+    monkeypatch.setattr(upcoming_week.core, "_PREDICTIONS_CACHE_DIR", str(tmp_path))
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    monkeypatch.setattr(upcoming_week, "_last_signature", None)
+    upcoming_week._publish_artifact({"available": True}, "sig-2")
+    assert upcoming_week._last_signature == "sig-2"
+    assert upcoming_week.read_cached_artifact() == {"available": True}
+
+
+@pytest.mark.unit
+def test_main_fails_loudly_on_non_offseason_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        upcoming_week,
+        "refresh_upcoming_week_cache",
+        lambda force=False: {"available": False, "reason": "no_slate"},
+    )
+    with pytest.raises(SystemExit):
+        upcoming_week.main()
+
+
+@pytest.mark.unit
+def test_main_fails_loudly_when_no_artifact(monkeypatch):
+    monkeypatch.setattr(upcoming_week, "refresh_upcoming_week_cache", lambda force=False: None)
+    with pytest.raises(SystemExit):
+        upcoming_week.main()
+
+
+@pytest.mark.unit
+def test_main_green_on_verified_offseason_and_on_success(monkeypatch):
+    monkeypatch.setattr(
+        upcoming_week,
+        "refresh_upcoming_week_cache",
+        lambda force=False: {"available": False, "reason": "offseason"},
+    )
+    upcoming_week.main()  # verified offseason: green, nothing uploaded
+    monkeypatch.setattr(
+        upcoming_week,
+        "refresh_upcoming_week_cache",
+        lambda force=False: {"available": True, "season": 2026, "week": 1},
+    )
+    upcoming_week.main()  # normal success: green
 
 
 @pytest.mark.integration
