@@ -14,7 +14,13 @@ ESPN's endpoints are undocumented and can change without notice, so:
     silently zero-filling a feature;
   * the public ``fetch_*`` helpers never raise into the poller — on a hard
     failure they return an empty result and the caller treats the cycle as
-    "no upcoming data".
+    "no upcoming data". The ONE deliberate exception is
+    :func:`next_unplayed_week`, which raises :class:`EspnUnreachableError`
+    when ESPN can't be reached at all: the CI artifact builder must
+    distinguish a *verified* offseason (ESPN answered: nothing scheduled)
+    from an outage — in 2026-08 a scoreboard 403 block read as "offseason",
+    the builder exited green without uploading, and serving froze on a
+    20-day-old artifact.
 
 Player identity is bridged ESPN ``athlete.id`` -> ``espn_id`` -> ``gsis_id``
 (our ``player_id``) via the stable nflverse crosswalk
@@ -42,6 +48,20 @@ _TIMEOUT_S = 15
 _RETRIES = 3
 _RETRY_BACKOFF_S = 1.5
 _MAX_REG_WEEK = 18
+# Abort the next_unplayed_week scan after this many consecutive failed
+# scoreboard probes (each probe already carries _get_json's own _RETRIES): a
+# hard outage/WAF block fails every week identically, so grinding through all
+# 2x18 weekly probes only wastes ~3 min of CI and hammers a blocking host.
+_CONSECUTIVE_FAILURE_ABORT = 3
+
+
+class EspnUnreachableError(RuntimeError):
+    """ESPN could not be reached at all (distinct from a verified empty slate).
+
+    Raised by :func:`next_unplayed_week` when scoreboard probes error and no
+    scheduled week was found — callers must NOT treat that as "offseason".
+    """
+
 
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
 _SKILL_POSITION_SET = set(SKILL_POSITIONS)
@@ -170,11 +190,20 @@ def espn_to_gsis_map() -> dict[str, str]:
 # Network
 # --------------------------------------------------------------------------
 def _get_json(url: str) -> dict:
-    """GET ``url`` and parse JSON, with timeout + retries. Raises on final fail."""
+    """GET ``url`` and parse JSON, with timeout + retries. Raises on final fail.
+
+    Deliberately sends NO custom ``User-Agent`` (urllib's honest default,
+    ``Python-urllib/3.x``, goes out instead). ESPN's WAF started 403-ing both
+    the old custom UA (``ff-predictor/1.0``) and spoofed-browser UAs from
+    non-browser clients in 2026-08 — every scheduled CI build silently served
+    a frozen artifact for 20 days — while honest tool UAs (``Python-urllib``,
+    ``curl``, ``python-requests``) pass. Don't "improve" this back to a
+    custom or browser UA.
+    """
     last_err: Exception | None = None
     for attempt in range(_RETRIES):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "ff-predictor/1.0"})
+            req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
@@ -335,11 +364,18 @@ def _parse_depthchart(payload: dict) -> list[dict]:
 # --------------------------------------------------------------------------
 # Public fetchers (defensive — never raise into the poller)
 # --------------------------------------------------------------------------
-def fetch_games(season: int, week: int) -> list[dict]:
-    """Fetch + parse the scoreboard for one (season, week). ``[]`` on failure."""
+def fetch_games(season: int, week: int, *, raise_on_error: bool = False) -> list[dict]:
+    """Fetch + parse the scoreboard for one (season, week).
+
+    Default: ``[]`` on failure (the legacy defensive contract). With
+    ``raise_on_error=True`` a network/parse failure raises instead, so callers
+    can distinguish "ESPN answered: no games" from "ESPN unreachable".
+    """
     try:
         return _parse_scoreboard_games(_get_json(_scoreboard_url(season, week)))
     except Exception as e:  # noqa: BLE001 - network boundary
+        if raise_on_error:
+            raise
         print(f"[espn_live] fetch_games({season}, {week}) failed: {e!r}")
         return []
 
@@ -350,15 +386,43 @@ def next_unplayed_week(season: int, lookahead_seasons: int = 1) -> tuple[int, in
     Returns ``(season, week)`` for the smallest week that still has a
     ``STATUS_SCHEDULED`` game, rolling into ``season + 1`` if the requested
     season is fully played, up to ``lookahead_seasons`` ahead. Returns ``None``
-    when nothing scheduled is found (true offseason / schedule not yet posted).
+    only for a VERIFIED offseason: every scoreboard probe answered and none had
+    a scheduled game (true offseason / schedule not yet posted).
+
+    Raises :class:`EspnUnreachableError` when probes errored and no scheduled
+    week was found — either early (``_CONSECUTIVE_FAILURE_ABORT`` consecutive
+    failures = a hard outage/WAF block) or at scan end (any failures at all:
+    an unverifiable week can't be ruled out, so "offseason" would be a guess).
+    The 2026-08 incident this guards: a scoreboard 403 block made every probe
+    return empty, the CI builder wrote "offseason" and exited green, and the
+    served artifact silently froze for 20 days.
     """
+    failures = 0
+    consecutive = 0
+    last_err: Exception | None = None
     for s in range(season, season + lookahead_seasons + 1):
         for w in range(1, _MAX_REG_WEEK + 1):
-            games = fetch_games(s, w)
-            if not games:
+            try:
+                games = fetch_games(s, w, raise_on_error=True)
+            except Exception as e:  # noqa: BLE001 - network boundary
+                failures += 1
+                consecutive += 1
+                last_err = e
+                print(f"[espn_live] fetch_games({s}, {w}) failed: {e!r}")
+                if consecutive >= _CONSECUTIVE_FAILURE_ABORT:
+                    raise EspnUnreachableError(
+                        f"aborting week scan at {s} W{w}: {consecutive} consecutive "
+                        f"scoreboard failures (last: {e!r})"
+                    ) from e
                 continue
-            if any(g["is_scheduled"] for g in games):
+            consecutive = 0
+            if games and any(g["is_scheduled"] for g in games):
                 return (s, w)
+    if failures:
+        raise EspnUnreachableError(
+            f"no scheduled week found and {failures} scoreboard probe(s) failed "
+            f"(last: {last_err!r}); cannot distinguish offseason from an ESPN outage"
+        ) from last_err
     return None
 
 

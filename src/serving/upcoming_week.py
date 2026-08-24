@@ -598,12 +598,18 @@ def read_cached_artifact() -> dict | None:
 
 
 def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
-    """Detect the next week, build + infer, and write the artifact.
+    """Detect the next week, build + infer, and write + publish the artifact.
 
     Change-gated on ``_input_signature`` (models + lines + roster) unless
     ``force``. Returns the artifact dict (or the unavailable/None result).
+
+    Fails loudly instead of degrading in two builder-fatal cases: it propagates
+    :class:`espn_live.EspnUnreachableError` from week detection (an ESPN outage
+    must not be recorded as "offseason" — the 2026-08 silent-stale incident;
+    raised before any write, so the last-good local artifact stays untouched),
+    and ``_publish_artifact`` raises when a configured S3 upload fails (the
+    fresh artifact is on disk but S3 — what serving reads — is still stale).
     """
-    global _last_signature
     detected = espn_live.next_unplayed_week(SEASONS[-1])
     if detected is None:
         _write_unavailable("offseason")
@@ -688,12 +694,30 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # Expert columns for the homepage (best-effort; nulls when a feed is down).
     _apply_upcoming_experts(results, raw_nflcom, raw_rotowire)
     payload = _build_artifact(season, week, results)
-    _write_artifact(payload)
-    with _state_lock:
-        _last_signature = sig
-    upload_artifact_to_s3()
+    _publish_artifact(payload, sig)
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")
     return payload
+
+
+def _publish_artifact(payload: dict, sig: str) -> None:
+    """Write the artifact locally, publish it to S3, then commit ``sig``.
+
+    When a bucket IS configured (the CI builder), a failed upload raises: the
+    builder's one job is a fresh artifact ON S3, and a green exit with a stale
+    S3 object is exactly the silent failure mode of the 2026-08 incident.
+    ``_last_signature`` is committed only after a successful publish so the
+    next run rebuilds + re-uploads instead of signature-skipping. No bucket
+    (local/dev/tests) keeps the old best-effort behavior.
+    """
+    global _last_signature
+    _write_artifact(payload)
+    if not upload_artifact_to_s3() and os.environ.get(_ENV_BUCKET, "").strip():
+        raise RuntimeError(
+            "[upcoming_week] artifact built but the S3 upload failed; "
+            "left _last_signature uncommitted so the next run re-publishes"
+        )
+    with _state_lock:
+        _last_signature = sig
 
 
 # --------------------------------------------------------------------------
@@ -781,8 +805,29 @@ def start_artifact_download_poller(
 def main() -> None:
     """CLI entry for the scheduled CI builder: build the upcoming-week artifact
     from the live ESPN slate + the models/data on disk, write it, and upload to
-    S3. Run by .github/workflows/refresh-upcoming-week.yml."""
-    refresh_upcoming_week_cache(force=True)
+    S3. Run by .github/workflows/refresh-upcoming-week.yml.
+
+    Exits non-zero (red CI) whenever a fresh artifact was NOT published: an
+    unreachable ESPN raises out of ``refresh_upcoming_week_cache``; an empty
+    slate/roster after a successful week detection (inherently anomalous — the
+    detection just saw a scheduled game) surfaces here as an ``available:
+    False`` artifact with a non-offseason reason. Only a VERIFIED offseason
+    (ESPN answered every probe: nothing scheduled) exits green without an
+    upload. Guards the 2026-08 incident: a scoreboard 403 block read as
+    "offseason", ~160 straight runs stayed green, and serving kept a 20-day-old
+    artifact.
+    """
+    artifact = refresh_upcoming_week_cache(force=True)
+    if artifact is None:
+        raise SystemExit("[upcoming_week] FATAL: builder produced no artifact")
+    if artifact.get("available") is False:
+        reason = artifact.get("reason", "unknown")
+        if reason == "offseason":
+            print("[upcoming_week] verified offseason (nothing scheduled); S3 artifact left as-is")
+            return
+        raise SystemExit(
+            f"[upcoming_week] FATAL: artifact unavailable (reason={reason}); nothing uploaded"
+        )
 
 
 if __name__ == "__main__":
