@@ -372,6 +372,105 @@ def test_download_poller_disabled_at_zero_interval():
     assert upcoming_week.start_artifact_download_poller(interval_s=0) is None
 
 
+def _espn_raw_frame():
+    return pd.DataFrame(
+        {
+            "player_id": ["00-WR", "00-QB"],
+            "position": ["WR", "QB"],
+            "season": [2026, 2026],
+            "week": [1, 1],
+            "espn_ppr_total": [19.97, 19.23],
+            "espn_receptions": [7.0, 0.0],
+        }
+    )
+
+
+@pytest.mark.unit
+def test_espn_points_for_format_reception_identity():
+    """ESPN appliedTotal is PPR; standard/half derive by removing the reception
+    weight — exact (verified vs ESPN's standard stock league), and a no-catch
+    QB is identical across formats."""
+    raw = _espn_raw_frame()
+    ppr = upcoming_week._espn_points_for_format(raw, "ppr").set_index("player_id")
+    half = upcoming_week._espn_points_for_format(raw, "half_ppr").set_index("player_id")
+    std = upcoming_week._espn_points_for_format(raw, "standard").set_index("player_id")
+    assert ppr.loc["00-WR", "espn_pred_total"] == pytest.approx(19.97)
+    assert half.loc["00-WR", "espn_pred_total"] == pytest.approx(16.47)
+    assert std.loc["00-WR", "espn_pred_total"] == pytest.approx(12.97)
+    for frame in (ppr, half, std):
+        assert frame.loc["00-QB", "espn_pred_total"] == pytest.approx(19.23)
+
+
+@pytest.mark.unit
+def test_apply_upcoming_experts_joins_espn():
+    results = pd.DataFrame(
+        {
+            "player_id": ["00-WR", "00-QB", "00-NOPROJ"],
+            "season": [2026, 2026, 2026],
+            "week": [1, 1, 1],
+        }
+    )
+    upcoming_week._apply_upcoming_experts(results, None, None, _espn_raw_frame())
+    col_ppr = _pred_col("espn", "ppr")
+    col_std = _pred_col("espn", "standard")
+    by_id = results.set_index("player_id")
+    assert by_id.loc["00-WR", col_ppr] == pytest.approx(19.97)
+    assert by_id.loc["00-WR", col_std] == pytest.approx(12.97)
+    assert by_id.loc["00-QB", col_ppr] == pytest.approx(19.23)
+    # No ESPN projection for that player -> stays null (renders "--").
+    assert pd.isna(by_id.loc["00-NOPROJ", col_ppr])
+    # The other sources were absent -> their columns exist and stay null.
+    assert pd.isna(by_id.loc["00-WR", _pred_col("nflcom", "ppr")])
+
+
+@pytest.mark.unit
+def test_apply_upcoming_experts_espn_failure_degrades_to_null(capsys):
+    # A malformed ESPN frame (missing espn_receptions) must degrade to null
+    # columns with a logged warning, never break the artifact build.
+    results = pd.DataFrame({"player_id": ["00-WR"], "season": [2026], "week": [1]})
+    bad = pd.DataFrame({"player_id": ["00-WR"], "season": [2026], "week": [1]})
+    upcoming_week._apply_upcoming_experts(results, None, None, bad)
+    assert results[_pred_col("espn", "ppr")].isna().all()
+    assert "ESPN ppr projection failed" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_expert_digest_covers_espn():
+    base = upcoming_week._expert_digest(None, None, None)
+    assert "espn:none" in base
+    with_espn = upcoming_week._expert_digest(None, None, _espn_raw_frame())
+    assert with_espn != base
+    moved = _espn_raw_frame()
+    moved.loc[0, "espn_ppr_total"] = 25.0
+    assert upcoming_week._expert_digest(None, None, moved) != with_espn
+
+
+@pytest.mark.unit
+def test_results_to_upcoming_rows_includes_espn_pred():
+    df = pd.DataFrame(
+        {
+            "player_id": ["00-1"],
+            "player_display_name": ["Star WR"],
+            "position": ["WR"],
+            "recent_team": ["SEA"],
+            "opponent_team": ["NE"],
+            "is_home": [1],
+            "spread_line": [3.5],
+            "total_line": [44.5],
+            "implied_team_total": [24.0],
+            "headshot_url": [""],
+            _pred_col("espn", "ppr"): [19.97],
+        }
+    )
+    rows = upcoming_week._results_to_upcoming_rows(df, "ppr")
+    assert rows[0]["espn_pred"] == pytest.approx(19.97)
+    # A frame without the column (older shapes) serializes null, not a KeyError.
+    rows_no_espn = upcoming_week._results_to_upcoming_rows(
+        df.drop(columns=[_pred_col("espn", "ppr")]), "ppr"
+    )
+    assert rows_no_espn[0]["espn_pred"] is None
+
+
 @pytest.mark.unit
 def test_refresh_propagates_unreachable_and_keeps_artifact(monkeypatch, tmp_path):
     """2026-08 incident pin: an ESPN outage must propagate loudly out of the

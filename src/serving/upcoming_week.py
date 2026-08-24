@@ -378,26 +378,35 @@ def run_upcoming_inference(
 
 
 # --------------------------------------------------------------------------
-# Expert projections for the upcoming slate (NFL.com + RotoWire)
+# Expert projections for the upcoming slate (NFL.com + RotoWire + ESPN)
 # --------------------------------------------------------------------------
-_UPCOMING_EXPERTS = ("nflcom", "rotowire")
+_UPCOMING_EXPERTS = ("nflcom", "rotowire", "espn")
+
+# ESPN's fantasy appliedTotal is PPR (stock league ``leaguedefaults/3``); the
+# three formats differ only by the reception weight — identical to
+# src/config.py's SCORING_STANDARD/HALF_PPR/PPR "receptions" values — so the
+# non-PPR formats derive exactly by removing the reception share.
+_ESPN_RECEPTION_WEIGHT = {"ppr": 1.0, "half_ppr": 0.5, "standard": 0.0}
 
 
 def _fetch_upcoming_expert_frames(
-    season: int, week: int, *, nflcom_loader=None, rotowire_loader=None
+    season: int, week: int, *, nflcom_loader=None, rotowire_loader=None, espn_loader=None
 ):
     """Best-effort raw expert projection frames for one (season, week).
 
     Runs only in the CI artifact builder (serving just downloads the artifact).
     NFL.com's archive publishes the current week's CSVs pre-game but not
-    guaranteed; Sleeper serves the upcoming week live. Either source failing
-    (or empty) degrades to None → the expert columns stay null → the frontend
-    renders "--" and hides the columns when both are absent.
+    guaranteed; Sleeper serves the upcoming week live; ESPN's fantasy API
+    serves weekly point projections year-round. Any source failing (or empty)
+    degrades to None → its expert column stays null → the frontend renders
+    "--" and hides that column (per-source gating).
     """
     if nflcom_loader is None:
         nflcom_loader = load_nflcom_with_gsis_id
     if rotowire_loader is None:
         rotowire_loader = load_sleeper_with_gsis_id
+    if espn_loader is None:
+        espn_loader = espn_live.fetch_fantasy_projections
     raw_nflcom = None
     try:
         raw_nflcom = nflcom_loader([season], weeks=[week], force_refresh=True)
@@ -412,17 +421,24 @@ def _fetch_upcoming_expert_frames(
         print(f"[upcoming_week] RotoWire projections unavailable: {e!r}")
     if raw_rotowire is not None and (raw_rotowire.empty or "position" not in raw_rotowire.columns):
         raw_rotowire = None
-    return raw_nflcom, raw_rotowire
+    raw_espn = None
+    try:
+        raw_espn = espn_loader(season, week)
+    except Exception as e:  # noqa: BLE001 - expert data is optional
+        print(f"[upcoming_week] ESPN projections unavailable: {e!r}")
+    if raw_espn is not None and (raw_espn.empty or "player_id" not in raw_espn.columns):
+        raw_espn = None
+    return raw_nflcom, raw_rotowire, raw_espn
 
 
-def _expert_digest(raw_nflcom, raw_rotowire) -> str:
+def _expert_digest(raw_nflcom, raw_rotowire, raw_espn) -> str:
     """Compact change-detection digest of the expert frames for _input_signature.
 
     Row count + numeric-content sum per source: cheap, order-invariant, and
     moves whenever a projection value or the covered player set changes.
     """
     parts = []
-    for name, df in (("nfl", raw_nflcom), ("rw", raw_rotowire)):
+    for name, df in (("nfl", raw_nflcom), ("rw", raw_rotowire), ("espn", raw_espn)):
         if df is None or df.empty:
             parts.append(f"{name}:none")
             continue
@@ -432,12 +448,28 @@ def _expert_digest(raw_nflcom, raw_rotowire) -> str:
     return "|".join(parts)
 
 
-def _apply_upcoming_experts(results: pd.DataFrame, raw_nflcom, raw_rotowire) -> None:
+def _espn_points_for_format(raw_espn: pd.DataFrame, fmt: str) -> pd.DataFrame:
+    """Convert the ESPN PPR frame to one scoring format's join frame.
+
+    ``espn_ppr_total`` is ESPN's own PPR appliedTotal; subtracting the non-PPR
+    share of projected receptions lands the other formats exactly (verified
+    against ESPN's standard stock league — see espn_live._STAT_ID_RECEPTIONS).
+    Returns the ``_assign_expert_totals`` shape: key cols + espn_pred_total.
+    """
+    out = raw_espn[["player_id", "season", "week"]].copy()
+    rec = pd.to_numeric(raw_espn["espn_receptions"], errors="coerce").fillna(0.0)
+    ppr = pd.to_numeric(raw_espn["espn_ppr_total"], errors="coerce")
+    out["espn_pred_total"] = ppr - (1.0 - _ESPN_RECEPTION_WEIGHT[fmt]) * rec
+    return out
+
+
+def _apply_upcoming_experts(results: pd.DataFrame, raw_nflcom, raw_rotowire, raw_espn) -> None:
     """Project + join the expert frames onto the upcoming results in place.
 
     Mirrors core._apply_expert_predictions (same projector + key-join helpers)
     scoped to the upcoming positions; per-source/position failures degrade to
-    null columns, never break the artifact build.
+    null columns, never break the artifact build. ESPN needs no per-position
+    pass: its frame is already fantasy points keyed by player/season/week.
     """
     for source in _UPCOMING_EXPERTS:
         for fmt in _VALID_SCORING:
@@ -456,6 +488,12 @@ def _apply_upcoming_experts(results: pd.DataFrame, raw_nflcom, raw_rotowire) -> 
                     core._assign_expert_totals(results, "rotowire", fmt, rw, "rotowire_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[upcoming_week] RotoWire {pos}/{fmt} projection failed: {e!r}")
+        if raw_espn is not None:
+            try:
+                esp = _espn_points_for_format(raw_espn, fmt)
+                core._assign_expert_totals(results, "espn", fmt, esp, "espn_pred_total")
+            except Exception as e:  # noqa: BLE001 - one source can degrade
+                print(f"[upcoming_week] ESPN {fmt} projection failed: {e!r}")
 
 
 # --------------------------------------------------------------------------
@@ -491,6 +529,7 @@ def _results_to_upcoming_rows(results: pd.DataFrame, scoring: str) -> list[dict]
                 "lgbm_pred": _safe_num(r.get(pred_keys["lgbm"])),
                 "nflcom_pred": _safe_num(r.get(_pred_col("nflcom", scoring))),
                 "rotowire_pred": _safe_num(r.get(_pred_col("rotowire", scoring))),
+                "espn_pred": _safe_num(r.get(_pred_col("espn", scoring))),
                 "headshot": _safe_str(r.get("headshot_url", "")),
                 "age": _int_or_none(r.get("age")),
                 "is_rookie": _bool_or_none(r.get("is_rookie")),
@@ -654,9 +693,9 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     practice_status_map = live_sources.fetch_practice_status_map(season, week)
     contract_features = live_sources.fetch_contract_features(season)
 
-    # Expert projections for the slate (NFL.com + RotoWire), fetched up front so
+    # Expert projections for the slate (NFL.com + RotoWire + ESPN), fetched up front so
     # a projection update alone re-triggers the rebuild via the signature.
-    raw_nflcom, raw_rotowire = _fetch_upcoming_expert_frames(season, week)
+    raw_nflcom, raw_rotowire, raw_espn = _fetch_upcoming_expert_frames(season, week)
 
     sig = _input_signature(
         season,
@@ -668,7 +707,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         practice_status_map,
         contract_features,
         rosters_df=rosters_df,
-        expert_digest=_expert_digest(raw_nflcom, raw_rotowire),
+        expert_digest=_expert_digest(raw_nflcom, raw_rotowire, raw_espn),
     )
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
@@ -692,7 +731,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # (same best-effort semantics as the season-leaders path).
     results = roster_meta.attach_age_and_rookie(results)
     # Expert columns for the homepage (best-effort; nulls when a feed is down).
-    _apply_upcoming_experts(results, raw_nflcom, raw_rotowire)
+    _apply_upcoming_experts(results, raw_nflcom, raw_rotowire, raw_espn)
     payload = _build_artifact(season, week, results)
     _publish_artifact(payload, sig)
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")

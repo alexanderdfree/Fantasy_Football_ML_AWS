@@ -1,9 +1,9 @@
-"""Expert projections (NFL.com / RotoWire) on the upcoming-week artifact.
+"""Expert projections (NFL.com / RotoWire / ESPN) on the upcoming-week artifact.
 
 Covers the Phase-5 plumbing: best-effort fetch wrappers, the change-detection
 digest that folds experts into the rebuild signature, the in-place projection
-apply, and the serialized row contract (nflcom_pred / rotowire_pred keys that
-the homepage feature-detects).
+apply, and the serialized row contract (nflcom_pred / rotowire_pred / espn_pred keys
+that the homepage feature-detects).
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def _rotowire_raw():
 class TestApplyUpcomingExperts:
     def test_rotowire_rows_project_and_join(self):
         results = _upcoming_results()
-        uw._apply_upcoming_experts(results, None, _rotowire_raw())
+        uw._apply_upcoming_experts(results, None, _rotowire_raw(), None)
         # 300 pass yds (0.04/yd) + 2 pass TDs (4 pts) = 20.0 under every format
         # (QB scoring has no reception term).
         val = results.loc[results["player_id"] == "QB1", _pred_col("rotowire", "ppr")].iloc[0]
@@ -69,14 +69,14 @@ class TestApplyUpcomingExperts:
 
     def test_missing_feeds_leave_stable_nan_columns(self):
         results = _upcoming_results()
-        uw._apply_upcoming_experts(results, None, None)
+        uw._apply_upcoming_experts(results, None, None, None)
         for source in uw._UPCOMING_EXPERTS:
             for fmt in uw._VALID_SCORING:
                 assert results[_pred_col(source, fmt)].isna().all()
 
     def test_rows_serialize_expert_keys(self):
         results = _upcoming_results()
-        uw._apply_upcoming_experts(results, None, _rotowire_raw())
+        uw._apply_upcoming_experts(results, None, _rotowire_raw(), None)
         rows = uw._results_to_upcoming_rows(results, scoring="ppr")
         qb = next(r for r in rows if r["player_id"] == "QB1")
         wr = next(r for r in rows if r["player_id"] == "WR1")
@@ -90,18 +90,22 @@ class TestFetchWrappers:
         def boom(*a, **k):
             raise RuntimeError("feed down")
 
-        nfl, rw = uw._fetch_upcoming_expert_frames(
-            2026, 12, nflcom_loader=boom, rotowire_loader=boom
+        nfl, rw, espn = uw._fetch_upcoming_expert_frames(
+            2026, 12, nflcom_loader=boom, rotowire_loader=boom, espn_loader=boom
         )
-        assert nfl is None and rw is None
+        assert nfl is None and rw is None and espn is None
 
     def test_empty_or_malformed_frames_degrade_to_none(self):
         empty = pd.DataFrame()
         no_pos = pd.DataFrame({"player_id": ["x"]})
-        nfl, rw = uw._fetch_upcoming_expert_frames(
-            2026, 12, nflcom_loader=lambda *a, **k: empty, rotowire_loader=lambda *a, **k: no_pos
+        nfl, rw, espn = uw._fetch_upcoming_expert_frames(
+            2026,
+            12,
+            nflcom_loader=lambda *a, **k: empty,
+            rotowire_loader=lambda *a, **k: no_pos,
+            espn_loader=lambda *a, **k: empty,
         )
-        assert nfl is None and rw is None
+        assert nfl is None and rw is None and espn is None
 
     def test_loaders_receive_single_week(self):
         seen = {}
@@ -112,21 +116,23 @@ class TestFetchWrappers:
             seen["force_refresh"] = force_refresh
             return None
 
-        uw._fetch_upcoming_expert_frames(2026, 12, nflcom_loader=spy, rotowire_loader=spy)
+        uw._fetch_upcoming_expert_frames(
+            2026, 12, nflcom_loader=spy, rotowire_loader=spy, espn_loader=lambda *a, **k: None
+        )
         assert seen == {"seasons": [2026], "weeks": [12], "force_refresh": True}
 
 
 class TestExpertDigest:
     def test_digest_tracks_content_changes(self):
         raw = _rotowire_raw()
-        d1 = uw._expert_digest(None, raw)
+        d1 = uw._expert_digest(None, raw, None)
         bumped = raw.copy()
         bumped.loc[0, "passing_yards"] = 310.0
-        d2 = uw._expert_digest(None, bumped)
+        d2 = uw._expert_digest(None, bumped, None)
         assert d1 != d2
 
     def test_digest_marks_missing_feeds(self):
-        assert uw._expert_digest(None, None) == "nfl:none|rw:none"
+        assert uw._expert_digest(None, None, None) == "nfl:none|rw:none|espn:none"
 
     def test_digest_feeds_input_signature(self):
         # Same inputs, different expert digest -> different rebuild signature.

@@ -44,6 +44,10 @@ _ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 # Depth charts live on the separate "core" host (the site API doesn't expose
 # them); fetched through the same _get_json timeout/retry treatment.
 _CORE_BASE = "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+# ESPN's fantasy API (weekly point projections) lives on a third host; the
+# public "leaguedefaults/3" league is ESPN's stock PPR league, whose
+# kona_player_info view carries every player's weekly projection.
+_FANTASY_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl"
 _TIMEOUT_S = 15
 _RETRIES = 3
 _RETRY_BACKOFF_S = 1.5
@@ -189,7 +193,7 @@ def espn_to_gsis_map() -> dict[str, str]:
 # --------------------------------------------------------------------------
 # Network
 # --------------------------------------------------------------------------
-def _get_json(url: str) -> dict:
+def _get_json(url: str, headers: dict[str, str] | None = None) -> dict:
     """GET ``url`` and parse JSON, with timeout + retries. Raises on final fail.
 
     Deliberately sends NO custom ``User-Agent`` (urllib's honest default,
@@ -198,12 +202,13 @@ def _get_json(url: str) -> dict:
     non-browser clients in 2026-08 — every scheduled CI build silently served
     a frozen artifact for 20 days — while honest tool UAs (``Python-urllib``,
     ``curl``, ``python-requests``) pass. Don't "improve" this back to a
-    custom or browser UA.
+    custom or browser UA. ``headers`` is for endpoint-specific extras (the
+    fantasy API's ``X-Fantasy-Filter``) and must never smuggle a User-Agent in.
     """
     last_err: Exception | None = None
     for attempt in range(_RETRIES):
         try:
-            req = urllib.request.Request(url)
+            req = urllib.request.Request(url, headers=headers or {})
             with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
@@ -593,6 +598,129 @@ def fetch_depth_chart_ranks(season: int, team_id_to_code: dict[str, str]) -> dic
                 continue
             ranks[gsis] = float(min(e["order"], _MAX_DEPTH_RANK))
     return ranks
+
+
+# --------------------------------------------------------------------------
+# Fantasy point projections (the "ESPN" expert column on the upcoming-week tab)
+# --------------------------------------------------------------------------
+# ESPN fantasy defaultPositionId -> skill position (5=K, 16=DST excluded —
+# the upcoming-week artifact is QB/RB/WR/TE only).
+_FANTASY_POS_MAP = {1: "QB", 2: "RB", 3: "WR", 4: "TE"}
+# kona_player_info stat-entry discriminators: statSourceId 1 = projection
+# (0 = actual); statSplitTypeId 1 = single-week split (0 = full season).
+_STAT_SOURCE_PROJECTION = 1
+_STAT_SPLIT_WEEKLY = 1
+# ESPN stat id for projected receptions inside a stat entry's raw ``stats``
+# dict. Verified empirically (2026-08-24): leaguedefaults/3 (PPR) appliedTotal
+# minus leaguedefaults/1 (standard) appliedTotal equals this stat exactly for
+# every sampled pass-catcher, and the two are equal for QBs — the formats
+# differ only by the reception weight, same as src/config.py's SCORING_* dicts.
+_STAT_ID_RECEPTIONS = "53"
+# X-Fantasy-Filter player cap: comfortably above the ~485 players ESPN projects
+# for a week and the ~775-player active skill roster set.
+_FANTASY_FILTER_LIMIT = 1500
+
+
+def _fantasy_projections_url(season: int, week: int) -> str:
+    return (
+        f"{_FANTASY_BASE}/seasons/{season}/segments/0/leaguedefaults/3"
+        f"?view=kona_player_info&scoringPeriodId={week}"
+    )
+
+
+def _parse_fantasy_projections(payload: dict, season: int, week: int) -> list[dict]:
+    """Normalize a ``kona_player_info`` payload into per-player projection dicts.
+
+    Emits ``{espn_id, position, ppr_total, receptions}`` for skill players
+    carrying a weekly projection entry for (season, week) with a nonzero
+    ``appliedTotal``. ESPN stamps 0.00 placeholders on deep-bench players —
+    those are "no genuine projection" (the roster-placeholder lesson), so they
+    are dropped and serialize as null, matching the other experts' semantics.
+    """
+    out: list[dict] = []
+    for entry in payload.get("players") or []:
+        pl = entry.get("player") or {}
+        pos = _FANTASY_POS_MAP.get(pl.get("defaultPositionId"))
+        espn_id = _norm_espn_id(pl.get("id"))
+        if not pos or not espn_id:
+            continue
+        for s in pl.get("stats") or []:
+            if (
+                s.get("seasonId") == season
+                and s.get("scoringPeriodId") == week
+                and s.get("statSourceId") == _STAT_SOURCE_PROJECTION
+                and s.get("statSplitTypeId") == _STAT_SPLIT_WEEKLY
+            ):
+                total = s.get("appliedTotal")
+                if not total:  # None or the 0.00 deep-bench placeholder
+                    break
+                raw = s.get("stats") or {}
+                try:
+                    receptions = float(raw.get(_STAT_ID_RECEPTIONS) or 0.0)
+                except (TypeError, ValueError):
+                    receptions = 0.0
+                out.append(
+                    {
+                        "espn_id": espn_id,
+                        "position": pos,
+                        "ppr_total": float(total),
+                        "receptions": receptions,
+                    }
+                )
+                break
+    return out
+
+
+def fetch_fantasy_projections(season: int, week: int) -> pd.DataFrame:
+    """ESPN weekly fantasy point projections for the skill positions.
+
+    One GET of the public stock-PPR league (``leaguedefaults/3``) with an
+    ``X-Fantasy-Filter`` limit covering every fantasy-relevant player; espn_id
+    -> gsis via the roster crosswalk (unmapped rows dropped, count logged).
+    Columns: ``player_id, position, season, week, espn_ppr_total,
+    espn_receptions``. PPR points are ESPN's own ``appliedTotal``;
+    standard/half-PPR derive exactly by removing the reception weight (see
+    ``_STAT_ID_RECEPTIONS``). Empty frame on any failure — expert data is
+    optional, so the builder degrades to a null column exactly like the
+    NFL.com/RotoWire boundaries.
+    """
+    try:
+        flt = json.dumps(
+            {
+                "players": {
+                    "limit": _FANTASY_FILTER_LIMIT,
+                    "sortPercOwned": {"sortAsc": False, "sortPriority": 1},
+                }
+            }
+        )
+        payload = _get_json(
+            _fantasy_projections_url(season, week), headers={"X-Fantasy-Filter": flt}
+        )
+        records = _parse_fantasy_projections(payload, season, week)
+    except Exception as e:  # noqa: BLE001 - network boundary
+        print(f"[espn_live] fantasy projections fetch failed: {e!r}")
+        return pd.DataFrame()
+    crosswalk = espn_to_gsis_map()
+    rows: list[dict] = []
+    unmapped = 0
+    for r in records:
+        gsis = crosswalk.get(r["espn_id"])
+        if not gsis:
+            unmapped += 1
+            continue
+        rows.append(
+            {
+                "player_id": gsis,
+                "position": r["position"],
+                "season": season,
+                "week": week,
+                "espn_ppr_total": r["ppr_total"],
+                "espn_receptions": r["receptions"],
+            }
+        )
+    if unmapped:
+        print(f"[espn_live] dropped {unmapped} fantasy-projection rows with no gsis mapping")
+    return pd.DataFrame(rows)
 
 
 def fetch_injury_status_map(season: int, week: int) -> dict[str, float]:
