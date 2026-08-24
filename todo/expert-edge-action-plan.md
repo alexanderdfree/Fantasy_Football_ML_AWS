@@ -22,6 +22,10 @@ Ruled out — do not re-propose without new evidence: monotone/isotonic recalibr
 coverage proxies, history-derived QB spot-start features (#1042), draft capital, expert projections as
 *features* (leakage / relearns the consensus — benchmarks only).
 
+Candidate causes *beyond* this catalog — measurement artifacts (final-rest-week grading, parameter
+vintage) and unbuilt in-house levers (rank objective, FP-blind head-loss allocation, recency weights,
+cross-position QB context): [todo/expert-gap-other-reasons-2026-08.md](expert-gap-other-reasons-2026-08.md).
+
 ## Phase 1 — quick wins, no retrain (this PR's session)
 
 ### 1a. Per-position best-ranker selection on the upcoming-week board — SHIPPED HERE
