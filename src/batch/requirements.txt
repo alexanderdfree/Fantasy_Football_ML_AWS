@@ -11,15 +11,15 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.12.1+cu130
 numpy==2.4.6  # held in sync with requirements.txt (numba lags numpy; 2.5.0 breaks the shap chain there)
-pandas==3.0.3
-pyarrow==24.0.0
+pandas==3.0.5
+pyarrow==25.0.1
 nflreadpy==0.1.5
-polars==1.42.1
+polars==1.43.2
 scikit-learn==1.9.0
-scipy==1.18.0
-matplotlib==3.11.0
+scipy==1.18.1
+matplotlib==3.11.1
 joblib==1.5.3
-lightgbm==4.6.0
+lightgbm==4.7.0
 mord==0.7
-boto3==1.43.40
+boto3==1.43.78
 optuna==4.9.0
