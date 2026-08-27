@@ -1082,6 +1082,45 @@ def build_opp_defense_history_arrays(
     return X_opp, opp_mask
 
 
+def _fill_opp_prior_season(
+    agg: pd.DataFrame,
+    entity_keys: list[str],
+    fill_map: dict[str, str],
+) -> pd.DataFrame:
+    """Back season-opener NaNs in within-season rolling opponent features with
+    that opponent's *full prior-season* per-game mean of the underlying stat.
+
+    The within-season ``shift(1).rolling(...)`` opponent aggregates are NaN for
+    an entity's first in-season game (no prior game to roll over). Left alone
+    those season openers fall through to ``feature_build.py``'s catch-all
+    ``fillna(0)``, which maps "no in-season history yet" to a strongly *negative*
+    post-scaler z-score rather than a neutral one. Backing them with last
+    season's average for the *same opponent* is both more informative and
+    leakage-safe: season S-1 is strictly before S, and ``season += 1`` aligns the
+    S-1 mean onto S exactly like the ``prior_season_*`` player idiom in
+    ``build_features``. Residual NaNs (the opponent's first season in the data)
+    still flow to the catch-all 0 as the last resort.
+
+    Args:
+        agg: per-game aggregate frame holding both the ``fill_map`` output
+            columns (NaN at openers) and their base stat columns, plus a
+            ``season`` column and ``entity_keys``.
+        entity_keys: the season-resetting grouping minus ``season`` (e.g.
+            ``["opponent", "position"]`` or ``["opponent_team"]``).
+        fill_map: ``{output_col: base_stat_col}`` — fill ``output_col``'s NaNs
+            with the prior-season mean of ``base_stat_col``.
+    """
+    base_cols = list(dict.fromkeys(fill_map.values()))
+    prior = agg.groupby(entity_keys + ["season"])[base_cols].mean().reset_index()
+    prior["season"] = prior["season"] + 1  # align S-1 mean onto season S
+    prior = prior.rename(columns={base: f"_prior_{base}" for base in base_cols})
+    agg = agg.merge(prior, on=entity_keys + ["season"], how="left")
+    for out_col, base_col in fill_map.items():
+        agg[out_col] = agg[out_col].fillna(agg[f"_prior_{base_col}"])
+    agg.drop(columns=[f"_prior_{base}" for base in base_cols], inplace=True)
+    return agg
+
+
 def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     """Build opponent/matchup features."""
     # Determine opponent from schedule or opponent_team column. Normalize to
@@ -1119,6 +1158,21 @@ def _build_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
             def_pts[f"opp_{col}"] = def_pts.groupby(["opponent", "position", "season"])[
                 col
             ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
+
+        # Season openers (first in-season game for an opponent×position) have no
+        # prior in-season game → the shift(1).rolling above is NaN. Back those
+        # with the opponent's prior-season per-game mean vs the same position
+        # instead of the catch-all 0 (see _fill_opp_prior_season). Done before
+        # the rename/rank so opp_def_rank_vs_pos ranks on the filled values too.
+        def_pts = _fill_opp_prior_season(
+            def_pts,
+            ["opponent", "position"],
+            {
+                "opp_pts_allowed_to_pos": "pts_allowed_to_pos",
+                "opp_rush_pts_allowed_to_pos": "rush_pts_allowed_to_pos",
+                "opp_recv_pts_allowed_to_pos": "recv_pts_allowed_to_pos",
+            },
+        )
 
         def_pts.rename(
             columns={
@@ -1223,6 +1277,14 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
             lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean()
         )
 
+    # Season openers (shift(1).rolling → NaN) fall back to the defense's
+    # prior-season per-game mean of each stat instead of the catch-all 0.
+    def_stats = _fill_opp_prior_season(
+        def_stats,
+        ["opponent_team"],
+        {out_col: raw_col for raw_col, out_col in stat_map.items()},
+    )
+
     # Merge onto player rows via opponent_team
     merge_cols = ["opponent_team", "season", "week"] + list(stat_map.values())
     def_merge = def_stats[merge_cols].drop_duplicates()
@@ -1261,6 +1323,13 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
         "points_allowed"
     ].transform(lambda x: x.shift(1).rolling(OPP_ROLLING_WINDOW, min_periods=1).mean())
 
+    # Season openers fall back to the team's prior-season per-game points allowed.
+    pts_allowed = _fill_opp_prior_season(
+        pts_allowed,
+        ["team"],
+        {"opp_def_pts_allowed_L5": "points_allowed"},
+    )
+
     pts_merge = pts_allowed[["team", "season", "week", "opp_def_pts_allowed_L5"]].drop_duplicates()
     n_before = len(df)
     df = df.merge(
@@ -1290,10 +1359,13 @@ def _build_defense_matchup_features(df: pd.DataFrame) -> pd.DataFrame:
     if len(df) != n_before:
         df = df.drop_duplicates(subset=["player_id", "season", "week"], keep="first")
 
-    # Fill NaNs (early-season games with no prior history) for the rolling
-    # opp-defense stats. ``implied_team_total`` is deliberately NOT filled here:
-    # the production schedule-merge path (``merge_schedule_features``) preserves
-    # NaN for unmatched games so downstream code can detect them, and the final
+    # Last-resort 0-fill for the rolling opp-defense stats. The prior-season
+    # fallback above (_fill_opp_prior_season) already backs the common case —
+    # season openers — with last season's per-game mean for that defense; what
+    # survives here is only an opponent's *first season in the data* (no S-1 to
+    # average). ``implied_team_total`` is deliberately NOT filled here: the
+    # production schedule-merge path (``merge_schedule_features``) preserves NaN
+    # for unmatched games so downstream code can detect them, and the final
     # feature build (``feature_build.py``'s catch-all
     # ``replace([inf, -inf], nan).fillna(0)``) maps any survivor to 0 uniformly.
     # Force-filling 0 here diverged from that NaN-preserving contract.

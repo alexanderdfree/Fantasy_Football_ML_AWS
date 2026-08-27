@@ -693,3 +693,146 @@ def test_inheritance_season_granular_rosters_warns_and_noops(caplog):
     assert any("missing columns" in r.message for r in caplog.records)
     # Week-3 vacancy invisible to the seasonal frame -> B inherits nothing.
     assert g.loc[("B", 3), "inherited_opportunity"] == 0.0
+
+
+# --- Cold-start opp_* prior-season fallback (_fill_opp_prior_season) ----------
+
+
+@pytest.mark.unit
+def test_fill_opp_prior_season_backs_opener_with_prior_mean():
+    """The helper fills only season-opener NaNs, with the *prior season's*
+    per-game mean of the base stat for the same entity (leakage-safe: the S
+    fill must use S-1 data ONLY, never same-season rows), leaves non-NaN rows
+    untouched, leaves a no-prior opener NaN (catch-all 0 is the last resort),
+    and drops its temp column."""
+    from src.features.engineer import _fill_opp_prior_season
+
+    agg = pd.DataFrame(
+        {
+            "entity": ["A", "A", "A", "A"],
+            "season": [2020, 2020, 2021, 2021],
+            "week": [1, 2, 1, 2],
+            "base": [10.0, 20.0, 30.0, 40.0],
+            # within-season shift(1).rolling: openers (week 1) are NaN
+            "out": [np.nan, 10.0, np.nan, 30.0],
+        }
+    )
+    res = _fill_opp_prior_season(agg, ["entity"], {"out": "base"}).set_index(["season", "week"])
+
+    # 2021 opener backed by the 2020 per-game mean = (10+20)/2 = 15.0.
+    # That it is 15.0 (not 25.0 = mean over all four rows) proves the fill uses
+    # S-1 data only — no same-season / future leakage.
+    assert res.loc[(2021, 1), "out"] == pytest.approx(15.0)
+    # First-season opener has no S-1 -> stays NaN (flows to the catch-all 0).
+    assert pd.isna(res.loc[(2020, 1), "out"])
+    # Non-opener rows are untouched (keep their within-season rolling value).
+    assert res.loc[(2020, 2), "out"] == pytest.approx(10.0)
+    assert res.loc[(2021, 2), "out"] == pytest.approx(30.0)
+    # The temp prior-season column is dropped.
+    assert not any(c.startswith("_prior_") for c in res.columns)
+
+
+def _opp_matchup_frame() -> pd.DataFrame:
+    """One RB facing opponent OPP across 2020 (wk1-3) and a 2021 wk1 opener.
+    Per-game points allowed to RB = the RB's fantasy_points; receptions drive
+    recv_fantasy so the multi-column fill_map is exercised too."""
+    rows = []
+    schedule = [(2020, 1, 10.0, 2), (2020, 2, 14.0, 3), (2020, 3, 12.0, 4), (2021, 1, 99.0, 9)]
+    for season, week, fp, rec in schedule:
+        rows.append(
+            dict(
+                player_id="RB1",
+                position="RB",
+                season=season,
+                week=week,
+                opponent_team="OPP",
+                fantasy_points=fp,
+                receptions=rec,
+                receiving_yards=0.0,
+                receiving_tds=0,
+                rushing_yards=0.0,
+                rushing_tds=0,
+            )
+        )
+    return pd.DataFrame(rows)
+
+
+@pytest.mark.unit
+def test_matchup_opener_uses_prior_season_mean():
+    """``_build_matchup_features`` backs a season-opener's opp_* matchup
+    features with the opponent's prior-season per-game mean instead of leaving
+    them NaN (which the catch-all maps to a biased-low 0)."""
+    from src.features.engineer import _build_matchup_features
+
+    out = _build_matchup_features(_opp_matchup_frame()).set_index(["season", "week"])
+
+    # 2021 opener: prior-season (2020) mean pts allowed to RB = (10+14+12)/3 = 12.0
+    assert out.loc[(2021, 1), "opp_fantasy_pts_allowed_to_pos"] == pytest.approx(12.0)
+    # recv component falls back too: 2020 mean receptions = (2+3+4)/3 = 3.0
+    assert out.loc[(2021, 1), "opp_recv_pts_allowed_to_pos"] == pytest.approx(3.0)
+    # The opener now ranks (not NaN); single opponent -> rank 1.
+    assert out.loc[(2021, 1), "opp_def_rank_vs_pos"] == pytest.approx(1.0)
+    # Within-season rows keep their shift(1).rolling value (2020 wk2 sees wk1=10).
+    assert out.loc[(2020, 2), "opp_fantasy_pts_allowed_to_pos"] == pytest.approx(10.0)
+    # First-season opener has no prior -> NaN survives to the catch-all 0.
+    assert pd.isna(out.loc[(2020, 1), "opp_fantasy_pts_allowed_to_pos"])
+
+
+@pytest.mark.unit
+def test_defense_matchup_opener_uses_prior_season_mean(monkeypatch):
+    """``_build_defense_matchup_features`` backs a season-opener's opp_def_*_L5
+    (offense-derived, site 2) and opp_def_pts_allowed_L5 (schedule-derived,
+    site 3) with the defense's prior-season per-game mean."""
+    import src.shared.weather_features as wf
+    from src.features.engineer import _build_defense_matchup_features
+
+    # Schedule: DEF (always the away team) allows the home score. 2020 mean
+    # points allowed = (20+10)/2 = 15.0; a 2021 wk1 opener game must exist so
+    # the merged row carries the fallback rather than dropping to the catch-all.
+    # spread_line/total_line are unused by these assertions but required by the
+    # implied_team_total lookup the same builder runs.
+    def _g(season, week, home, hs):
+        return dict(
+            season=season,
+            week=week,
+            away_team="DEF",
+            home_team=home,
+            away_score=0,
+            home_score=hs,
+            spread_line=0.0,
+            total_line=40.0,
+        )
+
+    sched = pd.DataFrame([_g(2020, 1, "HA", 20), _g(2020, 2, "HB", 10), _g(2021, 1, "HC", 99)])
+    monkeypatch.setattr(wf, "_schedule_cache", sched)
+    monkeypatch.setattr(wf, "_load_schedules", lambda: sched)
+
+    # Offense facing DEF: 2020 per-game sacks 2 & 4 (mean 3.0), plus a 2021
+    # wk1 opener whose within-season rolling is NaN -> falls back to 3.0.
+    plays = [(2020, 1, 2), (2020, 2, 4), (2021, 1, 9)]
+    df = pd.DataFrame(
+        [
+            dict(
+                player_id="QB1",
+                season=season,
+                week=week,
+                opponent_team="DEF",
+                recent_team="OFF",
+                sacks=sk,
+                passing_yards=200.0,
+                passing_tds=1,
+                interceptions=0,
+                rushing_yards=10.0,
+            )
+            for season, week, sk in plays
+        ]
+    )
+
+    out = _build_defense_matchup_features(df).set_index(["season", "week"])
+
+    # Site 2: opener opp_def_sacks_L5 = 2020 mean sacks = 3.0 (not 0).
+    assert out.loc[(2021, 1), "opp_def_sacks_L5"] == pytest.approx(3.0)
+    # Site 3: opener opp_def_pts_allowed_L5 = 2020 mean points allowed = 15.0.
+    assert out.loc[(2021, 1), "opp_def_pts_allowed_L5"] == pytest.approx(15.0)
+    # Within-season 2020 wk2 keeps its rolling value (sees wk1 sacks=2).
+    assert out.loc[(2020, 2), "opp_def_sacks_L5"] == pytest.approx(2.0)
