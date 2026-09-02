@@ -42,32 +42,68 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Remote (Claude Code on the web) venv bootstrap. Mirrors CI (tests.yml):
+# Python 3.12 + `uv pip install -r requirements-dev.txt`, which pulls in
+# requirements.txt (numpy/pandas/sklearn/lightgbm/boto3/…), the CPU torch wheel
+# via that file's --extra-index-url, and pytest/ruff/optuna. Idempotent: a warm
+# re-run (resume/compact, or a container restored from cache) audits in ~1s.
+#
+# Every install goes through the venv's OWN interpreter (`--python .venv/bin/python`),
+# never a bare `pip`: `uv venv` ships no pip, so inside the activated venv `pip`
+# resolved to the system /usr/bin/pip (Python 3.11) and the previous bootstrap
+# aborted before exporting anything — sessions started with an empty .venv and
+# no pandas/pytest/ruff on PATH.
+# ---------------------------------------------------------------------------
 cd "$repo_root"
+venv="$repo_root/.venv"
+py="$venv/bin/python"
 
-if [ ! -d .venv ]; then
-  # Prefer uv (it fetches the right interpreter); fall back so a missing
-  # python3.12 binary doesn't abort the whole bootstrap under `set -euo pipefail`.
-  # Matches SETUP.md's `uv venv --python 3.12`.
-  if command -v uv >/dev/null 2>&1; then
-    uv venv --python 3.12 .venv
-  else
-    python3.12 -m venv .venv 2>/dev/null || python3 -m venv .venv
-  fi
+# uv: fetches a Python 3.12 when the image lacks one and installs far faster than
+# pip. The web image ships it in ~/.local/bin; self-heal if a future image doesn't.
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "[session-start] uv not found — installing via astral.sh"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 
-# shellcheck disable=SC1091
-source .venv/bin/activate
+# Recreate a half-built venv (dir present, no interpreter) instead of trusting
+# `-d .venv`; a venv with a working interpreter is kept and topped up in place.
+if [ ! -x "$py" ]; then
+  rm -rf "$venv"
+  # --seed adds pip so an ad-hoc `pip install …` in-session lands in the venv
+  # instead of silently targeting the system interpreter.
+  uv venv --python 3.12 --seed "$venv"
+fi
+"$py" -m pip --version >/dev/null 2>&1 || uv pip install --python "$py" pip
 
-pip install --upgrade pip
+# Mirrors tests.yml's workflow-level UV_INDEX_STRATEGY: the PyTorch CPU index
+# (requirements-dev.txt's --extra-index-url) hosts older numpy/requests/etc.;
+# without it uv stops at the first index that carries a package and fails to resolve.
+export UV_INDEX_STRATEGY="${UV_INDEX_STRATEGY:-unsafe-best-match}"
+uv pip install --python "$py" -r requirements-dev.txt
 
-pip install -r requirements.txt
+# Persist for every later Bash call in this session (the harness sources this file).
+if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+  {
+    echo "export VIRTUAL_ENV=$venv"
+    echo "export PATH=$venv/bin:$HOME/.local/bin:\$PATH"
+    echo "export PYTHONPATH=$repo_root"
+  } >> "$CLAUDE_ENV_FILE"
+fi
 
-pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cpu
+# Fail loudly (non-zero exit) if the venv still lacks the core stack.
+"$py" - <<'PY'
+import sys
 
-pip install -r requirements-dev.txt
+import pandas
+import torch
 
-{
-  echo "export VIRTUAL_ENV=$repo_root/.venv"
-  echo "export PATH=$repo_root/.venv/bin:\$PATH"
-  echo "export PYTHONPATH=$repo_root"
-} >> "$CLAUDE_ENV_FILE"
+print(
+    f"[session-start] venv ready: python {sys.version.split()[0]} "
+    f"pandas {pandas.__version__} torch {torch.__version__}"
+)
+PY
+"$venv/bin/pytest" --version >/dev/null
+"$venv/bin/ruff" --version >/dev/null
+echo "[session-start] uv $(uv --version 2>/dev/null | awk '{print $2}') at $(command -v uv)"

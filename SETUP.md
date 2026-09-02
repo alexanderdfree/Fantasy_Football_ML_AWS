@@ -28,6 +28,21 @@ pip install torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements-dev.txt
 ```
 
+### Claude Code on the web — automatic
+
+Remote (web) sessions need none of the above: the tracked `SessionStart` hook
+([.claude/hooks/session-start.sh](.claude/hooks/session-start.sh)) runs the equivalent on every
+session start (`CLAUDE_CODE_REMOTE=true`) — `uv venv --python 3.12 --seed .venv`, then
+`uv pip install --python .venv/bin/python -r requirements-dev.txt` (the exact resolve CI runs:
+`requirements.txt` + the CPU torch wheel + pytest/ruff/optuna) — and exports
+`VIRTUAL_ENV`/`PATH`/`PYTHONPATH` into the session, so `python`, `pip`, `pytest`, `ruff`, and `uv`
+all resolve to the venv from the first shell command. The first session on a new environment
+installs cold (~25 s measured — `uv`); later sessions reuse the cached container filesystem and
+re-audit in ~5 s. If `python -c "import pandas"` fails in a web session, the hook errored — its stderr is in
+the transcript's `SessionStart hook error` notice; re-run it by hand with
+`CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh`. Hook edits apply to sessions started
+after they land on `main`.
+
 ## Apple Silicon (macOS) — optional MPS
 
 The install above uses the **CPU** wheel; on an Apple Silicon Mac the pipeline runs on the CPU
