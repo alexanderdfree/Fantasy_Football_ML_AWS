@@ -31,11 +31,25 @@ six-game filter. Validation/test retain every observed game.
 
 **References.** [src/data/split.py:6-37](../../src/data/split.py), season constants in [src/config.py](../../src/config.py). Knowledge cutoff to 2012 landed in commit `f400a5c`.
 
+**Fold-specific preprocessing.** Native D/ST CV and rolling-origin preparation
+must leave distribution-dependent context fills missing until the actual fold
+has been sliced. Fit those means/medians on that fold's training frame, then
+apply them to its validation/test frames before ordinary feature filling.
+Using the global 2013–2023 training years leaks later seasons into earlier
+origins. Public CV, its final refit, rolling-origin reports and LightGBM CV use
+the same existing fill hook. Ordinary production loading retains its configured
+training-year behavior. Explicit fold fitting never falls back to holdout data.
+
+The played-row predicate also tests each raw statistic individually: nonzero
+events can sum to zero (for example, one carry and minus one rushing yard).
+Such cancellation is not evidence that a game was unplayed.
+
 ## Changelog
 
 - **2026-09-10** — Recover missing participation identities, exclude invalid
   identifiers before joins, expose absent source coverage, and align K's
   effective minimum-games threshold with its configuration. (PR pending)
+- **2026-09-10** — Preserve played signed-stat cancellation rows and fit native D/ST context imputation at each actual fold boundary; verify held-out score perturbations cannot alter training/validation features. (PR pending)
 
 - **2026-09-10** — Restore played offensive zero-stat games from participation before feature engineering and splitting; retain the season cuts and train-only minimum-games policy. (PR pending)
 

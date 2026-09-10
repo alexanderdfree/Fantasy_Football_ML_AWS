@@ -68,6 +68,7 @@ import copy
 import json
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -162,6 +163,11 @@ def ensemble_env(fixed_epochs: int):
 # ---------------------------------------------------------------------------
 
 
+_CAPTURE_LOCK = threading.RLock()
+_CAPTURE_LOCAL = threading.local()
+_CAPTURE_PATCH = None
+
+
 @contextlib.contextmanager
 def capture_attention_construction(captures: list, test_capture: dict):
     """Patch ``MultiHeadTrainer.train`` + ``MultiHeadNetWithHistory.predict_numpy``
@@ -169,58 +175,92 @@ def capture_attention_construction(captures: list, test_capture: dict):
     per-seed init, loaders, criterion, optimizer hyperparams) and trains
     NOTHING. ``captures`` receives one dict per run; ``test_capture`` receives
     the scaled test arrays from the first ``predict_numpy`` call.
+
+    Hooks dispatch to the calling thread's innermost capture. Other threads
+    keep ordinary training and prediction, including while a capture fails.
     """
     from src.shared import neural_net
     from src.shared.training import MultiHeadTrainer
 
-    orig_train = MultiHeadTrainer.train
-    orig_predict = neural_net.MultiHeadNetWithHistory.predict_numpy
-
-    def _train_stub(self, train_loader, val_loader, n_epochs):
-        captures.append(
-            {
-                "trainer": self,
-                "train_loader": train_loader,
-                "val_loader": val_loader,
-                "n_epochs": n_epochs,
+    global _CAPTURE_PATCH
+    with _CAPTURE_LOCK:
+        state = _CAPTURE_PATCH
+        if state is None:
+            state = {
+                "train": MultiHeadTrainer.train,
+                "predict": neural_net.MultiHeadNetWithHistory.predict_numpy,
+                "active": 0,
             }
-        )
-        return {}
 
-    def _predict_stub(
-        self,
-        X_static,
-        X_history,
-        history_mask,
-        device,
-        X_opp_history=None,
-        opp_history_mask=None,
-    ):
-        test_capture.setdefault(
-            "args", (X_static, X_history, history_mask, X_opp_history, opp_history_mask)
-        )
-        # Learn the exact output key set (incl. gated-head aux keys) from a
-        # 1-row real forward, then zero-fill full length so the surrounding
-        # compute_target_metrics completes harmlessly.
-        sample = orig_predict(
-            self,
-            X_static[:1],
-            X_history[:1],
-            history_mask[:1],
-            device,
-            None if X_opp_history is None else X_opp_history[:1],
-            None if opp_history_mask is None else opp_history_mask[:1],
-        )
-        n = X_static.shape[0]
-        return {k: np.zeros(n, dtype=np.float32) for k in sample}
+            def _train_stub(self, train_loader, val_loader, n_epochs):
+                stack = getattr(_CAPTURE_LOCAL, "stack", ())
+                if not stack:
+                    return state["train"](self, train_loader, val_loader, n_epochs)
+                own_captures, _ = stack[-1]
+                own_captures.append(
+                    {
+                        "trainer": self,
+                        "train_loader": train_loader,
+                        "val_loader": val_loader,
+                        "n_epochs": n_epochs,
+                    }
+                )
+                return {}
 
-    MultiHeadTrainer.train = _train_stub
-    neural_net.MultiHeadNetWithHistory.predict_numpy = _predict_stub
+            def _predict_stub(
+                self,
+                X_static,
+                X_history,
+                history_mask,
+                device,
+                X_opp_history=None,
+                opp_history_mask=None,
+            ):
+                stack = getattr(_CAPTURE_LOCAL, "stack", ())
+                if not stack:
+                    return state["predict"](
+                        self,
+                        X_static,
+                        X_history,
+                        history_mask,
+                        device,
+                        X_opp_history,
+                        opp_history_mask,
+                    )
+                _, own_test_capture = stack[-1]
+                own_test_capture.setdefault(
+                    "args", (X_static, X_history, history_mask, X_opp_history, opp_history_mask)
+                )
+                # One untrained row supplies the output keys; preserve each
+                # capture's full test inputs without predicting every row.
+                sample = state["predict"](
+                    self,
+                    X_static[:1],
+                    X_history[:1],
+                    history_mask[:1],
+                    device,
+                    None if X_opp_history is None else X_opp_history[:1],
+                    None if opp_history_mask is None else opp_history_mask[:1],
+                )
+                return {k: np.zeros(X_static.shape[0], dtype=np.float32) for k in sample}
+
+            MultiHeadTrainer.train = _train_stub
+            neural_net.MultiHeadNetWithHistory.predict_numpy = _predict_stub
+            _CAPTURE_PATCH = state
+        if not hasattr(_CAPTURE_LOCAL, "stack"):
+            _CAPTURE_LOCAL.stack = []
+        _CAPTURE_LOCAL.stack.append((captures, test_capture))
+        state["active"] += 1
     try:
         yield
     finally:
-        MultiHeadTrainer.train = orig_train
-        neural_net.MultiHeadNetWithHistory.predict_numpy = orig_predict
+        with _CAPTURE_LOCK:
+            _CAPTURE_LOCAL.stack.pop()
+            state["active"] -= 1
+            if state["active"] == 0:
+                MultiHeadTrainer.train = state["train"]
+                neural_net.MultiHeadNetWithHistory.predict_numpy = state["predict"]
+                _CAPTURE_PATCH = None
 
 
 def capture_seeds(
@@ -337,11 +377,11 @@ def _optimizer_hyperparams(trainer) -> dict:
 
 
 def stacked_val_losses(template, params, buffers, criterion, val_loader, device) -> list[float]:
-    """Per-member combined val loss (mean over val batches), eval mode.
+    """Per-member combined val loss (mean over observations), eval mode.
 
     Mirrors the trainer's val pass semantics (``model.eval()`` + no_grad +
-    the combined criterion averaged over batches) so a stacked tune trial
-    reports the same quantity per member that an eager trial reports.
+    the combined criterion weighted by each batch's sample count) so a stacked
+    tune trial reports the same quantity per member that an eager trial reports.
     """
 
     def member_loss_eval(p, b, feats, y):
@@ -351,17 +391,19 @@ def stacked_val_losses(template, params, buffers, criterion, val_loader, device)
     veval = torch.vmap(member_loss_eval, in_dims=(0, 0, None, None))
     template.eval()
     totals = None
-    n_batches = 0
+    n_samples = 0
     with torch.no_grad():
         for batch in val_loader:
             feats, y = _batch_to_device(batch, device)
             losses = veval(params, buffers, feats, y)
-            totals = losses if totals is None else totals + losses
-            n_batches += 1
+            n_batch_samples = feats[0].shape[0]
+            weighted_losses = losses * n_batch_samples
+            totals = weighted_losses if totals is None else totals + weighted_losses
+            n_samples += n_batch_samples
     template.train()
-    if totals is None or n_batches == 0:
+    if totals is None or n_samples == 0:
         raise RuntimeError("stacked val pass saw no batches — empty val loader?")
-    return [float(v) for v in (totals / n_batches).cpu()]
+    return [float(v) for v in (totals / n_samples).cpu()]
 
 
 def train_stacked(

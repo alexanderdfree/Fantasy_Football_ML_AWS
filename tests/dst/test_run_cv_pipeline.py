@@ -46,8 +46,12 @@ def _patch_cv(monkeypatch):
         )
         return {"cv_metrics": {"ridge": {}, "nn": {}}}
 
+    def _build_data(*, impute_context=True):
+        assert impute_context is False
+        return df.copy()
+
     for mod in (dst_data, dst_pipe):
-        monkeypatch.setattr(mod, "build_data", lambda: df.copy(), raising=False)
+        monkeypatch.setattr(mod, "build_data", _build_data, raising=False)
     for mod in (dst_targets, dst_pipe):
         monkeypatch.setattr(mod, "compute_targets", lambda d: d, raising=False)
     for mod in (dst_features, dst_pipe):
@@ -76,9 +80,14 @@ def test_run_dst_cv_respects_custom_config(monkeypatch):
     calls = _patch_cv(monkeypatch)
     import src.dst.run_pipeline as dst_pipe
 
-    custom = {"targets": ["points_allowed"]}
+    custom = {"targets": ["points_allowed"], "fill_nans_fn": dst_pipe.CONFIG["fill_nans_fn"]}
+    original = custom.copy()
     dst_pipe.run_cv(config=custom)
-    assert calls[0]["cfg"] is custom
+    forwarded = calls[0]["cfg"]
+    assert forwarded is not custom
+    assert forwarded["targets"] == custom["targets"]
+    assert forwarded["fill_nans_fn"].keywords["fill_nans_fn"] is custom["fill_nans_fn"]
+    assert custom == original
 
 
 @pytest.mark.unit

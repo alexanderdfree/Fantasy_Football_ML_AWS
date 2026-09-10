@@ -15,6 +15,7 @@ def build_data(
     team_stats: pd.DataFrame | None = None,
     scoring_events: pd.DataFrame | None = None,
     allow_scoring_fetch: bool = True,
+    impute_context: bool = True,
 ) -> pd.DataFrame:
     """Build team-level D/ST data from schedules, weekly stats, and team-week stats.
 
@@ -408,49 +409,21 @@ def build_data(
     # the tier mapping still lands in a reasonable band.
     dst_df["yards_allowed"] = dst_df["yards_allowed"].fillna(350)
 
-    # Statistic-based fills are computed on TRAIN seasons only and applied to
-    # every split. Computing median/mean over the full frame (which includes
-    # the val=2024 / test=2025 holdout rows) leaks holdout distribution into
-    # the imputation used for train rows — and conversely fills val/test NaNs
-    # with a statistic they helped define, contaminating the cross-season
-    # generalization the temporal split assumes. This mirrors the train-only
-    # imputation pattern in src/data/split.py (impute_snap_pct(fit_on=train)).
-    # Constant fills below (is_home/rest_days/div_game/is_dome and the 0-fills
-    # above) don't depend on the data distribution, so they need no split-aware
-    # treatment.
-    train_rows = dst_df[dst_df["season"].isin(config.TRAIN_SEASONS)]
-
-    def _train_stat(col: str, agg: str) -> float:
-        """Train-only median/mean for ``col``, falling back to the full frame
-        when no TRAIN_SEASONS rows are present (e.g. a single-season fixture).
-        Production always has train rows, so the fallback is inert there."""
-        train_vals = train_rows[col]
-        stat = train_vals.median() if agg == "median" else train_vals.mean()
-        if pd.isna(stat):
-            stat = dst_df[col].median() if agg == "median" else dst_df[col].mean()
-        return stat
-
-    # league-average points-allowed (train-only) reused by the opp_scoring_L{3,5} fills
-    train_pts_allowed_mean = _train_stat("points_allowed", "mean")
-    for col in ["spread_line", "total_line"]:
-        dst_df[col] = dst_df[col].fillna(_train_stat(col, "median"))
+    # Ordinary production keeps its configured training-season imputation.
+    # CV callers defer these fills until their actual fold has been sliced.
+    if impute_context:
+        dst_df = impute_context_from_train(
+            dst_df,
+            fit_on=dst_df[dst_df["season"].isin(config.TRAIN_SEASONS)],
+            fallback_to_all=True,
+        )
+    # Constant fills do not depend on future observations.
     dst_df["is_home"] = dst_df["is_home"].fillna(0)
     dst_df["rest_days"] = dst_df["rest_days"].fillna(7)
     dst_df["div_game"] = dst_df["div_game"].fillna(0)
     dst_df["is_dome"] = dst_df["is_dome"].fillna(0)
-    dst_df["opp_scoring_L5"] = dst_df["opp_scoring_L5"].fillna(train_pts_allowed_mean)
-    dst_df["opp_scoring_L3"] = dst_df["opp_scoring_L3"].fillna(train_pts_allowed_mean)
-    dst_df["opp_turnovers_L5"] = dst_df["opp_turnovers_L5"].fillna(
-        _train_stat("opp_turnovers_L5", "median")
-    )
-    dst_df["opp_sacks_allowed_L5"] = dst_df["opp_sacks_allowed_L5"].fillna(
-        _train_stat("opp_sacks_allowed_L5", "median")
-    )
-    # Opposing QB features: EPA fills with 0 (league-average), rates/yards with
-    # the train-only median.
+    # Opposing QB EPA fills with 0 (league-average).
     dst_df["opp_qb_epa_L5"] = dst_df["opp_qb_epa_L5"].fillna(0)
-    for col in ["opp_qb_int_rate_L5", "opp_qb_sack_rate_L5", "opp_qb_rush_yds_L5"]:
-        dst_df[col] = dst_df[col].fillna(_train_stat(col, "median"))
 
     # Per-game opp column (attention history) — fill QB-EPA with 0 so the
     # first-week-of-season attention sequence isn't degenerate.
@@ -475,6 +448,40 @@ def build_data(
 
     dst_df = dst_df.sort_values(["team", "season", "week"]).reset_index(drop=True)
     return dst_df
+
+
+def impute_context_from_train(
+    df: pd.DataFrame, *, fit_on: pd.DataFrame, fallback_to_all: bool = False
+) -> pd.DataFrame:
+    """Apply native context fills fitted on the supplied training population.
+
+    Missing training statistics become neutral zeros for folds. The full-frame
+    fallback preserves the ordinary loader's historical single-season behavior;
+    fold callers must never enable it.
+    """
+    df = df.copy()
+    median_cols = (
+        "spread_line",
+        "total_line",
+        "opp_turnovers_L5",
+        "opp_sacks_allowed_L5",
+        "opp_qb_int_rate_L5",
+        "opp_qb_sack_rate_L5",
+        "opp_qb_rush_yds_L5",
+    )
+
+    def statistic(col, agg):
+        value = getattr(fit_on[col], agg)()
+        if pd.isna(value):
+            value = getattr(df[col], agg)() if fallback_to_all else 0.0
+        return value
+
+    for col in median_cols:
+        df[col] = df[col].fillna(statistic(col, "median"))
+    points_mean = statistic("points_allowed", "mean")
+    for col in ("opp_scoring_L3", "opp_scoring_L5"):
+        df[col] = df[col].fillna(points_mean)
+    return df
 
 
 def filter_to_position(df: pd.DataFrame) -> pd.DataFrame:

@@ -146,6 +146,66 @@ def test_preprocess_keeps_zero_stats_row_with_nonzero_snaps():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE"])
+@pytest.mark.parametrize("snap_column", [True, False])
+def test_preprocess_keeps_played_stats_that_cancel(position, snap_column):
+    """A negative rushing yard can cancel its attempt without erasing the play."""
+    df = pd.DataFrame(
+        [
+            _base_row(
+                player_id="played",
+                position=position,
+                passing_yards=0,
+                passing_tds=0,
+                rushing_yards=-1,
+                carries=1,
+                completions=0,
+                attempts=0,
+                snap_pct=np.nan,
+            )
+        ]
+    )
+    if not snap_column:
+        df = df.drop(columns="snap_pct")
+    out = preprocess(df)
+    assert out["player_id"].tolist() == ["played"]
+    assert out["rushing_yards"].tolist() == [-1]
+    assert out["carries"].tolist() == [1]
+    assert out["fantasy_points"].iloc[0] == pytest.approx(-0.1)
+    if snap_column:
+        assert out["snap_pct"].isna().all()
+
+
+@pytest.mark.unit
+def test_preprocess_distinguishes_cancelled_stats_from_missing_and_zero_stats():
+    """Missing statistics count as zero; an observed snap still keeps the row."""
+    rows = []
+    for player, yards, carries, snaps in [
+        ("played", -1, 1, np.nan),
+        ("zero", 0, 0, np.nan),
+        ("unknown", np.nan, np.nan, np.nan),
+        ("snapped", 0, 0, 0.25),
+    ]:
+        rows.append(
+            _base_row(
+                player_id=player,
+                passing_yards=0,
+                passing_tds=0,
+                rushing_yards=yards,
+                carries=carries,
+                completions=0,
+                attempts=0,
+                snap_pct=snaps,
+            )
+        )
+    df = pd.DataFrame(rows, index=[91, -4, 20, 3])
+    original = df.copy(deep=True)
+    out = preprocess(df)
+    assert set(out["player_id"]) == {"played", "snapped"}
+    pd.testing.assert_frame_equal(df, original)
+
+
+@pytest.mark.unit
 def test_preprocess_when_snap_pct_column_absent_keeps_all_zero_stat_rows():
     """No ``snap_pct`` column → no_snaps mask is True everywhere; rows with
     truly zero stats still get dropped (snap-mask matches)."""

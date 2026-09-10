@@ -238,13 +238,13 @@ def _self_load_full_frame_and_cfg(position):
     if position == "DST":
         from src.dst.data import build_data
         from src.dst.features import compute_features
-        from src.dst.run_pipeline import CONFIG
+        from src.dst.run_pipeline import CONFIG, with_fold_imputation
         from src.dst.targets import compute_targets
 
-        df = build_data()
+        df = build_data(impute_context=False)
         df = compute_targets(df)
         compute_features(df)
-        return df, CONFIG
+        return df, with_fold_imputation(CONFIG)
     if position == "K":
         from src.k.config import POSITION_CONFIG
         from src.k.data import load_data, load_kicks
