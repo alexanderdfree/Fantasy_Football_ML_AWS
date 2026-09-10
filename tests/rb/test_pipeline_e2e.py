@@ -69,8 +69,6 @@ def _run_pipeline_in_tmp(train_df, val_df, test_df, seed: int, workdir: str) -> 
     data_raw_src = _find_data_raw_dir()
     try:
         os.chdir(workdir)
-        os.makedirs("src/rb/outputs/models", exist_ok=True)
-        os.makedirs("src/rb/outputs/figures", exist_ok=True)
         dst = os.path.join(workdir, "data", "raw")
         if not os.path.exists(dst):
             os.makedirs(os.path.dirname(dst), exist_ok=True)

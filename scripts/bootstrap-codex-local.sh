@@ -40,7 +40,7 @@ if [ "$WITH_MEMORY_SYNC" -eq 1 ]; then
 fi
 
 cat <<EOF
-Installed Final-Project Codex prompts into:
+Installed Fantasy_Football_ML_AWS Codex prompts into:
   $prompt_dst
 
 Restart Codex so custom prompts reload, then invoke them as:
