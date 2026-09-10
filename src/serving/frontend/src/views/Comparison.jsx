@@ -52,7 +52,7 @@ function formatComparisonValue(v, metric) {
     return metric === "r2" ? v.toFixed(3) : v.toFixed(2);
 }
 
-/* Shared 7-column header: first label ("Position" / "Quartile"), then the six
+/* Shared header: first label ("Position" / "Quartile"), then the seven
  * source columns in COMPARISON_SOURCES order. */
 function ComparisonTableHead({ firstLabel }) {
     return (
@@ -211,8 +211,13 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
     return (
         <section id="view-comparison" className="view active">
             <ApproachBanner icon="chart" title="Our Models vs Expert Projections">
-                Weekly fantasy-point accuracy on the 2025 regular season. Every source is graded against full PPR actuals on identical player-weeks. Expected starters are selected before kickoff using a shared expert reference. Lower MAE / RMSE is better; higher R² is better.
+                Accuracy on the stats our models and experts both project, weighted with PPR scoring. Every column uses the same components and player-weeks within each position. Expected starters use an archived pregame reference. Lower MAE / RMSE is better; higher R² is better.
             </ApproachBanner>
+
+            <div className="comparison-notes">
+                QB includes passing, rushing, interceptions and lost fumbles. RB includes rushing, receiving and lost fumbles. WR/TE include receiving and lost fumbles. Stats outside those sets are excluded from actuals too.
+                K uses field-goal yardage, extra points and misses; NFL.com is excluded because its scoring components do not match. The kicker reference uses ESPN. DST uses the shared defensive stats and points/yardage tiers.
+            </div>
 
             <div className="comparison-controls">
                 <span className="comparison-metric-label">Metric</span>
@@ -246,7 +251,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                 error={error}
             />
             <ComparisonSubsetBlock
-                header="Season leaders · top 30 (2025)"
+                header="Season leaders by shared scoring · top 30 (2025)"
                 coverage={data?.coverage?.top30}
                 bodyId="comparison-top30-body"
                 posMap={data ? (subsets.top30 || {}) : null}
@@ -254,7 +259,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                 error={error}
             />
             <ComparisonSubsetBlock
-                header="Season leaders · top 12 (2025)"
+                header="Season leaders by shared scoring · top 12 (2025)"
                 coverage={data?.coverage?.top12}
                 bodyId="comparison-top12-body"
                 posMap={data ? (subsets.top12 || {}) : null}
@@ -323,13 +328,13 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                         <div className="section-header">About this comparison</div>
                         <ul className="comparison-note-list">
                             <li><strong>Seasons.</strong> Our model trains on 2013–2023 (2012 is loaded for prior-season context only), validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
-                            <li><strong>Scoring.</strong> Every source is graded against full regular-season PPR actuals, including rushing points for receivers and receiving points for quarterbacks.</li>
-                            <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly fantasy-point totals; the best cell in each row is highlighted.</li>
+                            <li><strong>Scoring.</strong> Predictions and regular-season actuals include only the shared projected components listed above, weighted with PPR scoring. These component scores differ from full fantasy totals.</li>
+                            <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly shared-component point totals; the best cell in each row is highlighted.</li>
                             <li><strong>NFL.com.</strong> {nflNote}</li>
                             <li><strong>RotoWire.</strong> {rwNote}</li>
                             <li><strong>ESPN.</strong> {espnNote}</li>
-                            <li><strong>Expected starters.</strong> The weekly top 24 uses a fixed average of archived NFL.com and RotoWire forecasts, with NFL.com alone for K and RotoWire alone for DST. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>
-                            <li><strong>Season leaders.</strong> Top 30 and top 12 use total actual regular-season points, excluding playoffs. These are retrospective diagnostics, not pregame starter lists.</li>
+                            <li><strong>Expected starters.</strong> The weekly top 24 uses a fixed average of archived NFL.com and RotoWire forecasts on shared components, with ESPN alone for K and RotoWire alone for DST. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>
+                            <li><strong>Season leaders.</strong> Top 30 and top 12 use total actual regular-season points from the shared components, excluding playoffs. These are retrospective diagnostics, not pregame starter lists.</li>
                             <li><strong>Weekly leader capture.</strong> The fraction of actual weekly top-24 scorers selected by each source's own forecasts. Only weeks with at least 24 comparable players count; hover for the number of weeks.</li>
                             <li>
                                 <strong>Coverage.</strong> Every displayed source in a position is scored on the same player-weeks. Missing forecasts are excluded, never treated as zero. Sample sizes appear beside each position. Historical investigations and uncertainty estimates are available in the{" "}

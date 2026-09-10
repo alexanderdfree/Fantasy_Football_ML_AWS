@@ -282,7 +282,7 @@ def _fake_experts():
 
 
 @pytest.mark.integration
-def test_comparison_scores_cached_sources_on_shared_full_actuals(
+def test_comparison_scores_cached_sources_on_shared_component_actuals(
     app_module, synthetic_cache, monkeypatch
 ):
     monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
@@ -347,7 +347,7 @@ def test_comparison_includes_quartile_bias(app_module, synthetic_cache, monkeypa
 
     meta = body["quartile_bias_meta"]
     assert meta["quartiles"] == ["Q1", "Q2", "Q3", "Q4"]
-    assert meta["binned_by"] == "actual_fantasy_points"
+    assert meta["binned_by"] == "actual_shared_component_points"
     assert meta["bias_convention"] == "pred_minus_actual"
 
     qb = body["quartile_bias"]

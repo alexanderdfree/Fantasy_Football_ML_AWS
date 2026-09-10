@@ -1,4 +1,4 @@
-"""Behavioral regression tests for full-score, paired expert comparisons."""
+"""Behavioral regression tests for shared-component, paired expert comparisons."""
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,10 @@ def records(n=30):
             "season": 2025,
             "week": 1,
             "fantasy_points": np.arange(n, dtype=float) + 7,
+            "actual_receiving_yards": np.arange(n, dtype=float) * 10,
+            "actual_receptions": 7.0,
+            "actual_receiving_tds": 0.0,
+            "actual_fumbles_lost": 0.0,
             "ridge_pred_ppr": np.arange(n, dtype=float),
             "nn_pred_ppr": np.arange(n, dtype=float),
             "attn_nn_pred_ppr": np.arange(n, dtype=float),
@@ -29,7 +33,7 @@ def records(n=30):
     )
 
 
-def test_identical_forecasts_have_identical_errors_on_full_actuals():
+def test_identical_forecasts_have_identical_errors_on_shared_actuals():
     subsets, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
     cells = subsets["all"]["WR"]
     assert all(cell["mae"] == 7 for cell in cells.values())
@@ -104,7 +108,7 @@ def test_route_ignores_poisoned_static_expert_metrics(app_module, monkeypatch):
     assert body["sample_basis"] == "shared_player_weeks"
 
 
-def test_offline_actual_scoring_includes_wr_rushing_and_qb_receiving():
+def test_offline_actual_scoring_excludes_wr_rushing_and_qb_receiving():
     from src.analysis.analysis_nflcom_baseline import _aggregate_actuals_to_ppr
 
     wr = pd.DataFrame(
@@ -113,5 +117,46 @@ def test_offline_actual_scoring_includes_wr_rushing_and_qb_receiving():
     qb = pd.DataFrame(
         {"passing_yards": [250], "receiving_yards": [10], "receptions": [1], "receiving_tds": [1]}
     )
-    assert _aggregate_actuals_to_ppr(wr, "WR", "ppr")[0] == 17
-    assert _aggregate_actuals_to_ppr(qb, "QB", "ppr")[0] == 18
+    assert _aggregate_actuals_to_ppr(wr, "WR", "ppr")[0] == 10
+    assert _aggregate_actuals_to_ppr(qb, "QB", "ppr")[0] == 10
+
+
+def test_unprojected_actual_stats_cannot_change_any_comparison_or_cohort():
+    data = records()
+    baseline = comparison.comparison_tables(data, reference=pd.DataFrame())
+    data["fantasy_points"] += np.arange(len(data))[::-1] * 100
+    data["actual_rushing_yards"] = 1000
+    data["actual_rushing_tds"] = 50
+    assert comparison.comparison_tables(data, reference=pd.DataFrame()) == baseline
+
+
+def test_missing_actual_components_are_explicit_and_never_use_full_score():
+    data = records().drop(columns="actual_receptions")
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    assert all(value is None for value in subsets["all"]["WR"].values())
+    assert coverage["all"]["WR"]["reason"] == "shared_actual_components_missing"
+    data = records()
+    data.loc[0, "actual_receptions"] = np.nan
+    subsets, _, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    assert all(value["n"] == 29 for value in subsets["all"]["WR"].values())
+
+
+def test_incompatible_kicker_total_is_excluded_from_errors_and_quartiles():
+    data = records().assign(
+        position="K",
+        actual_fg_yard_points=5.0,
+        actual_pat_points=3.0,
+        actual_fg_misses=0.0,
+        actual_xp_misses=0.0,
+        nflcom_pred_ppr=1000,
+        rotowire_pred_ppr=np.nan,
+        espn_pred_ppr=8.0,
+    )
+    subsets, coverage, quartiles, rankings = comparison.comparison_tables(
+        data, reference=pd.DataFrame()
+    )
+    assert subsets["all"]["K"]["nflcom"] is None
+    assert subsets["all"]["K"]["espn"]["mae"] == 0
+    assert "nflcom" in coverage["all"]["K"]["excluded_sources"]
+    assert "nflcom" not in rankings["K"]
+    assert all(row.get("nflcom") is None for row in (quartiles["K"] or {}).values())

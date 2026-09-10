@@ -1,0 +1,6 @@
+### [FIXED] Shared projected components define both sides of expert comparison
+
+- **File(s):** `src/shared/comparison_scoring.py`, `evaluation_cohorts.py`, `src/serving/comparison.py`, `routes.py`, `frontend/src/views/Comparison.jsx`, `src/scripts/build_evaluation_reference.py`, offline expert comparison scripts (PR pending).
+- **What:** After paired full-actual evaluation shipped, the owner clarified the intended task: compare only scoring quantities both the models and experts calculate. Restricting expert forecasts while retaining extra actual components did not measure that task; NFL.com K also used an incompatible native total.
+- **Fix:** Score observed raw components with the same position-specific rules as every comparable forecast, including cohort reports, seasonal selection and weekly ranking. Missing components are explicit. Exclude NFL.com K; recipe `shared_components_v2` uses ESPN K and preserves old versions. Show the component scope in the UI/API and keep saved model predictions intact.
+- **Lesson:** The output target set is a separate contract from the player's full fantasy total. Whichever contract the owner chooses must govern forecasts, actuals, cohort ranks and labels together.

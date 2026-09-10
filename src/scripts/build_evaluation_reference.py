@@ -22,35 +22,38 @@ from src.shared.evaluation_cohorts import (
 )
 
 
-def build_reference(seasons, *, nflcom_loader=None, rotowire_loader=None) -> pd.DataFrame:
-    """Build the fixed NFL.com/RotoWire mean; K uses NFL.com and DST RotoWire."""
+def build_reference(
+    seasons, *, nflcom_loader=None, rotowire_loader=None, espn_loader=None
+) -> pd.DataFrame:
+    """Build shared-component ranks: NFL/RotoWire offense, ESPN K, RotoWire DST."""
     from src.analysis.analysis_expert_comparison import _build_experts
 
     seasons = sorted({int(season) for season in seasons})
     sources = [
         source
-        for source in _build_experts(nflcom_loader, rotowire_loader)
-        if source.name in {"nflcom", "sleeper"}
+        for source in _build_experts(nflcom_loader, rotowire_loader, None, espn_loader)
+        if source.name in {"nflcom", "sleeper", "espn"}
     ]
     raw = {}
     for source in sources:
-        minimum = 2018 if source.name == "sleeper" else 2013
+        minimum = 2013 if source.name == "nflcom" else 2018
         supported = [season for season in seasons if season >= minimum]
         raw[source.name] = source.load(supported) if supported else None
     parts = []
     for pos in ("QB", "RB", "WR", "TE", "K", "DST"):
-        required = [source for source in sources if pos not in source.skipped]
-        if any(raw[source.name] is None for source in required):
+        names = ("espn",) if pos == "K" else ("sleeper",) if pos == "DST" else ("nflcom", "sleeper")
+        required = [
+            source for source in sources if source.name in names and pos not in source.skipped
+        ]
+        if len(required) != len(names) or any(raw[source.name] is None for source in required):
             continue
         projected = []
-        for source in sources:
-            if pos in source.skipped:
-                continue
+        for source in required:
             frame = regular_season_rows(source.project(raw[source.name], pos, "ppr"))
             # The hvpkod NFL.com offense archive backfills box scores before 2024.
             # RotoWire's usable archive begins in 2018. Never silently substitute
             # another reference recipe when one required source is unavailable.
-            first_season = 2018 if source.name == "sleeper" else 2024 if pos != "K" else 2013
+            first_season = 2024 if source.name == "nflcom" else 2018
             frame = frame[frame["season"].isin(seasons) & frame["season"].ge(first_season)].dropna(
                 subset=["expert_pred_total"]
             )
@@ -63,8 +66,7 @@ def build_reference(seasons, *, nflcom_loader=None, rotowire_loader=None) -> pd.
         combined = projected[0]
         for other in projected[1:]:
             combined = combined.merge(other, on=KEYS, how="inner", validate="one_to_one")
-        names = [s.name for s in sources if pos not in s.skipped]
-        combined["reference_pred"] = combined[names].mean(axis=1)
+        combined["reference_pred"] = combined[list(names)].mean(axis=1)
         combined = combined.sort_values(
             ["season", "week", "reference_pred", "player_id"], ascending=[True, True, False, True]
         )
@@ -86,11 +88,18 @@ def build_reference(seasons, *, nflcom_loader=None, rotowire_loader=None) -> pd.
     return result
 
 
-def write_reference(seasons, *, upload=False, nflcom_loader=None, rotowire_loader=None):
+def write_reference(
+    seasons, *, upload=False, nflcom_loader=None, rotowire_loader=None, espn_loader=None
+):
     """Replace requested seasons atomically and preserve other historical slates."""
     from src.data.cache_io import atomic_write_parquet
 
-    frame = build_reference(seasons, nflcom_loader=nflcom_loader, rotowire_loader=rotowire_loader)
+    frame = build_reference(
+        seasons,
+        nflcom_loader=nflcom_loader,
+        rotowire_loader=rotowire_loader,
+        espn_loader=espn_loader,
+    )
     if frame.empty:
         raise ValueError(
             "No valid archived pregame reference forecasts; existing artifact retained"

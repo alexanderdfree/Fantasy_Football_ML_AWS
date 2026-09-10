@@ -59,6 +59,26 @@ def test_missing_provider_does_not_change_reference_recipe(monkeypatch):
     assert set(ref.player_id) == {"a", "b"}
 
 
+def test_kicker_reference_uses_matching_espn_components_not_nfl_native_totals(monkeypatch):
+    def source(name, points):
+        return SimpleNamespace(
+            name=name,
+            skipped=frozenset(),
+            load=lambda seasons: rows().assign(expert_pred_total=points),
+            project=lambda raw, pos, scoring: raw.copy(),
+        )
+
+    monkeypatch.setattr(
+        "src.analysis.analysis_expert_comparison._build_experts",
+        lambda *args: [source("nflcom", [900, 800, 700]), source("espn", [5, 7, 9])],
+    )
+    ref = builder.build_reference([2025])
+    assert set(ref.position) == {"K"}
+    assert set(ref.reference_source) == {"espn"}
+    assert ref.player_id.tolist() == ["c", "a", "b"]
+    assert ref.reference_pred.tolist() == [9, 7, 5]
+
+
 def test_backfilled_nflcom_offense_seasons_cannot_enter_reference(monkeypatch):
     data = pd.concat([rows(), rows().assign(season=2023)], ignore_index=True)
     fake_sources(monkeypatch, data, data)

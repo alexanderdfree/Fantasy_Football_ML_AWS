@@ -41,6 +41,7 @@ from src.serving.serialization import (
 )
 from src.serving.wiki import WIKI_DOCS, _render_wiki_doc
 from src.shared.aggregate_targets import TARGET_UNITS
+from src.shared.comparison_scoring import ACTUAL_BASIS, EXCLUDED_SOURCES, scoring_components
 from src.shared.weather_features import WEATHER_FEATURES_ALL
 
 # Sortable keys for /api/predictions: the realized total ("actual"), the week, and
@@ -614,7 +615,7 @@ def api_wiki_page(slug):
 
 @app.route("/api/comparison")
 def api_comparison():
-    """Compare cached forecasts on full PPR actuals and identical player-weeks."""
+    """Compare shared projected components on identical regular-season player-weeks."""
     from datetime import UTC, datetime
 
     scoring = "ppr"
@@ -641,18 +642,22 @@ def api_comparison():
             "subsets": subsets,
             "coverage": coverage,
             "weekly_ranking": rankings,
-            "actual_basis": "full_regular_season_fantasy_points",
+            "actual_basis": ACTUAL_BASIS,
+            "scoring_components": {
+                pos: list(scoring_components(pos)) for pos in comparison.COMPARISON_POSITIONS
+            },
+            "excluded_sources": EXCLUDED_SOURCES,
             "sample_basis": "shared_player_weeks",
             "cohort_definitions": {
-                "weekly_reference_top24": "Top 24 per week by archived NFL.com/RotoWire mean; NFL.com for K, RotoWire for DST",
-                "top30": "Top 30 per season by total regular-season fantasy points",
-                "top12": "Top 12 per season by total regular-season fantasy points",
+                "weekly_reference_top24": "Top 24 per week by shared-component NFL.com/RotoWire mean; ESPN for K, RotoWire for DST",
+                "top30": "Top 30 per season by regular-season actual shared-component points",
+                "top12": "Top 12 per season by regular-season actual shared-component points",
             },
             "quartile_bias": quartile_bias,
             "quartile_bias_meta": {
                 "n_quantiles": 4,
                 "quartiles": list(comparison._QUARTILE_LABELS),
-                "binned_by": "actual_fantasy_points",
+                "binned_by": "actual_shared_component_points",
                 "bias_convention": "pred_minus_actual",
                 "seasons": seasons,
             },

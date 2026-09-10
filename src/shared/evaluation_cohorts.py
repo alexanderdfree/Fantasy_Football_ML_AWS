@@ -15,10 +15,11 @@ import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR
+from src.shared.comparison_scoring import ACTUAL_BASIS, score_actual_components, scoring_components
 from src.shared.evaluation import compute_metrics
 
 REFERENCE_FILENAME = "weekly_evaluation_reference_v1.parquet"
-REFERENCE_VERSION = "nflcom_rotowire_mean_v1"
+REFERENCE_VERSION = "shared_components_v2"
 KEYS = ["player_id", "season", "week"]
 MODEL_COLUMNS = {
     "Ridge": "pred_ridge_total",
@@ -119,7 +120,7 @@ def reference_selection(position: str, frame: pd.DataFrame, reference: pd.DataFr
 
 
 def metric_block(frame: pd.DataFrame, columns: dict[str, str]) -> dict:
-    """Compact JSON-safe full-fantasy metrics; unavailable forecasts are not zeros."""
+    """Compact JSON-safe metrics; unavailable forecasts are not zeros."""
     models = {}
     for name, col in columns.items():
         if col not in frame:
@@ -182,7 +183,7 @@ def build_cohorts(
 ) -> dict:
     """Produce every named top-24 result, or a reason it cannot be calculated."""
     definitions = {
-        "elite_top24": "prior_season_mean_fantasy_points",
+        "elite_top24": "prior_season_mean_shared_component_points",
         "weekly_reference_top24": "pregame_archived_expert_reference",
         "seasonal_actual_top24": "regular_season_total_actual_fantasy_points",
         "weekly_actual_top24": "actual_weekly_leaders_ranking",
@@ -195,11 +196,28 @@ def build_cohorts(
                 "n": None,
                 "models": {},
                 "definition": definition,
+                "actual_basis": ACTUAL_BASIS,
+                "scoring_components": list(scoring_components(position)),
             }
             for key, definition in definitions.items()
         }
     df = regular_season_rows(frame).copy()
     df["player_id"] = df["player_id"].astype(str)
+    df["fantasy_points"] = score_actual_components(df, position)
+    if not df["fantasy_points"].notna().any():
+        return {
+            key: {
+                "status": "unavailable",
+                "reason": "shared_actual_components_missing",
+                "n": None,
+                "models": {},
+                "definition": definition,
+                "actual_basis": ACTUAL_BASIS,
+                "scoring_components": list(scoring_components(position)),
+            }
+            for key, definition in definitions.items()
+        }
+    df = df[df["fantasy_points"].notna()]
     columns = {name: col for name, col in MODEL_COLUMNS.items() if col in df}
     masks = {
         "week1": df["week"].eq(1),
@@ -212,11 +230,12 @@ def build_cohorts(
     ):
         if column in df:
             masks[name] = predicate(df[column])
-    prior_col = "prior_season_mean_fantasy_points"
-    # K/DST must use their post-target, position-native totals, not the offensive
-    # fantasy_points field in the general split or its derived prior-season column.
+    prior_col = "prior_season_mean_shared_component_points"
+    # Rebuild prior importance from the same components. A full-fantasy prior
+    # mean is not equivalent for offense, and the generic split is invalid for K/DST.
     if prior_frames:
         prior = pd.concat([regular_season_rows(f) for f in prior_frames if f is not None])
+        prior["fantasy_points"] = score_actual_components(prior, position)
         if {*KEYS, "fantasy_points"}.issubset(prior):
             prior = (
                 prior.drop_duplicates(KEYS)
@@ -272,6 +291,9 @@ def build_cohorts(
         "cohort_hash": _identity(df),
         "models": weekly_ranking_metrics(df, columns),
     }
+    for cohort in block.values():
+        cohort["actual_basis"] = ACTUAL_BASIS
+        cohort["scoring_components"] = list(scoring_components(position))
     return block
 
 
