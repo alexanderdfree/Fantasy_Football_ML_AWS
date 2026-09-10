@@ -282,7 +282,9 @@ def _fake_experts():
 
 
 @pytest.mark.integration
-def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_cache, monkeypatch):
+def test_comparison_scores_cached_sources_on_shared_full_actuals(
+    app_module, synthetic_cache, monkeypatch
+):
     monkeypatch.setattr(comparison, "_load_comparison_experts", _fake_experts)
     app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
@@ -290,7 +292,7 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
         body = c.get("/api/comparison").get_json()
 
     assert body["model_source"] == "live"
-    assert set(body["subsets"]) == {"all", "top12", "top30"}
+    assert set(body["subsets"]) == {"all", "top12", "top30", "weekly_reference_top24"}
 
     qb = body["subsets"]["all"]["QB"]
     # Each architecture is its own block now (no single "Our Model" / best_arch).
@@ -299,10 +301,10 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     for key in _MODEL_KEYS:  # QB has all four models in the synthetic cache
         assert qb[key] is not None, key
         assert {"mae", "rmse", "r2", "n"} <= set(qb[key])
-    # Static experts passed through verbatim from the (faked) committed JSON.
-    assert qb["nflcom"] == {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
-    assert qb["rotowire"] == {"mae": 5.5, "rmse": 7.5, "r2": 0.3, "n": 100}
-    assert qb["espn"] == {"mae": 4.5, "rmse": 6.5, "r2": 0.3, "n": 100}
+    # Static accuracy cells must not override the same-sample computation.
+    assert qb["nflcom"] != {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
+    assert len({cell["n"] for cell in qb.values() if cell is not None}) == 1
+    assert body["coverage"]["all"]["QB"]["n"] == qb["ridge"]["n"]
 
     # attn_nn / lgbm aren't in the synthetic K/DST rows → those cells null out.
     assert body["subsets"]["all"]["K"]["attn_nn"] is None
@@ -313,17 +315,16 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     assert body["subsets"]["all"]["DST"]["nflcom"] is None
     assert body["subsets"]["all"]["K"]["rotowire"] is None
 
-    # Top-30 model columns are computed on the id-filtered slice (2 players × 7 wk).
+    # The fixture has fewer than 12 players; both true season-leader cohorts
+    # contain all of them, rather than obeying the stale static ID lists.
     top_qb = body["subsets"]["top30"]["QB"]
-    assert top_qb["ridge"]["n"] == 14
-    assert top_qb["nflcom"]["mae"] == 5.5  # 5.0 * 1.1
+    assert top_qb == qb
 
     # Top-12 slices by top12_ids (one player/pos here), so its model n is half of
     # top-30's 14 — proving the route uses top12_ids, not top30_ids. Experts carry
     # the top12 subset's own (faked) numbers (5.0 * 1.05).
     top12_qb = body["subsets"]["top12"]["QB"]
-    assert top12_qb["ridge"]["n"] == 7
-    assert top12_qb["nflcom"]["mae"] == 5.25  # 5.0 * 1.05
+    assert top12_qb == qb
 
     assert body["generated_at"] and "experts_meta" in body
 
@@ -395,18 +396,21 @@ def test_comparison_model_unavailable_when_no_results(app_module, monkeypatch):
     qb = body["subsets"]["all"]["QB"]
     # No live models → the per-model columns are absent; experts still render.
     assert all(qb.get(key) is None for key in _MODEL_KEYS)
-    assert qb["nflcom"] is not None  # experts unaffected
+    assert qb["nflcom"] is None  # no stale static scores mixed into the comparison
     # The live quartile-bias block is also unavailable, per position.
     assert body["quartile_bias"]["QB"] is None
 
 
 @pytest.mark.integration
-def test_comparison_500_when_expert_data_missing(app_module, monkeypatch):
+def test_comparison_works_without_static_expert_metadata(app_module, synthetic_cache, monkeypatch):
     monkeypatch.setattr(comparison, "_load_comparison_experts", lambda: None)
+    monkeypatch.setattr(core, "_ensure_metrics", lambda: None)
+    app_module._cache.update(synthetic_cache)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         r = c.get("/api/comparison")
-    assert r.status_code == 500
+    assert r.status_code == 200
+    assert r.get_json()["subsets"]["all"]["QB"]["nflcom"] is not None
 
 
 # --------------------------------------------------------------------------- #

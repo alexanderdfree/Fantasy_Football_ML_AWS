@@ -39,7 +39,8 @@ from datetime import UTC, datetime
 import numpy as np
 import pandas as pd
 
-from src.config import TEST_SEASONS
+from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD, TEST_SEASONS
+from src.data.loader import compute_fantasy_points
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
@@ -47,6 +48,7 @@ from src.shared.aggregate_targets import (
     predictions_to_fantasy_points,
 )
 from src.shared.evaluation import compute_metrics
+from src.shared.evaluation_cohorts import regular_season_rows
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
 TARGET_POSITIONS_DEFAULT: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
@@ -112,7 +114,7 @@ def _load_actuals(seasons: Sequence[int]) -> pd.DataFrame:
     # subcolumns — matches ``src.data.loader.compute_fantasy_points``.
     fumble_cols = ("sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost")
     out["fumbles_lost"] = sum(out[c].fillna(0) if c in out.columns else 0.0 for c in fumble_cols)
-    return out
+    return regular_season_rows(out)
 
 
 def _actuals_for_position(
@@ -120,7 +122,8 @@ def _actuals_for_position(
 ) -> pd.DataFrame:
     """Filter actuals to one position + season range, keep the cols we need."""
     eval_set = set(int(s) for s in eval_seasons)
-    df = actuals[(actuals["position"] == pos) & (actuals["season"].isin(eval_set))].copy()
+    df = regular_season_rows(actuals)
+    df = df[(df["position"] == pos) & (df["season"].isin(eval_set))].copy()
     if df.empty:
         return df
     # Coerce raw-stat columns; missing columns (e.g. K's offensive stats)
@@ -141,11 +144,9 @@ def _actuals_for_position(
             else:
                 df[c] = 0.0
             extra_cols.append(c)
-    return df[
-        ["player_id", "season", "week", "position", "fantasy_points"]
-        + [t for t in POSITION_TARGET_MAP.get(pos, {})]
-        + extra_cols
-    ].reset_index(drop=True)
+    # Preserve all scoring stats, including WR/TE rushing and QB receiving.
+    # Restricting this frame to a model's heads changes the actual-score label.
+    return df.reset_index(drop=True)
 
 
 def _project_nflcom_to_ppr(
@@ -200,9 +201,29 @@ def _aggregate_actuals_to_ppr(actuals: pd.DataFrame, pos: str, scoring_format: s
         fg_missed = actuals["fg_missed"].to_numpy()
         pat_missed = actuals["pat_missed"].to_numpy()
         return fg_yards * 0.1 + pat_made - fg_missed - pat_missed
-    target_map = POSITION_TARGET_MAP[pos]
-    pred_dict = {t: actuals[t].to_numpy() for t in target_map}
-    return predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    scoring = {"ppr": SCORING_PPR, "half_ppr": SCORING_HALF_PPR, "standard": SCORING_STANDARD}[
+        scoring_format
+    ]
+    frame = actuals.copy()
+    for col in (
+        "passing_yards",
+        "passing_tds",
+        "interceptions",
+        "rushing_yards",
+        "rushing_tds",
+        "receptions",
+        "receiving_yards",
+        "receiving_tds",
+    ):
+        if col not in frame:
+            frame[col] = 0.0
+    fumbles = ("sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost")
+    if not any(col in frame for col in fumbles):
+        frame["sack_fumbles_lost"] = frame.get("fumbles_lost", 0.0)
+    for col in fumbles:
+        if col not in frame:
+            frame[col] = 0.0
+    return compute_fantasy_points(frame, scoring).to_numpy()
 
 
 def _per_target_breakout(joined: pd.DataFrame, pos: str) -> dict:

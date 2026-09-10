@@ -168,82 +168,11 @@ def _significance_block(position, result):
     return compact_significance(boot)
 
 
-def _elite_top24_mask(test_df):
-    """Rows belonging to the per-season top-24 players by prior-season mean FP.
-
-    A-priori (prior-season) proxy, so the cohort is leakage-free and stable
-    within a season; mirrors ``cohort_analysis.label_scoring_tier_rows``
-    semantics without reloading splits. Top-24 is over distinct players, then
-    every row of those players counts.
-    """
-    import pandas as pd
-
-    col = "prior_season_mean_fantasy_points"
-    mask = pd.Series(False, index=test_df.index)
-    for _, sub in test_df.groupby("season"):
-        top = set(sub.drop_duplicates("player_id").nlargest(24, col)["player_id"])
-        mask.loc[sub.index] = sub["player_id"].isin(top)
-    return mask
-
-
-# Tracked cohorts (#1102/#1106 ask; anomaly clusters from #1141). Each entry is
-# (name, required columns, mask fn). Column-guarded so positions lacking a
-# feature degrade by omitting that cohort: RB deliberately drops
-# is_returning_from_absence (multicollinearity, see src/rb/config.py), and the
-# K/DST frames lack the skill-position contextual columns.
-_COHORT_SPECS = (
-    ("week1", ("week",), lambda df: df["week"] == 1),
-    (
-        "returning",
-        ("is_returning_from_absence",),
-        lambda df: df["is_returning_from_absence"] == 1,
-    ),
-    ("questionable", ("game_status",), lambda df: df["game_status"] < 1.0),
-    ("inheritor", ("inherited_opportunity",), lambda df: df["inherited_opportunity"] > 0),
-    (
-        "elite_top24",
-        ("prior_season_mean_fantasy_points", "player_id", "season"),
-        _elite_top24_mask,
-    ),
-)
-
-
 def _cohorts_block(position, result):
-    """Per-cohort, per-model fantasy-point bias/MAE for history fold-in.
+    """Compatibility entry point; every producer uses the shared cohort schema."""
+    from src.shared.evaluation_cohorts import build_cohorts
 
-    The tracked subgroup metrics #1102/#1106 asked for: week-1 cold start,
-    returners, Questionable designations, vacancy inheritors (the spot-start
-    cohort), and a-priori elite players — so feature work on any of these has
-    a recorded before/after baseline in every benchmark run. ``bias`` is
-    mean(pred - actual): negative = under-prediction. Schema-safe like
-    ``significance``: History-tab readers ignore unknown keys. Returns None if
-    the result lacks per-row test predictions.
-    """
-    test_df = result.get("test_df")
-    if test_df is None or "fantasy_points" not in getattr(test_df, "columns", ()):
-        return None
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
-
-    models = available_models(test_df)
-    if not models:
-        return None
-    block = {}
-    for name, required, mask_fn in _COHORT_SPECS:
-        if any(col not in test_df.columns for col in required):
-            continue
-        sub = test_df[mask_fn(test_df)]
-        if len(sub) == 0:
-            block[name] = {"n": 0, "models": {}}
-            continue
-        metrics = per_model_metrics(sub, models)
-        block[name] = {
-            "n": int(len(sub)),
-            "models": {
-                model: {"bias": round(float(v["bias"]), 3), "mae": round(float(v["mae"]), 3)}
-                for model, v in metrics.items()
-            },
-        }
-    return block or None
+    return result.get("cohorts") or build_cohorts(position, result.get("test_df"))
 
 
 # --- Rolling-origin (walk-forward) multi-season TEST evaluation ---------------
@@ -414,6 +343,8 @@ def _aggregate_rolling_origin(per_origin):
     per_origin_rows = []
     for ts, s in per_origin:
         row = {"test_season": ts}
+        if "cohorts" in s:
+            row["cohorts"] = s["cohorts"]
         for m in _RO_MODELS:
             for suff in ("mae", "r2", "top12"):
                 key = f"{m}_{suff}"

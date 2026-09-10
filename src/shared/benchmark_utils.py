@@ -186,6 +186,9 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
         summary["elapsed_sec"] = result["elapsed_sec"]
     if "phase_seconds" in result:
         summary["phase_seconds"] = result["phase_seconds"]
+    from src.shared.evaluation_cohorts import build_cohorts
+
+    summary["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
     return summary
 
 

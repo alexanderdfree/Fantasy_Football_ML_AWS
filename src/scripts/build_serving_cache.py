@@ -81,6 +81,18 @@ def main() -> int:
     if nflcom == 0:
         print("WARN: nflcom_pred is all-null (expert join produced no rows this build)")
 
+    # Publish a pregame-only slate from the full forecast archives. Both Batch
+    # and serving hydrate data/raw, and evaluation never fetches on a request.
+    from src.config import TEST_SEASONS
+    from src.scripts.build_evaluation_reference import write_reference
+
+    try:
+        write_reference(TEST_SEASONS, upload=True)
+    except Exception as exc:  # noqa: BLE001 — auxiliary network boundary
+        # Retain the previous archived reference and still publish valid model
+        # predictions. Uncovered seasons appear explicitly unavailable in reports.
+        print(f"WARN: evaluation reference not refreshed; existing artifact retained: {exc}")
+
     # 4. Publish the validated cache (required triple + the browser snapshot).
     if upload_predictions_cache_to_s3() is None:
         print("ERROR: upload returned no result — cache not published")

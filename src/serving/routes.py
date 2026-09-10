@@ -614,24 +614,11 @@ def api_wiki_page(slug):
 
 @app.route("/api/comparison")
 def api_comparison():
-    """Our model (live) vs NFL.com / RotoWire / ESPN (static), by position, for three
-    subsets (all rostered players + top-30 + top-12 per position). MAE/RMSE/R² each.
-    """
-    # The committed expert columns (``comparison_experts.json`` via
-    # ``build_comparison_summary.SCORING_FORMAT="ppr"``) are baked PPR-only, so
-    # honoring a non-ppr ``?scoring=`` here would re-score the model block at X
-    # while the experts stay at PPR — an apples-to-oranges table. The frontend
-    # only ever fetches /api/comparison with no scoring param (defaults ppr), so
-    # pin the endpoint to ppr for both the model block and the echoed value;
-    # ignore the request arg. (audit #653)
-    scoring = "ppr"
-    experts = comparison._load_comparison_experts()
-    if experts is None:
-        return jsonify({"error": "Comparison data unavailable"}), 500
+    """Compare cached forecasts on full PPR actuals and identical player-weeks."""
+    from datetime import UTC, datetime
 
-    # Live model metrics — best-effort. If models can't load (e.g. a cold box
-    # with no artifacts), the experts still render and the model column shows —.
-    model_source = "live"
+    scoring = "ppr"
+    metadata = comparison._load_comparison_experts() or {}
     results = None
     try:
         core._ensure_metrics()
@@ -639,72 +626,35 @@ def api_comparison():
             results = app_pkg._cache.get("results")
     except Exception:
         traceback.print_exc()
-        model_source = "unavailable"
-    if results is None or getattr(results, "empty", True):
-        model_source = "unavailable"
-
-    expert_subsets = experts.get("subsets", {})
-    # Each ranked subset slices the live model column to the SAME players the static
-    # expert numbers were computed on; "all" applies no filter. Add a tier by adding
-    # its {tier: "<tier>_ids"} entry — the loop and the model slice handle the rest.
-    id_map_keys = {"top12": "top12_ids", "top30": "top30_ids"}
-    out_subsets = {}
-    for subset in ("all", "top30", "top12"):
-        out_subsets[subset] = {}
-        pos_experts = expert_subsets.get(subset, {})
-        ids_for_pos = experts.get(id_map_keys[subset], {}) if subset in id_map_keys else {}
-        for pos in _ALL_POSITIONS:
-            cell = pos_experts.get(pos) or {}
-            id_filter = set(map(str, ids_for_pos.get(pos, []))) if subset in id_map_keys else None
-            # One block per model (ridge/nn/attn_nn/lgbm), each None when that model
-            # has no predictions for the slice; spread alongside the static experts.
-            blocks = (
-                comparison._model_blocks_from_results(results, scoring, pos, id_filter)
-                if model_source == "live"
-                else {}
-            )
-            out_subsets[subset][pos] = {
-                **blocks,
-                "nflcom": cell.get("nflcom"),
-                "rotowire": cell.get("rotowire"),
-                "espn": cell.get("espn"),
-            }
-
-    # Live per-source signed bias across the actual-FP scoring quartiles (Q1 lowest …
-    # Q4 boom), computed fresh each request from the same cached 2025 test rows as the
-    # accuracy tables (auto-updates on retrain). This replaces the former source-σ
-    # reliability and prediction-interval blocks on the site — their offline
-    # methodology stays in the committed JSON + helpers + docs, just no longer
-    # published here. ``None`` per position when models aren't loaded, so the tab
-    # degrades to the accuracy tables alone.
-    quartile_bias = {
-        pos: (
-            comparison._quartile_bias_from_results(results, scoring, pos)
-            if model_source == "live"
-            else None
-        )
-        for pos in _ALL_POSITIONS
-    }
-
+    available = results is not None and not results.empty
+    subsets, coverage, quartile_bias, rankings = comparison.comparison_tables(results, scoring)
+    seasons = sorted(int(s) for s in results["season"].dropna().unique()) if available else []
     return jsonify(
         {
             "scoring": scoring,
-            "model_source": model_source,
-            "generated_at": experts.get("generated_at"),
-            "experts_meta": experts.get("experts_meta", {}),
-            "top_n": experts.get("top_n"),
-            "top12_n": experts.get("top12_n"),
-            "subsets": out_subsets,
-            # Per-source signed bias by actual-FP quartile (Q1 lowest … Q4 highest):
-            # bias = mean(pred − actual), > 0 ⇒ over-predicts. Live on the 2025 test
-            # season; None per position when models aren't loaded.
+            "model_source": "live" if available else "unavailable",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "experts_meta": metadata.get("experts_meta", {}),
+            "top_n": 30,
+            "top12_n": 12,
+            "weekly_top_n": 24,
+            "subsets": subsets,
+            "coverage": coverage,
+            "weekly_ranking": rankings,
+            "actual_basis": "full_regular_season_fantasy_points",
+            "sample_basis": "shared_player_weeks",
+            "cohort_definitions": {
+                "weekly_reference_top24": "Top 24 per week by archived NFL.com/RotoWire mean; NFL.com for K, RotoWire for DST",
+                "top30": "Top 30 per season by total regular-season fantasy points",
+                "top12": "Top 12 per season by total regular-season fantasy points",
+            },
             "quartile_bias": quartile_bias,
             "quartile_bias_meta": {
                 "n_quantiles": 4,
                 "quartiles": list(comparison._QUARTILE_LABELS),
                 "binned_by": "actual_fantasy_points",
                 "bias_convention": "pred_minus_actual",
-                "season": 2025,
+                "seasons": seasons,
             },
         }
     )

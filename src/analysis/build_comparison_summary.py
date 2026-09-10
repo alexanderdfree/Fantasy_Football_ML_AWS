@@ -267,6 +267,9 @@ def build_summary(
 
     return {
         "generated_at": datetime.now(UTC).isoformat(),
+        "used_for_live_accuracy": False,
+        "actual_basis": "full_regular_season_fantasy_points",
+        "sample_basis": "per_source_coverage",
         "scoring": SCORING_FORMAT,
         "test_seasons": list(eval_seasons),
         "top_n": int(top_n),

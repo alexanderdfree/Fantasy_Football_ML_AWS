@@ -1,6 +1,6 @@
 /* Next Week (homepage) — live upcoming-week projections off /api/upcoming_week.
  * States: loading | warming (503) | offseason (available:false) | ready | error.
- * K/DST pills stay disabled: the upcoming artifact serves QB/RB/WR/TE only.
+ * Position availability follows the artifact, including K/DST.
  *
  * Filter bar v2 (design system): auto-fit one-row bar with Position (incl.
  * FLEX), Team, Age, Class (Rookies), Min Proj. Pts, plus pinned Columns /
@@ -20,8 +20,8 @@ const POSITION_OPTIONS = [
     { value: "WR", label: "WR" },
     { value: "TE", label: "TE" },
     { value: "FLEX", label: "FLEX" },
-    { value: "K", label: "K", disabled: true, title: "Coming soon" },
-    { value: "DST", label: "DST", disabled: true, title: "Coming soon" },
+    { value: "K", label: "K" },
+    { value: "DST", label: "DST" },
 ];
 const FLEX_POSITIONS = new Set(["RB", "WR", "TE"]);
 
@@ -31,6 +31,7 @@ const COLUMNS = [
     { key: "position", label: "Pos", cls: "col-pos", sort: "position", defaultVisible: true },
     { key: "team", label: "Team", cls: "col-team", sort: "team", defaultVisible: true },
     { key: "matchup", label: "Matchup", cls: "col-matchup", sort: "matchup", defaultVisible: true },
+    { key: "ridge_pred", label: "Ridge", cls: "col-pred ridge-col", sort: "ridge_pred", defaultVisible: true },
     { key: "nn_pred", label: "NN", cls: "col-pred nn-col", sort: "nn_pred", defaultVisible: true },
     { key: "attn_nn_pred", label: "Attn NN", cls: "col-pred attn-nn-col", sort: "attn_nn_pred", defaultVisible: true },
     { key: "lgbm_pred", label: "LGBM", cls: "col-pred lgbm-col", sort: "lgbm_pred", defaultVisible: true },
@@ -48,10 +49,11 @@ const TOGGLEABLE_COLUMNS = COLUMNS.filter((c) => !c.always);
 // ranks RB/WR better than the attention head (beats it on lineup regret in 4/4
 // rolling-origin seasons vs RotoWire — todo/expert-gap-investigation-2026-06.md §3);
 // other positions keep the attention-first chain. Display columns are unaffected.
-// Ridge is deliberately absent: it's hidden on this view.
+// K includes Ridge: it is the incumbent K baseline and is displayed here.
 const LGBM_RANKED_POSITIONS = new Set(["RB", "WR"]);
 function upcomingProjection(p) {
-    const order = LGBM_RANKED_POSITIONS.has(p.position)
+    const order = p.position === "K" ? [p.ridge_pred, p.attn_nn_pred, p.lgbm_pred, p.nn_pred]
+        : LGBM_RANKED_POSITIONS.has(p.position)
         ? [p.lgbm_pred, p.attn_nn_pred, p.nn_pred]
         : [p.attn_nn_pred, p.lgbm_pred, p.nn_pred];
     const best = order.find((v) => v != null);
@@ -117,6 +119,14 @@ export function NextWeekView({ scoring, search, onPlayer }) {
         if (state !== "ready" || !data) return [];
         return (data.scoring && data.scoring[scoring]) || [];
     }, [state, data, scoring]);
+    const positionOptions = POSITION_OPTIONS.map((option) => (
+        ["K", "DST"].includes(option.value) && !data?.positions?.includes(option.value)
+            ? { ...option, disabled: true, title: "Unavailable in this projection update" }
+            : option
+    ));
+    const weatherIncomplete = (data?.source_status?.weather || []).some(
+        (game) => !["forecast", "indoor"].includes(game.weather),
+    );
 
     const teams = useMemo(() => [...new Set(allRows.map((p) => p.team).filter(Boolean))].sort(), [allRows]);
     const hasAge = useMemo(() => allRows.some((p) => p.age != null), [allRows]);
@@ -172,7 +182,8 @@ export function NextWeekView({ scoring, search, onPlayer }) {
     }, [allRows, position, team, age, rookieOnly, search, minPts, sort]);
 
     const visibleColumns = COLUMNS.filter(
-        (c) => (c.always || !hiddenCols.has(c.key)) && (!c.expert || expertHasData[c.key]),
+        (c) => (c.always || !hiddenCols.has(c.key)) && (!c.expert || expertHasData[c.key])
+            && (c.key !== "ridge_pred" || ["K", "DST"].includes(position)),
     );
 
     const resetFilter = (key) => {
@@ -192,7 +203,7 @@ export function NextWeekView({ scoring, search, onPlayer }) {
                         <label className="field-label">Position</label>
                         <PillGroup
                             id={measure ? undefined : "homepage-position-filter"}
-                            options={POSITION_OPTIONS}
+                            options={positionOptions}
                             value={position}
                             onChange={setPosition}
                         />
@@ -311,6 +322,7 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             case "position": return <PosBadge position={p.position} />;
             case "team": return <TeamLabel abbr={p.team} />;
             case "matchup": return <MatchupLabel opponent={p.opponent} isHome={p.is_home} />;
+            case "ridge_pred": return fmt(p.ridge_pred);
             case "nn_pred": return fmt(p.nn_pred);
             case "attn_nn_pred": return fmt(p.attn_nn_pred);
             case "lgbm_pred": return fmt(p.lgbm_pred);
@@ -332,7 +344,10 @@ export function NextWeekView({ scoring, search, onPlayer }) {
 
             {state === "ready" && data && (
                 <div id="homepage-banner" className="homepage-banner" role="status" aria-live="polite">
-                    {`${data.week_label} — projected fantasy points (no games played yet)`}
+                    {`${data.week_label} — projected fantasy points for unplayed games`}
+                    {weatherIncomplete && " · Some kicker projections use estimated weather or roof conditions."}
+                    {data.source_status?.missing_kicker_teams?.length > 0 && ` · No active kicker available for ${data.source_status.missing_kicker_teams.join(", ")}.`}
+                    {data.source_status?.weather?.length > 0 && <> · Weather: <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></>}
                 </div>
             )}
 

@@ -4,11 +4,19 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 
 ---
 
+
 ### [FIXED] Lint CI drifted from the development Ruff pin
 - **File(s):** [../.github/workflows/tests.yml](../.github/workflows/tests.yml), [../tests/test_dependency_pins.py](../tests/test_dependency_pins.py) (audit #1509; PR pending).
 - **What:** The lint job independently pinned Ruff 0.15.16 while development requirements had advanced to 0.15.20, and then 0.16.6. Existing dependency parity tests did not inspect the lint install command.
 - **Fix:** Read the exact Ruff requirement from `requirements-dev.txt` in the lint install step. The contract test executes that step with a stub `uv` for both the current requirement and a future synthetic pin; development and GPU pins are checked together.
 - **Lesson:** A second hardcoded pin inevitably drifts. Test the consuming install command against the canonical requirement so future dependency bumps reach CI automatically.
+
+### [FIXED] K/DST missing from the live upcoming-week prediction path
+
+- **File(s):** `src/serving/upcoming_special_teams.py`, `forecast_weather.py`, `upcoming_week.py`, `espn_live.py`, `core.py`; optional frame injection in `src/k/data.py` and `src/dst/data.py`; NextWeek frontend and source/replay tests. PR pending.
+- **What:** The artifact builder and roster parser only admitted QB/RB/WR/TE. Simply adding K/DST to the position list would have left K without fresh per-kick history and DST without current-season opposing-offense history. The existing schedule adapter omitted rest/venue details and joined different providers' game IDs. Week 1 2026 had no schedule temperature/wind and incorrectly labeled the Melbourne neutral-site game a dome.
+- **Fix:** Dedicated upcoming K/DST frames reuse the training builders with cutoff-filtered live-season data, explicit history inputs, and coverage checks. Normalize active ESPN PK entries to K, build DST team rows, preserve matchup/rest context, join schedule rows by matchup, and obtain kickoff forecasts for the actual venue. Missing forecasts and uncertain roofs remain imputed and disclosed; incomplete required history or missing K/DST model output prevents publishing a false-success artifact. Training years, targets and model recipes stay fixed.
+- **Lesson:** A complete feature whitelist does not prove live readiness. Trace every attention history and cache dependency through actual inference, verify provider IDs and venue semantics, and distinguish an unavailable source from a zero observation.
 
 ### [FIXED] Current-tree bloat: duplicated experiment execution, copied helpers, and unused skip markers
 - **File(s):** `src/tuning/_execution.py`, `src/tuning/ab_harness.py`, `src/tuning/ablation_runner.py`, `src/tuning/ablate_batch.py`, shared offline helpers in `src/tuning/` and `src/analysis/`, `src/analysis/sleeper_loader.py`, `.github/workflows/skip-sentinel.yml` (removed), `benchmark_history/` (391 placeholder records removed), `AGENTS.md`, `agent-workflows/operating-lessons.md`; implementation `99e977ed`.
@@ -21,6 +29,17 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **What:** Serving still requested Torch 2.12.0 while local development and Batch requested 2.12.1. Its uv command also listed PyPI as the extra index, giving it priority over the intended CPU index under uv's first-index strategy.
 - **Fix:** Align all four environments on Torch 2.14.0 and give the CPU index priority in the serving install. Resolve CPU and CUDA dependency sets for Python 3.12 before shipping; keep the existing CUDA 13.0 variant.
 - **Lesson:** Dependency parity includes Dockerfile install commands and index order, not just requirements files. A matching public Torch version does not prove that serving installs the CPU wheel.
+### [FIXED] Expert comparison mixed scoring labels, coverage, and postseason-selected leaders
+- **File(s):** `src/serving/comparison.py`, `src/serving/routes.py`, `src/serving/frontend/src/views/Comparison.jsx`, `src/analysis/analysis_nflcom_baseline.py`; ADR-0024.
+- **What:** Models were graded against full fantasy actuals while committed expert metrics used only modeled targets. WR rushing and QB receiving counted against only one side. Static top-12/top-30 IDs were ranked with postseason totals, and per-source coverage differed.
+- **Fix:** Compute all columns from cached predictions on full regular-season actuals and a shared player-week intersection. Rebuild seasonal membership from that truth, select a new primary weekly top-24 cohort from a separate archived pregame reference, and distinguish actual-week leader capture from accuracy/bias. Retire the static accuracy snapshot as the live authority and label historical research tables accordingly.
+- **Lesson:** Same player IDs do not establish comparable evaluation: truth, season type, row coverage, and cohort-selection time must all agree. Actual-week winners' negative bias is not a training target.
+
+### [FIXED] Batch and alternate benchmark paths silently omitted elite cohort metrics (#1537)
+- **File(s):** `src/shared/evaluation_cohorts.py`, `src/shared/pipeline.py`, `src/shared/benchmark_utils.py`, `src/batch/train.py`, `src/benchmarking/benchmark.py`, `src/scripts/build_evaluation_reference.py`; ADR-0024.
+- **What:** The local benchmark appended cohort metrics after the common summary step. Batch serialization and split merges lost them, and rolling-origin output omitted them, so the elite-bias follow-up gate (#1354) lacked production evidence.
+- **Fix:** Calculate cohorts while held-out rows exist and preserve them in every benchmark summary and each rolling origin. Split merges require matching cohort/truth/reference identities. Preserve `elite_top24` as prior-season importance, add `weekly_reference_top24` as pregame importance, and report unavailable data explicitly rather than silently dropping the field or using zero metrics. The reference artifact contains forecasts/ranks only and is hydrated by existing raw-data sync.
+- **Lesson:** Assert the final serialized artifact, not just the helper. Retrospective leader cohorts, pregame expectation cohorts, and ranking metrics answer different questions and need distinct names.
 
 ### [FIXED] ESPN absent from historical expert comparisons
 - **File(s):** `src/serving/espn_projections.py`, `core.py`, `serialization.py`, `routes.py`, `frontend/src/views/Comparison.jsx`; `src/analysis/analysis_expert_comparison.py`, `build_comparison_summary.py`; committed `comparison_experts.json`.
