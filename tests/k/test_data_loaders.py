@@ -1050,12 +1050,18 @@ def test_load_data_keeps_observed_empty_games(tmp_path, monkeypatch, season):
 
     monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(k_data, "SEASONS", [season])
-    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", lambda df, years: None)
-    monkeypatch.setattr(
-        k_data.nfl_source,
-        "player_ids",
-        lambda: pd.DataFrame({"pfr_id": ["pfr-punter"], "gsis_id": ["P1"]}),
-    )
+
+    def backfill_attempt_means(df, years):
+        attempted = df["season"].isin(years) & df["fg_att"].gt(0)
+        df.loc[attempted, "avg_fg_distance"] = 35.0
+        df.loc[attempted, "avg_fg_prob"] = 0.85
+
+    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", backfill_attempt_means)
+
+    def unavailable_ids():
+        raise AssertionError("Cached K loading must not fetch live player IDs")
+
+    monkeypatch.setattr(k_data.nfl_source, "player_ids", unavailable_ids)
     signature = f"{SEASONS[0]}_{SEASONS[-1]}"
     made = _kicker_pbp_cache_row("K1", season, 1)
     if season < 2025:
@@ -1115,6 +1121,14 @@ def test_load_data_keeps_observed_empty_games(tmp_path, monkeypatch, season):
             "last_name": ["Kicker", "Kicker", "Punter"],
         }
     ).to_parquet(tmp_path / f"rosters_{signature}.parquet")
+    if season < 2025:
+        # The PFR spelling only appears in a later roster snapshot, but the
+        # exact globally-unique alias still identifies the same GSIS player.
+        path = tmp_path / f"rosters_{signature}.parquet"
+        roster = pd.read_parquet(path)
+        alias = roster.iloc[[0]].assign(season=season + 1)
+        roster.loc[roster.player_id.eq("K1"), "first_name"] = "Jon"
+        pd.concat([roster, alias]).to_parquet(path)
     pd.DataFrame(
         {
             "season": [season] * 3,
@@ -1137,6 +1151,8 @@ def test_load_data_keeps_observed_empty_games(tmp_path, monkeypatch, season):
     zero = loaded.loc[loaded.week.eq(2)].iloc[0]
     assert zero["fantasy_points"] == 0
     assert zero["fg_att"] == zero["pat_att"] == 0
+    assert pd.isna(zero["avg_fg_distance"])
+    assert pd.isna(zero["avg_fg_prob"])
     assert zero["is_home"] == 1
     assert zero["implied_team_total"] == 21
     assert zero["roof"] == "outdoors"
@@ -1145,6 +1161,19 @@ def test_load_data_keeps_observed_empty_games(tmp_path, monkeypatch, season):
         assert zero["game_temp"] == 52
     # Adding empty rows must not alter actual kick outcomes.
     assert loaded.loc[loaded.week.eq(1), "fg_yards_made"].item() == made["fg_yards_made"]
+
+    # The next game's rolling opportunity includes the empty game, but its
+    # average-distance/difficulty features must not invent a zero-yard kick.
+    from src.k.features import compute_features
+
+    future = loaded.loc[loaded.week.eq(1)].assign(week=3)
+    history = pd.concat([loaded, future], ignore_index=True)
+    compute_features(history)
+    next_game = history.loc[history.week.eq(3)].iloc[0]
+    assert next_game["fg_attempts_L3"] == 1.5
+    assert next_game["pat_volume_L3"] == 1.5
+    assert next_game["avg_fg_distance_L3"] == 35.0
+    assert next_game["avg_fg_prob_L3"] == 0.85
 
     # Participation in a season whose stats failed to load is NOT evidence
     # that every game in that season had zero attempts.

@@ -341,9 +341,11 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
         return k_df
 
     rosters = pd.read_parquet(f"{CACHE_DIR}/rosters_{signature}.parquet")
-    rosters = rosters.loc[rosters["position"].eq("K")].copy()
-    ids = nfl_source.player_ids()[["pfr_id", "gsis_id"]].rename(columns={"gsis_id": "player_id"})
-    ids = pd.concat([ids, rosters[["pfr_id", "player_id"]]], ignore_index=True)
+    # Resolve identities entirely from the already-synced roster cache. A live
+    # player-ID lookup here would make offline/cache-hit K loading depend on
+    # a new external service. Keep all roster positions until after matching:
+    # snap counts occasionally label a punter K, and we must identify/exclude it.
+    ids = rosters[["pfr_id", "player_id"]]
     ids = ids.replace({"None": None, "nan": None, "": None}).dropna()
     ids = ids.sort_values(["pfr_id", "player_id"]).drop_duplicates("pfr_id")
     snaps = snaps.merge(
@@ -367,10 +369,10 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
     formal_names = rosters.assign(
         _name_key=name_key(rosters["first_name"] + " " + rosters["last_name"])
     )
-    names = pd.concat([rosters, formal_names])[
+    aliases = pd.concat([rosters, formal_names])[
         ["season", "_name_key", "player_id"]
     ].drop_duplicates()
-    names = names.loc[~names.duplicated(["season", "_name_key"], keep=False)]
+    names = aliases.loc[~aliases.duplicated(["season", "_name_key"], keep=False)]
     snaps["_name_key"] = name_key(snaps["player"])
     snaps = snaps.merge(
         names.rename(columns={"player_id": "roster_id"}),
@@ -379,13 +381,21 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
         validate="many_to_one",
     )
     snaps["player_id"] = snaps["player_id"].fillna(snaps["roster_id"])
+    # A spelling may change between seasons (Steven/Stephen Hauschka). An
+    # exact alias seen elsewhere in the cache is safe only when it identifies
+    # one GSIS ID globally; ambiguous names are never guessed.
+    global_names = aliases[["_name_key", "player_id"]].drop_duplicates()
+    global_names = global_names.loc[~global_names.duplicated("_name_key", keep=False)]
+    snaps["player_id"] = snaps["player_id"].fillna(
+        snaps["_name_key"].map(global_names.set_index("_name_key")["player_id"])
+    )
     # A missing identity is not evidence for a zero stat line. Keep existing
     # scoring rows authoritative, and never synthesize an unidentified player.
     if snaps["player_id"].isna().any():
         missing_names = snaps.loc[snaps["player_id"].isna(), "player"].unique().tolist()
         raise ValueError(f"K game index has unmapped snap-count player IDs: {missing_names}")
     snaps = snaps.merge(
-        rosters[["season", "player_id"]].drop_duplicates(),
+        rosters.loc[rosters["position"].eq("K"), ["season", "player_id"]].drop_duplicates(),
         on=["season", "player_id"],
         how="inner",
         validate="many_to_one",
@@ -419,10 +429,13 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
         "q4_fg_made",
         "long_fg_att",
         "long_fg_made",
-        "avg_fg_distance",
-        "avg_fg_prob",
     ):
         missing[col] = 0.0
+    # An empty game has zero attempts but no defined mean distance/difficulty.
+    # Match the weekly/PBP-backfill path: rolling means skip these NaNs instead
+    # of treating a no-attempt game as a zero-yard, zero-probability kick.
+    missing["avg_fg_distance"] = float("nan")
+    missing["avg_fg_prob"] = float("nan")
     print(f"  Restored {len(missing)} no-attempt kicker games from participation data")
     return pd.concat([k_df, missing], ignore_index=True)
 
