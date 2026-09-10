@@ -502,6 +502,11 @@ def load_data() -> pd.DataFrame:
     if weekly_seasons:
         _backfill_2025_pbp_columns(k_df, weekly_seasons)
 
+    # Normalize both source eras, including pre-existing cached weekly values.
+    # Counts are zero for no-attempt games; mean kick attributes are undefined.
+    no_attempts = k_df["fg_att"].fillna(0).add(k_df["pat_att"].fillna(0)).eq(0)
+    k_df.loc[no_attempts, ["avg_fg_distance", "avg_fg_prob"]] = float("nan")
+
     # NOTE: the per-(player_id, season) ``MIN_GAMES`` filter is applied
     # **train-only** inside ``season_split`` (mirroring the shared pipeline's
     # train-only filter for other positions at
