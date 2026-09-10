@@ -85,19 +85,18 @@ import contextlib
 import copy
 import importlib
 import inspect
-import json
 import os
-import shutil
 import statistics
 import sys
 import tempfile
 import time
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+from src.tuning._execution import isolated_outputs, run_tasks
 
 ALL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 DEFAULT_SEEDS = (42, 123, 7)  # 3-seed default for FP-MAE A/Bs (AGENTS.md)
@@ -372,14 +371,7 @@ def run_cell(
         base_cfg = importlib.import_module(f"src.{pos.lower()}.run_pipeline").CONFIG
 
     cfg = _apply_config(variant, base_cfg)
-    orig_cwd = os.getcwd()
-    tmp_dir = tempfile.mkdtemp(prefix=f"ff-ab-{cell.key}-")
-    try:
-        os.chdir(tmp_dir)
-        link = Path(tmp_dir) / "data"
-        if not link.exists():
-            link.symlink_to(data_dir, target_is_directory=True)
-
+    with isolated_outputs(data_dir):
         # K/DST build their own splits inside run(seed, config) and take no
         # train/val/test args; the skill positions take (train_df, val_df,
         # test_df, seed, config) and support frame injection.
@@ -412,9 +404,6 @@ def run_cell(
             "ridge_mae": ridge,
             "error": None,
         }
-    finally:
-        os.chdir(orig_cwd)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -502,14 +491,7 @@ def run_group_stacked(
     base_cfg = mod.CONFIG
     cfg = _apply_config(variant, base_cfg)
 
-    orig_cwd = os.getcwd()
-    tmp_dir = tempfile.mkdtemp(prefix=f"ff-ab-{group.key}-")
-    try:
-        os.chdir(tmp_dir)
-        link = Path(tmp_dir) / "data"
-        if not link.exists():
-            link.symlink_to(data_dir, target_is_directory=True)
-
+    with isolated_outputs(data_dir):
         frames = None
         if variant.frame_injector is not None:
             frames = variant.frame_injector(*_load_general_splits())
@@ -556,9 +538,6 @@ def run_group_stacked(
                 }
             )
         return out
-    finally:
-        os.chdir(orig_cwd)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _group_failed(group: Group, variant: Variant, exc: BaseException) -> list[dict]:
@@ -646,71 +625,62 @@ def run_sequential_stacked(
 # --------------------------------------------------------------------------- #
 # Parallel (subprocess-per-cell) orchestration
 # --------------------------------------------------------------------------- #
-def _worker_preexec(cores: list[int], nice: int):
-    """preexec for a cell worker: pin to all physical cores (the core pool
-    narrows per CPU stage) and lower priority so interactive use wins."""
-
-    def _fn():
-        with contextlib.suppress(AttributeError, OSError):
-            os.sched_setaffinity(0, set(cores))
-        with contextlib.suppress(OSError):
-            os.nice(nice)
-
-    return _fn
-
-
-def _spawn_worker(key: str, argv: list[str], out_path: str, cores, nice, pool_addr, logdir):
-    """Popen one worker with the harness env (cache-disable, core pool, BLAS=1)."""
-    import subprocess
-
+def _init_spec_worker(cores, nice, pool_addr):
     from src.shared.core_pool import ENV_ADDR, ENV_POS
 
-    env = dict(os.environ)
-    # Cache-disable is inherited from run_ab (set per --feature-cache); default to
-    # disabled only if a worker is somehow launched outside run_ab.
-    env.setdefault(_ENV_CACHE_DISABLE, "1")
-    env[ENV_POS] = key
     if pool_addr:
-        env[ENV_ADDR] = pool_addr
-    for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
-        env.setdefault(k, "1")
-    # FF_DEVICE is deliberately NOT forced — a CPU A/B on the 5080 box (FF_DEVICE=cpu)
-    # must use the CPU pool, a CUDA A/B the GPU-launch-bound pool. The user/env decides.
-    log_path = os.path.join(logdir, f"ab-{key}.log")
-    logf = open(log_path, "w")  # noqa: SIM115 — owned by the orchestrator until the proc exits
-    proc = subprocess.Popen(
-        argv, env=env, stdout=logf, stderr=subprocess.STDOUT, cwd=os.getcwd(),
-        preexec_fn=_worker_preexec(cores, nice),
-    )  # fmt: skip
-    return {
-        "proc": proc,
-        "logf": logf,
-        "out": out_path,
-        "log": log_path,
-        "t0": time.time(),
-    }
+        os.environ[ENV_ADDR] = pool_addr
+    os.environ[ENV_POS] = str(os.getpid())
+    with contextlib.suppress(AttributeError, OSError):
+        os.sched_setaffinity(0, set(cores))
+    with contextlib.suppress(AttributeError, OSError):
+        os.nice(nice)
 
 
-def _launch_worker(cell: Cell, spec: Spec, out_path: str, cores, nice, pool_addr, data_dir, logdir):
-    argv = [
-        sys.executable, "-m", "src.tuning.ab_harness", "--worker",
-        "--spec", spec.dotted, "--position", cell.position,
-        "--variant", cell.variant, "--seed", str(cell.seed),
-        "--out", out_path, "--data-dir", data_dir,
-    ]  # fmt: skip
-    info = _spawn_worker(cell.key, argv, out_path, cores, nice, pool_addr, logdir)
-    info["cell"] = cell
-    return info
+def _spec_task_failure(task, exc, variant=None) -> list[dict]:
+    kind, work, _dotted, _data_dir, _epochs, log_path = task
+    variant = variant or Variant(work.variant)
+    results = (
+        _group_failed(work, variant, exc) if kind == "group" else [_cell_failed(work, variant, exc)]
+    )
+    for row in results:
+        row["log_path"] = log_path
+    return results
 
 
-def run_parallel(spec: Spec, cells: list[Cell], jobs: int, data_dir: str) -> list[dict]:
-    """Fan cells out as subprocess workers sharing a core pool.
+def _execute_spec_task(task) -> list[dict]:
+    kind, work, dotted, data_dir, epochs, log_path = task
+    start = time.time()
+    variant = None
+    os.environ.setdefault(_ENV_CACHE_DISABLE, "1")
+    from src.shared.core_pool import ENV_POS
 
-    Mirrors ``parallel_train.orchestrate`` (queue → dispatch up to ``jobs`` →
-    poll → reap → set_active_count) but the unit is a cell, not a position, and
-    there is no benchmark/S3 recording. Each worker writes its small result JSON;
-    the orchestrator reads them back.
-    """
+    os.environ[ENV_POS] = work.key
+    with (
+        open(log_path, "w") as log,
+        contextlib.redirect_stdout(log),
+        contextlib.redirect_stderr(log),
+    ):
+        try:
+            spec = resolve_spec(dotted, positions=[work.position])
+            variant = spec.variants[work.variant]
+            if kind == "group":
+                results = run_group_stacked(
+                    work, variant, spec.metric_fn, data_dir=data_dir, stacked_epochs=epochs
+                )
+            else:
+                results = [run_cell(work, variant, spec.metric_fn, data_dir=data_dir)]
+        except Exception as exc:
+            import traceback
+
+            traceback.print_exc()
+            results = _spec_task_failure(task, exc, variant)
+    for row in results:
+        row["elapsed_sec"] = round(time.time() - start, 1)
+    return results
+
+
+def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs) -> list[dict]:
     if not spec.dotted:
         raise ValueError(
             "parallel mode needs an importable spec (a dotted module path); pass the spec "
@@ -719,70 +689,73 @@ def run_parallel(spec: Spec, cells: list[Cell], jobs: int, data_dir: str) -> lis
     from src.benchmarking.parallel_train import physical_cores
     from src.shared.core_pool import start_coordinator
 
-    nice = int(os.environ.get(_ENV_NICE, _DEFAULT_NICE))
     phys = physical_cores()
-    logdir = "logs"
+    nice = int(os.environ.get(_ENV_NICE, _DEFAULT_NICE))
+    logdir = os.path.abspath("logs")
     os.makedirs(logdir, exist_ok=True)
-    tmpdir = tempfile.mkdtemp(prefix="ff-ab-pool-")
-    pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
+    with tempfile.TemporaryDirectory(prefix="ff-ab-pool-") as tmpdir:
+        pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
+        tasks = [
+            (
+                kind,
+                work,
+                spec.dotted,
+                data_dir,
+                stacked_epochs,
+                os.path.join(logdir, f"ab-{work.key}.log"),
+            )
+            for kind, work in units
+        ]
+        print(
+            f"[ab] {len(tasks)} units, -j {jobs}; core pool {pool_addr}; logs -> {logdir}",
+            flush=True,
+        )
+        completed = 0
 
-    queue = deque(cells)
-    active: OrderedDict[str, dict] = OrderedDict()
-    by_key: dict[str, dict] = {}
-    print(
-        f"[ab] {len(cells)} cells, -j {jobs}, {len(phys)} physical cores; core pool {pool_addr}; "
-        f"nice {nice}; logs -> {logdir}/ab-<cell>.log",
-        flush=True,
+        def report(index, rows):
+            nonlocal completed
+            completed += 1
+            set_active_count(min(jobs, len(tasks) - completed))
+            status = "ok" if all(r.get("ok") for r in rows) else "FAILED"
+            print(f"[ab] {units[index][1].key} {status} (log: {tasks[index][-1]})", flush=True)
+
+        try:
+            set_active_count(min(jobs, len(tasks)))
+            batches = run_tasks(
+                tasks,
+                _execute_spec_task,
+                max_workers=jobs,
+                on_error=lambda task, exc: _spec_task_failure(
+                    task, exc, spec.variants[task[1].variant]
+                ),
+                on_result=report,
+                initializer=_init_spec_worker,
+                initargs=(phys, nice, pool_addr),
+                # Spawn imports the CLI/spec before running the initializer.
+                # Native libraries must see these defaults at import time.
+                environment={
+                    **{
+                        key: os.environ.get(key, "1")
+                        for key in (
+                            "OMP_NUM_THREADS",
+                            "MKL_NUM_THREADS",
+                            "OPENBLAS_NUM_THREADS",
+                            "NUMEXPR_NUM_THREADS",
+                        )
+                    },
+                    _ENV_CACHE_DISABLE: os.environ.get(_ENV_CACHE_DISABLE, "1"),
+                },
+            )
+        finally:
+            pool_stop()
+    return [row for batch in batches for row in batch]
+
+
+def run_parallel(spec: Spec, cells: list[Cell], jobs: int, data_dir: str) -> list[dict]:
+    """Execute eager cells through the shared fresh-process grid runner."""
+    return _run_parallel_units(
+        spec, [("cell", c) for c in cells], jobs, data_dir, DEFAULT_STACKED_EPOCHS
     )
-    try:
-        while queue or active:
-            while queue and len(active) < jobs:
-                cell = queue.popleft()
-                out_path = os.path.join(tmpdir, f"{cell.key}.json")
-                active[cell.key] = _launch_worker(
-                    cell, spec, out_path, phys, nice, pool_addr, data_dir, logdir
-                )
-                print(f"[ab] launched {cell.key} (pid {active[cell.key]['proc'].pid})", flush=True)
-            set_active_count(len(active))
-
-            done = [k for k, info in active.items() if info["proc"].poll() is not None]
-            if not done:
-                time.sleep(0.4)
-                continue
-            for k in done:
-                info = active.pop(k)
-                info["logf"].close()
-                rc = info["proc"].returncode
-                elapsed = time.time() - info["t0"]
-                by_key[k] = _collect_worker(info, rc, elapsed)
-                tag = "ok" if by_key[k]["ok"] else f"FAILED (rc={rc})"
-                print(f"[ab] {k} {tag} in {elapsed:.1f}s (log: {info['log']})", flush=True)
-            set_active_count(len(active))
-    finally:
-        pool_stop()
-    # Preserve grid order in the returned list.
-    return [by_key[c.key] for c in cells]
-
-
-def _collect_worker(info: dict, rc: int, elapsed: float) -> dict:
-    cell: Cell = info["cell"]
-    result = None
-    # Read the JSON regardless of rc — a failed cell still writes its structured
-    # error there (rc=1), and surfacing that beats a bare "rc=1, see log".
-    try:
-        with open(info["out"]) as f:
-            result = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        result = None
-    if result is None:
-        return {
-            "position": cell.position, "variant": cell.variant, "seed": cell.seed,
-            "label": cell.variant, "ok": False, "metrics": {}, "ridge_mae": None,
-            "error": f"worker rc={rc}, no result JSON; see {info['log']}",
-            "elapsed_sec": round(elapsed, 1),
-        }  # fmt: skip
-    result["elapsed_sec"] = round(elapsed, 1)
-    return result
 
 
 def run_parallel_stacked(
@@ -793,116 +766,9 @@ def run_parallel_stacked(
     data_dir: str,
     stacked_epochs: int,
 ) -> list[dict]:
-    """Fan stacked groups (+ leftover eager cells) out as subprocess workers.
-
-    Same queue/poll/reap shape as :func:`run_parallel`; a group worker writes a
-    JSON LIST (one result per seed), an eager cell worker the usual dict.
-    """
-    if not spec.dotted:
-        raise ValueError(
-            "parallel mode needs an importable spec (a dotted module path); pass the spec "
-            "as a string or run with --sequential"
-        )
-    from src.benchmarking.parallel_train import physical_cores
-    from src.shared.core_pool import start_coordinator
-
-    nice = int(os.environ.get(_ENV_NICE, _DEFAULT_NICE))
-    phys = physical_cores()
-    logdir = "logs"
-    os.makedirs(logdir, exist_ok=True)
-    tmpdir = tempfile.mkdtemp(prefix="ff-ab-pool-")
-    pool_addr, set_active_count, pool_stop = start_coordinator(phys, tmpdir)
-
-    units: list[tuple[str, object]] = [("group", g) for g in groups]
-    units += [("cell", c) for c in cells]
-    queue = deque(units)
-    active: OrderedDict[str, dict] = OrderedDict()
-    by_key: dict[str, list[dict]] = {}
-    print(
-        f"[ab] {len(groups)} stacked groups + {len(cells)} eager cells, -j {jobs}, "
-        f"{len(phys)} physical cores; core pool {pool_addr}; nice {nice}; "
-        f"logs -> {logdir}/ab-<unit>.log",
-        flush=True,
-    )
-    try:
-        while queue or active:
-            while queue and len(active) < jobs:
-                kind, work = queue.popleft()
-                out_path = os.path.join(tmpdir, f"{work.key}.json")
-                if kind == "group":
-                    argv = [
-                        sys.executable, "-m", "src.tuning.ab_harness", "--worker-group",
-                        "--spec", spec.dotted, "--position", work.position,
-                        "--variant", work.variant,
-                        "--seeds", *[str(s) for s in work.seeds],
-                        "--stacked-epochs", str(stacked_epochs),
-                        "--out", out_path, "--data-dir", data_dir,
-                    ]  # fmt: skip
-                else:
-                    argv = [
-                        sys.executable, "-m", "src.tuning.ab_harness", "--worker",
-                        "--spec", spec.dotted, "--position", work.position,
-                        "--variant", work.variant, "--seed", str(work.seed),
-                        "--out", out_path, "--data-dir", data_dir,
-                    ]  # fmt: skip
-                info = _spawn_worker(work.key, argv, out_path, phys, nice, pool_addr, logdir)
-                info["unit"] = (kind, work)
-                active[work.key] = info
-                print(f"[ab] launched {work.key} (pid {info['proc'].pid})", flush=True)
-            set_active_count(len(active))
-
-            done = [k for k, info in active.items() if info["proc"].poll() is not None]
-            if not done:
-                time.sleep(0.4)
-                continue
-            for k in done:
-                info = active.pop(k)
-                info["logf"].close()
-                rc = info["proc"].returncode
-                elapsed = time.time() - info["t0"]
-                by_key[k] = _collect_unit(info, rc, elapsed)
-                tag = "ok" if all(r.get("ok") for r in by_key[k]) else f"FAILED (rc={rc})"
-                print(f"[ab] {k} {tag} in {elapsed:.1f}s (log: {info['log']})", flush=True)
-            set_active_count(len(active))
-    finally:
-        pool_stop()
-    ordered: list[dict] = []
-    for _, work in units:
-        ordered.extend(by_key[work.key])
-    return ordered
-
-
-def _collect_unit(info: dict, rc: int, elapsed: float) -> list[dict]:
-    """Read a unit worker's JSON (list for groups, dict for cells) → flat list."""
-    kind, work = info["unit"]
-    payload = None
-    try:
-        with open(info["out"]) as f:
-            payload = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        payload = None
-    if payload is None:
-        err = f"worker rc={rc}, no result JSON; see {info['log']}"
-        seeds = work.seeds if kind == "group" else (work.seed,)
-        return [
-            {
-                "position": work.position,
-                "variant": work.variant,
-                "seed": s,
-                "label": work.variant,
-                "ok": False,
-                "metrics": {},
-                "ridge_mae": None,
-                "error": err,
-                "elapsed_sec": round(elapsed, 1),
-                **({"stacked": True} if kind == "group" else {}),
-            }  # fmt: skip
-            for s in seeds
-        ]
-    results = payload if isinstance(payload, list) else [payload]
-    for r in results:
-        r["elapsed_sec"] = round(elapsed, 1)
-    return results
+    """Execute stacked groups and eager fallback cells through the same runner."""
+    units = [("group", group) for group in groups] + [("cell", cell) for cell in cells]
+    return _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs)
 
 
 # --------------------------------------------------------------------------- #
@@ -1213,68 +1079,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"Fixed epochs for stacked attention training (default {DEFAULT_STACKED_EPOCHS})",
     )
     p.add_argument("--list", action="store_true", help="Print the resolved grid + jobs and exit")
-    # Internal worker invocation (one cell / one stacked group, spawned by the
-    # orchestrator).
-    p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
-    p.add_argument("--worker-group", action="store_true", help=argparse.SUPPRESS)
-    p.add_argument("--position", help=argparse.SUPPRESS)
-    p.add_argument("--variant", help=argparse.SUPPRESS)
-    p.add_argument("--seed", type=int, help=argparse.SUPPRESS)
-    p.add_argument("--out", help=argparse.SUPPRESS)
-    p.add_argument("--data-dir", help=argparse.SUPPRESS)
     return p
-
-
-def _run_worker(args) -> int:
-    """Execute exactly one cell in this fresh process and write its result JSON."""
-    os.environ.setdefault(_ENV_CACHE_DISABLE, "1")
-    # Pass this cell's position so resolve_spec is satisfied even for a spec that
-    # defines no POSITIONS (relying on the orchestrator's --positions); the worker
-    # runs exactly one (position, variant, seed) regardless.
-    spec = resolve_spec(args.spec, positions=[args.position])
-    variant = spec.variants[args.variant]
-    cell = Cell(args.position.upper(), args.variant, int(args.seed))
-    data_dir = os.path.abspath(args.data_dir or "data")
-    try:
-        result = run_cell(cell, variant, spec.metric_fn, data_dir=data_dir)
-    except Exception as exc:  # noqa: BLE001 — report the failure via JSON, exit non-zero
-        result = _cell_failed(cell, variant, exc)
-    with open(args.out, "w") as f:
-        json.dump(result, f)
-    return 0 if result["ok"] else 1
-
-
-def _run_worker_group(args) -> int:
-    """Execute one stacked group in this fresh process; write a result LIST."""
-    os.environ.setdefault(_ENV_CACHE_DISABLE, "1")
-    spec = resolve_spec(args.spec, positions=[args.position])
-    variant = spec.variants[args.variant]
-    group = Group(args.position.upper(), args.variant, tuple(int(s) for s in args.seeds))
-    data_dir = os.path.abspath(args.data_dir or "data")
-    try:
-        results = run_group_stacked(
-            group,
-            variant,
-            spec.metric_fn,
-            data_dir=data_dir,
-            stacked_epochs=int(args.stacked_epochs),
-        )
-    except Exception as exc:  # noqa: BLE001 — report the failure via JSON, exit non-zero
-        results = _group_failed(group, variant, exc)
-    with open(args.out, "w") as f:
-        json.dump(results, f)
-    return 0 if all(r["ok"] for r in results) else 1
 
 
 def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.device:
         os.environ["FF_DEVICE"] = args.device
-
-    if args.worker:
-        return _run_worker(args)
-    if args.worker_group:
-        return _run_worker_group(args)
 
     spec_ref = args.spec or default_spec
     if not spec_ref:

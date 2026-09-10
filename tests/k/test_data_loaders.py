@@ -1188,6 +1188,50 @@ def test_load_data_keeps_observed_empty_games(tmp_path, monkeypatch, season):
 
 
 @pytest.mark.unit
+def test_supplied_live_k_frames_keep_empty_games_without_raw_cache(monkeypatch):
+    import src.k.data as k_data
+
+    row = _kicker_pbp_cache_row("K1", 2026, 1)
+    for col in (
+        "fg_att",
+        "fg_made",
+        "fg_missed",
+        "fg_yards_made",
+        "pat_att",
+        "pat_made",
+        "pat_missed",
+    ):
+        row[col] = 0.0
+    weekly = pd.DataFrame([row])
+    schedules = pd.DataFrame(
+        [
+            {
+                "season": 2026,
+                "week": 1,
+                "game_type": "REG",
+                "home_team": "KC",
+                "away_team": "BUF",
+                "spread_line": 0.0,
+                "total_line": 42.0,
+                "roof": "outdoors",
+                "surface": "grass",
+            }
+        ]
+    )
+    pbp = _synthetic_pbp(2026).assign(field_goal_attempt=0, extra_point_attempt=0)
+
+    def no_cache(*args, **kwargs):
+        raise AssertionError("Supplied live frames must not read historical raw caches")
+
+    monkeypatch.setattr(pd, "read_parquet", no_cache)
+    loaded = k_data.load_data(seasons=[2026], weekly=weekly, schedules=schedules, pbp=pbp)
+    assert len(loaded) == 1
+    assert loaded["fg_att"].item() == loaded["pat_att"].item() == 0
+    assert loaded["avg_fg_distance"].isna().all()
+    assert loaded["avg_fg_prob"].isna().all()
+
+
+@pytest.mark.unit
 def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     """``load_data`` must walk the 2025-weekly branch when SEASONS
     contains 2025. We pre-seed the weekly parquet, skip real PBP via the

@@ -440,7 +440,13 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([k_df, missing], ignore_index=True)
 
 
-def load_data() -> pd.DataFrame:
+def load_data(
+    *,
+    seasons: list[int] | None = None,
+    weekly: pd.DataFrame | None = None,
+    schedules: pd.DataFrame | None = None,
+    pbp: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Load kicker data combining PBP reconstruction (≤ 2024) + weekly (≥ 2025).
 
     The lower bound on the PBP arm comes from ``SEASONS`` (which starts at
@@ -448,8 +454,9 @@ def load_data() -> pd.DataFrame:
 
     Merges schedule info for Vegas lines and home/away.
     """
-    pbp_seasons = [s for s in SEASONS if s <= 2024]
-    weekly_seasons = [s for s in SEASONS if s >= 2025]
+    seasons = SEASONS if seasons is None else seasons
+    pbp_seasons = [s for s in seasons if s <= 2024]
+    weekly_seasons = [s for s in seasons if s >= 2025]
 
     parts = []
 
@@ -461,9 +468,10 @@ def load_data() -> pd.DataFrame:
 
     # --- Existing weekly data for 2025+ ---
     if weekly_seasons:
-        weekly = pd.read_parquet(
-            f"{CACHE_DIR}/weekly_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
-        )
+        if weekly is None:
+            weekly = pd.read_parquet(
+                f"{CACHE_DIR}/weekly_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
+            )
         k_weekly = weekly[
             (weekly["position"] == "K")
             & (weekly["season_type"] == "REG")
@@ -496,11 +504,18 @@ def load_data() -> pd.DataFrame:
         parts.append(k_weekly)
 
     k_df = pd.concat(parts, ignore_index=True)
-    k_df = _restore_no_attempt_games(k_df)
+    if pbp_seasons:
+        # The historical event-only reconstruction needs a participation index.
+        # Modern weekly feeds already provide game rows (including zero attempts),
+        # and injected live frames must not acquire a historical-cache dependency.
+        k_df = _restore_no_attempt_games(k_df)
 
     # --- Backfill PBP-derived columns for 2025 from PBP ---
     if weekly_seasons:
-        _backfill_2025_pbp_columns(k_df, weekly_seasons)
+        if pbp is None:
+            _backfill_2025_pbp_columns(k_df, weekly_seasons)
+        else:
+            _backfill_2025_pbp_columns(k_df, weekly_seasons, pbp=pbp)
 
     # Normalize both source eras, including pre-existing cached weekly values.
     # Counts are zero for no-attempt games; mean kick attributes are undefined.
@@ -522,9 +537,10 @@ def load_data() -> pd.DataFrame:
     # in the cached PBP). Schedules uses historical team codes (OAK/SD/STL)
     # while PBP normalises to current codes; map back so the join still hits
     # for pre-2017 rows.
-    schedules = pd.read_parquet(
-        f"{CACHE_DIR}/schedules_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
-    )
+    if schedules is None:
+        schedules = pd.read_parquet(
+            f"{CACHE_DIR}/schedules_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
+        )
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     has_venue = {"roof", "surface"}.issubset(schedules_reg.columns)
     venue_cols = ["roof", "surface"] if has_venue else []
@@ -651,7 +667,9 @@ def load_data() -> pd.DataFrame:
     return k_df
 
 
-def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
+def _backfill_2025_pbp_columns(
+    k_df: pd.DataFrame, seasons: list[int], *, pbp: pd.DataFrame | None = None
+) -> None:
     """Backfill PBP-derived columns for 2025 rows from PBP data."""
     mask = k_df["season"].isin(seasons)
     if not mask.any():
@@ -672,11 +690,16 @@ def _backfill_2025_pbp_columns(k_df: pd.DataFrame, seasons: list[int]) -> None:
         "fg_yards_made",
     ]
 
+    supplied_pbp = pbp
     try:
         all_weekly = []
         all_game_venue = []
         for yr in seasons:
-            pbp = nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
+            pbp = (
+                nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
+                if supplied_pbp is None
+                else supplied_pbp[supplied_pbp["season"] == yr]
+            )
             pbp = pbp[pbp["season_type"] == "REG"]
 
             # Game-level venue/weather lookup keyed on (season, week, posteam).
@@ -824,6 +847,8 @@ def _cached_kick_pbp_is_current(cache_path: str) -> bool:
 def reconstruct_kicker_kicks_from_pbp(
     seasons: list[int],
     cache_dir: str | None = None,
+    *,
+    pbp: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Extract individual FG + XP records from play-by-play data.
 
@@ -846,9 +871,10 @@ def reconstruct_kicker_kicks_from_pbp(
         return pd.DataFrame(columns=_KICKS_SCHEMA)
 
     cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
-    if os.path.exists(cache_path) and _cached_kick_pbp_is_current(cache_path):
+    if pbp is None and os.path.exists(cache_path) and _cached_kick_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
 
+    supplied_pbp = pbp
     all_kicks = []
     skipped_seasons: list[int] = []
     for yr in seasons:
@@ -857,7 +883,11 @@ def reconstruct_kicker_kicks_from_pbp(
         # missing column or unexpected schema in one season doesn't abort the
         # whole load. Mirrors the defensive posture of _backfill_2025_pbp_columns.
         try:
-            pbp = nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
+            pbp = (
+                nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
+                if supplied_pbp is None
+                else supplied_pbp[supplied_pbp["season"] == yr]
+            )
             pbp = pbp[pbp["season_type"] == "REG"]
 
             fg_rows = pbp[pbp["field_goal_attempt"] == 1]
@@ -947,13 +977,14 @@ def reconstruct_kicker_kicks_from_pbp(
             f"schema and retry."
         )
 
-    os.makedirs(cache_dir, exist_ok=True)
-    result.to_parquet(cache_path)
-    print(f"  Cached per-kick data: {len(result)} kicks -> {cache_path}")
+    if supplied_pbp is None:
+        os.makedirs(cache_dir, exist_ok=True)
+        result.to_parquet(cache_path)
+        print(f"  Cached per-kick data: {len(result)} kicks -> {cache_path}")
     return result
 
 
-def load_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
+def load_kicks(k_df: pd.DataFrame, *, kicks_df: pd.DataFrame | None = None) -> pd.DataFrame:
     """Load per-kick records aligned with the weekly kicker DataFrame.
 
     Called separately from `load_data` so the serving path (app.py)
@@ -961,7 +992,8 @@ def load_kicks(k_df: pd.DataFrame) -> pd.DataFrame:
     (player_id, season) pairs present in the caller's weekly frame, with
     `is_home` merged from the schedule-joined weekly DataFrame.
     """
-    kicks_df = reconstruct_kicker_kicks_from_pbp(SEASONS)
+    if kicks_df is None:
+        kicks_df = reconstruct_kicker_kicks_from_pbp(SEASONS)
 
     valid_keys = k_df[["player_id", "season"]].drop_duplicates()
     kicks_df = kicks_df.merge(valid_keys, on=["player_id", "season"], how="inner")

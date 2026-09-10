@@ -265,7 +265,7 @@ Layer A location-auditor scopes:
    `batch-image.yml`, `train-batch.yml`, `train-ec2.yml`, `deploy.yml`,
    `_detect-positions.yml`, `refresh-splits.yml`, `refresh-upcoming-week.yml`,
    `ab-batch.yml`, `retune-nn-batch.yml`, `retune-lgbm.yml`, `ablate-rb-gate.yml`,
-   `ablate-scheduler.yml`, `benchmark-batch.yml`, `skip-sentinel.yml`,
+   `ablate-scheduler.yml`, `benchmark-batch.yml`,
    `codeql.yml`
 2. Batch-orchestration auditor: `src/batch/` — `Dockerfile.train` +
    `Dockerfile.train.dockerignore`, `launch.py`, `train.py`, `benchmark.py`,

@@ -1,8 +1,8 @@
-"""Shared helpers for offline tuning ablations.
+"""Eager-job and report compatibility helpers for offline tuning ablations.
 
 This module is intentionally small and lives under ``src/tuning`` so ablation
-scripts can share seed/variant loops without moving experiment-only machinery
-into ``src/shared``. ``max_workers=1`` is available when an ablation needs clean
+scripts keep their per-target tables while sharing ``_execution.run_tasks``
+with ``ab_harness``. ``max_workers=1`` is available when an ablation needs clean
 per-job timing; local CUDA sweeps can use ``resolve_max_workers("auto", ...)`` to
 fan out small NN jobs across the single GPU while keeping worker processes
 isolated.
@@ -10,19 +10,16 @@ isolated.
 
 from __future__ import annotations
 
-import multiprocessing as mp
 import os
-import shutil
 import statistics
-import tempfile
 import traceback
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from src.shared.benchmark_utils import append_to_history, get_git_hash, utc_now_iso
+from src.tuning._execution import isolated_outputs, run_tasks
 
 HISTORY_DIR = os.path.join("benchmark_history", "ablations")
 _THREAD_CAP_VARS = (
@@ -264,30 +261,6 @@ def _append_error_to_log(log_path: str | None, tb: str) -> None:
         print(tb, file=logf)
 
 
-@contextmanager
-def _isolated_outputs(data_dir: str):
-    """chdir into a private tmp dir with ``data/`` and ``.cache/`` symlinked to the
-    originals, so the pipeline's hard-coded ``{pos}/outputs`` writes land in the tmp dir
-    and never clobber the served artifacts.
-
-    Unlike the A/B harness (which *disables* the feature cache for correctness), the
-    ablation runner symlinks ``.cache/`` through to the shared/primed cache so the
-    warm-once-before-fan-out optimisation (e.g. ``ablate_batch_lr._prime_feature_cache``)
-    still pays off — only the model-artifact writes are redirected. Mirrors the isolation
-    in ``src/tuning/ab_harness.run_cell``.
-    """
-    orig = os.getcwd()
-    tmp = tempfile.mkdtemp(prefix="ff-ablation-")
-    try:
-        os.chdir(tmp)
-        os.symlink(data_dir, os.path.join(tmp, "data"))
-        os.symlink(os.path.join(orig, ".cache"), os.path.join(tmp, ".cache"))
-        yield
-    finally:
-        os.chdir(orig)
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def _run_job(
     job: AblationJob,
     log_path: str | None = None,
@@ -309,7 +282,7 @@ def _run_job(
 
     try:
         if data_dir and os.path.isdir(data_dir):
-            with _isolated_outputs(data_dir):
+            with isolated_outputs(data_dir, share_cache=True):
                 result = _body()
         else:
             result = _body()
@@ -320,6 +293,10 @@ def _run_job(
         return _with_log_path(_error_result(job, exc, tb=tb), log_path)
 
 
+def _execute_job_task(task) -> AblationResult:
+    return _run_job(*task)
+
+
 def run_grid(
     jobs: list[AblationJob],
     *,
@@ -328,74 +305,41 @@ def run_grid(
     log_dir: str | None = None,
     progress: bool = False,
 ) -> list[AblationResult]:
-    """Run an ablation grid and return one result per job.
-
-    ``max_workers=1`` is intentionally serial. Larger values use a
-    ``ProcessPoolExecutor`` and are best reserved for non-timing diagnostics.
-    """
-
-    if max_workers < 1:
-        raise ValueError("max_workers must be >= 1")
-    # Absolute log paths survive each job's output-isolation chdir; data_dir is the real
-    # splits dir symlinked into every job's tmp cwd (see _isolated_outputs).
+    """Adapt eager jobs and their detailed reports to the shared grid executor."""
     log_paths = [
         os.path.abspath(os.path.join(log_dir, _safe_log_name(job, idx))) if log_dir else None
         for idx, job in enumerate(jobs)
     ]
     data_dir = os.path.abspath("data")
-    # Under fan-out, bound LightGBM's per-worker threads to physical_cores ÷ workers so N
-    # workers don't oversubscribe (serial keeps the env default → all cores for one run).
-    lgbm_n_jobs: int | None = None
+    lgbm_n_jobs = None
     if max_workers > 1:
         from src.benchmarking.parallel_train import physical_cores
 
         lgbm_n_jobs = max(1, len(physical_cores()) // max_workers)
-    if max_workers == 1:
-        results = []
-        for idx, job in enumerate(jobs):
-            result = _run_job(job, log_paths[idx], data_dir)
-            if progress:
-                status = "ERROR" if result.error else "ok"
-                suffix = f" log={log_paths[idx]}" if log_paths[idx] else ""
-                print(
-                    f"[ablation] {idx + 1}/{len(jobs)} {job.position} "
-                    f"seed={job.seed} variant={job.variant} {status}{suffix}",
-                    flush=True,
-                )
-            results.append(result)
-        return results
+    tasks = [(job, log_paths[i], data_dir, lgbm_n_jobs) for i, job in enumerate(jobs)]
 
-    ordered: list[AblationResult | None] = [None] * len(jobs)
-    completed: list[AblationResult] = []
-    mp_context = mp.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=max_workers, mp_context=mp_context) as pool:
-        futures = {
-            pool.submit(_run_job, job, log_paths[idx], data_dir, lgbm_n_jobs): (idx, job)
-            for idx, job in enumerate(jobs)
-        }
-        for future in as_completed(futures):
-            idx, job = futures[future]
-            try:
-                result = future.result()
-            except Exception as exc:  # noqa: BLE001 - include process/bootstrap failures per job
-                result = _error_result(job, exc)
-            result = _with_log_path(result, log_paths[idx])
-            if progress:
-                status = "ERROR" if result.error else "ok"
-                suffix = f" log={log_paths[idx]}" if log_paths[idx] else ""
-                print(
-                    f"[ablation] {idx + 1}/{len(jobs)} {job.position} "
-                    f"seed={job.seed} variant={job.variant} {status}{suffix}",
-                    flush=True,
-                )
-            if preserve_order:
-                ordered[idx] = result
-            else:
-                completed.append(result)
+    def failed(task, exc):
+        return _with_log_path(_error_result(task[0], exc), task[1])
 
-    if preserve_order:
-        return [result for result in ordered if result is not None]
-    return completed
+    def report(index, result):
+        if progress:
+            job = jobs[index]
+            status = "ERROR" if result.error else "ok"
+            suffix = f" log={log_paths[index]}" if log_paths[index] else ""
+            print(
+                f"[ablation] {index + 1}/{len(jobs)} {job.position} "
+                f"seed={job.seed} variant={job.variant} {status}{suffix}",
+                flush=True,
+            )
+
+    return run_tasks(
+        tasks,
+        _execute_job_task,
+        max_workers=max_workers,
+        preserve_order=preserve_order,
+        on_error=failed,
+        on_result=report,
+    )
 
 
 def result_to_dict(result: AblationResult) -> dict[str, Any]:

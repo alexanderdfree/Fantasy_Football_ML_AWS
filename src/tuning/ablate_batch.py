@@ -75,6 +75,10 @@ from types import ModuleType
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.tuning.ab_batch import _list_done_cells as _list_done_cells
+from src.tuning.ab_batch import _provenance as _provenance
+from src.tuning.ab_batch import _split_env_csv as _split_env_csv
+from src.tuning.ab_batch import cell_result_key as cell_result_key
 from src.tuning.ablation_runner import (  # noqa: E402
     AblationJob,
     _run_job,
@@ -91,23 +95,10 @@ ENV_VARIANTS = "FF_ABLATE_VARIANTS"
 DEFAULT_S3_PREFIX = "ablation_runs"
 
 
-def cell_result_key(s3_prefix: str, run_id: str, cell_key: str) -> str:
-    """S3 key for one cell's result JSON. Single source of truth — the
-    launcher's collector builds the same keys from the same grid."""
-    return f"{s3_prefix.strip('/')}/{run_id}/cells/{cell_key}.json"
-
-
 def cell_key(position: str, variant: str, seed: int) -> str:
     """Stable per-cell identity shared by the runner and the launcher's
     collector. Mirrors ``ab_harness`` cell keys (``{pos}-{variant}-{seed}``)."""
     return f"{position}-{variant}-{seed}"
-
-
-def _split_env_csv(name: str) -> list[str] | None:
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return None
-    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 def _require_env(name: str) -> str:
@@ -143,35 +134,6 @@ def resolve_grid(module: ModuleType, *, position: str, seeds, variants) -> list[
     if module.BASELINE not in selected:
         selected = [module.BASELINE, *selected]
     return module._build_jobs(position=position, seeds=seeds, variants=selected)
-
-
-def _list_done_cells(s3, bucket: str, s3_prefix: str, run_id: str) -> set[str]:
-    """Cell keys whose result JSON already exists under the run prefix —
-    completed by a prior Spot attempt; the retry skips them."""
-    prefix = f"{s3_prefix.strip('/')}/{run_id}/cells/"
-    done: set[str] = set()
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            name = obj["Key"][len(prefix) :]
-            if name.endswith(".json"):
-                done.add(name[: -len(".json")])
-    return done
-
-
-def _provenance() -> dict:
-    """GPU + capture facts stamped into every cell JSON so the aggregated
-    report records which metric path actually ran (mirrors ab_batch)."""
-    from src.shared.platform_detect import detect_platform
-    from src.shared.utils import cuda_graph_enabled
-
-    info = detect_platform()
-    return {
-        "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
-        "gpu_name": info.gpu_name,
-        "sm": info.sm,
-        "cuda_graph_active": cuda_graph_enabled(),
-    }
 
 
 def run_batch_entry(position: str) -> None:

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.tuning._cohort_metrics import inheritance_metrics
 from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["QB"]
@@ -153,26 +154,7 @@ def _whitelist_static(cfg):
 # Metric — per-model overall + inheritor-cohort bias/MAE/n
 # --------------------------------------------------------------------------- #
 def metric_fn(result, position):
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
-
-    df = result["test_df"]
-    models = available_models(df)
-    overall = per_model_metrics(df, models)
-    sub = (
-        df[df["inherited_opportunity"] > 0]
-        if "inherited_opportunity" in df.columns
-        else df.iloc[0:0]
-    )
-    sub_m = per_model_metrics(sub, models) if len(sub) else {}
-    out: dict = {}
-    for m, mv in overall.items():
-        row = {"mae": float(mv["mae"]), "bias": float(mv["bias"])}
-        if m in sub_m:
-            row["inh_mae"] = float(sub_m[m]["mae"])
-            row["inh_bias"] = float(sub_m[m]["bias"])
-            row["inh_n"] = float(sub_m[m]["n"])
-        out[m] = row
-    return out
+    return inheritance_metrics(result, position)
 
 
 VARIANTS = [

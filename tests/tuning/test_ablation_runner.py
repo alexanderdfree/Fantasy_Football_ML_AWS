@@ -9,6 +9,7 @@ import types
 
 import pytest
 
+from src.tuning import _execution
 from src.tuning import ablation_runner as ar
 
 pytestmark = pytest.mark.unit
@@ -92,42 +93,20 @@ def test_run_grid_writes_job_errors_to_logs(tmp_path):
 
 
 def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
-    submitted = []
-    pool_kwargs = []
+    options = []
 
-    class FakeFuture:
-        def __init__(self, result):
-            self._result = result
+    def shared_executor(tasks, execute, **kwargs):
+        options.append(kwargs)
+        selected = tasks if kwargs["preserve_order"] else list(reversed(tasks))
+        return [execute(task) for task in selected]
 
-        def result(self):
-            return self._result
-
-    class FakePool:
-        def __init__(self, max_workers, **kwargs):
-            self.max_workers = max_workers
-            pool_kwargs.append(kwargs)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def submit(self, fn, job, log_path=None, data_dir=None, lgbm_n_jobs=None):
-            submitted.append((self.max_workers, job.seed))
-            return FakeFuture(fn(job, log_path, data_dir, lgbm_n_jobs))
-
-    monkeypatch.setattr(ar, "ProcessPoolExecutor", FakePool)
-    monkeypatch.setattr(ar, "as_completed", lambda futures: list(reversed(list(futures))))
-
+    monkeypatch.setattr(ar, "run_tasks", shared_executor)
     jobs = [_job(1, "a"), _job(2, "b")]
     preserved = ar.run_grid(jobs, max_workers=2, preserve_order=True)
     completed = ar.run_grid(jobs, max_workers=2, preserve_order=False)
-
     assert [(r.seed, r.variant) for r in preserved] == [(1, "a"), (2, "b")]
     assert [(r.seed, r.variant) for r in completed] == [(2, "b"), (1, "a")]
-    assert submitted[:2] == [(2, 1), (2, 2)]
-    assert pool_kwargs[0]["mp_context"].get_start_method() == "spawn"
+    assert [o["max_workers"] for o in options] == [2, 2]
 
 
 def test_mean_std_and_paired_deltas():
