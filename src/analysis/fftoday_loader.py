@@ -49,6 +49,7 @@ from src.data.cache_io import atomic_write_parquet
 from src.data.nflcom_loader import (
     _build_roster_lookup,
     _format_unmatched_diagnostic,
+    _joined_identity_cache_is_valid,
     _team_abbr_normalize,
     normalize_player_name,
 )
@@ -65,6 +66,10 @@ FFTODAY_DEFAULT_WEEKS = tuple(range(1, 19))
 # min/max/count cache names, which did not identify every requested value.
 _CACHE_VERSION = "v2"
 _FETCH_COMPLETE_ATTR = "fftoday_fetch_complete_v1"
+# Joined caches retain matched rows only; keep the original denominator so
+# nearby thresholds sharing a rounded filename cannot turn partial coverage
+# into 100%. Legacy caches without this provenance must rebuild.
+_JOIN_SOURCE_ROWS_ATTR = "fftoday_join_source_rows_v1"
 
 
 def _seasons_sig(seasons: list[int]) -> str:
@@ -344,7 +349,9 @@ def load_fftoday_with_gsis_id(
     )
     if os.path.exists(cache_path) and not force_refresh and default_rosters:
         cached = pd.read_parquet(cache_path)
-        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True and _joined_identity_cache_is_valid(
+            cached, min_match_rate, total_rows=cached.attrs.get(_JOIN_SOURCE_ROWS_ATTR, -1)
+        ):
             return cached
 
     proj = load_fftoday_projections(
@@ -410,6 +417,7 @@ def load_fftoday_with_gsis_id(
     # an NaN id can't pair to a model prediction anyway (mirrors Sleeper/NFL.com).
     primary = primary[primary["player_id"].notna()].reset_index(drop=True)
     primary.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    primary.attrs[_JOIN_SOURCE_ROWS_ATTR] = n_total
     if fetch_complete and default_rosters:
         atomic_write_parquet(primary, cache_path)
     return primary

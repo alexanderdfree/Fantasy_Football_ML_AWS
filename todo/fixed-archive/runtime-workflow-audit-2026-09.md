@@ -59,6 +59,8 @@ Triage controls preserve repository/open-issue scope and perform no live
 label or comment writes.
 All twelve configured Claude/Gemini commands now execute from space-containing
 paths; ordinary-path controls remain valid. Ninety-seven related checks pass.
+Feature-manifest review output now exposes order and duplicate-count changes;
+fifteen CLI/snapshot checks pass, with no snapshot or numerical changes.
 
 **Lesson**: Verify the complete producer/consumer handoff, including explicit
 defaults, accepted names, interpreter boundaries and resource ownership.

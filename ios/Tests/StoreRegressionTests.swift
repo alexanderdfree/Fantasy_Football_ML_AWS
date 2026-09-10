@@ -370,6 +370,44 @@ final class StoreRegressionTests: XCTestCase {
         XCTAssertNotEqual(decoded[0].id, decoded[1].id)
     }
 
+    func testSameTimestampBenchmarkRunsUseCanonicalIdentityAndIndependentDeltas() throws {
+        let values = [1.5, 2.0, 1.0] // newest first: improvement, regression, baseline
+        let entries: [[String: Any]] = values.enumerated().map { index, value in
+            ["run_id": "2026-09-10T13:43:22_5044ea66_seed\(index)",
+             "timestamp": "2026-09-10T13:43:22", "git_hash": "5044ea66",
+             "training_skipped": false, "positions": ["QB"],
+             "ridge": [["position": "QB", "mae": value]],
+             "nn": [], "attn_nn": [], "lgbm": []]
+        }
+        let data = try JSONSerialization.data(withJSONObject: entries)
+        let rows = try JSONDecoder().decode([BenchmarkHistory.Row].self, from: data)
+        XCTAssertEqual(Set(rows.map(\.id)).count, 3)
+        XCTAssertEqual(rows.map(\.id), entries.map { $0["run_id"] as! String })
+        let deltas = HistoryDeltas(rows: rows, metric: .mae)
+        switch deltas.tint(rowID: rows[0].id, position: "QB", model: .ridge) {
+        case .improve?: break
+        default: XCTFail("The newest run improved independently")
+        }
+        switch deltas.tint(rowID: rows[1].id, position: "QB", model: .ridge) {
+        case .regress?: break
+        default: XCTFail("The middle run regressed independently")
+        }
+        XCTAssertNil(deltas.tint(rowID: rows[2].id, position: "QB", model: .ridge))
+    }
+
+    func testAbsentOrEmptyBenchmarkRunIDPreservesLegacyIdentity() throws {
+        let base: [String: Any] = ["timestamp": "2026-09-10T01:00:00", "git_hash": "abc1234",
+                                  "pr_number": 1, "training_skipped": false,
+                                  "positions": [], "ridge": [], "nn": [], "attn_nn": [], "lgbm": []]
+        for runID in [nil, "", "   "] as [String?] {
+            var entry = base
+            if let runID { entry["run_id"] = runID }
+            let data = try JSONSerialization.data(withJSONObject: entry)
+            let row = try JSONDecoder().decode(BenchmarkHistory.Row.self, from: data)
+            XCTAssertEqual(row.id, "abc1234|2026-09-10T01:00:00|1")
+        }
+    }
+
     func testVegasSpreadUsesTheAPITeamMarginConvention() {
         // A +3.5 API margin implies (47.5 + 3.5) / 2 = 25.5 points for
         // this team versus 22 for its opponent: it is the favorite at -3.5.

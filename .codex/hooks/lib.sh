@@ -158,6 +158,10 @@ codex_promote_worktree_splits() {
   }
   wt_splits="$wt/data/splits"
   parent_splits="$parent/data/splits"
+  if agent_hooks_data_is_sealed "$wt" "$parent"; then
+    echo "splits promote: sealed data snapshot detected; refresh raw and splits together using a coherent release download or rebuild" >&2
+    return 0
+  fi
   if [ -L "$wt_splits" ] || [ ! -d "$wt_splits" ]; then
     echo "splits promote: worktree has no local data/splits (shares the parent's)" >&2
     return 0

@@ -70,6 +70,18 @@ path = os.path.normcase(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2]))
 print(path.replace(os.sep, "/"))' "$1" "$2"
 }
 
+# Sealed raw inputs and splits are one release; copying only the parquets would
+# leave their provenance marker/checksums describing different bytes.
+agent_hooks_data_is_sealed() {
+  local root
+  for root in "$@"; do
+    if [ -f "$root/data/raw/.release.json" ] || [ -f "$root/data/splits/release-inputs.json" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 agent_hooks_current_pr() {
   local root="$1" jq_bin="$2" branch head metadata
   branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" || return 1

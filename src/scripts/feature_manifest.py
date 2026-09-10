@@ -341,6 +341,8 @@ def _diff_value(path: str, old: Any, new: Any, out: list[str]) -> None:
             out.append(f"  - {path}: removed {removed}")
         if added:
             out.append(f"  + {path}: added {added}")
+        if old_l != new_l and not removed and not added:
+            out.append(f"  ~ {path}: order or multiplicity changed {old_l!r} -> {new_l!r}")
     elif old != new:
         out.append(f"  ~ {path}: {old!r} -> {new!r}")
 

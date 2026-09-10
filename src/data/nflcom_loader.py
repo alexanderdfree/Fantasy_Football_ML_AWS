@@ -497,8 +497,15 @@ def _build_roster_lookup(rosters: pd.DataFrame) -> pd.DataFrame:
     nflverse's ``import_seasonal_rosters`` schema may vary; we tolerate
     ``team_abbr`` / ``team`` / ``recent_team`` and prefer the first that exists.
     """
+    # identity imports the name/team normalizers above; defer this import until
+    # lookup time so both modules can initialize without a cycle.
+    from src.data.identity import valid_player_ids
+
     if "player_id" not in rosters.columns:
         raise ValueError("rosters frame must have player_id (gsis_id)")
+    # Filter before astype(str) and deduplication: missing IDs otherwise become
+    # "None"/"nan" and can displace a valid alias for the same roster key.
+    rosters = rosters.loc[valid_player_ids(rosters["player_id"])]
     # Find the right name column.
     name_col = next(
         (c for c in ("player_name", "full_name", "player_display_name") if c in rosters.columns),
@@ -533,6 +540,22 @@ def _build_roster_lookup(rosters: pd.DataFrame) -> pd.DataFrame:
     # snapshot — different team rows after a trade); keep the first.
     lookup = lookup.drop_duplicates(subset=["norm_name", "season", "team", "position"])
     return lookup.reset_index(drop=True)
+
+
+def _joined_identity_cache_is_valid(
+    cached: pd.DataFrame, min_match_rate: float, *, total_rows: int
+) -> bool:
+    """Validate IDs and match coverage against the original projection count."""
+    from src.data.identity import valid_player_ids
+
+    if "player_id" not in cached or type(total_rows) is not int:
+        return False
+    if total_rows <= 0 or total_rows < len(cached):
+        return False
+    valid = valid_player_ids(cached["player_id"])
+    if (cached["player_id"].notna() & ~valid).any():
+        return False  # String-null IDs are stale data, never successful matches.
+    return bool(valid.sum() / total_rows >= min_match_rate)
 
 
 def _format_unmatched_diagnostic(unmatched: pd.DataFrame, top_n: int = 5) -> str:
@@ -609,7 +632,9 @@ def load_nflcom_with_gsis_id(
         # The filename rounds the requested threshold to a percent. Enforce
         # its exact value before reuse so nearby stricter requests cannot
         # inherit a result that would fail the cold-path match-rate check.
-        if cached is not None and cached["player_id"].notna().mean() >= min_match_rate:
+        if cached is not None and _joined_identity_cache_is_valid(
+            cached, min_match_rate, total_rows=len(cached)
+        ):
             return cached
 
     proj = load_nflcom_projections(
