@@ -28,6 +28,9 @@ Defects reproduced against `92be2873` during the 2026-09-10 audit.
   Advertised A/B specs imported undeclared heavy dependencies at dispatch time.
 - Claude/Gemini and generated WSL guards compared unnormalized paths; Claude
   promoted local splits after queued or mismatched merge events.
+- Claude/Gemini configured hook commands split repository paths containing
+  spaces, preventing every hook from running even though the scripts handled
+  those paths correctly.
 - Scheduled issue triage required both unlabeled and needs-triage status,
   selecting neither intended population.
 
@@ -41,6 +44,7 @@ instructions within the portfolio's DNS zone.
 Emit canonical stacked seeds explicitly and import heavy dependencies only in
 the functions that need them. Share canonical path/current-PR validation across
 providers and require the matching completed merge before promoting splits.
+Quote configured hook executable paths while preserving every other setting.
 Select the union of the two intended triage populations.
 
 **Validation**: Tests execute exact workflow/CLI fragments against local command
@@ -53,6 +57,8 @@ parent-checkout writes are exercised. Twenty advertised A/B specs resolve in a
 clean environment containing only the workflow's lightweight dependencies.
 Triage controls preserve repository/open-issue scope and perform no live
 label or comment writes.
+All twelve configured Claude/Gemini commands now execute from space-containing
+paths; ordinary-path controls remain valid. Ninety-seven related checks pass.
 
 **Lesson**: Verify the complete producer/consumer handoff, including explicit
 defaults, accepted names, interpreter boundaries and resource ownership.

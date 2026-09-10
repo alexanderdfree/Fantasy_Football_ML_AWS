@@ -164,5 +164,34 @@
       "log_sha256": "23f51b48b2e666bc017755992fc0aee2d3c036d4efc02fe1520c5be3214699b7",
       "change": "Current schema marker and explicit no-live-fetch control in fixture"
     }
+  },
+  "provider_path_quoting": {
+    "worktree": "/private/tmp/final-project-runtime-followup.eOYNNq",
+    "files": [
+      {
+        "path": ".claude/settings.json",
+        "sha256": "20a8479c185214372487a2a66fda8f3fb02f3338c0cba7d1be9d2f96dce4fa2e"
+      },
+      {
+        "path": ".gemini/settings.json",
+        "sha256": "029dd8fca70c31137f17d411b7022a701a491e8eb91861cf228f5ad6fb681aef"
+      },
+      {
+        "path": "tests/scripts/test_provider_config_paths.py",
+        "sha256": "ba362e4687915edb98d6782f27b0520afc38684fdb2515414081b39fffae964e"
+      }
+    ],
+    "change": "Quote configured hook executable paths; every other parsed configuration field identical",
+    "before": {
+      "failed": 12,
+      "controls_passed": 12,
+      "log": "/tmp/audit-provider-config-before.jp9OLl"
+    },
+    "after": {
+      "passed": 97,
+      "log": "/tmp/audit-provider-config-after.DMURkb"
+    },
+    "active_pr_overlap": "1533changesonlyClaudeSessionStarttimeout;1557and1566donotedittheseconfigs;quotesdonotaltertimeoutsemantics",
+    "frozen": true
   }
 }
