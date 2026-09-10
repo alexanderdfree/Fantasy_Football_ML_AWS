@@ -428,5 +428,11 @@
     "CPU validation; not a production GPU retrain.",
     "The corrected all-game MAE is not directly comparable with the baseline conditional-on-an-attempt MAE.",
     "Three seeds show a small common-cohort regression; no claim of a model accuracy gain."
-  ]
+  ],
+  "compatibility_validation": {
+    "benchmark": "benchmark_history/2026-09-10T10-44-10_0ffe4c87.json",
+    "default_pipeline_metrics_identical_after_live_loader_integration": true,
+    "k_and_live_tests_passed": 191,
+    "unit_tests_passed": 3588
+  }
 }

@@ -1,8 +1,8 @@
 {
-  "run_id": "2026-09-10T10:35:16_d51720eb",
-  "timestamp": "2026-09-10T10:35:16",
-  "git_hash": "d51720eb",
-  "note": "K empty-game fix after review; offline roster identity resolution; consistent missing kick means; macOS CPU, LGBM_N_JOBS=1, seed 42",
+  "run_id": "2026-09-10T10:44:10_0ffe4c87",
+  "timestamp": "2026-09-10T10:44:10",
+  "git_hash": "0ffe4c87",
+  "note": "K empty-game fix integrated with live K loader; cached identity and missing mean fixes; macOS CPU, LGBM_N_JOBS=1, seed 42",
   "positions": [
     "K"
   ],
@@ -159,12 +159,12 @@
       "lgbm_top12": 0.449,
       "phase_seconds": {
         "prepare_data": 0.1,
-        "ridge_tune": 0.5,
+        "ridge_tune": 0.4,
         "ridge_fit": 0.0,
-        "lgbm_train": 0.5,
-        "nn_train": 10.2,
-        "attn_nn_train": 14.3,
-        "train_models_total": 24.5,
+        "lgbm_train": 0.6,
+        "nn_train": 9.5,
+        "attn_nn_train": 14.7,
+        "train_models_total": 24.2,
         "backtest": 0.2,
         "save_artifacts": 0.0,
         "figures": 1.2
@@ -304,10 +304,10 @@
           }
         }
       },
-      "elapsed_sec": 32.8
+      "elapsed_sec": 33.1
     }
   ],
   "code_fingerprints": {
-    "K": "1968b6031fa75595a341306c7e5415238fc59966b21a5826e96f42e5873b81f9"
+    "K": "4d313b55a7a4fe9ad35ac73507cc7da433e42d8e247a954ad6a3c1554a76df9f"
   }
 }
