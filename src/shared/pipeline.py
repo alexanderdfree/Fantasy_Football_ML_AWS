@@ -63,6 +63,7 @@ from src.shared.neural_net import (
     build_multihead_net,
     build_multihead_net_with_history,
     build_multihead_net_with_nested_history,
+    initialize_poisson_heads,
 )
 from src.shared.training import (
     MultiHeadHistoryTrainer,
@@ -765,6 +766,7 @@ def _train_nn(
     )
 
     model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
+    initialize_poisson_heads(model, y_train_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
@@ -887,6 +889,7 @@ def _train_attention_nn(
         targets=targets,
         opp_game_dim=(opp_hist_train.shape[2] if use_opp else None),
     ).to(device)
+    initialize_poisson_heads(model, y_train_dict)
 
     # Warm-start hook (default-off, numerically inert when None): seed this
     # fold's weights from a prior fold's trained state instead of the fresh
@@ -1000,6 +1003,7 @@ def _train_nested_attention_nn(
         targets=targets,
         game_dim=game_dim,
     ).to(device)
+    initialize_poisson_heads(model, y_train_dict)
 
     # Warm-start hook (default-off, numerically inert when None) — see the twin
     # in _train_attention_nn. Production passes None (byte-identical fit).
@@ -2272,6 +2276,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         )
 
         model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
+        initialize_poisson_heads(model, y_train_dict)
 
         _run_nn_training(
             model=_maybe_compile(model),

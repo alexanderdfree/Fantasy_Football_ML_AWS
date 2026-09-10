@@ -2,6 +2,32 @@
 
 **Status:** Accepted
 
+**2026-09-10 amendment — ungated Poisson heads.** New training uses log-rate
+outputs for ungated heads whose loss family is `poisson_nll`. The predicted
+raw count is `exp(log_rate)` and the loss consumes the log-rate directly with
+`log_input=True`. A clamped negative output previously received zero gradient
+even when its label was positive; the stable RB/WR/TE attention fumble heads,
+WR base-NN fumble head, and DST attention safety head were zero throughout
+their 2025 holdouts. Log-space loss also avoids the vanishing gradient of
+`log(rate + epsilon)` when a rate is very small.
+
+Initialize each such head's final weights to zero and its bias to the log of
+the TRAIN-only event mean (minimum initial rate `1e-6` for an all-zero training
+target). Other heads, their losses/weights, and fantasy-point aggregation keep
+their existing behavior. In particular this does not restore global Softplus
+outputs or introduce the previously rejected hurdle-Poisson loss. K has no
+Poisson heads and is unchanged; the generic path also covers its nested model.
+
+The head persists `_log_rate_version` in its state dict. Missing/false markers
+retain the legacy raw-rate/clamp interpretation on load, including after a
+legacy artifact is re-saved. This lets serving deploy before retraining without
+reinterpreting old weights. Training factories and the inference registry use
+the same target resolver. `nn_poisson_log_rate=False` retains the baseline for
+paired validation via `src.tuning.ab_poisson_log_rate`; production defaults on.
+
+The earlier decision below records the original constraint stack. The log-rate
+amendment supersedes the clamp requirement only for new ungated Poisson heads.
+
 **Decision.** Combine four constraints on NN outputs: (a) Huber loss with per-target deltas, (b) per-head `clamp(min=0)` controlled by a `non_negative_targets` set, (c) a gated TD head that models P(TD>0) and E[TD|TD>0] separately, (d) ±4σ feature clipping after StandardScaler.
 
 **Context.** Fantasy targets have three nasty properties: they're zero-inflated (most players don't score a TD on a given week), non-negative (with one exception — DST `pts_allowed_bonus`, which runs −4 to +10), and have outliers (40+ point games do happen). Vanilla MSE regression with no output bound produces nonsense.
@@ -20,5 +46,7 @@
 **References.** [src/shared/neural_net.py:274-305](../../src/shared/neural_net.py) (`non_negative_targets` set + per-head clamp), [src/shared/training.py](../../src/shared/training.py) (`MultiTargetLoss` with Huber; `hurdle_negbin_value_loss` / `hurdle_poisson_value_loss` + their ZTNB/ZTP log-pmfs), [src/dst/config.py:174](../../src/dst/config.py) (`nn_non_negative_targets=set(_TARGETS)` — after the commit `cc0c627` migration all 10 raw DST heads are non-negative, so the set is simply the full target list; the `pts_allowed_bonus` head that used to warrant DST opting out of the global clamp is no longer a head — its negative values are produced downstream by the tier-lookup in `src/shared/aggregate_targets.py`), feature clipping in [src/shared/pipeline.py](../../src/shared/pipeline.py). The `GatedHead` is now parameterized over a list of gated targets (`RB` has three: `receptions`, `rushing_tds`, `receiving_tds`; `WR`/`TE` have two: `receptions`, `receiving_tds`; `QB`, `K`, and `DST` have none — see D2). See also [todo/fixed-archive.md](../../todo/fixed-archive.md) for each bug history.
 
 ## Changelog
+
+- **2026-09-10** — Train ungated Poisson heads as log-rates with training-mean initialization, consistent eager/graphed losses, and checkpointed legacy compatibility. Validate sparse-head calibration alongside full fantasy metrics with `ab_poisson_log_rate`. (PR pending)
 
 - **2026-05-20** — D5 extended with `hurdle_poisson` loss family (zero-truncated Poisson on positives + BCE gate) as an available primitive alongside `hurdle_negbin`. RB sparse-count ablation (Variants D/E/Bf added to `src/tuning/ablate_rb_gate.py`) showed Variant E (hurdle_poisson on rushing_tds, receiving_tds, fumbles_lost) wins per-target MAE — count_sum 0.353 vs Ridge 0.369 — but regresses aggregate FP MAE +0.163 vs current Variant C. **Rejected for shipping**; primitive kept available for future use, current RB config unchanged.

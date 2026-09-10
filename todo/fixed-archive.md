@@ -9,6 +9,9 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] Sparse Poisson heads lost corrective gradients behind nonnegative clamps
+[Read the incident record](fixed-archive/fixed-poisson-log-rate-gradients.md).
+
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).
 

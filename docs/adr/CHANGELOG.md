@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Recover sparse Poisson head gradients with log-rate outputs/losses, training-mean initialization, and checkpointed legacy semantics · (PR pending) · → ADR-0005
+
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017
 - 2026-09-10 · Owner-selected shared-component comparison truth, ESPN K reference, and explicit scoring metadata · (PR pending) · → ADR-0024
 
