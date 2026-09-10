@@ -14,8 +14,8 @@ it does not build it in the serving container (ADR-0018; the in-container build
 was reverted in #1069 -> #1076 because a 2-worker task OOMs running
 ``load_raw_data`` + ``build_features`` + inference).
 
-Skill positions only (QB/RB/WR/TE). K/DST use separate pipelines and land in a
-follow-up.
+K/DST reuse their separate training builders through upcoming_special_teams,
+including live-season kick and opposing-offense histories.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from src.data.loader import load_raw_data
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.data.preprocessing import preprocess
 from src.features.engineer import build_features
-from src.serving import core, espn_live, live_sources
+from src.serving import core, espn_live, live_sources, upcoming_special_teams
 from src.serving.expert_sources import load_sleeper_with_gsis_id
 from src.serving.serialization import (
     _MODEL_PRED_PREFIXES,
@@ -51,7 +51,7 @@ from src.serving.serialization import (
 )
 from src.shared import weather_features
 
-UPCOMING_POSITIONS = ("QB", "RB", "WR", "TE")
+UPCOMING_POSITIONS = (*espn_live.SKILL_POSITIONS, "K", "DST")
 _VALID_SCORING = ("ppr", "half_ppr", "standard")
 
 _ARTIFACT_NAME = "upcoming_week.json"
@@ -151,9 +151,17 @@ def _augment_schedules_cache(sched_rows: pd.DataFrame) -> None:
     if sched_rows is None or sched_rows.empty or not os.path.exists(path):
         return
     existing = pd.read_parquet(path)
-    new = sched_rows.reindex(columns=existing.columns)
-    keep = existing[~existing["game_id"].isin(sched_rows["game_id"])]
-    combined = pd.concat([keep, new], ignore_index=True)
+    # ESPN and nflverse IDs differ for the same game. The matchup key prevents
+    # duplicate schedule joins after adding the live season's completed games.
+    keys = upcoming_special_teams.GAME_KEYS
+    existing = upcoming_special_teams.normalize_schedules(existing)
+    new = upcoming_special_teams.normalize_schedules(sched_rows)
+    # Release schemas can encode optional IDs as strings in the live season
+    # and integers in the historical cache. Keep numeric columns numeric so
+    # Arrow can serialize the union (notably old_game_id).
+    for col in existing.select_dtypes(include="number").columns.intersection(new.columns):
+        new[col] = pd.to_numeric(new[col], errors="coerce")
+    combined = pd.concat([existing, new], ignore_index=True).drop_duplicates(keys, keep="last")
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         combined.to_parquet(tmp)
@@ -307,6 +315,8 @@ def run_upcoming_inference(
     slate: pd.DataFrame,
     season: int,
     week: int,
+    *,
+    special_teams: upcoming_special_teams.SpecialTeamsFrames | None = None,
 ):
     """Run the four skill-position models over the season-to-date frame.
 
@@ -321,6 +331,10 @@ def run_upcoming_inference(
     ``actual_*`` left null (no games played yet).
     """
     core._ensure_base_data()
+    if special_teams is not None:
+        featurized = pd.concat(
+            [featurized, special_teams.kicker, special_teams.defense], ignore_index=True
+        )
 
     keep = [
         c
@@ -333,6 +347,8 @@ def run_upcoming_inference(
             "opponent_team",
             "is_home",
             "implied_team_total",
+            "headshot_url",
+            "player_display_name",
         )
         if c in featurized.columns
     ]
@@ -350,8 +366,17 @@ def run_upcoming_inference(
     }
     spread_map = dict(zip(slate["recent_team"], slate["spread_line"], strict=False))
     total_map = dict(zip(slate["recent_team"], slate["total_line"], strict=False))
-    results["player_display_name"] = results["player_id"].map(name_map)
-    results["headshot_url"] = results["player_id"].map(head_map).fillna("")
+    results["player_display_name"] = (
+        results["player_id"]
+        .map(name_map)
+        .fillna(results.get("player_display_name", results["player_id"]))
+    )
+    results["headshot_url"] = (
+        results["player_id"]
+        .map(head_map)
+        .fillna(results.get("headshot_url", pd.Series("", index=results.index)))
+        .fillna("")
+    )
     results["spread_line"] = results["recent_team"].map(spread_map)
     results["total_line"] = results["recent_team"].map(total_map)
 
@@ -364,12 +389,24 @@ def run_upcoming_inference(
         results[f"{prefix}_pred"] = np.nan
 
     splits = app_pkg._cache.get("splits", {})
-    for pos in UPCOMING_POSITIONS:
+    positions = UPCOMING_POSITIONS if special_teams is not None else espn_live.SKILL_POSITIONS
+    for pos in positions:
         if pos not in splits:
             continue
         train, val, _ = splits[pos]
         try:
-            core._apply_position_models(train, val, featurized, pos, results)
+            if pos in ("K", "DST"):
+                core._apply_position_models(
+                    train,
+                    val,
+                    featurized[featurized["position"] == pos],
+                    pos,
+                    results,
+                    kick_history=special_teams.kicks,
+                    opponent_weekly=special_teams.opponent_weekly,
+                )
+            else:
+                core._apply_position_models(train, val, featurized, pos, results)
         except Exception as e:  # noqa: BLE001 - one position's failure must not sink the rest
             print(f"[upcoming_week] {pos} inference failed: {e!r}")
     # The season-to-date context rows exist only to give the per-position
@@ -538,7 +575,7 @@ def _results_to_upcoming_rows(results: pd.DataFrame, scoring: str) -> list[dict]
     return rows
 
 
-def _build_artifact(season: int, week: int, results: pd.DataFrame) -> dict:
+def _build_artifact(season: int, week: int, results: pd.DataFrame, *, source_status=None) -> dict:
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "available": True,
@@ -548,6 +585,7 @@ def _build_artifact(season: int, week: int, results: pd.DataFrame) -> dict:
         "no_actuals": True,
         "positions": list(UPCOMING_POSITIONS),
         "degraded_positions": core._degraded_positions(),
+        "source_status": source_status or {},
         "scoring": {fmt: _results_to_upcoming_rows(results, scoring=fmt) for fmt in _VALID_SCORING},
     }
 
@@ -563,6 +601,7 @@ def _input_signature(
     contract_features: pd.DataFrame | None = None,
     rosters_df: pd.DataFrame | None = None,
     expert_digest: str = "",
+    special_teams_digest: str = "",
 ) -> str:
     """Stable hash of (models + slate lines + roster id-set + live depth chart +
     injury/practice statuses + contracts + weekly RES/INA out-set) — recompute
@@ -575,7 +614,11 @@ def _input_signature(
     slate_part = slate.sort_values("recent_team")[
         ["recent_team", "opponent_team", "is_home", "spread_line", "total_line"]
     ].to_csv(index=False)
-    roster_part = ",".join(sorted(roster["player_id"].astype(str)))
+    roster_part = (
+        roster.reindex(columns=["player_id", "position", "recent_team"])
+        .sort_values("player_id")
+        .to_csv(index=False)
+    )
     depth_part = ",".join(f"{k}:{v}" for k, v in sorted((depth_chart_ranks or {}).items()))
     inj_part = ",".join(f"{k}:{v}" for k, v in sorted((game_status_map or {}).items()))
     prac_part = ",".join(f"{k}:{v}" for k, v in sorted((practice_status_map or {}).items()))
@@ -601,7 +644,7 @@ def _input_signature(
         rosters_part = ""
     blob = (
         f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|"
-        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}|{expert_digest}"
+        f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}|{expert_digest}|{special_teams_digest}"
     )
     return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -660,7 +703,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         _write_unavailable("no_slate")
         return read_cached_artifact()
     team_id_to_code = dict(zip(slate["team_id"], slate["recent_team"], strict=False))
-    roster = espn_live.fetch_active_rosters(team_id_to_code)
+    roster = espn_live.fetch_active_rosters(team_id_to_code, include_kickers=True)
     if roster.empty:
         _write_unavailable("no_roster")
         return read_cached_artifact()
@@ -697,6 +740,11 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # a projection update alone re-triggers the rebuild via the signature.
     raw_nflcom, raw_rotowire, raw_espn = _fetch_upcoming_expert_frames(season, week)
 
+    core._ensure_base_data()
+    special = upcoming_special_teams.prepare_special_teams(
+        season, week, roster, sched_rows, app_pkg._cache["splits"], app_pkg._cache["k_kicks_df"]
+    )
+
     sig = _input_signature(
         season,
         week,
@@ -708,17 +756,18 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         contract_features,
         rosters_df=rosters_df,
         expert_digest=_expert_digest(raw_nflcom, raw_rotowire, raw_espn),
+        special_teams_digest=special.digest,
     )
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
             return read_cached_artifact()
 
-    _augment_schedules_cache(sched_rows)
+    _augment_schedules_cache(special.schedules)
     featurized = build_upcoming_week_frame(
         season,
         week,
         slate,
-        roster,
+        roster[roster["position"].isin(espn_live.SKILL_POSITIONS)],
         injuries_df=injuries_df,
         rosters_df=rosters_df,
         depth_chart_ranks=depth_chart_ranks,
@@ -726,13 +775,20 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         practice_status_map=practice_status_map,
         contract_features=contract_features,
     )
-    results = run_upcoming_inference(featurized, roster, slate, season, week)
+    results = run_upcoming_inference(featurized, roster, slate, season, week, special_teams=special)
+    # Do not publish an apparently successful six-position artifact when either
+    # new path produced no usable models. The previous artifact stays intact.
+    for pos in ("K", "DST"):
+        rows = results[results["position"] == pos]
+        model_cols = [_pred_col(p, "ppr") for p in ("ridge", "nn", "attn_nn", "lgbm")]
+        if rows.empty or not np.isfinite(rows[model_cols].to_numpy(dtype=float)).any(axis=1).all():
+            raise RuntimeError(f"{pos} upcoming inference produced missing predictions")
     # Age-at-kickoff + rookie flag for the frontend's Age/Rookies filters
     # (same best-effort semantics as the season-leaders path).
     results = roster_meta.attach_age_and_rookie(results)
     # Expert columns for the homepage (best-effort; nulls when a feed is down).
     _apply_upcoming_experts(results, raw_nflcom, raw_rotowire, raw_espn)
-    payload = _build_artifact(season, week, results)
+    payload = _build_artifact(season, week, results, source_status=special.source_status)
     _publish_artifact(payload, sig)
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")
     return payload

@@ -309,7 +309,9 @@ def _apply_expert_predictions(
         results[f"{source}_pred"] = results[_pred_col(source, "ppr")]
 
 
-def _apply_position_models(train, val, test, pos, results):
+def _apply_position_models(
+    train, val, test, pos, results, *, kick_history=None, opponent_weekly=None
+):
     """Load pre-trained position-specific models and write predictions into
     results. Graceful per-model degradation: a single model's load failure is
     recorded in ``_cache["position_load_errors"]`` and the corresponding
@@ -525,7 +527,9 @@ def _apply_position_models(train, val, test, pos, results):
             structure = reg.get("attn_history_structure", "flat")
             if structure == "nested":
                 # K: build 4-D [N, G, K, kick_dim] history from per-kick records.
-                kicks_df = app_pkg._cache.get("k_kicks_df")
+                kicks_df = (
+                    kick_history if kick_history is not None else app_pkg._cache.get("k_kicks_df")
+                )
                 if kicks_df is None:
                     raise RuntimeError(
                         "K nested attention requires kicks_df cached by _load_k_splits"
@@ -603,7 +607,11 @@ def _apply_position_models(train, val, test, pos, results):
                     builder = OPP_ATTN_PER_GAME_BUILDERS[opp_attn_kind]
                     if opp_attn_kind == "offense":
                         weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
-                        opp_source_df = pd.read_parquet(weekly_cache_path)
+                        opp_source_df = (
+                            pd.read_parquet(weekly_cache_path)
+                            if opponent_weekly is None
+                            else opponent_weekly
+                        )
                         # Match training (src/shared/pipeline.py): the raw weekly
                         # cache carries postseason rows; the "defense" concat below
                         # is already REG-only (built from REG splits). Drop playoff

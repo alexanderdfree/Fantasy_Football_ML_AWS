@@ -7,7 +7,12 @@ from src.data.loader import load_team_week_stats
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
 
-def build_data() -> pd.DataFrame:
+def build_data(
+    *,
+    weekly: pd.DataFrame | None = None,
+    schedules: pd.DataFrame | None = None,
+    team_stats: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Build team-level D/ST data from schedules, weekly stats, and team-week stats.
 
     Strategy:
@@ -30,9 +35,17 @@ def build_data() -> pd.DataFrame:
     # season rollover or a tuner broadening the range — is honored here. (#475)
     cache_dir = config.CACHE_DIR
     seasons = config.SEASONS
-    weekly = pd.read_parquet(f"{cache_dir}/weekly_{seasons[0]}_{seasons[-1]}.parquet")
-    schedules = pd.read_parquet(f"{cache_dir}/schedules_{seasons[0]}_{seasons[-1]}.parquet")
-    team_stats = load_team_week_stats(seasons)
+    # The live artifact builder supplies cutoff-filtered frames without changing
+    # the training years or overwriting the historical caches.
+    weekly = (
+        pd.read_parquet(f"{cache_dir}/weekly_{seasons[0]}_{seasons[-1]}.parquet")
+        if weekly is None
+        else weekly.copy()
+    )
+    if schedules is None:
+        schedules = pd.read_parquet(f"{cache_dir}/schedules_{seasons[0]}_{seasons[-1]}.parquet")
+    if team_stats is None:
+        team_stats = load_team_week_stats(seasons)
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     # Normalize historical team codes (OAK/SD/STL → LV/LAC/LA) at the source so
     # every downstream ``team`` / ``opponent_team`` derived from the schedule

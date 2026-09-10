@@ -251,6 +251,7 @@ def _parse_scoreboard_games(payload: dict) -> list[dict]:
         odds = odds_list[0] if odds_list else {}
         espn_spread = odds.get("spread")
         total_line = odds.get("overUnder")
+        venue = comp.get("venue") or {}
         games.append(
             {
                 "game_id": ev.get("id"),
@@ -261,6 +262,10 @@ def _parse_scoreboard_games(payload: dict) -> list[dict]:
                 "home_team_id": str(home["team"].get("id")) if home["team"].get("id") else None,
                 "away_team_id": str(away["team"].get("id")) if away["team"].get("id") else None,
                 "is_scheduled": status == "STATUS_SCHEDULED",
+                "kickoff": ev.get("date"),
+                "venue_name": venue.get("fullName"),
+                "venue_indoor": venue.get("indoor"),
+                "neutral_site": bool(comp.get("neutralSite")),
                 # ESPN spread is negative = home favored; flip to nflverse sign.
                 "spread_line": (-espn_spread if espn_spread is not None else None),
                 "total_line": total_line,
@@ -269,7 +274,9 @@ def _parse_scoreboard_games(payload: dict) -> list[dict]:
     return games
 
 
-def _parse_roster_players(payload: dict, team_code: str) -> list[dict]:
+def _parse_roster_players(
+    payload: dict, team_code: str, *, include_kickers: bool = False
+) -> list[dict]:
     """Normalize a team-roster payload into active skill-player dicts.
 
     Skips inactive groups (IR / suspended / practice squad). ``id`` is the ESPN
@@ -281,7 +288,9 @@ def _parse_roster_players(payload: dict, team_code: str) -> list[dict]:
             continue
         for item in group.get("items", []) or []:
             pos = (item.get("position") or {}).get("abbreviation")
-            if pos not in _SKILL_POSITION_SET:
+            if include_kickers and pos == "PK":
+                pos = "K"
+            if pos not in _SKILL_POSITION_SET and not (include_kickers and pos == "K"):
                 continue
             espn_id = _norm_espn_id(item.get("id"))
             if not espn_id:
@@ -448,6 +457,10 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     team_rows: list[dict] = []
     sched_rows: list[dict] = []
     for g in games:
+        # Completed / in-progress games must not reappear as unplayed rows with
+        # null actuals when a refresh runs partway through the week.
+        if not g["is_scheduled"]:
+            continue
         sched_rows.append(
             {
                 "game_id": g["game_id"],
@@ -460,6 +473,10 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
                 "away_score": pd.NA,
                 "spread_line": g["spread_line"],
                 "total_line": g["total_line"],
+                "kickoff": g.get("kickoff"),
+                "venue_name": g.get("venue_name"),
+                "venue_indoor": g.get("venue_indoor"),
+                "neutral_site": g.get("neutral_site", False),
             }
         )
         for side, team, opp in (
@@ -486,7 +503,9 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(team_rows), pd.DataFrame(sched_rows)
 
 
-def fetch_active_rosters(team_id_to_code: dict[str, str]) -> pd.DataFrame:
+def fetch_active_rosters(
+    team_id_to_code: dict[str, str], *, include_kickers: bool = False
+) -> pd.DataFrame:
     """Fetch active skill-position rosters for the given teams.
 
     ``team_id_to_code`` maps each ESPN team id to its nflverse ``recent_team``
@@ -505,7 +524,9 @@ def fetch_active_rosters(team_id_to_code: dict[str, str]) -> pd.DataFrame:
         except Exception as e:  # noqa: BLE001 - network boundary
             print(f"[espn_live] roster fetch failed for team {team_id}: {e!r}")
             continue
-        for p in _parse_roster_players(payload, team_code=team_code):
+        for p in _parse_roster_players(
+            payload, team_code=team_code, include_kickers=include_kickers
+        ):
             gsis = crosswalk.get(p["espn_id"])
             if not gsis:
                 unmapped += 1
