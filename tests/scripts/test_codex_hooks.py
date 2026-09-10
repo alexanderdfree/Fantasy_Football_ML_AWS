@@ -76,6 +76,8 @@ def _run_hook(
         "GIT_WORK_TREE",
     ):
         env.pop(key, None)
+    if (cwd / ".test-gh/gh").exists():
+        env["PATH"] = str(cwd / ".test-gh") + os.pathsep + env.get("PATH", "")
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -196,7 +198,28 @@ def merge_scenario_codex(launcher_repo: tuple[Path, Path], tmp_path: Path) -> tu
     subprocess.run(
         ["git", "-C", str(other), "push", "origin", "main"], check=True, capture_output=True
     )
+    _stub_merged_pr(worktree, _head(other))
     return main, worktree
+
+
+def _stub_merged_pr(worktree: Path, merge_commit: str) -> Path:
+    tools_dir = worktree / ".test-gh"
+    tools_dir.mkdir()
+    gh = tools_dir / "gh"
+    gh.write_text('#!/bin/sh\ncat "$(dirname "$0")/pr.json"\n')
+    gh.chmod(0o755)
+    metadata = tools_dir / "pr.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "state": "MERGED",
+                "baseRefName": "main",
+                "headRefOid": _head(worktree),
+                "mergeCommit": {"oid": merge_commit},
+            }
+        )
+    )
+    return metadata
 
 
 def _matcher_result(command: str, fn: str = "codex_command_invokes_gh_pr_create") -> bool:
@@ -850,6 +873,25 @@ class TestCodexHooks:
         assert result.returncode == 0
         assert result.stdout == ""
 
+    @pytest.mark.parametrize(
+        "change", [{"state": "OPEN"}, {"headRefOid": "0" * 40}, {"baseRefName": "other"}]
+    )
+    def test_post_pr_merge_requires_this_head_merged_into_main(
+        self, merge_scenario_codex: tuple[Path, Path], change
+    ):
+        main, worktree = merge_scenario_codex
+        metadata = worktree / ".test-gh/pr.json"
+        metadata.write_text(json.dumps(json.loads(metadata.read_text()) | change))
+        before = _head(main)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash --auto"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert _head(main) == before
+        assert result.stdout == ""
+
     def test_post_pr_merge_skips_dirty_parent(self, merge_scenario_codex: tuple[Path, Path]):
         main, worktree = merge_scenario_codex
         (main / "README.md").write_text("dirty\n")
@@ -938,6 +980,7 @@ def _setup_promote_repo(tmp_path: Path, *, splits_affecting: bool) -> tuple[Path
     _git(main, "worktree", "add", "-b", "feature", str(worktree), "main")
     _write_splits(main / "data" / "splits", "STALE")
     _write_splits(worktree / "data" / "splits", "FRESH")
+    _stub_merged_pr(worktree, _head(main))
     return main, worktree
 
 
@@ -984,6 +1027,33 @@ class TestCodexPromoteSplits:
         assert result.returncode == 0
         assert self._parent_splits(main) == {"STALE"}
         assert "splits promote: copied" not in result.stdout
+
+    def test_does_not_promote_splits_for_a_different_main_tip(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=True)
+        (main / "src/features/foo.py").write_text("x = 3\n")
+        _git(main, "add", "src/features/foo.py")
+        _git(main, "commit", "-m", "another PR")
+        _git(main, "push", "origin", "main")
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert self._parent_splits(main) == {"STALE"}
+        assert "verified merge" in result.stderr
+
+    def test_does_not_promote_splits_when_main_cannot_be_refreshed(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=True)
+        _git(main, "remote", "set-url", "origin", str(tmp_path / "missing-remote.git"))
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert self._parent_splits(main) == {"STALE"}
+        assert "could not refresh main" in result.stderr
 
 
 class TestMainWorktreePipefailSafe:

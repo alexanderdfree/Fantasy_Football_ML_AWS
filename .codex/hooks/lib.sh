@@ -77,6 +77,18 @@ except (ValueError, TypeError, AttributeError):
     sys.exit(1)'
 }
 
+# A successful `gh pr merge --auto` can merely queue a merge. Verify that this
+# worktree's exact HEAD actually merged into main before doing parent upkeep.
+codex_merged_pr_commit() {
+  local root="$1" jq_bin="$2" branch head metadata
+  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" || return 1
+  head="$(git -C "$root" rev-parse HEAD)" || return 1
+  metadata="$(cd "$root" && gh pr view "$branch" --json state,baseRefName,headRefOid,mergeCommit 2>/dev/null)" || return 1
+  printf '%s' "$metadata" | "$jq_bin" -er --arg head "$head" '
+    select(.state == "MERGED" and .baseRefName == "main" and .headRefOid == $head)
+    | .mergeCommit.oid | strings | select(test("^[0-9a-f]{40}$"))'
+}
+
 # Best-effort fast-forward of the main/parent checkout's `main` branch to
 # origin/main. GUARDED so it never clobbers another agent's work: the parent can
 # hold a `codex/*` branch with uncommitted WIP (AGENTS.md "Worktree workflow").
@@ -118,6 +130,7 @@ codex_refresh_parent_main() {
 # stdlib). Copies only differing parquets; STDOUT line on copy, STDERR on skip.
 codex_promote_worktree_splits() {
   local wt="$1"
+  local merged_commit="$2"
   local parent wt_splits parent_splits f py changed positions copied=0
   [ -n "$wt" ] || {
     echo "splits promote: no worktree root" >&2
@@ -149,8 +162,15 @@ codex_promote_worktree_splits() {
     echo "splits promote: python3 not found; cannot check scope_positions" >&2
     return 0
   }
-  git -C "$wt" fetch origin main --quiet 2>/dev/null || true
-  changed="$(git -C "$wt" diff --name-only origin/main~1 origin/main 2>/dev/null || true)"
+  if ! git -C "$wt" fetch origin main --quiet 2>/dev/null; then
+    echo "splits promote: could not refresh main; skipping worktree splits" >&2
+    return 0
+  fi
+  if [ "$(git -C "$wt" rev-parse origin/main 2>/dev/null)" != "$merged_commit" ]; then
+    echo "splits promote: main is not at this PR's verified merge; skipping worktree splits" >&2
+    return 0
+  fi
+  changed="$(git -C "$wt" diff --name-only "$merged_commit^1" "$merged_commit" 2>/dev/null || true)"
   [ -n "$changed" ] || {
     echo "splits promote: could not resolve the merged commit's changed files" >&2
     return 0

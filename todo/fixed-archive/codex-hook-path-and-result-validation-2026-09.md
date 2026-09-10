@@ -18,6 +18,9 @@ resolved paths inside the active worktree. Require a completed successful tool
 response before reporting PR creation or refreshing the parent after a merge;
 missing, pending, and failed responses skip those follow-ups. Path validation
 requires Python 3 and blocks edits if that dependency is unavailable.
+The merge follow-up also verifies that GitHub reports the worktree's exact HEAD
+merged into main: enabling auto-merge is insufficient. Dataset promotion checks
+the verified squash commit and skips when main has advanced beyond it.
 
 **Evidence (2026-09-10):** The original 107 focused infrastructure checks passed.
 Against an isolated copy of the base hook implementations, 15 of 16 added
