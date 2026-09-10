@@ -41,6 +41,9 @@ from src.batch.launch import (  # noqa: E402
     RETRY_STRATEGY,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
+    data_release_environment,
+    pin_data_release,
+    resolve_launch_binding,
     wait_for_jobs,
 )
 
@@ -58,6 +61,7 @@ def submit_ablate_job(
     seeds: str,
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     batch_client=None,
+    binding: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Submit one Batch scheduler-type ablation job. Returns (position, job_id)."""
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
@@ -75,7 +79,7 @@ def submit_ablate_job(
     response = batch.submit_job(
         jobName=f"ff-ablate-sched-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,
-        jobDefinition=JOB_DEFINITION,
+        jobDefinition=binding["gpu_definition"] if binding else JOB_DEFINITION,
         retryStrategy=RETRY_STRATEGY,
         timeout={"attemptDurationSeconds": int(attempt_timeout)},
         containerOverrides={
@@ -83,6 +87,8 @@ def submit_ablate_job(
             "environment": [
                 {"name": "S3_BUCKET", "value": S3_BUCKET},
                 {"name": "S3_DATA_PREFIX", "value": "data"},
+                *data_release_environment(),
+                *([{"name": "FF_TRAIN_GIT_SHA", "value": binding["image_sha"]}] if binding else []),
                 {"name": "FF_DEVICE", "value": "cuda"},
                 # Force eager: CUDA graphs (autodetect-ON for sm_80+) are NOT
                 # numerically inert, so a bit-comparable scheduler A/B needs them off.
@@ -158,6 +164,9 @@ def main():
         return
 
     batch_client = boto3.client("batch", region_name=AWS_REGION)
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+    binding = resolve_launch_binding(batch_client, s3, positions, gpu_only=True)
+    pin_data_release(s3, source_ref=binding["image_sha"])
     print(f"Submitting {len(positions)} scheduler-type ablation jobs: {positions}")
     job_ids: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=len(positions)) as pool:
@@ -168,6 +177,7 @@ def main():
                 seeds=args.seeds,
                 attempt_timeout=args.attempt_timeout,
                 batch_client=batch_client,
+                binding=binding,
             ): pos
             for pos in positions
         }

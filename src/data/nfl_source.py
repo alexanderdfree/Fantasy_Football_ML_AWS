@@ -167,6 +167,11 @@ def player_ids() -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_ff_playerids())
 
 
+def player_metadata() -> pd.DataFrame:
+    """NFL identity and documented name variants, independent of fantasy IDs."""
+    return _to_pandas(_nflreadpy.load_players())
+
+
 def teams() -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_teams())
 

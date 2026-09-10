@@ -23,9 +23,16 @@ from src.data.external_sources import (
     load_ff_opportunity,
     load_qbr_weekly,
 )
+from src.data.identity import (
+    bridge_snap_counts,
+    load_player_id_bridge,
+    load_player_metadata,
+    valid_player_ids,
+)
 from src.data.nflcom_loader import schedule_team_code_normalization
 from src.data.participation import restore_offensive_appearances
 from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
+from src.data.release import DataReleaseError, assert_source_fetch_allowed
 
 # Re-export the redzone_pbp feature list as a list (for ``not in df.columns``
 # loops below). Single source of truth lives in ``redzone_pbp.RZ_PBP_FEATURE_COLUMNS``.
@@ -78,12 +85,23 @@ def _normalize_espn_depth(espn: pd.DataFrame, schedules: pd.DataFrame, season: i
         return empty
 
     off = espn[_is_espn_offense(espn["pos_grp"])].copy()
-    off = off[off["gsis_id"].notna() & off["gsis_id"].astype(str).str.len().gt(0)]
     if off.empty:
         return empty
     off["snapshot_ts"] = pd.to_datetime(off["dt"], errors="coerce", utc=True).dt.tz_localize(None)
     off = off.dropna(subset=["snapshot_ts"])
     off["team"] = off["team"].replace(_TEAM_CODE_NORMALIZATION)
+    # ESPN numbers receivers across formation slots (WR1/WR2/WR3 are all
+    # starters). Legacy depth_team is the depth level WITHIN a slot. Preserve
+    # single-slot ranks, and normalize multi-slot positions before dropping
+    # unidentified players so an unknown starter cannot promote their backup.
+    if {"pos_abb", "pos_slot"}.issubset(off):
+        grouping = ["team", "snapshot_ts", "pos_grp"]
+        multi_slot = off.groupby([*grouping, "pos_abb"])["pos_slot"].transform("nunique").gt(1)
+        slot_rank = off.groupby([*grouping, "pos_slot"])["pos_rank"].rank(method="dense")
+        off["pos_rank"] = off["pos_rank"].where(~multi_slot, slot_rank)
+    off = off.loc[valid_player_ids(off["gsis_id"])]
+    if off.empty:
+        return empty
     # Best (min) rank per player per snapshot — a player can hold multiple slots
     # in one snapshot; min mirrors the legacy ``min(depth_team)`` (order-independent).
     snap = off.groupby(["gsis_id", "team", "snapshot_ts"], as_index=False)["pos_rank"].min()
@@ -158,9 +176,10 @@ def load_team_week_stats(
     os.makedirs(cache_dir, exist_ok=True)
     path = f"{cache_dir}/team_stats_{_seasons_cache_signature(seasons)}.parquet"
 
-    if os.path.exists(path):
+    if os.path.exists(path) and _cached_parquet_has_columns(path, ("_team_stats_schema_v2",)):
         return pd.read_parquet(path)
 
+    assert_source_fetch_allowed(path)
     parts = []
     skipped = []
     for s in seasons:
@@ -176,6 +195,7 @@ def load_team_week_stats(
         # Don't poison the cache with an empty frame — let the next call retry.
         return pd.DataFrame()
     df = pd.concat(parts, ignore_index=True)
+    df["_team_stats_schema_v2"] = True
     if skipped:
         # Partial coverage: some seasons failed to fetch. Return what we have for
         # THIS call, but do NOT persist a partial frame as the authoritative cache
@@ -208,32 +228,38 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     _sig = _seasons_cache_signature(seasons)
     weekly_path = f"{cache_dir}/weekly_{_sig}.parquet"
     rosters_path = f"{cache_dir}/rosters_{_sig}.parquet"
+    weekly_rosters_path = f"{cache_dir}/rosters_weekly_{_sig}.parquet"
     schedules_path = f"{cache_dir}/schedules_{_sig}.parquet"
     snap_path = f"{cache_dir}/snap_counts_{_sig}.parquet"
     injury_path = f"{cache_dir}/injuries_{_sig}.parquet"
-    # ``_v2`` cache-version sentinel: PR #595's REG-only ``week -= 1`` realignment
-    # only runs in _fetch_depth's cache-miss branch, so a pre-#595 ``depth_charts_*``
-    # parquet (stale-by-1 weeks) would be served verbatim and silently revert the
-    # fix. Bumping the filename makes any legacy cache unreachable, forcing a
-    # re-fetch through the realignment. (#616)
-    depth_path = f"{cache_dir}/depth_charts_v2_{_sig}.parquet"
+    # v3 preserves the legacy week realignment and invalidates the schema-valid
+    # ESPN cache that numbered WRs across slots instead of by depth within slots.
+    depth_path = f"{cache_dir}/depth_charts_v3_{_sig}.parquet"
 
     def _fetch_weekly():
         # Schema-gate: regenerate if the cache predates the current
         # nfl_source._WEEKLY_RENAME layer — a renamed column absent ⇒ stale schema,
         # and downstream fillna would silently zero it. These four are guaranteed
         # present after the rename. (#428)
-        _weekly_required = ("recent_team", "interceptions", "sacks", "sack_yards")
+        _weekly_required = (
+            "recent_team",
+            "interceptions",
+            "sacks",
+            "sack_yards",
+            "_weekly_modern_schema_v2",
+        )
         if os.path.exists(weekly_path) and _cached_parquet_has_columns(
             weekly_path, _weekly_required
         ):
             return pd.read_parquet(weekly_path)
+        assert_source_fetch_allowed(weekly_path)
         # All seasons come from nflreadpy's load_player_stats (the modern nflverse
         # stats_player release). Harmonisation of that schema to the legacy weekly
         # column names lives in src.data.nfl_source.weekly_data — one code path for
         # every season (previously ≤2024 used nfl_data_py and ≥2025 read the
         # stats_player parquet directly, with the rename inlined here).
         weekly = nfl_source.weekly_data(seasons)
+        weekly["_weekly_modern_schema_v2"] = True
         atomic_write_parquet(weekly, weekly_path)
         return weekly
 
@@ -246,12 +272,13 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             rosters_path, _rosters_required
         ):
             return pd.read_parquet(rosters_path)
+        assert_source_fetch_allowed(rosters_path)
         rosters = nfl_source.rosters(seasons)
         # Coerce mixed-type columns that break parquet serialization
         # (e.g. jersey_number is str in older seasons, int in newer)
         for col in rosters.columns:
             if rosters[col].dtype == object:
-                rosters[col] = rosters[col].astype(str)
+                rosters[col] = rosters[col].astype("string")
         atomic_write_parquet(rosters, rosters_path)
         return rosters
 
@@ -264,9 +291,20 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             schedules_path, _schedules_required
         ):
             return pd.read_parquet(schedules_path)
+        assert_source_fetch_allowed(schedules_path)
         schedules = nfl_source.schedules(seasons)
         atomic_write_parquet(schedules, schedules_path)
         return schedules
+
+    def _fetch_weekly_rosters():
+        # Identity aliases must cover midseason team changes and players absent
+        # from the season roster. The same cache supplies pregame availability.
+        if os.path.exists(weekly_rosters_path):
+            return pd.read_parquet(weekly_rosters_path)
+        assert_source_fetch_allowed(weekly_rosters_path)
+        weekly_rosters = nfl_source.rosters_weekly(seasons)
+        atomic_write_parquet(weekly_rosters, weekly_rosters_path, index=False)
+        return weekly_rosters
 
     def _fetch_snap_counts():
         # Schema-gate (mirror _fetch_weekly): regenerate if the cache lacks the
@@ -275,10 +313,21 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         # (#350 F15b)
         _snap_required = ("pfr_player_id", "season", "week")
         if os.path.exists(snap_path) and _cached_parquet_has_columns(snap_path, _snap_required):
-            return pd.read_parquet(snap_path)
-        snap_seasons = [s for s in seasons if s >= 2012]
-        snap_counts = nfl_source.snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
-        atomic_write_parquet(snap_counts, snap_path)
+            snap_counts = pd.read_parquet(snap_path)
+        else:
+            assert_source_fetch_allowed(snap_path)
+            snap_seasons = [s for s in seasons if s >= 2012]
+            snap_counts = nfl_source.snap_counts(snap_seasons) if snap_seasons else pd.DataFrame()
+            atomic_write_parquet(snap_counts, snap_path)
+        covered = (
+            set(snap_counts["season"].dropna().astype(int)) if "season" in snap_counts else set()
+        )
+        missing_seasons = sorted(set(seasons) - covered)
+        if missing_seasons:
+            print(
+                f"WARNING: snap-count source has no rows for seasons {missing_seasons}; "
+                "snap coverage is unknown, not observed zero participation"
+            )
         return snap_counts
 
     def _fetch_injuries():
@@ -291,6 +340,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
             injury_path, _injuries_required
         ):
             return pd.read_parquet(injury_path)
+        assert_source_fetch_allowed(injury_path)
         injuries = nfl_source.injuries(seasons)
         atomic_write_parquet(injuries, injury_path)
         return injuries
@@ -298,6 +348,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     def _fetch_depth(schedules):
         if os.path.exists(depth_path):
             return pd.read_parquet(depth_path)
+        assert_source_fetch_allowed(depth_path)
         # nflreadpy's load_depth_charts serves the legacy NFL-Data-Exchange schema
         # for ≤2024 and the new ESPN schema (dt/pos_grp/pos_rank, daily snapshots,
         # no season/week) for ≥2025. Pull legacy via the nfl_source shim; normalize
@@ -399,6 +450,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     with ThreadPoolExecutor(max_workers=10) as pool:
         weekly_f = pool.submit(_fetch_weekly)
         rosters_f = pool.submit(_fetch_rosters)
+        weekly_rosters_f = pool.submit(_fetch_weekly_rosters)
         schedules_f = pool.submit(_fetch_schedules)
         snap_counts_f = pool.submit(_fetch_snap_counts)
         injuries_f = pool.submit(_fetch_injuries)
@@ -408,6 +460,8 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         contracts_f = pool.submit(_fetch_contracts)
         weekly = weekly_f.result()
         rosters = rosters_f.result()
+        weekly_rosters = weekly_rosters_f.result()
+        rosters = pd.concat([rosters, weekly_rosters], ignore_index=True)
         # _fetch_schedules() persists schedules_{min}_{max}.parquet for downstream
         # consumers (src/k/data.py::load_data, src/shared/weather_features.py::
         # _load_schedules). The frame is also consumed below by _fetch_depth, which
@@ -427,9 +481,13 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     depth = _fetch_depth(schedules)
 
     # --- Merge rosters for position override ---
-    roster_pos = rosters[["player_id", "season", "position"]].drop_duplicates(
-        subset=["player_id", "season"]
-    )
+    invalid_ids = ~valid_player_ids(weekly["player_id"])
+    if invalid_ids.any():
+        print(f"WARNING: dropping {int(invalid_ids.sum())} statistical rows without player IDs")
+        weekly = weekly.loc[~invalid_ids].copy()
+    roster_pos = rosters.loc[
+        valid_player_ids(rosters["player_id"]), ["player_id", "season", "position"]
+    ].drop_duplicates(subset=["player_id", "season"])
     weekly = weekly.merge(
         roster_pos, on=["player_id", "season"], how="left", suffixes=("_weekly", "")
     )
@@ -439,30 +497,29 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
 
     # --- Merge snap counts via ID bridge ---
     try:
-        ids = nfl_source.player_ids()
-        pfr_to_gsis = ids[["pfr_id", "gsis_id"]].dropna().drop_duplicates()
-        # Subset-dedup on pfr_id before merging — the full-row drop_duplicates
-        # above only collapses identical (pfr_id, gsis_id) pairs. If a single
-        # pfr_id maps to multiple distinct gsis_ids in the ID release (rare
-        # ID-system churn or data-entry collisions), the snap-count merge below
-        # would fan out and multiply each player-week row. Keep "first" — the
-        # downstream consequence of dropping a real cross-reference is one
-        # player-week with NaN snap_pct (zero-filled by engineer.py's
-        # snap_pct lag; the post-split impute_snap_pct is a no-op in the
-        # canonical flow — see preprocessing.py), strictly better than
-        # silently double-counting.
-        # Deterministic pre-sort before keep="first": player_ids() is polars-
-        # backed (no row-order guarantee), so without a sort the chosen gsis_id
-        # for a colliding pfr_id flips across library versions. (#811)
-        pfr_to_gsis = pfr_to_gsis.sort_values(["pfr_id", "gsis_id"]).drop_duplicates(
-            subset=["pfr_id"], keep="first"
-        )
-        assert pfr_to_gsis["pfr_id"].is_unique, (
-            "pfr_to_gsis must be unique on pfr_id after subset-dedup"
-        )
-        snap_counts = snap_counts.merge(
-            pfr_to_gsis, left_on="pfr_player_id", right_on="pfr_id", how="left"
-        )
+        try:
+            ids = load_player_id_bridge(cache_dir)
+        except DataReleaseError:
+            raise
+        except Exception as exc:
+            print(f"WARNING: player crosswalk unavailable ({exc}); using roster identities")
+            ids = pd.DataFrame()
+        snap_counts = bridge_snap_counts(snap_counts, ids, rosters, weekly)
+        if {"position", "offense_snaps"}.issubset(snap_counts):
+            unresolved = (
+                snap_counts["gsis_id"].isna()
+                & snap_counts["position"].isin(["QB", "RB", "WR", "TE"])
+                & snap_counts["offense_snaps"].gt(0)
+            )
+            if unresolved.any():
+                try:
+                    metadata = load_player_metadata(cache_dir)
+                except DataReleaseError:
+                    raise
+                except Exception as exc:
+                    print(f"WARNING: NFL name variants unavailable ({exc}); retaining resolved IDs")
+                else:
+                    snap_counts = bridge_snap_counts(snap_counts, ids, rosters, weekly, metadata)
         weekly = restore_offensive_appearances(weekly, snap_counts, roster_pos)
         snap_merged = snap_counts[["gsis_id", "season", "week", "offense_pct"]].dropna(
             subset=["gsis_id"]
@@ -476,6 +533,8 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         if "gsis_id" in weekly.columns:
             weekly.drop(columns=["gsis_id"], inplace=True)
         weekly.rename(columns={"offense_pct": "snap_pct"}, inplace=True)
+    except DataReleaseError:
+        raise
     except Exception as e:
         print(f"WARNING: Snap count merge failed ({e}), snap_pct will be NaN")
         if "snap_pct" not in weekly.columns:

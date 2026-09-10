@@ -3,6 +3,9 @@
 ### [FIXED] Concurrent model/cache publication and serving recovery failures
 [Read the incident record](fixed-archive/serving-publication-concurrency-2026-09.md).
 
+### [FIXED] Training labels, role semantics, identity joins and raw/split generations diverged
+[Read the incident record](fixed-archive/training-data-audit-remediation-2026-09.md).
+
 ### [FIXED] Out-of-order and late Batch runs lost or mislabeled History rows
 [Read the incident record](fixed-archive/training-history-arrivals.md).
 

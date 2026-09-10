@@ -32,10 +32,12 @@ from src.batch.launch import (
     ALL_POSITIONS,
     AWS_REGION,
     S3_BUCKET,
-    TRAIN_GIT_SHA,
     WAIT_TIMEOUT_SECONDS,
+    pin_data_release,
+    resolve_launch_binding,
     submit_job,
     upload_data,
+    validate_local_publish,
     validate_submission_source,
     wait_for_jobs,
 )
@@ -230,6 +232,7 @@ def record_benchmark_run(
     pr_number=None,
     git_hash=None,
     run_id=None,
+    data_release=None,
 ):
     """Aggregate already-trained artifacts into one benchmark_history row.
 
@@ -252,6 +255,7 @@ def record_benchmark_run(
             run_id,
             positions=positions,
             git_sha=git_hash,
+            **({"data_release": data_release} if data_release is not None else {}),
         )
         if entry is None:
             raise RuntimeError(f"History run {run_id} still has unfinished positions")
@@ -440,16 +444,21 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.download_only:
-        try:
-            validate_submission_source(args.positions)
-        except RuntimeError as exc:
-            parser.error(str(exc))
-
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
     os.chdir(project_root)
 
+    selected_release = None
     if not args.download_only:
+        binding = resolve_launch_binding(None, None, args.positions)
+        try:
+            validate_submission_source(args.positions, binding=binding)
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        if args.git_hash and not binding["image_sha"].startswith(args.git_hash):
+            parser.error("--git-hash must match the selected training image source SHA")
+        args.git_hash = binding["image_sha"]
+        validate_local_publish(binding["image_sha"])
+
         from src.batch.run_history import create_run
         from src.shared.artifact_publication import register_source
 
@@ -457,21 +466,22 @@ def main():
             boto3.client("s3", region_name=AWS_REGION),
             S3_BUCKET,
             _model_s3_prefix(),
-            TRAIN_GIT_SHA or "",
+            binding["image_sha"],
         )
+        print("Publishing data for the selected remote image...")
+        upload_data(S3_BUCKET)
+        selected_release = pin_data_release(source_ref=binding["image_sha"])
         args.run_id = create_run(
             boto3.client("s3", region_name=AWS_REGION),
             S3_BUCKET,
             args.positions,
             run_id=args.run_id,
-            git_sha=TRAIN_GIT_SHA,
+            git_sha=binding["image_sha"],
+            data_release=selected_release,
             pr_number=args.pr_number,
             seed=args.seed,
             note=args.note or "AWS Batch training run",
         )
-        # Upload data
-        print("Uploading data splits to S3...")
-        upload_data(S3_BUCKET)
 
         # Submit all jobs in parallel (mirrors src/batch/launch.py:main)
         total_t0 = time.time()
@@ -483,6 +493,7 @@ def main():
                     submit_job,
                     pos,
                     args.seed,
+                    binding=binding,
                     history_run_id=args.run_id,
                 ): pos
                 for pos in args.positions
@@ -525,6 +536,7 @@ def main():
         pr_number=args.pr_number,
         git_hash=args.git_hash,
         run_id=args.run_id,
+        **({"data_release": selected_release} if selected_release is not None else {}),
     )
 
 

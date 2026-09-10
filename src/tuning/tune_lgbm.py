@@ -59,6 +59,12 @@ def _ensure_data_from_s3():
     # that don't have boto3 + full src/batch/train deps, e.g. offline inspection.
     from src.batch.train import download_data, sync_raw_data
 
+    if os.environ.get("FF_DATA_RELEASE") != "legacy":
+        # A populated cache is not evidence of matching provenance. Hydrate
+        # the sealed raw+split release together, checking every local checksum.
+        download_data(bucket, prefix, SPLITS_DIR)
+        return
+
     splits_needed = not all(
         os.path.exists(os.path.join(SPLITS_DIR, f))
         for f in ("train.parquet", "val.parquet", "test.parquet")

@@ -93,7 +93,9 @@ def write_reference(
 ):
     """Replace requested seasons atomically and preserve other historical slates."""
     from src.data.cache_io import atomic_write_parquet
+    from src.data.release import assert_source_fetch_allowed
 
+    assert_source_fetch_allowed(reference_path())
     frame = build_reference(
         seasons,
         nflcom_loader=nflcom_loader,

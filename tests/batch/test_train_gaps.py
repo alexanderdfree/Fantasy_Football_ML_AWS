@@ -77,6 +77,7 @@ def test_download_if_stale_cache_hit_skips_download(tmp_path, capsys):
 @pytest.mark.unit
 def test_sync_raw_data_downloads_every_parquet_key(monkeypatch, tmp_path):
     """Paginator yields pages of objects; only .parquet keys trigger download."""
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     from src.batch import train as t
 
     monkeypatch.chdir(tmp_path)

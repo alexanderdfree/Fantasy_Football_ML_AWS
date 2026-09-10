@@ -34,6 +34,15 @@
 
 ## Changelog
 
+- **2026-09-10** — Normalize ESPN multi-slot WR ranks to legacy within-slot
+  depth levels before filtering unidentified players. Compute availability
+  over the same pregame roster population in training/live inference, including
+  nonparticipants without fabricating history rows. Use weekly A01/I01
+  descriptors for legacy pre-2016 rosters whose coarse status was overwritten
+  by season data; use weekly NGS status thereafter. Unknown population coverage
+  yields explicit neutral features. Cache historical K backfill PBP and isolate
+  current-season overlays from the training release. (PR pending)
+
 - **2026-09-10** — Correct the opponent-score lookup perspective and retain played offensive zero-stat observations in history. (PR pending)
 
 - **2026-09-10** — **K empty-game history.** K's weekly game index now retains zero-FG/zero-PAT games already in the weekly feed and restores missing historical appearances from cached special-teams snaps, restricted to players designated K in the season roster. Identity resolution uses cached roster PFR/GSIS IDs and unique exact normalized roster aliases, with no live ID-feed dependency. Undefined no-attempt mean distance/probability stay NaN in both data eras so rolling means agree. Byes and inactive weeks are not synthesized from rosters. Both training and serving build the nested outer slots from the same weekly rows as their per-game aggregate branch: a real no-attempt game has a valid outer mask and an empty inner mask, while padding has both masks false. Made and missed kicks remain individual inner tokens; the existing 17-game/10-kick caps, same-season boundary, and four aggregate outputs remain unchanged. Empty games obtain venue/weather from schedules and contribute zero opportunity to subsequent rolling features. This changes K's training/evaluation population and requires retraining; it does not claim an architecture or accuracy improvement. (PR pending)

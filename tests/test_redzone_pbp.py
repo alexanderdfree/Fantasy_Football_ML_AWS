@@ -156,7 +156,7 @@ def test_reconstruct_redzone_from_pbp_happy_path(tmp_path, monkeypatch):
     out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
 
     # Cache file must now exist.
-    assert (tmp_path / "redzone_pbp_2020_2020.parquet").exists()
+    assert (tmp_path / "redzone_pbp_v2_2020_2020.parquet").exists()
 
     # Every required schema column lands.
     required = {
@@ -364,7 +364,7 @@ def test_reconstruct_redzone_from_pbp_cache_hit(tmp_path, monkeypatch):
     a load-and-return."""
     import src.data.redzone_pbp as rz
 
-    cache_path = tmp_path / "redzone_pbp_2021_2021.parquet"
+    cache_path = tmp_path / "redzone_pbp_v2_2021_2021.parquet"
     pd.DataFrame([_redzone_cache_row("RB-A", 2021, 1)]).to_parquet(cache_path)
 
     def _should_not_be_called(*args, **kwargs):
@@ -386,7 +386,7 @@ def test_reconstruct_redzone_stale_cache_regenerates(tmp_path, monkeypatch, caps
     import src.data.redzone_pbp as rz
 
     # Pre-write a parquet that looks plausible but is missing redzone_target_share.
-    stale_cache = tmp_path / "redzone_pbp_2020_2020.parquet"
+    stale_cache = tmp_path / "redzone_pbp_v2_2020_2020.parquet"
     pd.DataFrame(
         {
             "player_id": ["RB-A"],
@@ -431,7 +431,7 @@ def test_reconstruct_redzone_skips_failing_seasons(tmp_path, monkeypatch, capsys
     out = rz.reconstruct_redzone_from_pbp([2020], cache_dir=str(tmp_path))
 
     # No cache file written (partial result must not poison the cache).
-    assert not (tmp_path / "redzone_pbp_2020_2020.parquet").exists()
+    assert not (tmp_path / "redzone_pbp_v2_2020_2020.parquet").exists()
 
     # Returns an empty frame with the required schema so callers can merge
     # without crashing.
@@ -475,6 +475,6 @@ def test_reconstruct_redzone_partial_failure_does_not_cache(tmp_path, monkeypatc
     assert (out["season"] == 2020).any()
     assert not (out["season"] == 2021).any()
     # Partial result must not be cached.
-    assert not (tmp_path / "redzone_pbp_2020_2021.parquet").exists()
+    assert not (tmp_path / "redzone_pbp_v2_2020_2021.parquet").exists()
     captured = capsys.readouterr().out
     assert "Skipped seasons [2021]" in captured

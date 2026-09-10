@@ -112,7 +112,7 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 **First-time data pull** — the heredoc in the next section is bash-only; on Windows use this cross-shell one-liner instead:
 
 ```powershell
-python -c "from src.data.loader import load_raw_data; from src.data.preprocessing import preprocess; from src.features.engineer import build_features; from src.data.split import temporal_split; temporal_split(build_features(preprocess(load_raw_data())))"
+python -m src.data.build
 ```
 
 **Run training / tuning** — identical commands to macOS/Linux, run from the repo root.
@@ -262,17 +262,26 @@ python -m src.benchmarking.benchmark       # equivalent autodetect path (no wrap
 
 `src.data.loader.load_raw_data()` caches the nflverse pulls to `data/raw/`. `src.features.engineer.build_features()` materialises the ~150 engineered columns (rolling_*, ewma_*, trend_*, prior_season_*, opp_*, contextual, position one-hots) every position's `include_features` whitelist references — without this step every engineered column ends up constant-zero via the silent backfill that used to live in `src/shared/feature_build.py` (now raises `KeyError`). `src.data.split.temporal_split()` writes `train.parquet`, `val.parquet`, `test.parquet` under `data/splits/`. The app and benchmark both read from `data/splits/`, so these must exist before anything else runs.
 
-```bash
-python - <<'PY'
-from src.data.loader import load_raw_data
-from src.data.preprocessing import preprocess
-from src.features.engineer import build_features
-from src.data.split import temporal_split
+To reproduce published inputs with configured AWS credentials, hydrate one
+verified release (add `--release <hash>` to select a specific recorded version):
 
-df = build_features(preprocess(load_raw_data()))
-temporal_split(df)           # writes data/splits/{train,val,test}.parquet
-PY
+```bash
+python -m src.data.release --bucket ff-predictor-training
 ```
+
+To build a new dataset, use clean, unpinned `data/raw` and `data/splits`
+directories in an isolated checkout:
+
+```bash
+python -m src.data.build
+```
+
+The producer passes the cached injury and weekly-roster context into feature
+engineering, prewarms K/DST and the shared evaluation reference, then seals the
+raw dependencies and splits. It does not upload data. A hydrated release is
+immutable: missing/incompatible sources require a new producer build, not a
+silent network refresh. The snapshot records source coverage, including the
+currently empty 2012 snap-count feed. See [ADR-0026](docs/adr/0026-coherent-training-data-releases.md).
 
 First run takes several minutes (downloads ~14 seasons of weekly stats, rosters, schedules, snap counts, injuries, depth charts). Subsequent runs use the parquet cache in `data/raw/` and are near-instant.
 

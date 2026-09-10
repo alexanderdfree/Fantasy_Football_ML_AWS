@@ -11,7 +11,12 @@ from src.dst.config import POSITION_CONFIG as DST_CONFIG
 from src.k.config import POSITION_CONFIG as K_CONFIG
 from src.serving import espn_live
 from src.serving import upcoming_special_teams as special
-from tests.dst.test_data_build import _make_schedules, _make_team_stats, _make_weekly
+from tests.dst.test_data_build import (
+    _make_schedules,
+    _make_scoring_events,
+    _make_team_stats,
+    _make_weekly,
+)
 from tests.k.conftest import _build_games
 
 pytestmark = pytest.mark.unit
@@ -28,11 +33,12 @@ def schedule():
 def test_dst_replay_matches_all_38_features_without_target_week_outcomes(monkeypatch):
     monkeypatch.setattr(dst_data.nfl_source, "teams", lambda: pd.DataFrame())
     weekly, teams, games = _make_weekly(), _make_team_stats(), schedule()
+    events = _make_scoring_events()
     expected = dst_targets.compute_targets(
-        dst_data.build_data(weekly=weekly, schedules=games, team_stats=teams)
+        dst_data.build_data(weekly=weekly, schedules=games, team_stats=teams, scoring_events=events)
     )
     dst_features.compute_features(expected)
-    replay = special.build_defense_frame(weekly, teams, games, 2024, 3)
+    replay = special.build_defense_frame(weekly, teams, games, 2024, 3, scoring_events=events)
     cols = list(DST_CONFIG.all_features)
     lhs = expected[expected.week.eq(3)].set_index("team")[cols].sort_index()
     rhs = replay[replay.week.eq(3)].set_index("team")[cols].sort_index()
@@ -41,15 +47,29 @@ def test_dst_replay_matches_all_38_features_without_target_week_outcomes(monkeyp
     # Positive control: a changed PREVIOUS game's QB signal must reach week 3.
     changed = weekly.copy()
     changed.loc[changed.week.eq(2) & changed.position.eq("QB"), "passing_epa"] += 100
-    new = special.build_defense_frame(changed, teams, games, 2024, 3)
+    new = special.build_defense_frame(changed, teams, games, 2024, 3, scoring_events=events)
     assert not new.loc[new.week.eq(3), "opp_qb_epa_L5"].equals(
         replay.loc[replay.week.eq(3), "opp_qb_epa_L5"]
+    )
+    changed_events = events.copy()
+    changed_events.loc[changed_events.week.eq(2), "def_tds"] += 2
+    corrected = special.build_defense_frame(
+        weekly, teams, games, 2024, 3, scoring_events=changed_events
+    )
+    assert (
+        (
+            corrected.loc[corrected.week.eq(3), "dst_pts_L3"]
+            - replay.loc[replay.week.eq(3), "dst_pts_L3"]
+        )
+        .eq(6)
+        .all()
     )
     # A target-week outcome edit must change neither features nor prior tokens.
     weekly.loc[weekly.week.eq(3), "passing_epa"] = 1e9
     teams.loc[teams.week.eq(3), "def_tds"] = 999
     games.loc[games.week.eq(3), "home_score"] = 999
-    poisoned = special.build_defense_frame(weekly, teams, games, 2024, 3)
+    events.loc[events.week.eq(3), ["def_tds", "special_teams_tds", "def_punt_blocks"]] = 999
+    poisoned = special.build_defense_frame(weekly, teams, games, 2024, 3, scoring_events=events)
     pd.testing.assert_frame_equal(replay, poisoned)
 
 
@@ -158,8 +178,12 @@ def test_prepare_reuses_verified_schedule_for_both_special_positions(monkeypatch
     games.to_parquet(tmp_path / f"schedules_{suffix}.parquet")
     monkeypatch.setattr(special, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(special, "load_team_week_stats", lambda *args, **kwargs: teams)
-    live = special.LiveInputs(games, weekly.iloc[:0], teams.iloc[:0], pd.DataFrame())
-    monkeypatch.setattr(special, "fetch_live_inputs", lambda *args: live)
+    monkeypatch.setattr(special, "load_dst_scoring_events", lambda *a, **kw: _make_scoring_events())
+    monkeypatch.setattr(
+        special,
+        "fetch_live_inputs",
+        lambda *args: pytest.fail("historical replay fetched live data"),
+    )
     monkeypatch.setattr(special.k_data, "load_data", lambda: weekly.iloc[:0])
     monkeypatch.setattr(
         special.forecast_weather,
@@ -173,7 +197,7 @@ def test_prepare_reuses_verified_schedule_for_both_special_positions(monkeypatch
         return weekly.iloc[:0]
 
     monkeypatch.setattr(special, "build_kicker_frame", lambda h, c, r, s, *a: capture(s))
-    monkeypatch.setattr(special, "build_defense_frame", lambda w, t, s, *a: capture(s))
+    monkeypatch.setattr(special, "build_defense_frame", lambda w, t, s, *a, **kw: capture(s))
     roster = pd.DataFrame({"player_id": ["K1"], "position": ["K"], "recent_team": ["BUF"]})
     statuses = [{"game_id": "g", "weather": "forecast"}]
     result = special.prepare_special_teams(
@@ -192,3 +216,42 @@ def test_prepare_reuses_verified_schedule_for_both_special_positions(monkeypatch
         assert frame.roof.eq("outdoors").all() and frame.surface.eq("grass").all()
         assert "venue" not in frame  # nested ESPN metadata must not break input hashing
     assert result.source_status["weather"] == statuses
+
+
+def test_historical_replay_retains_sealed_prior_stats_kicks_and_scoring(monkeypatch, tmp_path):
+    weekly, teams, games, events = (
+        _make_weekly(),
+        _make_team_stats(),
+        schedule(),
+        _make_scoring_events(),
+    )
+    weekly["season_type"] = "REG"
+    suffix = f"{special.SEASONS[0]}_{special.SEASONS[-1]}"
+    weekly.to_parquet(tmp_path / f"weekly_{suffix}.parquet")
+    games.to_parquet(tmp_path / f"schedules_{suffix}.parquet")
+    monkeypatch.setattr(special, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(special, "load_team_week_stats", lambda *a, **kw: teams)
+    monkeypatch.setattr(special, "load_dst_scoring_events", lambda *a, **kw: events)
+    monkeypatch.setattr(special, "fetch_live_inputs", lambda *a: pytest.fail("historical refetch"))
+    monkeypatch.setattr(special.k_data, "load_data", lambda: weekly.iloc[:0])
+    monkeypatch.setattr(special, "build_kicker_frame", lambda *a: weekly.iloc[:0])
+    captured = {}
+
+    def defense(players, team_stats, schedules, *args, scoring_events):
+        captured.update(players=players, teams=team_stats, events=scoring_events)
+        return team_stats.iloc[:0]
+
+    monkeypatch.setattr(special, "build_defense_frame", defense)
+    roster = pd.DataFrame({"player_id": ["K1"], "position": ["K"], "recent_team": ["BUF"]})
+    kicks = pd.DataFrame({"season": [2024, 2024, 2024], "week": [1, 2, 3]})
+    result = special.prepare_special_teams(
+        2024, 3, roster, games[games.week.eq(3)], kicks, schedule_context=games
+    )
+    for name in ("players", "teams", "events"):
+        assert not captured[name].empty
+        assert captured[name].week.max() == 2
+    pd.testing.assert_frame_equal(
+        captured["events"].reset_index(drop=True), events[events.week.lt(3)].reset_index(drop=True)
+    )
+    assert result.kicks.week.tolist() == [1, 2]
+    assert result.source_status["completed_team_weeks"] == len(teams[teams.week.lt(3)])

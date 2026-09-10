@@ -63,8 +63,11 @@ from src.batch.launch import (  # noqa: E402
     RETRY_STRATEGY,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
+    data_release_environment,
+    pin_data_release,
     wait_for_jobs,
 )
+from src.scripts.resolve_training_image import resolve_definition  # noqa: E402
 from src.tuning.ab_batch import (  # noqa: E402
     DEFAULT_S3_PREFIX,
     ENV_ONLY,
@@ -215,6 +218,7 @@ def submit_ab_job(
         # across a multi-cell job (same rationale as launch_tune).
         {"name": "LOG_EVERY", "value": "20"},
     ]
+    environment.extend(data_release_environment())
     if seeds:
         environment.append({"name": ENV_SEEDS, "value": ",".join(str(s) for s in seeds)})
     if only:
@@ -543,6 +547,11 @@ def main() -> None:
             )
 
     job_definition = resolve_job_definition(image_sha, batch)
+    binding = resolve_definition(batch, job_definition)
+    if binding["image_sha"] != image_sha:
+        raise RuntimeError("Resolved A/B job image differs from the requested source SHA")
+    job_definition = binding["job_definition"]
+    pin_data_release(s3, prefix=args.data_prefix, source_ref=binding["image_sha"])
 
     print(f"Submitting {len(spec.positions)} A/B jobs (run_id={run_id}): {spec.positions}")
     job_ids: dict[str, str] = {}

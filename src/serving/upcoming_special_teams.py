@@ -17,6 +17,7 @@ import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
 from src.data import nfl_source
+from src.data.dst_scoring import PBP_COLUMNS, aggregate_dst_scoring_events, load_dst_scoring_events
 from src.data.loader import load_team_week_stats
 from src.dst import data as dst_data
 from src.dst import features as dst_features
@@ -27,9 +28,11 @@ from src.k import features as k_features
 from src.k import targets as k_targets
 from src.k.config import POSITION_CONFIG as K_CONFIG
 from src.serving import forecast_weather
+from src.serving.live_build import historical_cache_dir
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
 GAME_KEYS = ["season", "week", "home_team", "away_team"]
+_LIVE_PBP_COLUMNS = tuple(dict.fromkeys((*nfl_source.PBP_KICKER_COLS, *PBP_COLUMNS)))
 
 
 @dataclass
@@ -80,13 +83,13 @@ def fetch_live_inputs(season: int, week: int, historical_weekly, historical_team
             schedules,
             historical_weekly.iloc[:0].copy(),
             historical_team.iloc[:0].copy(),
-            pd.DataFrame(columns=nfl_source.PBP_KICKER_COLS),
+            pd.DataFrame(columns=_LIVE_PBP_COLUMNS),
         )
     completed_seasons = sorted(int(s) for s in prior["season"].unique())
     with ThreadPoolExecutor(max_workers=4) as pool:
         weekly_job = pool.submit(nfl_source.weekly_data, completed_seasons)
         team_jobs = [pool.submit(nfl_source.team_week_stats_release, s) for s in completed_seasons]
-        pbp_job = pool.submit(nfl_source.pbp_data, completed_seasons, nfl_source.PBP_KICKER_COLS)
+        pbp_job = pool.submit(nfl_source.pbp_data, completed_seasons, _LIVE_PBP_COLUMNS)
         weekly, pbp = weekly_job.result(), pbp_job.result()
         teams = pd.concat([job.result() for job in team_jobs], ignore_index=True)
     values = []
@@ -107,9 +110,9 @@ def fetch_live_inputs(season: int, week: int, historical_weekly, historical_team
         if missing:
             raise RuntimeError(f"{name} missing completed team-weeks: {missing}")
         values.append(frame)
-    missing_pbp = set(nfl_source.PBP_KICKER_COLS) - set(values[2].columns)
+    missing_pbp = set(_LIVE_PBP_COLUMNS) - set(values[2].columns)
     if missing_pbp:
-        raise RuntimeError(f"K PBP schema incomplete: {sorted(missing_pbp)}")
+        raise RuntimeError(f"K/DST PBP schema incomplete: {sorted(missing_pbp)}")
     required_team = [
         "def_tds",
         "def_safeties",
@@ -215,7 +218,9 @@ def build_kicker_frame(history, current, roster, schedules, season, week) -> pd.
     return combined
 
 
-def build_defense_frame(weekly, team_stats, schedules, season, week) -> pd.DataFrame:
+def build_defense_frame(
+    weekly, team_stats, schedules, season, week, *, scoring_events
+) -> pd.DataFrame:
     weekly = before_week(weekly, season, week)
     team_stats = before_week(team_stats, season, week)
     mask = (schedules["season"] == season) & (schedules["week"] == week)
@@ -233,7 +238,10 @@ def build_defense_frame(weekly, team_stats, schedules, season, week) -> pd.DataF
     skeleton = skeleton.reindex(columns=weekly.columns)
     with_placeholders = pd.concat([weekly, skeleton], ignore_index=True)
     frame = dst_data.build_data(
-        weekly=with_placeholders, schedules=schedules, team_stats=team_stats
+        weekly=with_placeholders,
+        schedules=schedules,
+        team_stats=team_stats,
+        scoring_events=before_week(scoring_events, season, week),
     )
     frame = dst_targets.compute_targets(frame)
     dst_features.compute_features(frame)
@@ -253,15 +261,37 @@ def prepare_special_teams(
     *,
     schedule_context: pd.DataFrame | None = None,
     weather_status=None,
+    live_inputs: LiveInputs | None = None,
 ) -> SpecialTeamsFrames:
-    root = Path(CACHE_DIR)
+    root = Path(historical_cache_dir(CACHE_DIR))
     suffix = f"{SEASONS[0]}_{SEASONS[-1]}"
     weekly = pd.read_parquet(root / f"weekly_{suffix}.parquet")
-    team_stats = load_team_week_stats(SEASONS, cache_dir=CACHE_DIR)
+    team_stats = load_team_week_stats(SEASONS, cache_dir=str(root))
+    scoring_events = load_dst_scoring_events(SEASONS, cache_dir=root, allow_fetch=False)
     old_schedule = normalize_schedules(pd.read_parquet(root / f"schedules_{suffix}.parquet"))
-    live = fetch_live_inputs(season, week, weekly, team_stats)
-    refreshed_seasons = live.schedules["season"].unique()
+    historical_replay = season in SEASONS and live_inputs is None
+    if historical_replay:
+        # Historical replay retains sealed statistics, kick histories and compact
+        # scoring events. Only an explicit fixture may replace in-season PBP.
+        live = LiveInputs(
+            old_schedule[old_schedule["season"].eq(season)],
+            weekly.iloc[:0].copy(),
+            team_stats.iloc[:0].copy(),
+            pd.DataFrame(columns=_LIVE_PBP_COLUMNS),
+        )
+        refreshed_seasons = []
+    else:
+        live = (
+            live_inputs
+            if live_inputs is not None
+            else fetch_live_inputs(season, week, weekly, team_stats)
+        )
+        refreshed_seasons = live.schedules["season"].unique()
     if schedule_context is None:
+        if historical_replay:
+            raise ValueError(
+                "Historical replay requires explicit schedule_context; no live forecast"
+            )
         upcoming = merge_live_schedule(
             live.schedules, espn_schedule.drop(columns=["venue"], errors="ignore")
         )
@@ -325,12 +355,26 @@ def prepare_special_teams(
     kicks = pd.concat(
         [kicks[~kicks["season"].isin(refreshed_seasons)], fresh_kicks], ignore_index=True
     )
-    defense = build_defense_frame(weekly, team_stats, schedules, season, week)
+    scoring_events = before_week(scoring_events, season, week)
+    fresh_events = (
+        aggregate_dst_scoring_events(live.pbp)
+        if not live.pbp.empty
+        else scoring_events.iloc[:0].copy()
+    )
+    scoring_events = pd.concat(
+        [scoring_events[~scoring_events["season"].isin(refreshed_seasons)], fresh_events],
+        ignore_index=True,
+    )
+    defense = build_defense_frame(
+        weekly, team_stats, schedules, season, week, scoring_events=scoring_events
+    )
     source_status = {
         "retrieved_at": datetime.now(UTC).isoformat(),
         "season": season,
         "history_before_week": week,
-        "completed_team_weeks": len(live.team_stats),
+        "completed_team_weeks": len(team_stats[team_stats["season"].eq(season)])
+        if historical_replay
+        else len(live.team_stats),
         "weather": weather_status,
         "missing_kicker_teams": sorted(
             set(team_schedule(upcoming)["recent_team"])
@@ -340,7 +384,7 @@ def prepare_special_teams(
     # Hash actual input content, not row counts: stat corrections and forecast
     # updates must invalidate a same-week artifact even with unchanged odds.
     digest = hashlib.sha256()
-    for frame in (live.weekly, live.team_stats, live.pbp, upcoming):
+    for frame in (live.weekly, live.team_stats, live.pbp, scoring_events, upcoming):
         digest.update(pd.util.hash_pandas_object(frame, index=False).values.tobytes())
     return SpecialTeamsFrames(
         kicker, defense, kicks, weekly, schedules, source_status, digest.hexdigest()

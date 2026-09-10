@@ -10,6 +10,13 @@
 
 **Options considered.**
 
+**Identity and filtering.** Missing or placeholder IDs cannot participate in
+roster joins. Conservative roster/name bridges recover missing participation
+without fuzzy identity guesses; unresolved source gaps remain explicit in the
+data release (ADR-0026). K uses its declared four-game training threshold in
+both its split helper and shared preparation, avoiding an accidental second
+six-game filter. Validation/test retain every observed game.
+
 | Option | Complexity | Leakage risk | Data-efficiency |
 |---|---|---|---|
 | Random row split | Low | **High** (rolling features leak) | High |
@@ -25,6 +32,10 @@
 **References.** [src/data/split.py:6-37](../../src/data/split.py), season constants in [src/config.py](../../src/config.py). Knowledge cutoff to 2012 landed in commit `f400a5c`.
 
 ## Changelog
+
+- **2026-09-10** — Recover missing participation identities, exclude invalid
+  identifiers before joins, expose absent source coverage, and align K's
+  effective minimum-games threshold with its configuration. (PR pending)
 
 - **2026-09-10** — Restore played offensive zero-stat games from participation before feature engineering and splitting; retain the season cuts and train-only minimum-games policy. (PR pending)
 

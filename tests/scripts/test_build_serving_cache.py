@@ -41,7 +41,7 @@ def cache_builder(monkeypatch, tmp_path):
     """Real generation IO/hydration, stubbed S3 and expensive inference only."""
     from src.scripts import build_evaluation_reference
     from src.serving import app, core
-    from src.shared import model_sync, prediction_cache
+    from src.shared import evaluation_cohorts, model_sync, prediction_cache
 
     mod = importlib.import_module(_MODULE)
     state = SimpleNamespace(
@@ -57,6 +57,16 @@ def cache_builder(monkeypatch, tmp_path):
         }
     )
     metrics = {"ppr": {"Ridge Regression": {"overall": {"mae": 1.0}, "by_position": []}}}
+    # Data hydration already supplies the archived cohort. Cache reuse/rebuild
+    # must leave those historical bytes intact, including on failure paths.
+    reference_dir = tmp_path / "data" / "raw"
+    reference_dir.mkdir(parents=True)
+    reference = results[["position", "player_id", "week"]].assign(season=2025)
+    reference_path = reference_dir / evaluation_cohorts.REFERENCE_FILENAME
+    reference.to_parquet(reference_path, index=False)
+    reference_bytes = reference_path.read_bytes()
+    reference_mtime = reference_path.stat().st_mtime_ns
+    monkeypatch.setattr(evaluation_cohorts, "CACHE_DIR", str(reference_dir))
     cache_dir = tmp_path / "serving_cache"
     monkeypatch.setattr(app, "_cache", {})
     monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(cache_dir))
@@ -97,6 +107,8 @@ def cache_builder(monkeypatch, tmp_path):
         state.events.append("compute")
         assert os.environ["FF_MODEL_S3_BUCKET"] == ""
         assert not app._cache, "rebuild must discard any state restored during failed reuse"
+        # Exercise the same cache-only reference reader used by build_cohorts.
+        pd.testing.assert_frame_equal(evaluation_cohorts.load_reference(), reference)
         app._cache.update(
             results=results.copy(),
             metrics_by_format=metrics,
@@ -122,9 +134,11 @@ def cache_builder(monkeypatch, tmp_path):
     monkeypatch.setattr(
         build_evaluation_reference,
         "write_reference",
-        lambda *a, **kw: state.events.append("reference"),
+        lambda *a, **kw: pytest.fail("cache builder must not regenerate the sealed reference"),
     )
-    return mod, state
+    yield mod, state
+    assert reference_path.read_bytes() == reference_bytes
+    assert reference_path.stat().st_mtime_ns == reference_mtime
 
 
 def test_reuse_valid_skips_inference_and_publication(cache_builder):
@@ -150,7 +164,7 @@ def test_unusable_s3_generation_rebuilds_before_success(cache_builder, variant):
     mod, state = cache_builder
     state.variant = variant
     assert mod.main(["--reuse-valid"]) == 0
-    assert state.events == ["data", "models", "cache", "compute", "reference", "upload"]
+    assert state.events == ["data", "models", "cache", "compute", "upload"]
     assert len(state.uploaded) == 1
     assert json.loads(state.uploaded[0]["fingerprint.json"])["sha256"] == "live-inputs"
     assert not json.loads(state.uploaded[0]["metrics.json"])["position_load_errors"]
@@ -176,7 +190,7 @@ def test_pending_hydrated_position_forces_rebuild(cache_builder, monkeypatch):
 def test_default_still_forces_rebuild_without_syncing_old_cache(cache_builder):
     mod, state = cache_builder
     assert mod.main([]) == 0
-    assert state.events == ["data", "models", "compute", "reference", "upload"]
+    assert state.events == ["data", "models", "compute", "upload"]
     assert len(state.uploaded) == 1
 
 

@@ -47,23 +47,25 @@ on:
     # only edited a hyperparameter / docstring / comment still pays the full
     # regen.
     #
-    # Skill-position configs only (QB/RB/WR/TE) — K and DST have their own
-    # data paths (src/k/data.py, src/dst/data.py) that don't touch
-    # data/splits/, so their config edits are out of scope for this
-    # workflow. The "Verify engineered columns present" step below mirrors the
-    # same scoping.
-    #
+    # Covers the complete raw/split/reference producer contract in
+    # src.data.release.DATA_PRODUCER_PATHS; unrelated deploys reuse the snapshot.
     paths:
       - "src/qb/config.py"
       - "src/rb/config.py"
       - "src/wr/config.py"
       - "src/te/config.py"
+      - "src/k/data.py"
+      - "src/k/config.py"
+      - "src/dst/data.py"
+      - "src/dst/config.py"
+      - "src/config.py"
       - "src/data/**"
-      # engineer.py can change the split parquet column set consumed by
-      # position configs, so feature-pipeline edits must refresh S3 splits.
       - "src/features/**"
-      # Self-edit trigger: a path-filter change in this file takes effect on
-      # its own merge, no separate manual dispatch needed.
+      - "src/shared/comparison_scoring.py"
+      - "src/shared/evaluation_cohorts.py"
+      - "src/scripts/build_evaluation_reference.py"
+      - "src/analysis/analysis_expert_comparison.py"
+      - "src/analysis/sleeper_loader.py"
       - ".github/workflows/refresh-splits.yml"
 
 concurrency:
@@ -93,6 +95,8 @@ permissions:
 
 jobs:
   refresh:
+    outputs:
+      release_id: ${{ steps.publish.outputs.release_id }}
     runs-on: ubuntu-latest
     # 30 -> 45: the post-upload "Build + upload serving prediction cache" step runs
     # the full 6-position inference (~10 min) on top of the ~10 min splits regen.
@@ -126,8 +130,8 @@ jobs:
         # (written after the S3 upload below). Keyed by github.sha — the same
         # identifier train-batch sees as workflow_run.head_sha (the SHA its
         # image was built from), matching the job-def-revisions/${SHA}.txt
-        # convention. Best-effort (|| true): a marker-write failure must not
-        # fail the refresh; train's gate is fail-safe (proceeds on absence).
+        # convention. Consumers independently verify the manifest, so missing
+        # markers never authorize a rollout; failed markers shorten the wait.
         run: |
           printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
             "s3://${S3_BUCKET}/splits-rebuild-markers/pending/${GITHUB_SHA}.txt" \
@@ -184,12 +188,15 @@ jobs:
           NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
         run: |
           python - <<'PY'
-          from src.config import SEASONS
+          from src.config import CACHE_DIR, SEASONS
+          from src.data.cache_io import atomic_write_parquet
+          from src.data.external_sources import _seasons_cache_signature
           from src.data import nfl_source
           from src.data.loader import load_raw_data
           from src.data.preprocessing import preprocess
           from src.features.engineer import build_features
           from src.data.split import temporal_split
+          from src.data.release import prewarm_training_dependencies, seal_inputs
 
           # Raw injuries = the OUT-teammate out-set for the role-inheritance features
           # (those teammates are absent from the weekly frame, so the out-set must come
@@ -204,6 +211,11 @@ jobs:
           # A fetch failure raises here, failing the step before any S3 upload.
           injuries = nfl_source.injuries(list(SEASONS))
           rosters = nfl_source.rosters_weekly(list(SEASONS))
+          # Preserve the exact full-roster inputs used by availability features,
+          # including active nonparticipants absent from weekly player stats.
+          signature = _seasons_cache_signature(SEASONS)
+          atomic_write_parquet(injuries, f"{CACHE_DIR}/injuries_{signature}.parquet", index=False)
+          atomic_write_parquet(rosters, f"{CACHE_DIR}/rosters_weekly_{signature}.parquet", index=False)
           max_weeks = int(rosters.groupby("season")["week"].nunique().max())
           assert max_weeks >= 5, (
               f"rosters frame is not weekly-granular (max {max_weeks} distinct "
@@ -213,6 +225,8 @@ jobs:
               preprocess(load_raw_data()), injuries_df=injuries, rosters_df=rosters
           )
           temporal_split(df)
+          prewarm_training_dependencies()
+          seal_inputs()
           PY
 
       - name: Verify engineered columns present
@@ -340,12 +354,9 @@ jobs:
           retention-days: 14
 
       - name: Upload to S3 with force
-        # ``force=True`` skips the per-file ETag-vs-MD5 short-circuit in
-        # ``upload_data`` so we always overwrite the existing S3 objects
-        # — the regenerated parquet typically differs from the last upload
-        # in row count + content even when the column list is unchanged,
-        # so the ETag would be different in any case; force is the safer
-        # default for an explicit refresh.
+        id: publish
+        # Publish all sealed raw dependencies and splits under immutable keys.
+        # The current manifest advances only after every remote checksum passes.
         run: |
           python - <<'PY'
           import os
@@ -355,7 +366,13 @@ jobs:
           from src.batch.launch import upload_data
 
           s3 = boto3.client("s3", region_name=os.environ["AWS_REGION"])
-          upload_data(os.environ["S3_BUCKET"], s3_client=s3, force=True)
+          release_id = upload_data(os.environ["S3_BUCKET"], s3_client=s3, force=True)
+          # Subsequent cache builders must use this run's snapshot, even when
+          # another source revision publishes a new global current pointer.
+          with open(os.environ["GITHUB_ENV"], "a") as stream:
+              stream.write(f"FF_DATA_RELEASE={release_id}\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+              stream.write(f"release_id={release_id}\n")
           PY
 
       - name: Confirm S3 objects updated
@@ -366,9 +383,9 @@ jobs:
         # Written only after the S3 upload above succeeded (sequential steps —
         # a failed upload fails the job before reaching here), so this marker's
         # presence means data/splits/ in S3 reflects this commit. train-batch's
-        # gate waits for it before submitting Batch jobs. Best-effort (|| true):
-        # if the marker write itself fails, the splits are still uploaded and
-        # train's gate degrades to a poll-then-proceed (fail-safe), never a block.
+        # gates independently verify the immutable manifest before submitting
+        # work. This ready marker remains an operator breadcrumb; its failure
+        # cannot authorize an incompatible rollout.
         run: |
           printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
             "s3://${S3_BUCKET}/splits-rebuild-markers/ready/${GITHUB_SHA}.txt" \
@@ -384,8 +401,7 @@ jobs:
         # after the pipeline's own imputations, so the depth_chart fix correctly
         # shows ~0 now). PUBLISH-BEFORE-VERIFY: this + the depth check below run
         # AFTER the S3 upload + "Mark ready" so a slow diagnostic can't delay the
-        # marker past train-batch's ~20-min fail-safe (which silently falls back
-        # to STALE splits — the bug this ordering fixes). Warn-only by default;
+        # marker while consumers wait for a compatible manifest. Warn-only by default;
         # set COVSHIFT_HARD_FAIL=1 for a post-publish HARD alert (fails the run +
         # halts the ECS roll; the splits are already in S3). Skill positions only
         # — matches the column-presence step's scoping (K/DST don't write data/splits/).
@@ -508,35 +524,6 @@ jobs:
           FF_DEVICE: cpu
         run: python -m src.scripts.build_serving_cache
 
-      - name: Kick off ECS rolling deploy (non-blocking)
-        # Force the ECS service to roll new tasks so they re-sync the fresh
-        # ``data/splits/*.parquet`` we just uploaded. The serving container's
-        # in-flight refresh poller only watches model manifests, NOT the
-        # splits parquet — without this step, running tasks keep their
-        # boot-time local copy of the splits and any new attn_history_stats
-        # col added since their boot will produce a state_dict shape
-        # mismatch on the next model swap (the trained model has the new
-        # cols; the running task's ``pos_test.columns`` doesn't, and the
-        # serving's ``_apply_position_models`` silently filters the col
-        # list before instantiating the inference model — postmortem in
-        # this PR's body and in ``tests/test_refresh_splits_workflow.py``).
-        #
-        # Non-blocking: ``update-service`` returns ~1s. The actual rolling
-        # deploy proceeds asynchronously via ECS; we do NOT wait on
-        # ``services-stable`` here because (a) PR #302's in-flight model
-        # refresh + new tasks' boot-time split sync close the loop, and
-        # (b) ``ecs_refresh_sentinel`` was deliberately retired in PR #330
-        # for the same reason. Failure to call this is the bug; failure of
-        # this step is surfaced via the workflow status.
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --force-new-deployment \
-            --no-cli-pager > /dev/null
-          echo "Kicked off ECS rolling deploy on $ECS_CLUSTER/$ECS_SERVICE."
-
       - name: Trigger retrain via image rebuild
         # Optional chain — if the operator wants the full
         # regen-splits-then-retrain flow in one click, this dispatches
@@ -572,6 +559,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run batch-image.yml --ref main
+
+      - name: Mark failed data rebuild for rollout gates
+        if: failure()
+        run: |
+          printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
+            "s3://${S3_BUCKET}/splits-rebuild-markers/failed/${GITHUB_SHA}.txt" \
+            --region "${AWS_REGION}" --no-cli-pager
 
       - name: File issue on failure (stale-splits alert)
         # A failed run here means data/splits/ in S3 silently lags main until
@@ -624,3 +618,26 @@ jobs:
             echo "in-flight refresh poller swaps the fresh artifact on every"
             echo "running serving task within ~30s of the manifest write."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  rollout:
+    needs: refresh
+    runs-on: ubuntu-latest
+    # Serialize only the ECS mutation with code deployment. Holding this lock
+    # during data production would deadlock a deploy waiting for its snapshot.
+    concurrency:
+      group: ecs-fantasy-cluster-fantasy-service
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Advance only a compatible deployed data pin
+        env:
+          DATA_RELEASE: ${{ needs.refresh.outputs.release_id }}
+        run: |
+          python3 -m src.scripts.advance_data_release --bucket "$S3_BUCKET" \
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --release-id "$DATA_RELEASE"

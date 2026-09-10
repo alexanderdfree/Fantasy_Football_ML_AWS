@@ -69,24 +69,28 @@ def metrics(sha="a" * 40, value=1.0):
     }
 
 
-def create(s3, positions=ALL_POSITIONS, run_id="run-a", sha="a" * 40):
+def create(s3, positions=ALL_POSITIONS, run_id="run-a", sha="a" * 40, data_release=None):
     return run_history.create_run(
         s3,
         "bucket",
         positions,
         run_id=run_id,
         git_sha=sha,
+        data_release=data_release,
         pr_number=100,
     )
 
 
-def publish(s3, run_id, pos, sha="a" * 40, value=1.0):
+def publish(s3, run_id, pos, sha="a" * 40, value=1.0, data_release=None):
+    result = metrics(sha, value)
+    if data_release is not None:
+        result["data_release"] = data_release
     return run_history.publish_position(
         s3,
         "bucket",
         run_id,
         pos,
-        metrics(sha, value),
+        result,
         f"test-history/{pos}/{run_id}.tar.gz",
     )
 
@@ -338,23 +342,56 @@ def test_launcher_registers_before_submit_and_only_full_or_merge_jobs_publish(
     s3, monkeypatch, split
 ):
     submitted = []
+    source_registered = False
+
+    def register(*args, **kwargs):
+        nonlocal source_registered
+        assert args[3] == "a" * 40
+        source_registered = True
+
+    def pin(_s3, *, source_ref):
+        assert source_registered
+        assert source_ref == "a" * 40
+        assert "test-history/training_runs/ci-run/run.json" not in s3.objects
+        monkeypatch.setenv("FF_DATA_RELEASE", DATA_A)
+        return DATA_A
 
     class Batch:
+        def describe_job_definitions(self, *, jobDefinitions):
+            (reference,) = jobDefinitions
+            assert reference in {"gpu-def:1", "cpu-def:1"}
+            name, revision = reference.rsplit(":", 1)
+            return {
+                "jobDefinitions": [
+                    {
+                        "jobDefinitionName": name,
+                        "revision": int(revision),
+                        "status": "ACTIVE",
+                        "containerProperties": {"image": "registry/training:" + "a" * 40},
+                    }
+                ]
+            }
+
         def submit_job(self, **kwargs):
             # Even an immediately completing job can resolve the full descriptor.
             descriptor = json.loads(s3.objects["test-history/training_runs/ci-run/run.json"])
             assert descriptor["positions"] == list(ALL_POSITIONS)
             assert descriptor["pr_number"] == 1554
+            assert descriptor["git_sha"] == "a" * 40
+            assert descriptor["data_release"] == DATA_A
             submitted.append(kwargs)
             return {"jobId": str(len(submitted))}
 
     monkeypatch.setattr(
         launch.boto3, "client", lambda service, **kw: s3 if service == "s3" else Batch()
     )
-    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", "a" * 40)
+    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", None)
+    monkeypatch.setattr(launch, "JOB_DEFINITION", "gpu-def")
+    monkeypatch.setattr(launch, "pin_data_release", pin)
+    monkeypatch.setenv("FF_DATA_RELEASE", "")
     monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "1")
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", "1")
-    monkeypatch.setattr(publication, "register_source", lambda *a, **kw: None)
+    monkeypatch.setattr(publication, "register_source", register)
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu-def")
     monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-queue")
     monkeypatch.setattr(launch, "JOB_IDS_FILE", None)
@@ -373,6 +410,7 @@ def test_launcher_registers_before_submit_and_only_full_or_merge_jobs_publish(
     publishers = []
     for job in submitted:
         env = {e["name"]: e["value"] for e in job["containerOverrides"]["environment"]}
+        assert env["FF_DATA_RELEASE"] == DATA_A
         if "FF_BENCHMARK_RUN_ID" in env:
             assert env["FF_BENCHMARK_RUN_ID"] == "ci-run"
             assert env["FF_TRAIN_GIT_SHA"] == "a" * 40
@@ -382,3 +420,78 @@ def test_launcher_registers_before_submit_and_only_full_or_merge_jobs_publish(
             publishers.append(job)
     assert len(publishers) == 6
     assert len(submitted) == (18 if split else 6)
+
+
+DATA_A, DATA_B = "1" * 64, "2" * 64
+
+
+def test_same_source_run_cannot_be_reused_with_a_different_data_release(s3):
+    create(s3, ["QB"], data_release=DATA_A)
+    assert create(s3, ["QB"], data_release=DATA_A) == "run-a"
+    with pytest.raises(ValueError, match="different work"):
+        create(s3, ["QB"], data_release=DATA_B)
+    assert run_history._descriptor(s3, "bucket", "run-a")["data_release"] == DATA_A
+
+
+@pytest.mark.parametrize("actual", [DATA_B, None])
+def test_pinned_run_rejects_mismatched_or_unknown_input_generation(s3, actual):
+    create(s3, ["QB"], data_release=DATA_A)
+    with pytest.raises(ValueError, match="data release mismatch"):
+        publish(s3, "run-a", "QB", data_release=actual)
+    assert run_history._run_key("run-a", "QB.json") not in s3.objects
+    assert s3.history() == []
+
+
+@pytest.mark.parametrize("actual", [DATA_B, None])
+def test_collector_revalidates_preexisting_result_data_release(s3, actual):
+    create(s3, ["QB"], data_release=DATA_A)
+    value = {
+        "run_id": "run-a",
+        "position": "QB",
+        "completed_at": "2026-09-10T00:00:00Z",
+        "artifact_key": "own-artifact",
+        "metrics": {**metrics(), "data_release": actual},
+    }
+    s3.objects[run_history._run_key("run-a", "QB.json")] = json.dumps(value).encode()
+    with pytest.raises(ValueError, match="data release mismatch"):
+        run_history.complete_run(s3, "bucket", "run-a")
+    assert s3.history() == []
+
+
+def test_legacy_descriptor_remains_readable_but_cannot_accept_a_new_pinned_result(s3):
+    create(s3, ["QB"])
+    key = run_history._run_key("run-a", "run.json")
+    descriptor = json.loads(s3.objects[key])
+    descriptor.pop("data_release")
+    s3.objects[key] = json.dumps(descriptor).encode()
+    with pytest.raises(ValueError, match="data release mismatch"):
+        publish(s3, "run-a", "QB", data_release=DATA_A)
+    legacy = publish(s3, "run-a", "QB")
+    assert legacy == run_history.complete_run(s3, "bucket", "run-a")
+    assert "data_release" not in legacy
+
+
+def test_same_image_overlapping_data_releases_keep_separate_complete_rows(s3):
+    create(s3, data_release=DATA_A)
+    create(s3, run_id="run-b", data_release=DATA_B)
+    for pos in ALL_POSITIONS[:3]:
+        assert publish(s3, "run-a", pos, data_release=DATA_A) is None
+    for pos in reversed(ALL_POSITIONS):
+        publish(s3, "run-b", pos, value=9.0, data_release=DATA_B)
+    for pos in ALL_POSITIONS[3:]:
+        publish(s3, "run-a", pos, data_release=DATA_A)
+    rows = {row["training_run_id"]: row for row in s3.history()}
+    assert set(rows) == {"run-a", "run-b"}
+    for run_id, pin, value in (("run-a", DATA_A, 1.0), ("run-b", DATA_B, 9.0)):
+        row = rows[run_id]
+        assert row["data_release"] == pin
+        assert {result["data_release"] for result in row["results"]} == {pin}
+        assert [result["ridge_mae"] for result in row["results"]] == [value] * 6
+
+
+def test_collection_expected_data_release_must_match_registered_work(s3):
+    create(s3, ["QB"], data_release=DATA_A)
+    row = publish(s3, "run-a", "QB", data_release=DATA_A)
+    assert run_history.complete_run(s3, "bucket", "run-a", data_release=DATA_A) == row
+    with pytest.raises(ValueError, match="data release mismatch"):
+        run_history.complete_run(s3, "bucket", "run-a", data_release=DATA_B)

@@ -6,6 +6,8 @@ import pyarrow.parquet as pq
 from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
 from src.data import nfl_source
+from src.data.cache_io import atomic_write_parquet
+from src.data.release import DataReleaseError, assert_source_fetch_allowed
 from src.k.config import POSITION_CONFIG
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
@@ -118,6 +120,7 @@ def reconstruct_kicker_weekly_from_pbp(
     cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
     if os.path.exists(cache_path) and _cached_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
+    assert_source_fetch_allowed(cache_path)
 
     all_weekly = []
     skipped_seasons: list[int] = []
@@ -673,6 +676,43 @@ def load_data(
     return k_df
 
 
+def _load_backfill_pbp(season: int) -> pd.DataFrame:
+    """Pin the projected historical PBP used by modern weekly K backfills.
+
+    This small raw dependency is prewarmed into the same data release as the
+    splits. Injected live PBP bypasses it and retains its caller's cutoff.
+    """
+    path = f"{CACHE_DIR}/kicker_backfill_pbp_v1_{season}.parquet"
+    required = {
+        "season",
+        "season_type",
+        "week",
+        "posteam",
+        "kicker_player_id",
+        "field_goal_attempt",
+        "field_goal_result",
+        "kick_distance",
+        "fg_prob",
+        "qtr",
+        "wind",
+        "temp",
+        "roof",
+        "surface",
+    }
+    if os.path.exists(path) and required.issubset(pq.read_schema(path).names):
+        return pd.read_parquet(path)
+    assert_source_fetch_allowed(path)
+    frame = nfl_source.pbp_data([season], nfl_source.PBP_KICKER_COLS)
+    missing = sorted(required - set(frame))
+    if missing:
+        raise ValueError(f"K backfill PBP for {season} is missing columns: {missing}")
+    frame = frame.loc[frame["season_type"].eq("REG")].copy()
+    if frame.empty:
+        raise ValueError(f"K backfill PBP for {season} contains no regular-season games")
+    atomic_write_parquet(frame, path, index=False)
+    return frame
+
+
 def _backfill_2025_pbp_columns(
     k_df: pd.DataFrame, seasons: list[int], *, pbp: pd.DataFrame | None = None
 ) -> None:
@@ -702,7 +742,7 @@ def _backfill_2025_pbp_columns(
         all_game_venue = []
         for yr in seasons:
             pbp = (
-                nfl_source.pbp_data([yr], nfl_source.PBP_KICKER_COLS)
+                _load_backfill_pbp(yr)
                 if supplied_pbp is None
                 else supplied_pbp[supplied_pbp["season"] == yr]
             )
@@ -797,6 +837,8 @@ def _backfill_2025_pbp_columns(
                 k_df.update(venue_lookup.set_index(venue_key)[venue_cols])
             finally:
                 k_df.reset_index(inplace=True)
+    except DataReleaseError:
+        raise
     except Exception as e:
         print(f"  WARNING: 2025 PBP backfill failed ({e}), PBP features will be NaN for 2025")
         # #815: a swallowed failure that leaves fg_yards_made all-NaN silently
@@ -879,6 +921,8 @@ def reconstruct_kicker_kicks_from_pbp(
     cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
     if pbp is None and os.path.exists(cache_path) and _cached_kick_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
+    if pbp is None:
+        assert_source_fetch_allowed(cache_path)
 
     supplied_pbp = pbp
     all_kicks = []

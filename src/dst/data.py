@@ -3,6 +3,7 @@ import pandas as pd
 
 from src import config
 from src.data import nfl_source
+from src.data.dst_scoring import SCORING_COLUMNS, SCORING_KEYS, load_dst_scoring_events
 from src.data.loader import load_team_week_stats
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 
@@ -12,6 +13,8 @@ def build_data(
     weekly: pd.DataFrame | None = None,
     schedules: pd.DataFrame | None = None,
     team_stats: pd.DataFrame | None = None,
+    scoring_events: pd.DataFrame | None = None,
+    allow_scoring_fetch: bool = True,
 ) -> pd.DataFrame:
     """Build team-level D/ST data from schedules, weekly stats, and team-week stats.
 
@@ -24,17 +27,23 @@ def build_data(
         This captures special-teams recoveries (muffed punts, kickoff fumbles)
         and excludes touchback / out-of-end-zone fumbles — both of which the
         old opponent-offensive-fumbles-lost derivation got wrong (#1427).
-      - def_tds / def_safeties / def_fumbles_forced: from nflverse stats_team
-        (full history, much better fill than per-player aggregation)
-      - def_blocked_kicks: opponent's fg_blocked + pat_blocked from stats_team
+      - def_tds / special_teams_tds: complete, mutually exclusive PBP counts
+      - def_safeties / def_fumbles_forced: from nflverse stats_team
+      - def_blocked_kicks: opponent's fg_blocked + pat_blocked plus PBP punt blocks
       - yards_allowed: opponent's net passing + rushing yards from stats_team
-      - Special teams TDs: from player stats per team (mostly complete)
     """
     # Read src.config lazily (module-attr access, not an import-time name bind)
     # so a post-import mutation of src.config.SEASONS / CACHE_DIR — a mid-process
     # season rollover or a tuner broadening the range — is honored here. (#475)
     cache_dir = config.CACHE_DIR
     seasons = config.SEASONS
+    injected = weekly is not None or schedules is not None or team_stats is not None
+    if scoring_events is None:
+        if injected:
+            raise ValueError("Injected D/ST inputs require matching scoring_events")
+        scoring_events = load_dst_scoring_events(
+            seasons, cache_dir=cache_dir, allow_fetch=allow_scoring_fetch
+        )
     # The live artifact builder supplies cutoff-filtered frames without changing
     # the training years or overwriting the historical caches.
     weekly = (
@@ -56,6 +65,23 @@ def build_data(
     # (distinct from #971's away-row spread_line SIGN fix). (#728)
     schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
     schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
+    scoring_events = scoring_events[[*SCORING_KEYS, *SCORING_COLUMNS]].copy()
+    scoring_events["team"] = scoring_events["team"].replace(TEAM_CODE_NORMALIZATION)
+    if scoring_events.duplicated(list(SCORING_KEYS)).any():
+        raise ValueError("D/ST scoring events contain duplicate team-weeks")
+    # A missing completed game is unavailable data, not a zero-event game.
+    # Upcoming placeholders are intentionally absent from the event cache.
+    completed = schedules_reg.dropna(subset=["home_score", "away_score"])
+    expected = {
+        (team, int(row.season), int(row.week))
+        for row in completed.itertuples()
+        for team in (row.home_team, row.away_team)
+    }
+    valid_scoring = scoring_events.loc[scoring_events[list(SCORING_COLUMNS)].ge(0).all(axis=1)]
+    actual = set(valid_scoring[list(SCORING_KEYS)].itertuples(index=False, name=None))
+    missing = sorted(expected - actual)
+    if missing:
+        raise ValueError(f"D/ST scoring events missing completed team-weeks: {missing[:8]}")
 
     # --- 1. Points allowed from schedule scores ---
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
@@ -161,7 +187,7 @@ def build_data(
     )
     def_from_offense.columns = ["team", "season", "week", "def_sacks", "def_ints"]
 
-    # --- 5. Defensive TDs, safeties, forced fumbles, fumble recoveries
+    # --- 5. Safeties, forced fumbles, fumble recoveries
     #        from team-week stats ---
     # nflverse stats_team carries these directly for every team-week across
     # the full history — avoids the fill gap that per-player aggregation hits
@@ -173,7 +199,6 @@ def build_data(
             "team",
             "season",
             "week",
-            "def_tds",
             "def_safeties",
             "def_fumbles_forced",
             "fumble_recovery_opp",
@@ -183,7 +208,7 @@ def build_data(
     # --- 5b. Opponent-derived columns from team_stats ---
     # NFL team offense is NET of sacks. nflverse sack_yards_lost is signed
     # negative, so add it to gross passing yards before applying fantasy tiers.
-    # def_blocked_kicks = opponent's fg_blocked + pat_blocked (we blocked them)
+    # Add punt blocks from scoring_events after the opponent-side merge.
     team_stats_aug = team_stats.copy()
     team_stats_aug["_opp_yards"] = (
         team_stats_aug["passing_yards"].fillna(0)
@@ -204,16 +229,6 @@ def build_data(
         "yards_allowed",
         "def_blocked_kicks",
     ]
-
-    # --- 6. Special teams TDs from all players on the team ---
-    st_tds = (
-        weekly.groupby(["recent_team", "season", "week"])
-        .agg(
-            special_teams_tds=("special_teams_tds", "sum"),
-        )
-        .reset_index()
-    )
-    st_tds.columns = ["team", "season", "week", "special_teams_tds"]
 
     # --- 7. Team offensive quality metrics (for opponent strength features) ---
     # 7a. Team scoring
@@ -321,7 +336,10 @@ def build_data(
     dst_df = dst_df.merge(def_team_stats, on=["team", "season", "week"], how="left")
     # yards_allowed + def_blocked_kicks are keyed on opponent_team
     dst_df = dst_df.merge(opp_side, on=["opponent_team", "season", "week"], how="left")
-    dst_df = dst_df.merge(st_tds, on=["team", "season", "week"], how="left")
+    dst_df = dst_df.merge(scoring_events, on=list(SCORING_KEYS), how="left", validate="one_to_one")
+    dst_df["def_blocked_kicks"] = dst_df["def_blocked_kicks"].fillna(0) + dst_df.pop(
+        "def_punt_blocks"
+    ).fillna(0)
 
     # Merge opponent offensive quality histories (scoring, turnovers, sacks allowed)
     team_scoring_sorted = team_scoring.sort_values(["team", "season", "week"])

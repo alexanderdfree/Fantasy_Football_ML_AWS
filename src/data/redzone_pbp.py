@@ -25,6 +25,7 @@ from src.config import CACHE_DIR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
 from src.data.external_sources import _seasons_cache_signature
+from src.data.release import assert_source_fetch_allowed
 
 # Feature columns the current implementation produces (excluding the four
 # ``player_id``/``season``/``week``/``recent_team`` merge keys). Single
@@ -206,9 +207,12 @@ def reconstruct_redzone_from_pbp(
     """
     if cache_dir is None:
         cache_dir = CACHE_DIR
-    cache_path = f"{cache_dir}/redzone_pbp_{_seasons_cache_signature(seasons)}.parquet"
+    # v2 invalidates schema-compatible caches built before the no-play,
+    # kneel-down and two-point-attempt exclusions.
+    cache_path = f"{cache_dir}/redzone_pbp_v2_{_seasons_cache_signature(seasons)}.parquet"
     if os.path.exists(cache_path) and _cached_rz_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
+    assert_source_fetch_allowed(cache_path)
 
     all_weekly: list[pd.DataFrame] = []
     skipped_seasons: list[int] = []

@@ -1,23 +1,14 @@
-"""Contract tests for the refresh-splits → train fresh-splits gate.
+"""Both training paths verify and pin published data before starting jobs.
 
-refresh-splits.yml (the S3 split producer) and the batch-image.yml →
-train-batch.yml / train-ec2.yml consumer chain fire in parallel off the same
-push, with no ordering between them — so a data-affecting merge could train on
-the previous commit's splits (surfaced by PR #383; see TODO.md). PR #516 added a
-fail-safe pending/ready S3-marker handshake: refresh-splits writes
-``splits-rebuild-markers/pending/<sha>`` before the rebuild and ``.../ready/<sha>``
-after the upload, and the train workflows poll the ready marker before training.
-
-#516 gated only train-batch.yml and shipped no tests. This suite pins the wait
-gate on BOTH train workflows — train-ec2.yml (the BATCH_ACTIVE=false rollback
-path) shares the identical batch-image.yml→workflow_run trigger and S3 split
-read, so it has the same race — so a future edit can't silently drop either
-gate. The producer's pending/ready marker writes are pinned in
-tests/test_refresh_splits_workflow.py.
+A missing pending marker or a timeout cannot permit training against incompatible
+inputs. Manifest/hash behavior is covered by scripts/test_wait_data_release.py;
+these checks preserve its wiring in both the Batch and EC2 workflows.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -54,12 +45,8 @@ def test_batch_history_collection_keeps_rebase_checkout_clean():
 
 
 def _find_split_gate(steps: list[dict]) -> dict | None:
-    """The fresh-splits gate head-objects the splits-rebuild markers. Anchored
-    on BOTH 'splits-rebuild-markers' and 'head-object' so it's not confused with
-    the model-artifact freshness step (which head-objects models/<pos>/manifest.json)."""
     for step in steps:
-        run_body = step.get("run", "") or ""
-        if "splits-rebuild-markers" in run_body and "head-object" in run_body:
+        if "src.scripts.wait_data_release" in (step.get("run", "") or ""):
             return step
     return None
 
@@ -72,47 +59,97 @@ def _find_split_gate(steps: list[dict]) -> dict | None:
     ],
 )
 def test_train_waits_for_fresh_splits(wf, job, train_step):
-    """Both train workflows must gate on refresh-splits' fresh-split marker
-    before training: (a) head-object the splits-rebuild ready marker,
-    (b) gated on the workflow_run event, (c) keyed on workflow_run.head_sha,
-    (d) fail-safe (proceeds on timeout, never exit 1), (e) before the train step."""
-    doc = _load(wf)
-    steps = _job_steps(doc, job)
+    """Every event verifies the image's producer contract, pins it, then trains."""
+    steps = _job_steps(_load(wf), job)
     gate = _find_split_gate(steps)
-    assert gate is not None, (
-        f"{wf}:{job} is missing the fresh-splits wait gate — it would race "
-        f"refresh-splits and train one commit behind on a data-affecting merge "
-        f"(the PR #383 incident; PR #516 fixed train-batch, this is the "
-        f"train-ec2 follow-up)."
-    )
-    cond = str(gate.get("if", ""))
-    assert "workflow_run" in cond, (
-        f"{wf} gate must be scoped to the workflow_run event (workflow_dispatch "
-        f"is deliberate/operator-driven); got if: {cond!r}"
-    )
+    assert gate is not None, f"{wf}:{job} must verify published data before training"
+    assert not gate.get("if"), "Manual dispatch must obey the same compatibility gate"
+    assert not gate.get("continue-on-error"), "A failed data gate must block training"
     env = gate.get("env", {}) or {}
-    assert any("workflow_run.head_sha" in str(v) for v in env.values()), (
-        f"{wf} gate must key the marker lookup on "
-        f"github.event.workflow_run.head_sha (== the merge commit; matches the "
-        f"job-def-revisions/<sha>.txt convention)."
-    )
+    assert ".outputs.image_sha" in env.get("HEAD_SHA", "")
     run_body = gate.get("run", "")
-    assert "ready/" in run_body, f"{wf} gate must wait on the splits-rebuild 'ready/' marker."
-    # Fail-safe: every path proceeds; a gate bug must never block the GPU
-    # pipeline. So NO `exit 1`, and the timeout path warns + proceeds.
-    assert "exit 1" not in run_body, (
-        f"{wf} gate must be fail-safe (proceed on timeout), never `exit 1` — a "
-        f"gate bug should degrade to the old behavior, not block training."
+    assert '--revision "$HEAD_SHA"' in run_body
+    assert "--timeout-seconds 3600" in run_body
+    assert "--pin-training" in run_body
+    assert "|| true" not in run_body
+    assert gate.get("timeout-minutes", 0) > 60
+    names = [step.get("name", "") for step in steps]
+    assert train_step in names
+    assert steps.index(gate) < names.index(train_step)
+
+
+def test_deploy_prepares_verified_cache_from_the_same_pinned_data_before_rollout():
+    steps = _job_steps(_load("deploy.yml"), "deploy")
+    data_index = next(i for i, step in enumerate(steps) if step.get("id") == "data-release")
+    cache_index = next(
+        i
+        for i, step in enumerate(steps)
+        if "src.scripts.build_serving_cache" in step.get("run", "")
     )
-    assert "::warning::" in run_body, (
-        f"{wf} gate should emit a ::warning:: on the poll-timeout path so a "
-        f"stale-split train is at least visible in the run annotations."
+    rollout_index = next(
+        i
+        for i, step in enumerate(steps)
+        if "amazon-ecs-deploy-task-definition" in step.get("uses", "")
     )
-    names = [s.get("name", "") for s in steps]
-    gate_idx = steps.index(gate)
-    assert train_step in names, f"{wf}: could not find the training step {train_step!r}"
-    assert gate_idx < names.index(train_step), (
-        f"{wf}: the fresh-splits gate (idx {gate_idx}) must come before the "
-        f"training step '{train_step}' (idx {names.index(train_step)}) — "
-        f"waiting after training defeats the gate."
+    assert data_index < cache_index < rollout_index
+    cache = steps[cache_index]
+    assert cache["run"] == "python -m src.scripts.build_serving_cache --reuse-valid"
+    assert cache["env"]["FF_DATA_RELEASE"] == "${{ steps.data-release.outputs.release_id }}"
+    assert not steps[data_index].get("continue-on-error")
+    assert not cache.get("continue-on-error")
+    task = next(step for step in steps if step.get("name") == "Pull current task definition")
+    assert task["env"]["DATA_RELEASE"] == cache["env"]["FF_DATA_RELEASE"]
+
+
+def test_ec2_registers_the_resolved_source_before_remote_training():
+    steps = _job_steps(_load("train-ec2.yml"), "train")
+    training = next(step for step in steps if step.get("id") == "train")
+    body = training["run"]
+    assert training["env"]["FF_TRAIN_GIT_SHA"] == "${{ steps.image.outputs.image_sha }}"
+    assert body.index('register_training_source --sha "$FF_TRAIN_GIT_SHA"') < body.index(
+        "aws ssm send-command"
     )
+    assert "FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA'" in body
+    assert "FF_TRAIN_IMAGE='$FF_TRAIN_IMAGE'" in body
+    assert "FF_DATA_RELEASE='$DATA_RELEASE'" in body
+
+
+def test_batch_attempts_share_one_history_id_but_have_isolated_split_staging():
+    document = _load("train-batch.yml")
+    run_template = document["env"]["FF_BENCHMARK_RUN_ID"]
+    assert "github.run_id" in run_template and "github.run_attempt" in run_template
+    steps = _job_steps(document, "train")
+    training = next(step for step in steps if step.get("id") == "train")
+    collection = next(
+        step for step in steps if step.get("name") == "Append Batch run to benchmark_history/"
+    )
+    assert '--history-run-id "$FF_BENCHMARK_RUN_ID"' in training["run"]
+    assert '--run-id "$FF_BENCHMARK_RUN_ID"' in collection["run"]
+    assert "--append-history false" not in training["run"]
+    assert "--collect-history false" in training["run"]
+    assignment = next(
+        line.strip()
+        for line in training["run"].splitlines()
+        if line.strip().startswith("SPLIT_RUN_ID=")
+    )
+
+    def namespace(attempt):
+        history_id = run_template.replace("${{ github.run_id }}", "100").replace(
+            "${{ github.run_attempt }}", str(attempt)
+        )
+        env = {
+            **os.environ,
+            "split_sha": "a" * 40,
+            "GITHUB_RUN_ID": "100",
+            "GITHUB_RUN_ATTEMPT": str(attempt),
+            "FF_BENCHMARK_RUN_ID": history_id,
+        }
+        return subprocess.check_output(
+            ["bash", "-c", assignment + '\nprintf "%s" "$SPLIT_RUN_ID"'], env=env, text=True
+        )
+
+    first, second = namespace(1), namespace(2)
+    assert first != second  # negative control: old attempt cannot overwrite new staging
+    assert first == namespace(1)  # retries within the same attempt remain idempotent
+    assert "train-100-1" in first and "train-100-2" in second
+    assert all(character.isalnum() or character in "_.-" for character in first + second)

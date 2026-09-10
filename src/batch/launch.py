@@ -6,8 +6,8 @@ Usage:
     python src/batch/launch.py --wait false            # fire and forget
     python src/batch/launch.py --dry-run               # print plan, touch nothing
     python src/batch/launch.py --wait-timeout 1800     # override 3h default
-    python src/batch/launch.py --force-upload          # skip ETag dedup
-    python src/batch/launch.py --skip-upload           # assume S3 current (CI)
+    python src/batch/launch.py --force-upload          # compatibility flag; publish verified release
+    python src/batch/launch.py --skip-upload           # pin published release (CI)
 
 Source identity (required except for --dry-run):
     FF_TRAIN_GIT_SHA    Full SHA of the selected training image.
@@ -28,7 +28,6 @@ Other configuration (environment variables, optional):
 """
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -153,53 +152,118 @@ def _cloudwatch_url(log_stream_name: str) -> str:
     )
 
 
-def _file_md5(path: str, chunk_size: int = 1024 * 1024) -> str:
-    """Stream-hash a file; returns hex digest (matches S3 ETag for single-part)."""
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(chunk_size), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _s3_object_etag(s3_client, bucket: str, key: str):
-    """Return the S3 object's ETag (minus quotes) or None if the object doesn't exist."""
-    try:
-        resp = s3_client.head_object(Bucket=bucket, Key=key)
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code")
-        if code in ("404", "NoSuchKey", "NotFound"):
-            return None
-        raise
-    return resp.get("ETag", "").strip('"')
-
-
 def upload_data(s3_bucket, s3_client=None, force: bool = False):
-    """Upload local data splits to S3, skipping files whose ETag matches the local MD5.
+    """Publish sealed raw dependencies and splits as one verified release.
 
-    Set force=True to re-upload regardless.
+    Existing unversioned S3 objects are retained for explicitly selected legacy
+    readers; new data never updates those independently mutable objects.
     """
+    from src.data.release import publish_release
+
     s3 = s3_client or boto3.client("s3", region_name=AWS_REGION)
-    data_dir = "data/splits"
-    uploaded = 0
-    skipped = 0
-    for name in ("train.parquet", "val.parquet", "test.parquet"):
-        local_path = os.path.join(data_dir, name)
-        s3_key = f"data/{name}"
-        if not force:
-            remote_etag = _s3_object_etag(s3, s3_bucket, s3_key)
-            if remote_etag is not None:
-                local_md5 = _file_md5(local_path)
-                if remote_etag == local_md5:
-                    print(
-                        f"  [skip] s3://{s3_bucket}/{s3_key} already up to date ({local_md5[:8]}...)"
-                    )
-                    skipped += 1
-                    continue
-        print(f"  [upload] {local_path} -> s3://{s3_bucket}/{s3_key}")
-        s3.upload_file(local_path, s3_bucket, s3_key)
-        uploaded += 1
-    print(f"Data upload complete: {uploaded} uploaded, {skipped} skipped.\n")
+    release_id = publish_release(s3, s3_bucket, force=force)
+    os.environ["FF_DATA_RELEASE"] = release_id
+    return release_id
+
+
+def pin_data_release(s3_client=None, *, prefix="data", source_ref=None):
+    """Pin this checkout's recipe, or honor an explicitly selected remote image pin."""
+    from pathlib import Path
+
+    from src.data.release import (
+        DataReleaseError,
+        data_producer_hashes,
+        resolve_compatible_release,
+        resolve_release,
+    )
+
+    selected = os.environ.get("FF_DATA_RELEASE")
+    if selected == "legacy":
+        print("WARNING: explicit legacy data selected; raw/split generation is unverified")
+        return "legacy"
+    s3 = s3_client or boto3.client("s3", region_name=AWS_REGION)
+    if source_ref:
+        from src.scripts.wait_data_release import producer_hashes_at_revision
+
+        expected = producer_hashes_at_revision(source_ref)
+    else:
+        expected = data_producer_hashes(Path(__file__).resolve().parents[2])
+    if selected:
+        # CI may launch image A while its bookkeeping checkout has advanced to B.
+        release_id, manifest = resolve_release(s3, S3_BUCKET, prefix=prefix, release_id=selected)
+        if source_ref and any(
+            manifest.get("producer", {}).get(name) != digest for name, digest in expected.items()
+        ):
+            raise DataReleaseError(
+                f"Pinned data release is incompatible with selected image {source_ref}"
+            )
+    else:
+        release_id, _ = resolve_compatible_release(s3, S3_BUCKET, expected, prefix=prefix)
+    os.environ["FF_DATA_RELEASE"] = release_id
+    return release_id
+
+
+def resolve_launch_binding(batch, s3, positions, *, split=False, gpu_only=False):
+    """Snapshot all selected job revisions and require one actual source image."""
+    from src.scripts.resolve_training_image import resolve_batch
+
+    batch = batch or boto3.client("batch", region_name=AWS_REGION)
+    s3 = s3 or boto3.client("s3", region_name=AWS_REGION)
+
+    cpu_routed = bool(JOB_DEFINITION_CPU and JOB_QUEUE_CPU) and not gpu_only
+    use_cpu = split or (cpu_routed and any(pos in CPU_ONLY_POSITIONS for pos in positions))
+    only_cpu = not split and cpu_routed and all(pos in CPU_ONLY_POSITIONS for pos in positions)
+    selected = resolve_batch(
+        batch,
+        s3,
+        S3_BUCKET,
+        sha=TRAIN_GIT_SHA or "",
+        split=use_cpu and not only_cpu,
+        name=JOB_DEFINITION_CPU if only_cpu else JOB_DEFINITION,
+        cpu_name=JOB_DEFINITION_CPU or "ff-training-cpu-job",
+        revision=(JOB_DEFINITION_CPU_REVISION if only_cpu else JOB_DEFINITION_REVISION) or "",
+        cpu_revision=JOB_DEFINITION_CPU_REVISION or "",
+        primary_cpu=only_cpu,
+    )
+    return {
+        "image_sha": selected["image_sha"],
+        "gpu_definition": f"{JOB_DEFINITION}:{selected['revision']}" if not only_cpu else "",
+        "cpu_definition": (
+            f"{JOB_DEFINITION_CPU}:{selected['revision']}"
+            if only_cpu
+            else f"{JOB_DEFINITION_CPU}:{selected['cpu_revision']}"
+            if use_cpu
+            else ""
+        ),
+    }
+
+
+def validate_local_publish(source_ref):
+    """Reject local recipe B before any publication for remotely selected image A."""
+    from pathlib import Path
+
+    from src.data.release import DataReleaseError, data_producer_hashes
+    from src.scripts.wait_data_release import producer_hashes_at_revision
+
+    expected = producer_hashes_at_revision(source_ref)
+    if data_producer_hashes(Path.cwd()) != expected:
+        raise DataReleaseError(
+            f"Local data producer differs from selected image {source_ref}; "
+            "rebuild using that source revision or use --skip-upload to select its published release"
+        )
+
+
+def _bound_definition(binding, position, branch="full"):
+    cpu = branch in {"cpu", "merge"} or (
+        branch == "full" and position in CPU_ONLY_POSITIONS and binding["cpu_definition"]
+    )
+    return binding["cpu_definition" if cpu else "gpu_definition"]
+
+
+def data_release_environment() -> list[dict[str, str]]:
+    """Forward the launcher's selected release into every worker."""
+    selected = os.environ.get("FF_DATA_RELEASE")
+    return [{"name": "FF_DATA_RELEASE", "value": selected}] if selected else []
 
 
 def _job_definition_for(position: str, branch: str = "full") -> str:
@@ -255,15 +319,20 @@ def _job_queue_for(position: str, branch: str = "full") -> str:
     return JOB_QUEUE
 
 
-def validate_submission_source(positions, *, split=False):
+def validate_submission_source(positions, *, split=False, binding=None):
     """Reject unidentifiable images before allocating any training jobs."""
     from src.shared.artifact_publication import source_key
 
-    source_key("models", TRAIN_GIT_SHA or "")
+    source_sha = binding["image_sha"] if binding else TRAIN_GIT_SHA
+    source_key("models", source_sha or "")
     branches = ("nn", "cpu", "merge") if split else ("full",)
     for position in positions:
         for branch in branches:
-            definition = _job_definition_for(position, branch=branch)
+            definition = (
+                _bound_definition(binding, position, branch)
+                if binding
+                else _job_definition_for(position, branch=branch)
+            )
             if not definition.rsplit(":", 1)[-1].isdigit():
                 raise RuntimeError(
                     "Training requires an immutable Batch job-definition revision. "
@@ -281,6 +350,7 @@ def submit_job(
     branch: str = "full",
     split_run_id: str | None = None,
     depends_on: list[dict] | None = None,
+    binding: dict | None = None,
     history_run_id: str | None = None,
 ):
     """Submit a single Batch job. Returns (position-or-branch-key, job_id)."""
@@ -289,19 +359,25 @@ def submit_job(
     # a short uuid suffix makes the name unique without sacrificing readability.
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
-    job_definition = _job_definition_for(position, branch=branch)
+    job_definition = (
+        _bound_definition(binding, position, branch)
+        if binding
+        else _job_definition_for(position, branch=branch)
+    )
     job_queue = _job_queue_for(position, branch=branch)
     environment = [
         {"name": "S3_BUCKET", "value": S3_BUCKET},
         {"name": "S3_DATA_PREFIX", "value": "data"},
         {"name": "LOG_EVERY", "value": "1"},
     ]
+    environment.extend(data_release_environment())
     if history_run_id:
         environment.append({"name": "FF_BENCHMARK_RUN_ID", "value": history_run_id})
-    if TRAIN_GIT_SHA:
+    source_sha = binding["image_sha"] if binding else TRAIN_GIT_SHA
+    if source_sha:
         # Stamped into benchmark_metrics.json by train.py; benchmark.py uses
         # it to surface per-position SHA divergence across a single run.
-        environment.append({"name": "FF_TRAIN_GIT_SHA", "value": TRAIN_GIT_SHA})
+        environment.append({"name": "FF_TRAIN_GIT_SHA", "value": source_sha})
     if FF_CUDA_GRAPH:
         # Override only — graphs autodetect ON for sm_80+ in the container, so a
         # value is needed only to force the eager path (forward "0"). K's nested
@@ -366,7 +442,13 @@ def submit_job(
 
 
 def _submit_split_for_position(
-    position: str, seed: int, split_run_id: str, batch_client=None, *, history_run_id=None
+    position: str,
+    seed: int,
+    split_run_id: str,
+    batch_client=None,
+    binding=None,
+    *,
+    history_run_id=None,
 ):
     """Submit NN, CPU, and merge jobs for one split position."""
     _, nn_job_id = submit_job(
@@ -375,6 +457,7 @@ def _submit_split_for_position(
         batch_client,
         branch="nn",
         split_run_id=split_run_id,
+        binding=binding,
     )
     _, cpu_job_id = submit_job(
         position,
@@ -382,6 +465,7 @@ def _submit_split_for_position(
         batch_client,
         branch="cpu",
         split_run_id=split_run_id,
+        binding=binding,
     )
     merge_key, merge_job_id = submit_job(
         position,
@@ -389,6 +473,7 @@ def _submit_split_for_position(
         batch_client,
         branch="merge",
         split_run_id=split_run_id,
+        binding=binding,
         history_run_id=history_run_id,
         depends_on=[{"jobId": nn_job_id}, {"jobId": cpu_job_id}],
     )
@@ -737,7 +822,7 @@ def _write_job_ids_file(path, expected_positions, job_ids):
         print(f"WARNING: could not write job-ids file {path}: {e!r}")
 
 
-def _append_benchmark_history(positions, *, note, run_id=None):
+def _append_benchmark_history(positions, *, note, git_hash=None, run_id=None, data_release=None):
     """Collect the registered run locally after waiting, as a convenience.
 
     Completing jobs publish the S3 row independently; this local copy is not
@@ -751,7 +836,12 @@ def _append_benchmark_history(positions, *, note, run_id=None):
         # module-level import here would be circular.
         from src.batch.benchmark import record_benchmark_run
 
-        record_benchmark_run(positions, backend="batch", note=note, run_id=run_id)
+        metadata = {"git_hash": git_hash} if git_hash else {}
+        if run_id:
+            metadata["run_id"] = run_id
+        if data_release is not None:
+            metadata["data_release"] = data_release
+        record_benchmark_run(positions, backend="batch", note=note, **metadata)
     except Exception as e:  # noqa: BLE001 — append is a convenience, not a gate
         print(f"[benchmark_history] auto-append skipped: {e!r}")
 
@@ -785,13 +875,13 @@ def main():
     parser.add_argument(
         "--force-upload",
         action="store_true",
-        help="Upload data splits even if S3 ETag matches the local file",
+        help="Compatibility flag; release publication always verifies every file",
     )
     parser.add_argument(
         "--skip-upload",
         action="store_true",
         help=(
-            "Skip uploading data/splits/*.parquet (assume S3 already current). "
+            "Skip publication and pin the existing verified S3 data release. "
             "Used by CI (train-batch.yml) where the runner has no local data."
         ),
     )
@@ -839,14 +929,17 @@ def main():
         _print_plan(args.positions, args.seed, split=args.split, split_run_id=split_run_id)
         return
 
-    try:
-        validate_submission_source(args.positions, split=args.split)
-    except RuntimeError as exc:
-        parser.error(str(exc))
-
     # Shared boto3 clients — boto3 clients are thread-safe, no need per-thread.
     s3_client = boto3.client("s3", region_name=AWS_REGION)
     batch_client = boto3.client("batch", region_name=AWS_REGION)
+
+    binding = resolve_launch_binding(batch_client, s3_client, args.positions, split=args.split)
+    try:
+        validate_submission_source(args.positions, split=args.split, binding=binding)
+    except RuntimeError as exc:
+        parser.error(str(exc))
+    if not args.skip_upload:
+        validate_local_publish(binding["image_sha"])
 
     # Register the pinned image's immutable ancestry before any job can publish.
     from src.shared.artifact_publication import register_source
@@ -855,8 +948,15 @@ def main():
         s3_client,
         S3_BUCKET,
         os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
-        TRAIN_GIT_SHA or "",
+        binding["image_sha"],
     )
+    if args.skip_upload:
+        print("Skipping publication (--skip-upload); pinning the verified S3 data release.\n")
+    else:
+        print("Publishing sealed raw inputs and splits to S3...")
+        upload_data(S3_BUCKET, s3_client=s3_client, force=args.force_upload)
+
+    selected_release = pin_data_release(s3_client, source_ref=binding["image_sha"])
     history_run_id = None
     if append_history:
         history_run_id = create_run(
@@ -864,17 +964,12 @@ def main():
             S3_BUCKET,
             args.positions,
             run_id=args.history_run_id,
-            git_sha=TRAIN_GIT_SHA,
+            git_sha=binding["image_sha"],
+            data_release=selected_release,
             pr_number=args.pr_number,
             seed=args.seed,
         )
         print(f"Training history run: {history_run_id}")
-
-    if args.skip_upload:
-        print("Skipping data upload (--skip-upload); assuming S3 splits are current.\n")
-    else:
-        print("Uploading data splits to S3...")
-        upload_data(S3_BUCKET, s3_client=s3_client, force=args.force_upload)
 
     # Submit all positions in parallel
     if args.split:
@@ -895,6 +990,7 @@ def main():
                     args.seed,
                     split_run_id,
                     batch_client,
+                    binding,
                     history_run_id=history_run_id,
                 ): pos
                 for pos in args.positions
@@ -902,7 +998,12 @@ def main():
         else:
             futures = {
                 pool.submit(
-                    submit_job, pos, args.seed, batch_client, history_run_id=history_run_id
+                    submit_job,
+                    pos,
+                    args.seed,
+                    batch_client,
+                    binding=binding,
+                    history_run_id=history_run_id,
                 ): pos
                 for pos in args.positions
             }
@@ -971,7 +1072,11 @@ def main():
         download_artifacts(succeeded, stopped_at_by_pos=stopped_at_by_pos, s3_client=s3_client)
         if append_history and args.collect_history.lower() == "true":
             _append_benchmark_history(
-                args.positions, note="Standalone Batch run", run_id=history_run_id
+                args.positions,
+                note="Standalone Batch run",
+                git_hash=binding["image_sha"],
+                run_id=history_run_id,
+                data_release=selected_release,
             )
 
     print("\nAll done.")

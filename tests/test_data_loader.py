@@ -32,7 +32,9 @@ def test_load_team_week_stats_cache_hit(tmp_path):
     """Pre-written parquet at the expected path → no network call, just a read."""
     seasons = [2022, 2023]
     cache_path = tmp_path / f"team_stats_{seasons[0]}_{seasons[-1]}.parquet"
-    fake = pd.DataFrame({"team": ["KC"], "season": [2022], "week": [1]})
+    fake = pd.DataFrame(
+        {"team": ["KC"], "season": [2022], "week": [1], "_team_stats_schema_v2": [True]}
+    )
     fake.to_parquet(cache_path)
 
     out = load_team_week_stats(seasons, cache_dir=str(tmp_path))
@@ -232,6 +234,7 @@ def _mock_all_nfl_helpers(monkeypatch):
 
     monkeypatch.setattr(loader.nfl_source, "weekly_data", _fake_weekly)
     monkeypatch.setattr(loader.nfl_source, "rosters", _fake_rosters)
+    monkeypatch.setattr(loader.nfl_source, "rosters_weekly", _fake_rosters)
     monkeypatch.setattr(loader.nfl_source, "schedules", _fake_schedules)
     monkeypatch.setattr(loader.nfl_source, "snap_counts", _fake_snap_counts)
     monkeypatch.setattr(loader.nfl_source, "player_ids", _fake_ids)
@@ -293,7 +296,7 @@ def test_load_raw_data_fresh_fetch_old_seasons_only(tmp_path, monkeypatch):
         assert (tmp_path / f"{name}_2022_2023.parquet").exists()
     # Depth cache carries the _v2 version sentinel so a pre-#595 stale cache is
     # unreachable and the week-=1 realignment always reruns (#616).
-    assert (tmp_path / "depth_charts_v2_2022_2023.parquet").exists()
+    assert (tmp_path / "depth_charts_v3_2022_2023.parquet").exists()
 
 
 @pytest.mark.unit
@@ -327,7 +330,7 @@ def test_load_raw_data_espn_depth_404_partial_not_cached(tmp_path, monkeypatch, 
     assert (rows_2025["depth_chart_rank"] == -1).all()
     # Partial coverage → the depth cache is NOT written; the next call retries
     # the missing ESPN season instead of serving the partial frame from cache.
-    assert not (tmp_path / "depth_charts_v2_2024_2025.parquet").exists()
+    assert not (tmp_path / "depth_charts_v3_2024_2025.parquet").exists()
     out = capsys.readouterr().out
     assert "ESPN depth_charts fetch failed for 2025" in out
     assert "depth_charts partial coverage (skipped seasons [2025]); not caching" in out
@@ -540,6 +543,7 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
     for name in (
         "weekly_data",
         "rosters",
+        "rosters_weekly",
         "schedules",
         "snap_counts",
         "injuries",
@@ -612,7 +616,7 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
             ),
         ),
         (
-            "depth_charts_v2",  # cache-version sentinel filename (#616)
+            "depth_charts_v3",  # cache-version sentinel filename (#616)
             pd.DataFrame(
                 {
                     "gsis_id": ["P00"],
@@ -624,6 +628,10 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
             ),
         ),
     ]:
+        if name == "weekly":
+            df["_weekly_modern_schema_v2"] = True
+        if name == "rosters":
+            df.to_parquet(tmp_path / f"rosters_weekly_{seasons[0]}_{seasons[-1]}.parquet")
         df.to_parquet(tmp_path / f"{name}_{seasons[0]}_{seasons[-1]}.parquet")
 
     # Pre-write the red-zone PBP cache with the full required schema so the
@@ -640,7 +648,7 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
             "inside5_carries": [0],
             "redzone_target_share": [0.0],
         }
-    ).to_parquet(tmp_path / f"redzone_pbp_{seasons[0]}_{seasons[-1]}.parquet")
+    ).to_parquet(tmp_path / f"redzone_pbp_v2_{seasons[0]}_{seasons[-1]}.parquet")
 
     # Pre-write the external-source caches (ff_opportunity / QBR / contracts) so
     # load_ff_opportunity / load_qbr_weekly / load_contracts short-circuit on the
@@ -651,9 +659,9 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         QBR_FEATURE_COLUMNS,
     )
 
-    pd.DataFrame(columns=["player_id", "season", "week", *FF_OPP_FEATURE_COLUMNS]).to_parquet(
-        tmp_path / f"ff_opportunity_{seasons[0]}_{seasons[-1]}.parquet"
-    )
+    pd.DataFrame(
+        columns=["player_id", "season", "week", *FF_OPP_FEATURE_COLUMNS, "_ff_opportunity_v2"]
+    ).to_parquet(tmp_path / f"ff_opportunity_{seasons[0]}_{seasons[-1]}.parquet")
     pd.DataFrame(columns=["player_id", "season", "week", *QBR_FEATURE_COLUMNS]).to_parquet(
         tmp_path / f"qbr_weekly_v2_{seasons[0]}_{seasons[-1]}.parquet"
     )
@@ -693,7 +701,7 @@ def test_load_raw_data_snap_merge_exception_falls_back_to_nan(tmp_path, monkeypa
     df = loader.load_raw_data([2023], cache_dir=str(tmp_path))
     assert "snap_pct" in df.columns
     assert df["snap_pct"].isna().all()
-    assert "Snap count merge failed" in capsys.readouterr().out
+    assert "player crosswalk unavailable" in capsys.readouterr().out
 
 
 @pytest.mark.unit

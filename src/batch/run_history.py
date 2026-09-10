@@ -67,6 +67,7 @@ def create_run(
     *,
     run_id=None,
     git_sha=None,
+    data_release=None,
     pr_number=None,
     seed=42,
     note="AWS Batch training run",
@@ -80,6 +81,7 @@ def create_run(
         "run_id": run_id,
         "positions": [p for p in ALL_POSITIONS if p in positions],
         "git_sha": git_sha or None,
+        "data_release": data_release or None,
         "pr_number": pr_number,
         "seed": seed,
         "note": note,
@@ -107,12 +109,23 @@ def _check_sha(expected, actual):
         raise ValueError(f"Training history SHA mismatch: expected {expected}, got {actual}")
 
 
+def _check_data_release(expected, actual):
+    # Legacy descriptors/results without this field remain readable. A pinned
+    # result must never enter an unknown run, nor may an unknown result enter a
+    # pinned run; both would falsely describe one coherent input generation.
+    if (expected or None) != (actual or None):
+        raise ValueError(
+            f"Training history data release mismatch: expected {expected!r}, got {actual!r}"
+        )
+
+
 def publish_position(s3, bucket, run_id, position, metrics, artifact_key):
     """Save this job's result and publish the complete run when all positions arrive."""
     descriptor = _descriptor(s3, bucket, run_id)
     if position not in descriptor["positions"]:
         raise ValueError(f"Unexpected position {position} for history run {run_id}")
     _check_sha(descriptor["git_sha"], metrics.get("git_sha"))
+    _check_data_release(descriptor.get("data_release"), metrics.get("data_release"))
     _write_once(
         s3,
         bucket,
@@ -128,7 +141,7 @@ def publish_position(s3, bucket, run_id, position, metrics, artifact_key):
     return complete_run(s3, bucket, run_id)
 
 
-def complete_run(s3, bucket, run_id, *, positions=None, git_sha=None):
+def complete_run(s3, bucket, run_id, *, positions=None, git_sha=None, data_release=None):
     """Return/publish an immutable summary, or None while any position is missing.
 
     Also used by the CLI to retrieve exactly its own run for the git history
@@ -138,6 +151,8 @@ def complete_run(s3, bucket, run_id, *, positions=None, git_sha=None):
     if positions is not None and set(positions) != set(descriptor["positions"]):
         raise ValueError("Requested positions do not match the registered history run")
     _check_sha(git_sha, descriptor["git_sha"])
+    if data_release is not None:
+        _check_data_release(descriptor.get("data_release"), data_release)
     results = []
     for position in descriptor["positions"]:
         result = _read(s3, bucket, _run_key(run_id, f"{position}.json"))
@@ -146,6 +161,7 @@ def complete_run(s3, bucket, run_id, *, positions=None, git_sha=None):
         if result["run_id"] != run_id or result["position"] != position:
             raise ValueError("Training result belongs to another run or position")
         _check_sha(descriptor["git_sha"], result["metrics"].get("git_sha"))
+        _check_data_release(descriptor.get("data_release"), result["metrics"].get("data_release"))
         results.append(result)
 
     # Reuse the existing hardware label; local import avoids CLI import cycles.
@@ -154,6 +170,11 @@ def complete_run(s3, bucket, run_id, *, positions=None, git_sha=None):
     metrics = {r["position"]: r["metrics"] for r in results}
     timestamp = max(r["completed_at"] for r in results)
     git_short = (descriptor["git_sha"] or "unknown")[:7]
+    # The generic numeric summary does not own run provenance. Attach the
+    # already-validated snapshot to both the aggregate and each position.
+    data_metadata = (
+        {"data_release": descriptor["data_release"]} if descriptor.get("data_release") else {}
+    )
     entry = {
         "run_id": f"{timestamp}_{git_short}_{run_id}",
         "training_run_id": run_id,
@@ -164,8 +185,12 @@ def complete_run(s3, bucket, run_id, *, positions=None, git_sha=None):
         "instance_type": _derive_instance_label(metrics, backend="batch", fallback="AWS Batch"),
         "note": descriptor["note"],
         "positions": descriptor["positions"],
-        "results": [summarize_pipeline_result(p, metrics[p]) for p in descriptor["positions"]],
+        "results": [
+            {**summarize_pipeline_result(p, metrics[p]), **data_metadata}
+            for p in descriptor["positions"]
+        ],
         "artifacts": {r["position"]: r["artifact_key"] for r in results},
     }
+    entry.update(data_metadata)
     filename = entry["run_id"].replace(":", "-") + ".json"
     return _write_once(s3, bucket, f"{_prefix()}/benchmark_history/{filename}", entry)

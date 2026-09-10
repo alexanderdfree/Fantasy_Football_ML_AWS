@@ -116,6 +116,12 @@ def _make_team_stats(seed: int = 1) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _make_scoring_events() -> pd.DataFrame:
+    return _make_team_stats()[["team", "season", "week", "def_tds"]].assign(
+        special_teams_tds=0, def_punt_blocks=0
+    )
+
+
 # --- Fixture wrapper ----------------------------------------------------
 
 
@@ -144,6 +150,9 @@ def synthetic_parquets(tmp_path, monkeypatch):
     monkeypatch.setattr("src.config.CACHE_DIR", str(cache_dir))
     monkeypatch.setattr("src.config.SEASONS", _SEASONS)
     monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons: team_stats)
+    monkeypatch.setattr(
+        dst_data, "load_dst_scoring_events", lambda *a, **kw: _make_scoring_events()
+    )
 
     # Stub nfl_source.teams so the logo lookup branch runs without
     # a network call. The except-Exception fallback branch is covered by a

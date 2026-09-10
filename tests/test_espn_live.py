@@ -254,9 +254,9 @@ def test_injury_status_map_only_out_doubtful():
 
 
 @pytest.mark.unit
-def test_parse_depthchart_reranks_by_order_and_pools_wr():
+def test_parse_depthchart_reranks_legacy_single_slot_entries():
     # ESPN's raw `rank` is grid-numbered (WRs 1, 4, 7); we re-rank by sorted
-    # order. Defense + fullback are dropped; split WR slots pool into one WR list.
+    # order when slot metadata is absent. Defense + fullback are dropped.
     payload = {
         "items": [
             {"name": "Base D", "positions": {"lde": {"athletes": [_dc(1, "999")]}}},
@@ -277,6 +277,130 @@ def test_parse_depthchart_reranks_by_order_and_pools_wr():
     assert by_id["101"]["order"] == 2
     # WR re-ranked by raw rank 1<4<7 -> order 1,2,3.
     assert [by_id[i]["order"] for i in ("200", "201", "202")] == [1, 2, 3]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("shape", ["athlete_slots", "position_keys"])
+@pytest.mark.parametrize("missing_identity", [False, True])
+def test_live_depth_slots_match_training_through_current_week_context(
+    monkeypatch, shape, missing_identity
+):
+    from src.data.loader import _normalize_espn_depth
+    from src.serving.upcoming_week import _fill_current_week_context
+
+    # Actual ESPN core shape: one WR key, three athlete.slot values, and grid
+    # ranks 1/4, 2/5, 3/6. Older payloads expose the slots as separate keys.
+    ids = ["101", "102", "103", "104", "105", "106"]
+    slots = [1, 2, 8, 1, 2, 8]
+    crosswalk = {pid: f"g{pid}" for pid in ids}
+    if missing_identity:
+        del crosswalk["101"]
+        del crosswalk["102"]
+    positions = {}
+    for rank, (pid, slot) in enumerate(zip(ids, slots, strict=True), 1):
+        entry = _dc(rank, pid)
+        if missing_identity and pid == "101":
+            # One missing ESPN reference and one unmapped ESPN->GSIS identity:
+            # both starters still occupy their slot ahead of the backups.
+            entry["athlete"] = {}
+        if shape == "athlete_slots":
+            key = "wr"
+            entry["slot"] = slot
+        else:
+            key = {1: "lwr", 2: "rwr", 8: "swr"}[slot]
+        positions.setdefault(key, {"athletes": []})["athletes"].insert(0, entry)
+    payload = {"items": [{"name": "3WR 1TE", "positions": positions}]}
+    archive = pd.DataFrame(
+        {
+            "dt": ["2025-09-01T00:00:00Z"] * 6,
+            "team": ["CIN"] * 6,
+            "pos_grp": ["3WR 1TE"] * 6,
+            "gsis_id": [crosswalk.get(pid) for pid in ids],
+            "pos_abb": ["WR"] * 6,
+            "pos_slot": slots,
+            "pos_rank": list(range(1, 7)),
+        }
+    )
+    schedule = pd.DataFrame(
+        {
+            "season": [2025],
+            "week": [1],
+            "game_type": ["REG"],
+            "gameday": ["2025-09-07"],
+            "home_team": ["CIN"],
+            "away_team": ["CLE"],
+        }
+    )
+    expected = (
+        _normalize_espn_depth(archive, schedule, 2025)
+        .set_index("gsis_id")
+        .depth_team.astype(float)
+        .to_dict()
+    )
+    monkeypatch.setattr(espn_live, "_get_json", lambda url: payload)
+    monkeypatch.setattr(espn_live, "espn_to_gsis_map", lambda: crosswalk)
+    ranks = espn_live.fetch_depth_chart_ranks(2025, {"4": "CIN"})
+    assert ranks == expected
+    assert all(ranks[f"g{pid}"] == 2.0 for pid in ids[3:])
+    if not missing_identity:
+        assert all(ranks[f"g{pid}"] == 1.0 for pid in ids[:3])
+    current = pd.DataFrame({"player_id": list(expected), "depth_chart_rank": 3.0})
+    history = pd.DataFrame(columns=["player_id", "season", "week", "depth_chart_rank"])
+    result = _fill_current_week_context(current, history, depth_chart_ranks=ranks)
+    assert result.set_index("player_id").depth_chart_rank.to_dict() == expected
+
+
+@pytest.mark.unit
+def test_depth_player_uses_best_slot_across_formations():
+    def slot(rank, pid, value):
+        return {**_dc(rank, pid), "slot": value}
+
+    groups = [
+        {
+            "positions": {
+                "wr": {"athletes": [slot(1, "100", 1), slot(4, "101", 1), slot(2, "102", 2)]}
+            }
+        },
+        {"positions": {"wr": {"athletes": [slot(1, "103", 1), slot(2, "101", 2)]}}},
+    ]
+    for ordered in (groups, list(reversed(groups))):
+        entries = espn_live._parse_depthchart({"items": ordered})
+        matches = [entry for entry in entries if entry["espn_id"] == "101"]
+        assert matches == [{"espn_id": "101", "position": "WR", "order": 1}]
+
+
+@pytest.mark.unit
+def test_explicit_single_slot_preserves_source_depth_gaps():
+    entries = espn_live._parse_depthchart(
+        {
+            "items": [
+                {
+                    "positions": {
+                        "qb": {
+                            "athletes": [
+                                {**_dc(2, "100"), "slot": 9},
+                                {**_dc(4, "101"), "slot": 9},
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    )
+    assert {entry["espn_id"]: entry["order"] for entry in entries} == {"100": 2.0, "101": 4.0}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("rank", [None, float("nan"), float("inf")])
+@pytest.mark.parametrize("explicit_slots", [False, True])
+def test_missing_depth_rank_does_not_create_a_starter(rank, explicit_slots):
+    unknown, known = _dc(rank, "101"), _dc(2, "102")
+    if explicit_slots:
+        unknown["slot"], known["slot"] = 1, 2
+    payload = {"items": [{"positions": {"wr": {"athletes": [unknown, known]}}}]}
+    assert espn_live._parse_depthchart(payload) == [
+        {"espn_id": "102", "position": "WR", "order": 1}
+    ]
 
 
 @pytest.mark.unit

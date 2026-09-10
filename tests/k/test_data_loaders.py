@@ -434,10 +434,12 @@ def test_reconstruct_weekly_pbp_dome_games_get_65f_0_wind(tmp_path, monkeypatch)
 
 
 @pytest.mark.unit
-def test_backfill_2025_pbp_dome_games_get_65f_0_wind(monkeypatch):
+def test_backfill_2025_pbp_dome_games_get_65f_0_wind(monkeypatch, tmp_path):
     """2025 PBP backfill must apply the same dome rewrite as the historical
     reconstruction: dome rows -> (65.0 F, 0.0 mph)."""
     import src.k.data as k_data
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
 
     def _pbp_2025_dome(seasons, cols):
         return pd.DataFrame(
@@ -927,11 +929,13 @@ def test_kicker_season_split_splits_by_year(capsys):
 
 
 @pytest.mark.unit
-def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
+def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch, tmp_path):
     """``_backfill_2025_pbp_columns`` must overwrite PBP-derived columns on
     rows whose ``season`` is in the backfill list — existing NaNs should
     become populated values once the fake PBP frame fires."""
     import src.k.data as k_data
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
 
     monkeypatch.setattr(
         k_data.nfl_source, "pbp_data", lambda seasons, cols: _synthetic_pbp(seasons[0])
@@ -974,10 +978,12 @@ def test_backfill_2025_pbp_columns_updates_in_place(monkeypatch):
 
 
 @pytest.mark.unit
-def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
+def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys, tmp_path):
     """If ``pbp_data`` raises, _backfill logs a warning and leaves
     k_df untouched (swallowed by the outer try/except)."""
     import src.k.data as k_data
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
 
     def _boom(*args, **kwargs):
         raise RuntimeError("network down")
@@ -998,12 +1004,14 @@ def test_backfill_2025_pbp_logs_warning_on_failure(monkeypatch, capsys):
 
 
 @pytest.mark.unit
-def test_backfill_2025_pbp_raises_when_failure_zeros_fg_yards_made(monkeypatch, capsys):
+def test_backfill_2025_pbp_raises_when_failure_zeros_fg_yards_made(monkeypatch, capsys, tmp_path):
     """#815: a swallowed backfill failure that leaves fg_yards_made all-NaN must
     fail loud — otherwise src.k.targets fillna(0)'s fg_yard_points to 0 for the
     whole 2025 season (a silent ~3-fpt K collapse). Production seeds fg_yards_made
     before the backfill runs, so the column is present in this realistic frame."""
     import src.k.data as k_data
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
 
     def _boom(*args, **kwargs):
         raise RuntimeError("network down")

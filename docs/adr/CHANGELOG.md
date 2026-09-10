@@ -1,6 +1,7 @@
 # ADR Changelog
 
-- 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR pending) · → ADR-0011, ADR-0014
+- 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR #1560) · → ADR-0011, ADR-0014
+- 2026-09-10 · Correct training event/identity/depth/availability semantics and K filtering; publish coherent data releases with safe live overlays and rollout gates · (PR #1564) · → ADR-0001, ADR-0002, ADR-0004, ADR-0026
 
 - 2026-09-10 · Isolate training history by run, publish from completing jobs beyond the workflow wait, and refresh the History view · (PR pending) · → ADR-0013, ADR-0023
 - 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR #1554) · → ADR-0017

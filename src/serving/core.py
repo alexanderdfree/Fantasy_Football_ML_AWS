@@ -40,8 +40,10 @@ from src.config import (
     TRAIN_SEASONS,
     VAL_SEASONS,
 )
+from src.data.external_sources import _seasons_cache_signature
 from src.data.loader import compute_fantasy_points
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.data.release import SEAL_NAME as DATA_RELEASE_SEAL_NAME
 from src.features.engineer import (
     OPP_ATTN_PER_GAME_BUILDERS,
     build_game_history_arrays,
@@ -122,7 +124,7 @@ def _load_dst_splits():
     D/ST operates at team level (not player level), built from schedule
     scores and opponent offensive stats.
     """
-    dst_df = dst_data.build_data()
+    dst_df = dst_data.build_data(allow_scoring_fetch=False)
     dst_df = POSITION_REGISTRY["DST"]["compute_targets_fn"](dst_df)
     dst_features.compute_features(dst_df)
     train = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
@@ -1449,7 +1451,9 @@ _FINGERPRINT_JSON = "fingerprint.json"
 # schema bump invalidates it so the corrected expert join repopulates the column.
 # v8 adds ESPN historical projections to every per-row scoring format. Old
 # snapshots must recompute or ESPN would remain null despite the new column.
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 8
+# v9 includes historical K/DST scoring sources and the coherent data release.
+# Older dependency manifests cannot certify a cache before these inputs arrive.
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 9
 # Optional browser snapshot, committed with its prediction/metric generation.
 # Its absence permits hydration and local regeneration from those same bytes.
 _SNAPSHOT_JSON = "snapshot.json"
@@ -1460,9 +1464,21 @@ _EXPERT_SOURCE_CACHE_PREFIXES = (
     "sleeper_projections_joined_",
 )
 _K_PBP_SEASONS = tuple(s for s in k_data.SEASONS if s <= 2024)
+_FULL_RAW_FINGERPRINT_FILES = frozenset(
+    {
+        f"depth_charts_v3_{_seasons_cache_signature(SEASONS)}.parquet",
+        f"dst_scoring_pbp_v1_{_seasons_cache_signature(SEASONS)}.parquet",
+        *(
+            f"kicker_backfill_pbp_v1_{season}.parquet"
+            for season in k_data.SEASONS
+            if season >= 2025
+        ),
+    }
+)
 _SERVING_RAW_FINGERPRINT_FILES = frozenset(
     {
-        f"depth_charts_v2_{SEASONS[0]}_{SEASONS[-1]}.parquet",
+        ".release.json",
+        *_FULL_RAW_FINGERPRINT_FILES,
         f"injuries_{SEASONS[0]}_{SEASONS[-1]}.parquet",
         *(
             {f"kicker_pbp_{_K_PBP_SEASONS[0]}_{_K_PBP_SEASONS[-1]}.parquet"}
@@ -1480,11 +1496,13 @@ _SERVING_RAW_FINGERPRINT_FILES = frozenset(
 
 
 def _iter_fingerprint_paths():
-    """Yield absolute paths whose (size, mtime) define cache validity.
+    """Yield absolute paths whose content defines cache validity.
 
     Walks each position's model dir, the base data splits, and the production
-    serving raw inputs. Any change to a trained model, a split, or one of those
-    raw inputs invalidates the predictions cache automatically.
+    serving raw inputs and release identity. The release marker/seal covers
+    source changes anywhere in a coherent snapshot, including beyond a file's
+    sampled head bytes. Current depth charts and historical K/DST scoring inputs
+    are tracked for directories without a hydrated release marker as well.
 
     Do not fingerprint every local ``data/raw/*.parquet``. Developer checkouts
     often contain analysis-only or loader-side-effect caches (contracts,
@@ -1506,7 +1524,7 @@ def _iter_fingerprint_paths():
             for fname in filenames:
                 yield os.path.join(dirpath, fname)
     splits_dir = os.path.join(_REPO_ROOT, "data", "splits")
-    for name in ("train.parquet", "val.parquet", "test.parquet"):
+    for name in ("train.parquet", "val.parquet", "test.parquet", DATA_RELEASE_SEAL_NAME):
         path = os.path.join(splits_dir, name)
         if os.path.isfile(path):
             yield path
@@ -1520,6 +1538,10 @@ def _iter_fingerprint_paths():
 
 
 _FINGERPRINT_CONTENT_BYTES = 64 * 1024  # 64 KB head-sample per file
+_FULL_CONTENT_FINGERPRINT_FILES = _FULL_RAW_FINGERPRINT_FILES | {
+    ".release.json",
+    DATA_RELEASE_SEAL_NAME,
+}
 
 
 def _compute_models_fingerprint():
@@ -1530,13 +1552,15 @@ def _compute_models_fingerprint():
     boto3's ``download_file`` stamps the local file with the *download* time,
     not the upload time on S3 — so every fresh container saw a different
     fingerprint and missed the cache on boot even when the content was
-    byte-identical. We now hash ``(size, head-bytes)`` instead, where
-    head-bytes is the first 64 KB of each file's content. That's enough
-    collision resistance for our use case (every model retrain rewrites
+    byte-identical. Model files retain ``(size, head-bytes)`` hashing, where
+    head-bytes is the first 64 KB of each file's content (every retrain rewrites
     weights at the start of the joblib pickle / torch state dict; even tiny
     config changes shift those leading bytes), and reading 64 KB per file
     keeps the boot-time fingerprint compute fast (~50ish files in the
-    aggregate, <5 ms on local SSD).
+    aggregate). Release metadata, depth charts, and historical K/DST scoring
+    sources are hashed completely: later games can change without altering the
+    first parquet row group or file size. In a coherent release, the release ID
+    additionally identifies the complete content of every input dependency.
     """
     files = []
     paths = sorted(_iter_fingerprint_paths())
@@ -1547,14 +1571,19 @@ def _compute_models_fingerprint():
         except OSError:
             continue
         try:
+            content = hashlib.sha256()
             with open(path, "rb") as f:
-                head_bytes = f.read(_FINGERPRINT_CONTENT_BYTES)
+                if os.path.basename(path) in _FULL_CONTENT_FINGERPRINT_FILES:
+                    for chunk in iter(lambda: f.read(_FINGERPRINT_CONTENT_BYTES), b""):
+                        content.update(chunk)
+                else:
+                    content.update(f.read(_FINGERPRINT_CONTENT_BYTES))
         except OSError:
             # File disappeared between stat and open — same handling as the
             # stat OSError above (skip this entry; differing fingerprint will
             # naturally invalidate the cache).
             continue
-        content_hash = hashlib.sha256(head_bytes).hexdigest()
+        content_hash = content.hexdigest()
         rel = os.path.relpath(path, _REPO_ROOT)
         entry = {"path": rel, "size": st.st_size, "content_hash": content_hash}
         files.append(entry)

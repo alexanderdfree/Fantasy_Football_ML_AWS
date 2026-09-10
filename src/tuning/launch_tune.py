@@ -55,6 +55,9 @@ from src.batch.launch import (  # noqa: E402
     RETRY_STRATEGY,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
+    data_release_environment,
+    pin_data_release,
+    resolve_launch_binding,
     wait_for_jobs,
 )
 from src.tuning.ab_ensemble_seeds import (  # noqa: E402
@@ -147,6 +150,7 @@ def submit_tune_job(
     attempt_timeout: int = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
     scope: str = SCOPE_FULL,
     batch_client=None,
+    binding: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Submit one Batch tuning job. Returns (position, job_id).
 
@@ -225,7 +229,7 @@ def submit_tune_job(
         # Ridge/LGBM for those positions when an NN isn't trained); tuning
         # always trains the attention NN. Pin the revision (mirrors
         # launch.py) so concurrent image builds don't race onto the latest.
-        jobDefinition=_tune_job_definition(),
+        jobDefinition=binding["gpu_definition"] if binding else _tune_job_definition(),
         retryStrategy=RETRY_STRATEGY,
         timeout={"attemptDurationSeconds": int(attempt_timeout)},
         containerOverrides={
@@ -233,6 +237,8 @@ def submit_tune_job(
             "environment": [
                 {"name": "S3_BUCKET", "value": S3_BUCKET},
                 {"name": "S3_DATA_PREFIX", "value": "data"},
+                *data_release_environment(),
+                *([{"name": "FF_TRAIN_GIT_SHA", "value": binding["image_sha"]}] if binding else []),
                 {"name": "FF_DEVICE", "value": "cuda"},
                 # tune_nn re-resolves its namespace in-container from
                 # cuda_graph_enabled(); on the sm_80+ tune CEs (g6/L4, g5/A10G)
@@ -506,6 +512,9 @@ def main():
         return
 
     batch_client = boto3.client("batch", region_name=AWS_REGION)
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+    binding = resolve_launch_binding(batch_client, s3, positions, gpu_only=True)
+    pin_data_release(s3, source_ref=binding["image_sha"])
 
     print(f"Submitting {len(positions)} tune jobs: {positions}")
     job_ids: dict[str, str] = {}
@@ -527,6 +536,7 @@ def main():
                 attempt_timeout=args.attempt_timeout,
                 scope=args.scope,
                 batch_client=batch_client,
+                binding=binding,
             ): pos
             for pos in positions
         }

@@ -237,66 +237,18 @@ class TestLaunchArgParsing:
 
 
 class TestUploadData:
-    def test_uploads_when_missing(self, monkeypatch, tmp_path):
-        """No remote object -> upload all three files."""
+    def test_publishes_sealed_inputs_and_pins_release(self, monkeypatch):
         from src.batch import launch
+        from src.data import release
 
-        # Build fake local parquets
-        data_dir = tmp_path / "data" / "splits"
-        data_dir.mkdir(parents=True)
-        for name in ("train.parquet", "val.parquet", "test.parquet"):
-            (data_dir / name).write_bytes(b"fake-parquet")
-        monkeypatch.chdir(tmp_path)
-
-        mock_s3 = mock.MagicMock()
-        mock_s3.head_object.side_effect = ClientError(
-            {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
-        )
-
-        launch.upload_data("my-bucket", s3_client=mock_s3)
-
-        assert mock_s3.upload_file.call_count == 3
-        uploaded_keys = {c.args[2] for c in mock_s3.upload_file.call_args_list}
-        assert uploaded_keys == {"data/train.parquet", "data/val.parquet", "data/test.parquet"}
-
-    def test_skips_when_etag_matches(self, monkeypatch, tmp_path):
-        """ETag == local MD5 -> skip upload."""
-        from src.batch import launch
-
-        data_dir = tmp_path / "data" / "splits"
-        data_dir.mkdir(parents=True)
-        content = b"fake-parquet"
-        import hashlib
-
-        local_md5 = hashlib.md5(content).hexdigest()
-        for name in ("train.parquet", "val.parquet", "test.parquet"):
-            (data_dir / name).write_bytes(content)
-        monkeypatch.chdir(tmp_path)
-
-        mock_s3 = mock.MagicMock()
-        mock_s3.head_object.return_value = {"ETag": f'"{local_md5}"'}
-
-        launch.upload_data("my-bucket", s3_client=mock_s3)
-        assert mock_s3.upload_file.call_count == 0
-
-    def test_force_upload_bypasses_dedup(self, monkeypatch, tmp_path):
-        from src.batch import launch
-
-        data_dir = tmp_path / "data" / "splits"
-        data_dir.mkdir(parents=True)
-        content = b"fake-parquet"
-        import hashlib
-
-        local_md5 = hashlib.md5(content).hexdigest()
-        for name in ("train.parquet", "val.parquet", "test.parquet"):
-            (data_dir / name).write_bytes(content)
-        monkeypatch.chdir(tmp_path)
-
-        mock_s3 = mock.MagicMock()
-        mock_s3.head_object.return_value = {"ETag": f'"{local_md5}"'}
-
-        launch.upload_data("my-bucket", s3_client=mock_s3, force=True)
-        assert mock_s3.upload_file.call_count == 3
+        publish = mock.Mock(return_value="a" * 64)
+        monkeypatch.setattr(release, "publish_release", publish)
+        # Register an undo even when the key started absent: upload_data pins it.
+        monkeypatch.setenv("FF_DATA_RELEASE", "")
+        s3 = mock.Mock()
+        assert launch.upload_data("my-bucket", s3_client=s3, force=True) == "a" * 64
+        publish.assert_called_once_with(s3, "my-bucket", force=True)
+        assert os.environ["FF_DATA_RELEASE"] == "a" * 64
 
 
 # ---------------------------------------------------------------------------

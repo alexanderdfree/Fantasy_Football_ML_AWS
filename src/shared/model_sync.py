@@ -780,28 +780,31 @@ def start_benchmark_history_poller(
 
 
 def sync_data_from_s3() -> dict | None:
-    """Download inference data parquets from S3 in parallel.
+    """Hydrate one verified raw+split release before serving reads any inputs.
 
-    Pulls s3://{bucket}/data/{train,val,test}.parquet into data/splits/ and
-    every data/raw/*.parquet except the 2023-only duplicates already covered
-    by the 2012-2025 range files.
-
-    Per-file failures are isolated (M17): a single broken parquet no longer
-    kills the whole sync — the container still boots, the failed file is
-    listed in the returned summary under ``failed``, and any feature build
-    that touches the missing file surfaces the error per-position via
-    ``_apply_position_models``'s outer try/except. A position whose raw
-    dependency went missing degrades to per-model NaNs while the rest of
-    the site keeps serving (preserving the divergence with
-    ``sync_models_from_s3``'s pattern; see PR #236).
-
-    Returns a summary dict (now including ``failed``), or None if
-    FF_MODEL_S3_BUCKET is unset/empty.
+    Missing/corrupt release files fail the bootstrap instead of exposing a
+    mixture. FF_DATA_RELEASE=legacy is the explicit migration rollback: it
+    retains the former per-file failure isolation on unversioned objects.
+    Unset FF_MODEL_S3_BUCKET leaves local offline inputs alone.
     """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
         print(f"[data_sync] {_ENV_BUCKET} unset — skipping S3 sync, using on-disk data.")
         return None
+
+    if os.environ.get("FF_DATA_RELEASE") != "legacy":
+        import boto3
+
+        from src.data.release import download_release
+
+        root = _repo_root()
+        start = time.monotonic()
+        result = download_release(
+            boto3.client("s3"), bucket, raw_dir=root / "data/raw", splits_dir=root / "data/splits"
+        )
+        result["total_secs"] = round(time.monotonic() - start, 2)
+        print(f"[data_sync] verified release {result['release_id']}: {result['files']} files")
+        return result
 
     root = _repo_root()
     import boto3

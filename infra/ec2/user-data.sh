@@ -93,9 +93,10 @@ cat > /usr/local/bin/ff-train <<EOF
 set -euo pipefail
 POS="\$1"
 SEED="\${2:-42}"
-IMAGE="${IMAGE}"
-if [ -n "\${FF_TRAIN_GIT_SHA:-}" ]; then
-  IMAGE="\${IMAGE%:*}:\$FF_TRAIN_GIT_SHA"
+IMAGE="\${FF_TRAIN_IMAGE:?FF_TRAIN_IMAGE digest pin is required}"
+if [[ ! "\$IMAGE" =~ @sha256:[0-9a-f]{64}\$ ]] || [[ ! "\${FF_TRAIN_GIT_SHA:-}" =~ ^[0-9a-f]{40}\$ ]]; then
+  echo "ff-train requires a digest-pinned image and its full verified source SHA" >&2
+  exit 1
 fi
 _t_total=\$SECONDS
 
@@ -107,20 +108,13 @@ mkdir -p /opt/ff/scratch/input /opt/ff/scratch/model /opt/ff/scratch/raw /opt/ff
 # outlasts IDLE_HOURS before docker completes.
 date -Iseconds > /opt/ff/logs/last-activity
 
-# Skip docker pull if the locally-cached image digest matches ECR's :latest.
-# Falls through to unconditional pull on any error (ECR auth, parse failure).
+# The workflow resolves a SHA tag to its digest before the data gate. Running
+# that digest keeps a concurrent :latest update from changing the verified code.
 _t_pull=\$SECONDS
-REMOTE_DIGEST=\$(aws ecr describe-images \\
-  --repository-name ff-training \\
-  --image-ids imageTag="\${FF_TRAIN_GIT_SHA:-latest}" \\
-  --region ${REGION} \\
-  --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
-LOCAL_DIGEST=\$(docker image inspect --format='{{index .RepoDigests 0}}' "\$IMAGE" 2>/dev/null | awk -F@ '{print \$2}' || echo "")
-if [ -z "\$REMOTE_DIGEST" ] || [ "\$REMOTE_DIGEST" != "\$LOCAL_DIGEST" ]; then
-  echo "[image] digest mismatch (local=\$LOCAL_DIGEST remote=\$REMOTE_DIGEST) — pulling"
+if ! docker image inspect "\$IMAGE" >/dev/null 2>&1; then
   docker pull "\$IMAGE"
 else
-  echo "[image] digest cached (\$LOCAL_DIGEST) — skipping pull"
+  echo "[image] verified digest cached — skipping pull"
 fi
 echo "[timing] phase=docker_pull seconds=\$((SECONDS - _t_pull))"
 
@@ -128,6 +122,7 @@ _t_run=\$SECONDS
 docker run --rm --gpus all \\
   -e S3_BUCKET=${BUCKET} \\
   -e S3_DATA_PREFIX=data \\
+  -e FF_DATA_RELEASE="\${FF_DATA_RELEASE:-}" \\
   -e LOG_EVERY=1 \\
   -e REQUIRE_GPU=1 \\
   -e AWS_DEFAULT_REGION=${REGION} \\
