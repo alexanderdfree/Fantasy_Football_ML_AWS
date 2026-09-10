@@ -56,11 +56,64 @@ def test_recovers_active_player_and_shares_identity_with_injury_depth_consumers(
     _, reference = sources
     frame = fetch(reference)
     assert frame.player_id.tolist() == ["00-0040598"]
-    assert espn_live.espn_to_gsis_map()["4431346"] == "00-0040598"
+    assert "4431346" not in espn_live.espn_to_gsis_map()
+    assert frame.attrs["recovered_ids"] == {"4431346": "00-0040598"}
+    records = [{"espn_id": "4431346", "status": "Out", "position": "TE", "team": "GB"}]
+    ids = frame.attrs["recovered_ids"]
+    injuries = espn_live.fetch_injuries_df(2026, 1, records=records, id_map=ids)
+    assert injuries.gsis_id.tolist() == ["00-0040598"]
+    assert espn_live.fetch_injury_status_map(2026, 1, records=records, id_map=ids) == {
+        "00-0040598": 0.0
+    }
     metadata = frame.attrs["source_metadata"]
     assert metadata["status"] == "available"
     assert metadata["parsed_players"] == metadata["mapped_players"] == 1
     assert metadata["recovered_players"] == 1
+
+
+@pytest.mark.parametrize("status", ["EXE", "RES", "INA"])
+def test_repeat_refresh_revalidates_recovered_eligibility(sources, status):
+    _, reference = sources
+    first = fetch(reference)
+    reference.loc[0, "status"] = status
+    second = fetch(reference)
+    assert first.player_id.tolist() == ["00-0040598"]
+    assert second.empty
+    assert second.attrs["recovered_ids"] == {}
+    assert second.attrs["source_metadata"]["status"] == "partial"
+
+
+def test_recovery_is_not_reused_when_the_next_weekly_reference_is_unavailable(sources):
+    _, reference = sources
+    assert not fetch(reference).empty
+    second = fetch(None)
+    assert second.empty
+    assert (
+        second.attrs["source_metadata"]["unresolved_players"][0]["reason"]
+        == "identity_reference_unavailable"
+    )
+
+
+def test_build_local_recovery_reaches_depth_and_expert_consumers(sources, monkeypatch):
+    _, reference = sources
+    frame = fetch(reference)
+    ids = frame.attrs["recovered_ids"]
+    monkeypatch.setattr(espn_live, "_get_json", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        espn_live, "_parse_depthchart", lambda _: [{"espn_id": "4431346", "order": 2}]
+    )
+    monkeypatch.setattr(
+        espn_live,
+        "_parse_fantasy_projections",
+        lambda *args: [
+            {"espn_id": "4431346", "position": "TE", "ppr_total": 2.5, "receptions": 1.0}
+        ],
+    )
+    assert espn_live.fetch_depth_chart_ranks(2026, {"9": "GB"}, id_map=ids) == {"00-0040598": 2.0}
+    points = espn_live.fetch_fantasy_projections(2026, 1, id_map=ids)
+    assert points.player_id.tolist() == ["00-0040598"]
+    assert points.espn_ppr_total.tolist() == [2.5]
+    assert "4431346" not in espn_live.espn_to_gsis_map()
 
 
 @pytest.mark.parametrize(

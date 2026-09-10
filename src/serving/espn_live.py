@@ -612,15 +612,15 @@ def fetch_active_rosters(
                     "roster_season": p["roster_season"],
                 }
             )
-    # Later injury/depth lookups in this build must use the same resolved IDs.
-    with _crosswalk_lock:
-        crosswalk.update(recovered)
     if unresolved:
         print(f"[espn_live] unresolved roster identities/eligibility: {len(unresolved)}")
     # A player can appear on two ESPN rosters mid-offseason churn; keep the last.
     result = pd.DataFrame(rows)
     if rows:
         result = result.drop_duplicates(subset="player_id", keep="last")
+    # Share only with this build's consumers. Promoting these into the cached
+    # primary crosswalk would skip eligibility checks on the next refresh.
+    result.attrs["recovered_ids"] = recovered
     result.attrs["source_metadata"] = {
         "status": "partial" if unresolved or failed_teams else "available",
         "fetched_at": datetime.now(UTC).isoformat(),
@@ -637,7 +637,13 @@ def fetch_active_rosters(
 _INJURIES_COLUMNS = ["gsis_id", "position", "team", "season", "week", "report_status"]
 
 
-def fetch_injuries_df(season: int, week: int, *, records: list[dict] | None = None) -> pd.DataFrame:
+def fetch_injuries_df(
+    season: int,
+    week: int,
+    *,
+    records: list[dict] | None = None,
+    id_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
     """Return OUT/Doubtful players shaped for ``build_features``' role-inheritance
     feature: columns ``(gsis_id, position, team, season, week, report_status)``.
 
@@ -646,7 +652,7 @@ def fetch_injuries_df(season: int, week: int, *, records: list[dict] | None = No
     Empty (with the right columns) on failure — the inheritance feature then
     degrades to 0 cleanly.
     """
-    crosswalk = espn_to_gsis_map()
+    crosswalk = id_map if id_map is not None else espn_to_gsis_map()
     rows: list[dict] = []
     if records is None:
         try:
@@ -676,7 +682,9 @@ def fetch_injuries_df(season: int, week: int, *, records: list[dict] | None = No
     return pd.DataFrame(rows)
 
 
-def fetch_depth_chart_ranks(season: int, team_id_to_code: dict[str, str]) -> dict[str, float]:
+def fetch_depth_chart_ranks(
+    season: int, team_id_to_code: dict[str, str], *, id_map: dict[str, str] | None = None
+) -> dict[str, float]:
     """``{player_id: depth_chart_rank}`` from ESPN's live depth charts.
 
     For each team, GET the core ``/depthcharts`` endpoint, rank each formation
@@ -685,7 +693,7 @@ def fetch_depth_chart_ranks(season: int, team_id_to_code: dict[str, str]) -> dic
     requested season isn't posted yet (offseason). ``{}`` on total failure —
     callers then keep the carry-forward / default behavior.
     """
-    crosswalk = espn_to_gsis_map()
+    crosswalk = id_map if id_map is not None else espn_to_gsis_map()
     ranks: dict[str, float] = {}
     for team_id in team_id_to_code:
         if not team_id:
@@ -782,7 +790,9 @@ def _parse_fantasy_projections(payload: dict, season: int, week: int) -> list[di
     return out
 
 
-def fetch_fantasy_projections(season: int, week: int) -> pd.DataFrame:
+def fetch_fantasy_projections(
+    season: int, week: int, *, id_map: dict[str, str] | None = None
+) -> pd.DataFrame:
     """ESPN weekly fantasy point projections for the skill positions.
 
     One GET of the public stock-PPR league (``leaguedefaults/3``) with an
@@ -811,7 +821,7 @@ def fetch_fantasy_projections(season: int, week: int) -> pd.DataFrame:
     except Exception as e:  # noqa: BLE001 - network boundary
         print(f"[espn_live] fantasy projections fetch failed: {e!r}")
         return pd.DataFrame()
-    crosswalk = espn_to_gsis_map()
+    crosswalk = id_map if id_map is not None else espn_to_gsis_map()
     rows: list[dict] = []
     unmapped = 0
     for r in records:
@@ -835,7 +845,11 @@ def fetch_fantasy_projections(season: int, week: int) -> pd.DataFrame:
 
 
 def fetch_injury_status_map(
-    season: int, week: int, *, records: list[dict] | None = None
+    season: int,
+    week: int,
+    *,
+    records: list[dict] | None = None,
+    id_map: dict[str, str] | None = None,
 ) -> dict[str, float]:
     """``{player_id: game_status}`` from ESPN injuries, on the training encoding.
 
@@ -845,7 +859,7 @@ def fetch_injury_status_map(
     default (1.0). ESPN exposes no practice participation, so ``practice_status``
     is deliberately NOT filled here. ``{}`` on failure.
     """
-    crosswalk = espn_to_gsis_map()
+    crosswalk = id_map if id_map is not None else espn_to_gsis_map()
     out: dict[str, float] = {}
     if records is None:
         try:
@@ -877,6 +891,7 @@ def fetch_injury_report(
     team_id_to_code: dict[str, str],
     *,
     now: datetime | None = None,
+    id_map: dict[str, str] | None = None,
 ) -> InjuryReport:
     """One validated snapshot for Out exclusions, vacancies and game status.
 
@@ -913,8 +928,8 @@ def fetch_injury_report(
     if unknown:
         raise ValueError(f"ESPN injury report has unknown statuses: {unknown}")
     return InjuryReport(
-        injuries=fetch_injuries_df(season, week, records=records),
-        statuses=fetch_injury_status_map(season, week, records=records),
+        injuries=fetch_injuries_df(season, week, records=records, id_map=id_map),
+        statuses=fetch_injury_status_map(season, week, records=records, id_map=id_map),
         metadata={
             "provider": "ESPN",
             "status": "available",

@@ -27,6 +27,7 @@ import sys
 import tempfile
 import threading
 from datetime import UTC, datetime
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -1008,6 +1009,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         rosters_df=rosters_df,
     )
     roster_source = dict(roster.attrs.get("source_metadata", {}))
+    player_ids = {**espn_live.espn_to_gsis_map(), **roster.attrs.get("recovered_ids", {})}
     roster_source["weekly_reference_available"] = bool(roster_source.get("identity_reference_rows"))
     if roster.empty:
         _write_unavailable("no_roster")
@@ -1020,7 +1022,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
 
     # Both Out exclusion and status values must use the SAME recent, complete
     # snapshot. An outage leaves the last published artifact untouched.
-    injury_report = espn_live.fetch_injury_report(season, week, team_id_to_code)
+    injury_report = espn_live.fetch_injury_report(season, week, team_id_to_code, id_map=player_ids)
     injuries_df = injury_report.injuries
     # Don't surface projections for players ruled OUT (they won't play); keep
     # them in injuries_df so the role-inheritance feature still sizes vacancies.
@@ -1032,7 +1034,9 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # Live role + health + contract signals the synthetic rows otherwise lack:
     # ESPN sets depth_chart_rank + game_status; official NFL reports set
     # practice_status; nflverse OTC sets the current-season contract_* values.
-    depth_chart_ranks = espn_live.fetch_depth_chart_ranks(season, team_id_to_code)
+    depth_chart_ranks = espn_live.fetch_depth_chart_ranks(
+        season, team_id_to_code, id_map=player_ids
+    )
     game_status_map = injury_report.statuses
     practice_report = practice_reports.fetch_practice_report(
         season, week, roster, rosters_df=rosters_df
@@ -1042,7 +1046,9 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
 
     # Expert projections for the slate (NFL.com + RotoWire + ESPN), fetched up front so
     # a projection update alone re-triggers the rebuild via the signature.
-    raw_nflcom, raw_rotowire, raw_espn = _fetch_upcoming_expert_frames(season, week)
+    raw_nflcom, raw_rotowire, raw_espn = _fetch_upcoming_expert_frames(
+        season, week, espn_loader=partial(espn_live.fetch_fantasy_projections, id_map=player_ids)
+    )
 
     core._ensure_base_data()
     special = upcoming_special_teams.prepare_special_teams(

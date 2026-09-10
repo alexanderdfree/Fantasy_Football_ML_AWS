@@ -2,6 +2,10 @@
 
 import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +16,37 @@ from botocore.exceptions import ClientError
 from src.data import release
 
 pytestmark = pytest.mark.unit
+
+
+def test_unit_cache_is_mutable_without_unpinning_production_snapshot(tmp_path):
+    project = tmp_path / "project"
+    raw = project / "data/raw"
+    raw.mkdir(parents=True)
+    marker = raw / ".release.json"
+    marker.write_text('{"release_id":"production-snapshot"}')
+    (raw / "weekly.parquet").write_bytes(b"source-bytes")
+    shutil.copyfile(Path(__file__).parents[1] / "conftest.py", project / "conftest.py")
+    env = dict(os.environ)
+    env.pop("FF_CACHE_DIR", None)
+    script = """
+import json, os, runpy, sys
+from pathlib import Path
+runpy.run_path(sys.argv[1])
+cache = Path(os.environ['FF_CACHE_DIR'])
+print(json.dumps({'cache':str(cache), 'pinned':(cache/'.release.json').exists(), 'bytes':(cache/'weekly.parquet').read_text()}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(project / "conftest.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    observed = json.loads(result.stdout)
+    assert Path(observed["cache"]) != raw
+    assert observed["pinned"] is False
+    assert observed["bytes"] == "source-bytes"
+    assert json.loads(marker.read_text())["release_id"] == "production-snapshot"
 
 
 class FakeS3:

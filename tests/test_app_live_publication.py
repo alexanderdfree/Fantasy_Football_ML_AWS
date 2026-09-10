@@ -282,14 +282,16 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
     request = Mock(return_value=payload)
     monkeypatch.setattr(espn_live, "_get_json", request)
     monkeypatch.setattr(live.nfl_source, "rosters_weekly", lambda *args: pd.DataFrame())
-    monkeypatch.setattr(espn_live, "fetch_depth_chart_ranks", lambda *args: {})
+    monkeypatch.setattr(espn_live, "fetch_depth_chart_ranks", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         live.practice_reports,
         "fetch_practice_report",
         lambda *args, **kwargs: SimpleNamespace(values={}, metadata={"unknown_players": 0}),
     )
     monkeypatch.setattr(live.live_sources, "fetch_contract_features", lambda *args: None)
-    monkeypatch.setattr(live, "_fetch_upcoming_expert_frames", lambda *args: (None, None, None))
+    monkeypatch.setattr(
+        live, "_fetch_upcoming_expert_frames", lambda *args, **kwargs: (None, None, None)
+    )
     monkeypatch.setattr(live.core, "_ensure_base_data", lambda: None)
     monkeypatch.setattr(live.core, "_compute_models_fingerprint", lambda: "test-models")
     monkeypatch.setattr(live.core, "_degraded_positions", lambda: [])
