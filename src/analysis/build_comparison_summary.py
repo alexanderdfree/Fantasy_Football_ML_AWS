@@ -1,7 +1,7 @@
 """Generate the committed expert-comparison summary for the serving "Comparison" tab.
 
 Writes ``src/serving/comparison_experts.json`` — for each position, the
-``{mae, rmse, r2, n}`` of each EXPERT (NFL.com, RotoWire via Sleeper) scored
+``{mae, rmse, r2, n}`` of each EXPERT (NFL.com, RotoWire via Sleeper, ESPN) scored
 against actuals, on (a) all matched player-weeks, (b) the top-30-per-position
 subset, and (c) the top-12-per-position subset (each ranked by actual fantasy
 points). Also emits the top-30 and top-12 ``player_id`` sets (so the serving app
@@ -49,6 +49,7 @@ from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.dst.data import build_data as build_dst_data
 from src.dst.targets import compute_targets as compute_dst_targets
+from src.serving.espn_projections import ESPN_NOTE, load_espn_with_gsis_id, project_espn_to_fantasy
 from src.shared.evaluation import compute_metrics
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
@@ -175,6 +176,7 @@ def build_summary(
     *,
     nflcom_loader=None,
     sleeper_loader=None,
+    espn_loader=None,
     actuals_loader=None,
     dst_actuals_loader=None,
     reliability_seasons: Sequence[int] | None = None,
@@ -189,6 +191,7 @@ def build_summary(
     eval_seasons = tuple(int(s) for s in eval_seasons)
     nflcom_loader = nflcom_loader or load_nflcom_with_gsis_id
     sleeper_loader = sleeper_loader or load_sleeper_with_gsis_id
+    espn_loader = espn_loader or load_espn_with_gsis_id
     actuals_loader = actuals_loader or _load_actuals
     dst_actuals_loader = dst_actuals_loader or _dst_actuals
 
@@ -201,6 +204,8 @@ def build_summary(
     nflcom_full = nflcom_loader(seasons=list(eval_seasons))
     print(f"Loading RotoWire (Sleeper) projections for {list(eval_seasons)}...")
     sleeper_full = sleeper_loader(list(eval_seasons))
+    print(f"Loading ESPN projections for {list(eval_seasons)}...")
+    espn_full = espn_loader(list(eval_seasons))
 
     top12_ids: dict[str, list[str]] = {}
     top30_ids: dict[str, list[str]] = {}
@@ -227,8 +232,14 @@ def build_summary(
         else:
             rw_blocks = dict(empty_blocks)
 
+        espn_proj = project_espn_to_fantasy(espn_full, pos, SCORING_FORMAT)
+        espn_blocks = _expert_subsets(actuals, espn_proj, "espn_pred_total", tier_id_sets)
         for subset in ("all", "top12", "top30"):
-            subsets[subset][pos] = {"nflcom": nfl_blocks[subset], "rotowire": rw_blocks[subset]}
+            subsets[subset][pos] = {
+                "nflcom": nfl_blocks[subset],
+                "rotowire": rw_blocks[subset],
+                "espn": espn_blocks[subset],
+            }
         print(
             f"  {pos:<4} all: nflcom={nfl_blocks['all']} rotowire={rw_blocks['all']} "
             f"(top12 ids: {len(ids12)}, top30 ids: {len(ids30)})"
@@ -265,6 +276,11 @@ def build_summary(
             "model": {"train": "2013-2023", "val": "2024", "test": "2025"},
             "nflcom": {"label": "NFL.com", "note": _NFLCOM_NOTE, "seasons": "2025"},
             "rotowire": {"label": "RotoWire", "note": _ROTOWIRE_NOTE, "seasons": "2025"},
+            "espn": {
+                "label": "ESPN",
+                "note": ESPN_NOTE,
+                "seasons": ", ".join(map(str, eval_seasons)),
+            },
         },
         "top12_ids": top12_ids,
         "top30_ids": top30_ids,

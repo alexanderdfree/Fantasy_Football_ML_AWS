@@ -292,9 +292,16 @@ def test_build_summary_embeds_expert_reliability():
         actuals_loader=_actuals_loader,
         dst_actuals_loader=_dst_actuals_loader,
         reliability_seasons=(2025,),
+        espn_loader=lambda seasons: _sleeper_loader(seasons).assign(
+            fg_yard_points=0.0,
+            pat_points=0.0,
+            fg_misses=0.0,
+            xp_misses=0.0,
+        ),
     )
     rel = summary["expert_reliability"]
     assert set(rel["positions"]) == set(bcs.POSITIONS)
     assert rel["positions"]["QB"]["nflcom"]["sigma"] >= 0.0
     assert rel["positions"]["DST"]["nflcom"] is None
     assert rel["positions"]["K"]["rotowire"] is None
+    assert summary["subsets"]["all"]["QB"]["espn"]["n"] > 0

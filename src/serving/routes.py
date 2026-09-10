@@ -614,7 +614,7 @@ def api_wiki_page(slug):
 
 @app.route("/api/comparison")
 def api_comparison():
-    """Our model (live) vs NFL.com / RotoWire (static), by position, for three
+    """Our model (live) vs NFL.com / RotoWire / ESPN (static), by position, for three
     subsets (all rostered players + top-30 + top-12 per position). MAE/RMSE/R² each.
     """
     # The committed expert columns (``comparison_experts.json`` via
@@ -667,6 +667,7 @@ def api_comparison():
                 **blocks,
                 "nflcom": cell.get("nflcom"),
                 "rotowire": cell.get("rotowire"),
+                "espn": cell.get("espn"),
             }
 
     # Live per-source signed bias across the actual-FP scoring quartiles (Q1 lowest …

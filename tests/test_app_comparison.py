@@ -191,6 +191,7 @@ def test_quartile_bias_from_results(app_module):
             "fantasy_points": a,
             "ridge_pred_ppr": a + 1.0,  # constant +1 residual → bias +1 every bin
             "nflcom_pred_ppr": a - 2.0,  # constant −2 residual → bias −2 every bin
+            "espn_pred_ppr": a + 3.0,
             "nn_pred_ppr": np.nan,  # column present but all-NaN → None cells
         }
         for i, a in enumerate(actuals)
@@ -199,6 +200,7 @@ def test_quartile_bias_from_results(app_module):
     assert set(qb) == {"Q1", "Q2", "Q3", "Q4"}
     for q in ("Q1", "Q2", "Q3", "Q4"):
         assert qb[q]["ridge"] == {"n": 2, "mae": 1.0, "bias": 1.0}
+        assert qb[q]["espn"] == {"n": 2, "mae": 3.0, "bias": 3.0}
         assert qb[q]["nflcom"] == {"n": 2, "mae": 2.0, "bias": -2.0}
         assert qb[q]["nn"] is None  # all-NaN preds
         assert qb[q]["lgbm"] is None  # column absent entirely
@@ -226,6 +228,7 @@ def _fake_experts():
             out[p] = {
                 "nflcom": None if p == "DST" else cell(round(5.0 * mult, 3)),
                 "rotowire": None if p == "K" else cell(round(5.5 * mult, 3)),
+                "espn": cell(round(4.5 * mult, 3)),
             }
         return out
 
@@ -299,6 +302,7 @@ def test_comparison_merges_live_model_with_static_experts(app_module, synthetic_
     # Static experts passed through verbatim from the (faked) committed JSON.
     assert qb["nflcom"] == {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
     assert qb["rotowire"] == {"mae": 5.5, "rmse": 7.5, "r2": 0.3, "n": 100}
+    assert qb["espn"] == {"mae": 4.5, "rmse": 6.5, "r2": 0.3, "n": 100}
 
     # attn_nn / lgbm aren't in the synthetic K/DST rows → those cells null out.
     assert body["subsets"]["all"]["K"]["attn_nn"] is None
@@ -421,7 +425,8 @@ def test_committed_expert_summary_contract():
     for subset in ("all", "top12", "top30"):
         assert set(data["subsets"][subset]) == set(_POSITIONS)
         for pos in _POSITIONS:
-            assert set(data["subsets"][subset][pos]) == {"nflcom", "rotowire"}
+            assert set(data["subsets"][subset][pos]) == {"nflcom", "rotowire", "espn"}
+            assert data["subsets"][subset][pos]["espn"]["n"] > 0
         # Coverage holes: NFL.com has no DST; RotoWire has no K.
         assert data["subsets"][subset]["DST"]["nflcom"] is None
         assert data["subsets"][subset]["K"]["rotowire"] is None

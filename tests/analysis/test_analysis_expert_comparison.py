@@ -155,6 +155,10 @@ def _stub_fftoday_loader(seasons):
     return _sleeper_qb()
 
 
+def _stub_espn_loader(seasons):
+    return _stub_sleeper_loader(seasons).iloc[1:].copy()
+
+
 def _run(tmp_path, **kw):
     """main() with all loaders stubbed (no network/training)."""
     defaults = dict(
@@ -166,6 +170,7 @@ def _run(tmp_path, **kw):
         nflcom_loader=_stub_nflcom_loader,
         sleeper_loader=_stub_sleeper_loader,
         fftoday_loader=_stub_fftoday_loader,
+        espn_loader=_stub_espn_loader,
     )
     defaults.update(kw)
     return mod.main(**defaults)
@@ -188,7 +193,9 @@ def test_experts_each_same_sample_and_significance(tmp_path) -> None:
     result = _run(tmp_path, positions=("QB", "DST"))
 
     # Nested per-expert output (NFL.com + Sleeper + FFToday).
-    assert set(result["experts"]) == {"nflcom", "sleeper", "fftoday"}
+    assert set(result["experts"]) == {"nflcom", "sleeper", "fftoday", "espn"}
+    assert result["experts"]["espn"]["positions"]["QB"]["n_matched"] == 7
+    assert result["experts"]["espn"]["positions"]["DST"]["n_matched"] == 8
     nflcom_qb = result["experts"]["nflcom"]["positions"]["QB"]
     sleeper_qb = result["experts"]["sleeper"]["positions"]["QB"]
     # FFToday is offense-only: QB scored (same offense frame as Sleeper), DST skipped.
@@ -235,7 +242,7 @@ def test_writes_parseable_nested_json(tmp_path) -> None:
     out = tmp_path / "expert_comparison.json"
     assert out.exists()
     payload = json.loads(out.read_text())
-    assert set(payload["experts"]) == {"nflcom", "sleeper", "fftoday"}
+    assert set(payload["experts"]) == {"nflcom", "sleeper", "fftoday", "espn"}
     assert payload["experts"]["nflcom"]["positions"]["QB"]["n_matched"] == 6
     assert payload["experts"]["sleeper"]["positions"]["QB"]["n_matched"] == 8
     # The Sleeper provenance caveat rides along in the output.

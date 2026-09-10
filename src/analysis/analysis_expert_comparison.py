@@ -1,4 +1,4 @@
-"""Head-to-head: our model vs. expert projections (NFL.com + Sleeper/RotoWire).
+"""Head-to-head: our model vs NFL.com, Sleeper/RotoWire, FFToday and ESPN.
 
 Where :mod:`src.analysis.analysis_nflcom_baseline` scores NFL.com *against
 actuals* (so you eyeball it next to the model's benchmark numbers), this script
@@ -25,6 +25,10 @@ the training-loss mismatch is irrelevant here. See the methodology memo for the
 Gneiting (2011) / Taggart (2022) basis.
 
 Experts:
+  - **ESPN**: QB/RB/WR/TE/K/DST raw-stat projections, rescored with our rules.
+    History starts in 2018; incomplete 2023 Week 1 is excluded. Historical
+    kickoff-snapshot provenance remains unverified.
+  - **FFToday**: QB/RB/WR/TE; archive back to 2010.
   - **NFL.com** (hvpkod archive): QB/RB/WR/TE/K. DST skipped (no projections); K
     is totals-only (standard-scoring, not PPR-decomposable).
   - **Sleeper (RotoWire)**: QB/RB/WR/TE + DST (K out of scope). A single provider, not a
@@ -77,6 +81,11 @@ from src.analysis.significance import (
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS, TOP_K_RANKING
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.serving.espn_projections import (
+    ESPN_NOTE,
+    load_espn_with_gsis_id,
+    project_espn_to_fantasy,
+)
 from src.shared.aggregate_targets import (
     DST_TARGETS,
     POSITION_TARGET_MAP,
@@ -170,7 +179,15 @@ def _project_sleeper_to_ppr(raw_df: pd.DataFrame, pos: str, scoring_format: str)
     return out
 
 
-def _build_experts(nflcom_loader, sleeper_loader, fftoday_loader=None) -> list[ExpertSource]:
+def _project_espn_expert(raw_df: pd.DataFrame, pos: str, scoring_format: str) -> pd.DataFrame:
+    return project_espn_to_fantasy(raw_df, pos, scoring_format).rename(
+        columns={"espn_pred_total": _EXPERT_PRED_COL}
+    )
+
+
+def _build_experts(
+    nflcom_loader, sleeper_loader, fftoday_loader=None, espn_loader=None
+) -> list[ExpertSource]:
     """Construct the default expert list, honoring injected loaders (tests)."""
     return [
         ExpertSource(
@@ -196,6 +213,13 @@ def _build_experts(nflcom_loader, sleeper_loader, fftoday_loader=None) -> list[E
             project=_project_sleeper_to_ppr,  # generic raw-stat -> PPR aggregator
             skipped=frozenset({"K", "DST"}),  # offense-only archive
             note=_FFTODAY_NOTE,
+        ),
+        ExpertSource(
+            name="espn",
+            label="ESPN",
+            load=espn_loader or load_espn_with_gsis_id,
+            project=_project_espn_expert,
+            note=ESPN_NOTE,
         ),
     ]
 
@@ -429,6 +453,7 @@ def main(
     nflcom_loader=None,
     sleeper_loader=None,
     fftoday_loader=None,
+    espn_loader=None,
 ) -> dict:
     """Run the model-vs-experts comparison, print + write JSON, return the result.
 
@@ -439,7 +464,7 @@ def main(
     eval_seasons = tuple(int(s) for s in eval_seasons)
     if model_preds_loader is None:
         model_preds_loader = _default_model_preds
-    experts = _build_experts(nflcom_loader, sleeper_loader, fftoday_loader)
+    experts = _build_experts(nflcom_loader, sleeper_loader, fftoday_loader, espn_loader)
 
     # The default model loader sources predictions from the pipeline's held-out
     # test_df, scored in the pipeline's configured format (PPR for shipped models).
@@ -520,7 +545,7 @@ def main(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Head-to-head: our model vs expert projections (NFL.com + Sleeper) — MAE/RMSE + ranking + paired significance"
+        description="Head-to-head: our model vs NFL.com, Sleeper, FFToday and ESPN — MAE/RMSE + ranking + paired significance"
     )
     parser.add_argument(
         "--seasons",
@@ -544,7 +569,7 @@ def _parse_args() -> argparse.Namespace:
         choices=list(TARGET_POSITIONS_DEFAULT),
         metavar="POS",
         help="Positions to evaluate (default: all). Per expert, unsupported positions are skipped "
-        "(NFL.com: no DST; Sleeper: offense + DST, no K).",
+        "(NFL.com: no DST; Sleeper: no K; FFToday: offense only; ESPN: all six).",
     )
     parser.add_argument("--output-dir", default=OUTPUT_DIR_DEFAULT)
     parser.add_argument("--n-boot", type=int, default=N_BOOT_DEFAULT, help="Bootstrap replicates")

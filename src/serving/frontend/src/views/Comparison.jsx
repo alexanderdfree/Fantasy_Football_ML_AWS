@@ -1,5 +1,5 @@
 /* Comparison — our four model architectures (live) vs expert projection sources
- * (NFL.com, RotoWire), by position, on three player subsets (all + top-30 +
+ * (NFL.com, RotoWire, ESPN), by position, on three player subsets (all + top-30 +
  * top-12/position). One /api/comparison fetch (module-level cache, mirroring the
  * vanilla comparisonLoaded flag); the MAE/RMSE/R² toggle re-renders from the
  * cached payload. Lower is better for MAE/RMSE, higher for R²; best cell per row
@@ -22,6 +22,7 @@ const MODEL_SOURCES = [
 const EXPERT_SOURCES = [
     { key: "nflcom", label: "NFL.com" },
     { key: "rotowire", label: "RotoWire" },
+    { key: "espn", label: "ESPN" },
 ];
 const COMPARISON_SOURCES = [...MODEL_SOURCES, ...EXPERT_SOURCES];
 const COMPARISON_METRIC_HINTS = {
@@ -105,11 +106,11 @@ function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error }) {
                     <ComparisonTableHead firstLabel="Position" />
                     <tbody id={bodyId}>
                         {error ? (
-                            <tr><td colSpan={7} className="arch-error">Failed to load: {error}</td></tr>
+                            <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-error">Failed to load: {error}</td></tr>
                         ) : posMap ? (
                             <ComparisonRows posMap={posMap} metric={metric} />
                         ) : (
-                            <tr><td colSpan={7} className="arch-loading">Loading comparison…</td></tr>
+                            <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-loading">Loading comparison…</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -182,6 +183,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
     const unavailable = data && data.model_source === "unavailable";
     const nflNote = (meta.nflcom && meta.nflcom.note) || "";
     const rwNote = (meta.rotowire && meta.rotowire.note) || "";
+    const espnNote = (meta.espn && meta.espn.note) || "";
     const modelLine = unavailable
         ? "Currently unavailable (models not loaded). "
         : "Each of our four architectures is computed live from the deployed models, one column per architecture, so they track the latest retrain. ";
@@ -276,7 +278,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                                         );
                                     })
                                 ) : (
-                                    <tr><td colSpan={7} className="arch-loading">Loading quartile bias…</td></tr>
+                                    <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-loading">Loading quartile bias…</td></tr>
                                 )}
                             </tbody>
                         </table>
@@ -294,6 +296,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                             <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly fantasy-point totals; the best cell in each row is highlighted.</li>
                             <li><strong>NFL.com.</strong> {nflNote}</li>
                             <li><strong>RotoWire.</strong> {rwNote}</li>
+                            <li><strong>ESPN.</strong> {espnNote}</li>
                             <li><strong>Top 30.</strong> The second table restricts to the top 30 players per position by actual 2025 fantasy points — the fantasy-relevant starters.</li>
                             <li><strong>Top 12.</strong> The third table tightens further to the top 12 per position by actual 2025 fantasy points — roughly a standard league's starters at each spot.</li>
                             <li>

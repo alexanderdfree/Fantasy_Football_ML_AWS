@@ -10,6 +10,13 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **Fix:** Align all four environments on Torch 2.14.0 and give the CPU index priority in the serving install. Resolve CPU and CUDA dependency sets for Python 3.12 before shipping; keep the existing CUDA 13.0 variant.
 - **Lesson:** Dependency parity includes Dockerfile install commands and index order, not just requirements files. A matching public Torch version does not prove that serving installs the CPU wheel.
 
+### [FIXED] ESPN absent from historical expert comparisons
+- **File(s):** `src/serving/espn_projections.py`, `core.py`, `serialization.py`, `routes.py`, `frontend/src/views/Comparison.jsx`; `src/analysis/analysis_expert_comparison.py`, `build_comparison_summary.py`; committed `comparison_experts.json`.
+- **What:** ESPN was available only on Next Week. Historical comparisons omitted it even though its public API retains weekly raw projections from 2018 onward. Stock ESPN points do not exactly match this project's position-specific scoring, and 2023 Week 1 has an incomplete player pool.
+- **Fix:** Decode raw weekly projection entries, cache each season independently, bridge athlete IDs through nflverse and DST by franchise, exclude the known incomplete week and absent forecasts, and use the shared six-position scoring formulas. Add the source to paired analysis, dashboard metrics and per-row quartile bias; bump the serving cache schema to refresh pre-ESPN snapshots. Regenerate the 2025 summary against actuals.
+- **Lesson:** A year/week API selector is insufficient: check stat-source discriminators, full-season response filtering, player coverage and scoring. A missing rushing field does not invalidate a receiving-only RB forecast. Historical availability is not proof that values were frozen at kickoff.
+- **Review follow-up:** Track ESPN load/scoring completeness on the results frame and refuse to persist/upload incomplete results. Otherwise a transient outage becomes an all-null cache reused indefinitely under the unchanged model fingerprint. A later cold boot now retries; complete existing disk snapshots remain untouched.
+
 ### [FIXED] Machine-specific Codex catalog path prevented session startup on macOS
 - **File(s):** [../.codex/config.toml](../.codex/config.toml), [../CODEX.md](../CODEX.md).
 - **What:** The tracked config referenced `/home/alex/.codex/my_catalog.json`, a WSL-local file absent on macOS. Desktop `config/read` failed with `failed to resolve feature override precedence: No such file or directory (os error 2)`, and `codex features list` failed to load configuration before any hook could run.
