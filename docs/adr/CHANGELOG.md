@@ -2,6 +2,8 @@
 
 
 - 2026-09-10 · ESPN historical expert comparisons (2018+, all six positions), shared raw-stat scoring, per-season cache and 2023 Week 1 exclusion; Comparison accuracy + quartile bias, refreshed 2025 summary and serving cache schema 8; no retrain · (PR pending) · → ADR-0018
+- 2026-09-10 · Share the eager/A-B grid executor and output isolation; preserve reporting and Batch contracts · (PR #1542) · → ADR-0020
+- 2026-09-10 · Retire training-skipped marker workflow and tracked placeholders; retain real benchmark fallback and legacy API parsing · (PR #1542) · → ADR-0010
 - 2026-09-10 · Full-score matched expert comparison, regular-season cohorts, and pregame top-24 reporting through Batch/local/CV serialization · (PR pending) · → ADR-0024
 
 - 2026-09-10 · Live K/DST frames with independent current-season history, explicit kick/opponent inference inputs, event-specific forecast weather and source coverage checks · (PR pending) · → ADR-0018

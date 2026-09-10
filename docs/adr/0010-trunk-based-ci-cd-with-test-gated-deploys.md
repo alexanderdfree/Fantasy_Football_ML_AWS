@@ -19,3 +19,12 @@
 **Rejected.** Environment branches would add a staging deploy with nothing behind it — for a personal project the "prod monitoring" is the dashboard on my laptop. Manual deploys were the original state; replacing them was the point.
 
 **References.** [.github/workflows/tests.yml](../../.github/workflows/tests.yml), [batch-image.yml](../../.github/workflows/batch-image.yml), [deploy.yml](../../.github/workflows/deploy.yml). Landed in commit `ffb3119`.
+
+
+## Benchmark bookkeeping
+
+Only actual training runs produce committed benchmark records. Non-training commits are already represented by Git/CI; the web and iOS History views exclude training-skipped rows, so a dedicated skip-marker workflow and per-commit JSON files are unnecessary. Parsers retain the legacy `training_skipped` field for older S3 records and API clients.
+
+## Changelog
+
+- **2026-09-10** — Retired the skip-training sentinel workflow and removed its 391 tracked placeholder records, including one added on main during the cleanup. Actual benchmark results and the bundled serving fallback are retained.

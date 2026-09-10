@@ -14,7 +14,6 @@ import contextlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -129,27 +128,10 @@ def _study_db_path(pos: str, seeds: tuple[int, ...]) -> str:
 
 
 def _physical_core_ids() -> list[int]:
-    """Return one logical CPU id per physical core, matching parallel_train."""
-    try:
-        out = subprocess.run(
-            ["lscpu", "-p=CPU,CORE"], capture_output=True, text=True, check=True
-        ).stdout
-        first_cpu_of_core: dict[int, int] = {}
-        for line in out.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            cpu_s, core_s = line.split(",")[:2]
-            core = int(core_s)
-            if core not in first_cpu_of_core:
-                first_cpu_of_core[core] = int(cpu_s)
-        cores = sorted(first_cpu_of_core.values())
-        if cores:
-            return cores
-    except Exception:  # noqa: BLE001 - best-effort; fall through to heuristic
-        pass
-    n = os.cpu_count() or 2
-    return list(range(max(1, n // 2)))
+    """Use the benchmark runner's physical-core resolver."""
+    from src.benchmarking.parallel_train import physical_cores
+
+    return physical_cores()
 
 
 @contextlib.contextmanager
