@@ -17,6 +17,21 @@
       "Resource": "arn:aws:s3:::ff-predictor-training"
     },
     {
+      "Sid": "ReadUpcomingArtifactVersions",
+      "Effect": "Allow",
+      "Action": ["s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::ff-predictor-training/models/predictions_cache/upcoming_week.json"
+    },
+    {
+      "Sid": "ListUpcomingArtifactVersions",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucketVersions"],
+      "Resource": "arn:aws:s3:::ff-predictor-training",
+      "Condition": {
+        "StringEquals": {"s3:prefix": "models/predictions_cache/upcoming_week.json"}
+      }
+    },
+    {
       "Sid": "WritePredictionsCache",
       "Effect": "Allow",
       "Action": ["s3:PutObject"],

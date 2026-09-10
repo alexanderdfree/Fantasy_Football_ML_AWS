@@ -51,6 +51,7 @@ from src.serving import (
     live_schedule,
     live_sources,
     practice_reports,
+    upcoming_artifact,
     upcoming_special_teams,
     upcoming_status,
 )
@@ -86,8 +87,8 @@ _ESPN_HEADSHOT = "https://a.espncdn.com/i/headshots/nfl/players/full/{espn_id}.p
 _ENV_BUCKET = "FF_MODEL_S3_BUCKET"
 _ENV_PREFIX = "FF_MODEL_S3_PREFIX"
 # How often the serving container re-pulls the artifact from S3 (a cheap GET);
-# 0 disables. Default 10 min so a fresh CI build shows up without a redeploy.
-_DOWNLOAD_INTERVAL_S = int(os.environ.get("FF_UPCOMING_SYNC_INTERVAL_S", "600"))
+# 0 disables. Conditional reads avoid downloading an unchanged artifact.
+_DOWNLOAD_INTERVAL_S = int(os.environ.get("FF_UPCOMING_SYNC_INTERVAL_S", "60"))
 # This is source coverage, separate from the fixed training/evaluation years.
 _NFLCOM_ARCHIVE_LAST_SEASON = 2025
 
@@ -1187,40 +1188,17 @@ def upload_artifact_to_s3() -> bool:
     path = _artifact_path()
     if not bucket or not os.path.isfile(path):
         return False
-    try:
-        import boto3
-
-        boto3.client("s3").upload_file(
-            path, bucket, _s3_artifact_key(), ExtraArgs={"ContentType": "application/json"}
-        )
-        print(f"[upcoming_week] uploaded artifact -> s3://{bucket}/{_s3_artifact_key()}")
-        return True
-    except Exception as e:  # noqa: BLE001 - best-effort
-        print(f"[upcoming_week] S3 artifact upload failed: {e!r}")
-        return False
+    return upcoming_artifact.upload(path, bucket, _s3_artifact_key())
 
 
 def sync_artifact_from_s3() -> bool:
     """Download the CI-built artifact from S3 into data/serving_cache (serving).
-    Best-effort: unset bucket / missing object / error → ``False`` and the route
-    serves 503 ``warming`` until the next sync."""
+    Validate before replacement, retaining last-good data on errors. Cold starts
+    can recover a valid prior S3 version. Unchanged/failed syncs return False."""
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
         return False
-    path = _artifact_path()
-    tmp = f"{path}.s3.{os.getpid()}.tmp"
-    try:
-        import boto3
-
-        os.makedirs(core._PREDICTIONS_CACHE_DIR, exist_ok=True)
-        boto3.client("s3").download_file(bucket, _s3_artifact_key(), tmp)
-        os.replace(tmp, path)
-        return True
-    except Exception as e:  # noqa: BLE001 - best-effort
-        print(f"[upcoming_week] S3 artifact sync skipped: {e!r}")
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        return False
+    return upcoming_artifact.sync(_artifact_path(), bucket, _s3_artifact_key())
 
 
 # --------------------------------------------------------------------------
@@ -1232,7 +1210,7 @@ def start_artifact_download_poller(
     """Daemon thread that re-pulls the CI-built artifact from S3 so a fresh build
     appears without a redeploy.
 
-    Interval from ``FF_UPCOMING_SYNC_INTERVAL_S`` (default 10 min); ``0`` disables.
+    Interval from ``FF_UPCOMING_SYNC_INTERVAL_S`` (default 60s); ``0`` disables.
     Cheap (a single S3 GET) — none of the build/PBP/OOM cost that the in-serving
     build had. Broad try/except so a transient S3 error never kills the loop.
     """

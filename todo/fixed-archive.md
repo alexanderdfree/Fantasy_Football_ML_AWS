@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
+[Read the incident record](fixed-archive/upcoming-refresh-availability-2026-09.md).
+
 ### [FIXED] Live QBR qualification and roster/practice identity joins omitted available data
 [Read the incident record](fixed-archive/live-source-identity-qbr-2026-09.md).
 

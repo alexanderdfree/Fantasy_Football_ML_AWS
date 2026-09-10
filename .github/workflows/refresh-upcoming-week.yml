@@ -10,8 +10,8 @@ name: Refresh upcoming-week projections
 # where network + memory are ample.
 #
 # Fires on:
-#   - schedule: every 3h, to keep the live ESPN inputs (Vegas lines, injuries)
-#     fresh. Tighten the cron near game days if desired.
+#   - schedule: hourly, off the busy top of the hour. GitHub's scheduler is
+#     best effort; additional opportunities reduce missed-refresh downtime.
 #   - workflow_run: after "Train on Batch (Spot)" completes — new models change
 #     the projections, so rebuild immediately (the other half of "fresh": models
 #     change rarely, lines/injuries change continuously, so we need both).
@@ -19,14 +19,17 @@ name: Refresh upcoming-week projections
 
 on:
   schedule:
-    - cron: "0 */3 * * *"
+    - cron: "17 * * * *"
   workflow_run:
     workflows: ["Train on Batch (Spot)"]
     types: [completed]
   workflow_dispatch:
 
 concurrency:
-  group: refresh-upcoming-week
+  # An unsuccessful training notification must not evict a useful pending
+  # refresh before its job-level `if` is evaluated. Give skipped events unique
+  # groups; eligible events keep one running build and the latest pending one.
+  group: ${{ (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') && 'refresh-upcoming-week' || format('refresh-upcoming-week-skipped-{0}', github.run_id) }}
   cancel-in-progress: false
 
 env:
@@ -86,6 +89,8 @@ jobs:
         # slate and upload it. FF_MODEL_S3_BUCKET makes both the model load and
         # the artifact upload target prod. ESPN + nflverse PBP are fetched live
         # (CI has reliable network — the exact thing the serving task lacked).
+        # Source requests already retry. S3 publication retries the built bytes
+        # in upcoming_artifact; never rerun this expensive step for upload alone.
         run: |
           python - <<'PY'
           from src.shared.model_sync import sync_data_from_s3, sync_models_from_s3

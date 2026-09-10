@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-MAX_ARTIFACT_AGE_SECONDS = 4 * 3600  # 3-hour builds plus build/download headroom.
+MAX_ARTIFACT_AGE_SECONDS = 4 * 3600  # Warning threshold; stale rows stay available.
 
 
 def freshness(payload: dict, *, now: datetime | None = None) -> dict:
