@@ -6,7 +6,7 @@ import multiprocessing as mp
 import os
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,6 +14,21 @@ from typing import TypeVar
 
 Task = TypeVar("Task")
 Result = TypeVar("Result")
+
+
+@contextmanager
+def _worker_environment(values: Mapping[str, str]):
+    """Expose worker settings before spawn re-imports the entry module."""
+    previous = {key: os.environ.get(key) for key in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @contextmanager
@@ -42,6 +57,7 @@ def run_tasks(
     on_result: Callable[[int, Result], None] | None = None,
     initializer: Callable | None = None,
     initargs: tuple = (),
+    environment: Mapping[str, str] | None = None,
 ) -> list[Result]:
     """Execute a grid, preserving order or returning completion order.
 
@@ -68,13 +84,16 @@ def run_tasks(
                 result = on_error(task, exc)
             record(index, result)
     else:
-        with ProcessPoolExecutor(
-            max_workers=max_workers,
-            mp_context=mp.get_context("spawn"),
-            max_tasks_per_child=1,
-            initializer=initializer,
-            initargs=initargs,
-        ) as pool:
+        with (
+            _worker_environment(environment or {}),
+            ProcessPoolExecutor(
+                max_workers=max_workers,
+                mp_context=mp.get_context("spawn"),
+                max_tasks_per_child=1,
+                initializer=initializer,
+                initargs=initargs,
+            ) as pool,
+        ):
             futures = {pool.submit(execute, task): i for i, task in enumerate(tasks)}
             for future in as_completed(futures):
                 index = futures[future]

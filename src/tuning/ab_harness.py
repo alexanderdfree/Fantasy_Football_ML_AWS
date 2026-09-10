@@ -628,13 +628,6 @@ def run_sequential_stacked(
 def _init_spec_worker(cores, nice, pool_addr):
     from src.shared.core_pool import ENV_ADDR, ENV_POS
 
-    for key in (
-        "OMP_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-    ):
-        os.environ.setdefault(key, "1")
     if pool_addr:
         os.environ[ENV_ADDR] = pool_addr
     os.environ[ENV_POS] = str(os.getpid())
@@ -738,6 +731,20 @@ def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs) -> list[dic
                 on_result=report,
                 initializer=_init_spec_worker,
                 initargs=(phys, nice, pool_addr),
+                # Spawn imports the CLI/spec before running the initializer.
+                # Native libraries must see these defaults at import time.
+                environment={
+                    **{
+                        key: os.environ.get(key, "1")
+                        for key in (
+                            "OMP_NUM_THREADS",
+                            "MKL_NUM_THREADS",
+                            "OPENBLAS_NUM_THREADS",
+                            "NUMEXPR_NUM_THREADS",
+                        )
+                    },
+                    _ENV_CACHE_DISABLE: os.environ.get(_ENV_CACHE_DISABLE, "1"),
+                },
             )
         finally:
             pool_stop()

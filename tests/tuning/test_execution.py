@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +48,29 @@ def test_parallel_ridge_matches_serial_and_each_cell_has_fresh_state():
     assert all(r["seen"] == 1 for r in parallel)
     for left, right in zip(serial, parallel, strict=True):
         np.testing.assert_array_equal(left["predictions"], right["predictions"])
+
+
+def test_worker_environment_precedes_entry_module_import_and_restores_parent(tmp_path):
+    # A real CLI is needed: spawn re-imports __main__ before its initializer.
+    # Pytest's entry module does not reproduce a numeric CLI's import-time reads.
+    script = tmp_path / "worker_environment.py"
+    script.write_text(
+        "import os\n"
+        "BOOT_VALUE = os.environ.get('FF_TEST_WORKER_BOOT')\n"
+        "from src.tuning._execution import run_tasks\n"
+        "def report(_): return BOOT_VALUE\n"
+        "def failed(_, exc): raise exc\n"
+        "if __name__ == '__main__':\n"
+        "    assert BOOT_VALUE is None\n"
+        "    assert run_tasks([1, 2, 3], report, max_workers=2, on_error=failed,\n"
+        "        environment={'FF_TEST_WORKER_BOOT': 'ready'}) == ['ready'] * 3\n"
+        "    assert 'FF_TEST_WORKER_BOOT' not in os.environ\n"
+    )
+    environment = dict(os.environ)
+    environment.pop("FF_TEST_WORKER_BOOT", None)
+    root = str(Path(__file__).resolve().parents[2])
+    environment["PYTHONPATH"] = os.pathsep.join(filter(None, [root, environment.get("PYTHONPATH")]))
+    subprocess.run([sys.executable, str(script)], env=environment, check=True, timeout=30)
 
 
 @pytest.mark.parametrize("workers", [1, 2])
