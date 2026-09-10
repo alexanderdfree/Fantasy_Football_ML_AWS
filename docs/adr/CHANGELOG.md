@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Share the eager/A-B grid executor and output isolation; preserve reporting and Batch contracts · (PR pending) · → ADR-0020
+- 2026-09-10 · Retire training-skipped marker workflow and tracked placeholders; retain real benchmark fallback and legacy API parsing · (PR pending) · → ADR-0010
 - 2026-09-10 · ESPN historical expert comparisons (2018+, all six positions), shared raw-stat scoring, per-season cache and 2023 Week 1 exclusion; Comparison accuracy + quartile bias, refreshed 2025 summary and serving cache schema 8; no retrain · (PR pending) · → ADR-0018
 
 Terse, chronological log of architecture changes — one line each: `YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`. Full rationale lives in the per-decision

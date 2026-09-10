@@ -218,7 +218,7 @@ class TestRowShape:
 
 
 class TestSkippedTraining:
-    """Sentinel JSON files written by ``.github/workflows/skip-sentinel.yml``
+    """Legacy sentinel JSON files that may still arrive from S3
     for [docs-only] or no-model-relevant-path commits. The shape is empty
     ``results`` plus a top-level ``training_skipped: true`` flag, and the row
     should surface as six all-null pills across every model."""

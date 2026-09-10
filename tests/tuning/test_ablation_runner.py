@@ -9,6 +9,7 @@ import types
 
 import pytest
 
+from src.tuning import _execution
 from src.tuning import ablation_runner as ar
 
 pytestmark = pytest.mark.unit
@@ -113,12 +114,12 @@ def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def submit(self, fn, job, log_path=None, data_dir=None, lgbm_n_jobs=None):
-            submitted.append((self.max_workers, job.seed))
-            return FakeFuture(fn(job, log_path, data_dir, lgbm_n_jobs))
+        def submit(self, fn, task):
+            submitted.append((self.max_workers, task[0].seed))
+            return FakeFuture(fn(task))
 
-    monkeypatch.setattr(ar, "ProcessPoolExecutor", FakePool)
-    monkeypatch.setattr(ar, "as_completed", lambda futures: list(reversed(list(futures))))
+    monkeypatch.setattr(_execution, "ProcessPoolExecutor", FakePool)
+    monkeypatch.setattr(_execution, "as_completed", lambda futures: list(reversed(list(futures))))
 
     jobs = [_job(1, "a"), _job(2, "b")]
     preserved = ar.run_grid(jobs, max_workers=2, preserve_order=True)

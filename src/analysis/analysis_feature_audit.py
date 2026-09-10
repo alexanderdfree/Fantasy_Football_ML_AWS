@@ -72,6 +72,8 @@ from pathlib import Path
 
 import matplotlib
 
+from src.analysis._feature_stats import _clean_features, _decide_drop, _present_numeric
+
 matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
 
 import numpy as np  # noqa: E402
@@ -126,40 +128,6 @@ PCA_VARIANCE_TARGET = 0.99
 # ───────────────────────── shared numeric helpers ──────────────────────────
 # (Ported verbatim from analysis_rb_feature_audit.py / analysis_k_feature_audit.py;
 #  those scripts keep their own copies — this is the canonical tested version.)
-
-
-def _present_numeric(df: pd.DataFrame, cols: list[str]) -> list[str]:
-    """Filter to columns that are present, numeric, and have non-zero variance."""
-    out = []
-    for c in cols:
-        if c not in df.columns:
-            continue
-        if not pd.api.types.is_numeric_dtype(df[c]):
-            continue
-        # zero-variance cols make corr/VIF undefined and inflate the heatmap
-        if df[c].std(ddof=0) == 0 or df[c].nunique(dropna=True) <= 1:
-            continue
-        out.append(c)
-    return out
-
-
-def _clean_features(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    """Return a copy of ``df`` with NaN/±inf in the present ``cols`` filled to 0.0.
-
-    Mirrors the production catch-all at ``src/shared/feature_build.py:110``
-    (``build_position_features``: ``replace([inf,-inf], nan).fillna(0)``), the
-    last NaN-handling step every model's feature matrix passes through. Using
-    this instead of listwise ``dropna()`` keeps the audit on the SAME full,
-    imputed population the models actually train on — not the veteran-heavy
-    complete-case subset (rookies have NaN ``prior_season_*``; a player's
-    early games have NaN rolling stats). dropna() silently restricted the QB
-    audit to ~59% of rows; production sees 100%. See PR #594.
-    """
-    out = df.copy()
-    present = [c for c in cols if c in out.columns]
-    if present:
-        out[present] = out[present].replace([np.inf, -np.inf], np.nan).fillna(0.0)
-    return out
 
 
 def _pca_conditioning(
@@ -219,32 +187,6 @@ def _condition_number(
     n_components = min(pca_components, X.shape[1], X.shape[0])
     Xp = PCA(n_components=n_components).fit_transform(X)
     return cond_pre, float(np.linalg.cond(Xp))
-
-
-def _decide_drop(
-    a: str, b: str, target_signal: dict[str, float], target_col: str | None
-) -> tuple[str, str, str]:
-    """Pick which side of a redundant pair to drop. Returns (drop, keep, reason).
-
-    Tie-break ladder (each step exits early once a decision is reached):
-      1. Higher |corr-with-target| wins (keep).
-      2. Prefer L3 over L5 rolling window.
-      3. Final fallback: drop the longer name (proxy for "more derived").
-    """
-    sa = abs(target_signal.get(a, float("nan")))
-    sb = abs(target_signal.get(b, float("nan")))
-    if not np.isnan(sa) and not np.isnan(sb) and abs(sa - sb) > 1e-6:
-        drop = a if sa < sb else b
-        return drop, (b if drop == a else a), f"lower |corr-with-{target_col}|"
-
-    a_l5 = "_L5" in a
-    b_l5 = "_L5" in b
-    if a_l5 != b_l5:
-        drop = a if a_l5 else b
-        return drop, (b if drop == a else a), "L5 rolling window (prefer fresher L3)"
-
-    drop = a if len(a) >= len(b) else b
-    return drop, (b if drop == a else a), "more derived / longer name"
 
 
 def _drop_candidates(

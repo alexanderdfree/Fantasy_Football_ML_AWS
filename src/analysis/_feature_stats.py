@@ -138,3 +138,78 @@ def _print_vif(vif: dict[str, float], k: int = 15) -> None:
     print(f"    {'feature':<48s} {'VIF':>10s}")
     for name, v in items:
         print(f"    {name[:48]:<48s} {v:>10.2f}")
+
+
+def _present_numeric(df: pd.DataFrame, cols: list[str]) -> list[str]:
+    """Filter to columns that are present, numeric, and have non-zero variance."""
+    out = []
+    for c in cols:
+        if c not in df.columns:
+            continue
+        if not pd.api.types.is_numeric_dtype(df[c]):
+            continue
+        # zero-variance cols make corr/VIF undefined and inflate the heatmap
+        if df[c].std(ddof=0) == 0 or df[c].nunique(dropna=True) <= 1:
+            continue
+        out.append(c)
+    return out
+
+
+def _pre_registered_table(df: pd.DataFrame, pairs: list[tuple[str, str, str]]) -> list[dict]:
+    out = []
+    for a, b, why in pairs:
+        if a not in df.columns or b not in df.columns:
+            out.append(
+                {
+                    "a": a,
+                    "b": b,
+                    "why": why,
+                    "pearson": None,
+                    "spearman": None,
+                    "note": "missing column",
+                }
+            )
+            continue
+        sub = df[[a, b]].dropna()
+        if len(sub) < 50:
+            out.append(
+                {
+                    "a": a,
+                    "b": b,
+                    "why": why,
+                    "pearson": None,
+                    "spearman": None,
+                    "note": f"only {len(sub)} non-NaN rows",
+                }
+            )
+            continue
+        p = float(sub[a].corr(sub[b]))
+        s = float(sub[a].corr(sub[b], method="spearman"))
+        out.append({"a": a, "b": b, "why": why, "pearson": p, "spearman": s, "n": int(len(sub))})
+    return out
+
+
+def _decide_drop(
+    a: str, b: str, target_signal: dict[str, float], target_col: str | None
+) -> tuple[str, str, str]:
+    """Pick which side of a redundant pair to drop. Returns (drop, keep, reason).
+
+    Tie-break ladder (each step exits early once a decision is reached):
+      1. Higher |corr-with-target| wins (keep).
+      2. Prefer L3 over L5 rolling window.
+      3. Final fallback: drop the longer name (proxy for "more derived").
+    """
+    sa = abs(target_signal.get(a, float("nan")))
+    sb = abs(target_signal.get(b, float("nan")))
+    if not np.isnan(sa) and not np.isnan(sb) and abs(sa - sb) > 1e-6:
+        drop = a if sa < sb else b
+        return drop, (b if drop == a else a), f"lower |corr-with-{target_col}|"
+
+    a_l5 = "_L5" in a
+    b_l5 = "_L5" in b
+    if a_l5 != b_l5:
+        drop = a if a_l5 else b
+        return drop, (b if drop == a else a), "L5 rolling window (prefer fresher L3)"
+
+    drop = a if len(a) >= len(b) else b
+    return drop, (b if drop == a else a), "more derived / longer name"

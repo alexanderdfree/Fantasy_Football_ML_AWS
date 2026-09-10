@@ -39,6 +39,8 @@ from pathlib import Path
 
 import matplotlib
 
+from src.analysis._feature_stats import _pre_registered_table, _present_numeric
+
 matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
 
 import numpy as np  # noqa: E402
@@ -119,21 +121,6 @@ def _attn_static_features() -> list[str]:
     return [c for cat in ATTN_STATIC_CATEGORIES for c in INCLUDE_FEATURES[cat]]
 
 
-def _present_numeric(df: pd.DataFrame, cols: list[str]) -> list[str]:
-    """Filter to columns that are present and numeric and have non-zero variance."""
-    out = []
-    for c in cols:
-        if c not in df.columns:
-            continue
-        if not pd.api.types.is_numeric_dtype(df[c]):
-            continue
-        # zero-variance cols make corr/VIF undefined and inflate the heatmap
-        if df[c].std(ddof=0) == 0 or df[c].nunique(dropna=True) <= 1:
-            continue
-        out.append(c)
-    return out
-
-
 def _condition_number(df: pd.DataFrame, cols: list[str]) -> tuple[float, float]:
     """Return (pre-PCA, post-PCA) condition numbers of standardised ``df[cols]``."""
     sub = df[cols].dropna()
@@ -145,40 +132,6 @@ def _condition_number(df: pd.DataFrame, cols: list[str]) -> tuple[float, float]:
     Xp = PCA(n_components=n_components).fit_transform(X)
     cond_post = float(np.linalg.cond(Xp))
     return cond_pre, cond_post
-
-
-def _pre_registered_table(df: pd.DataFrame, pairs: list[tuple[str, str, str]]) -> list[dict]:
-    out = []
-    for a, b, why in pairs:
-        if a not in df.columns or b not in df.columns:
-            out.append(
-                {
-                    "a": a,
-                    "b": b,
-                    "why": why,
-                    "pearson": None,
-                    "spearman": None,
-                    "note": "missing column",
-                }
-            )
-            continue
-        sub = df[[a, b]].dropna()
-        if len(sub) < 50:
-            out.append(
-                {
-                    "a": a,
-                    "b": b,
-                    "why": why,
-                    "pearson": None,
-                    "spearman": None,
-                    "note": f"only {len(sub)} non-NaN rows",
-                }
-            )
-            continue
-        p = float(sub[a].corr(sub[b]))
-        s = float(sub[a].corr(sub[b], method="spearman"))
-        out.append({"a": a, "b": b, "why": why, "pearson": p, "spearman": s, "n": int(len(sub))})
-    return out
 
 
 def main() -> int:
