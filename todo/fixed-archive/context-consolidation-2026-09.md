@@ -5,7 +5,7 @@
 - **Fix:** Keep bounded startup routers and topic references; move all 142 existing incident records into individually indexed files with preserved headings and rebased links. Reconcile the stale recommendations and metric heuristic, stop copying every lesson into startup files, and inherit personal Codex model/context settings. See the [preservation ledger](../context-consolidation-2026-09.md).
 - **Lesson:** Preserve evidence and constraints in scoped sources. Check the actual loaded prompt, reconcile superseded decisions, and validate content preservation as well as byte budgets.
 
-- **Follow-up (2026-09-10, PR pending):** Delete the completed Batch cohort-stamp
+- **Follow-up (2026-09-10, PR #1553):** Delete the completed Batch cohort-stamp
   recommendation and superseded GPU-plan prescriptions; keep pending A/Bs and
   dated measurement/approval evidence. Consolidate repeated operational rules
   under topic anchors and scope global memory to preferences/retrieval pointers.

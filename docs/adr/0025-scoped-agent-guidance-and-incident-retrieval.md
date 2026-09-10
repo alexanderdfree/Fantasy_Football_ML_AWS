@@ -66,4 +66,4 @@ and decisions in their investigation or incident record.
 - 2026-09-10: Split startup policy, provider references and incident retrieval;
   retain evidence and add context budgets (PR #1546).
 - 2026-09-10: Remove superseded recommendations, narrow global memory to
-  preferences/pointers, and consolidate repeated rules by topic (PR pending).
+  preferences/pointers, and consolidate repeated rules by topic (PR #1553).
