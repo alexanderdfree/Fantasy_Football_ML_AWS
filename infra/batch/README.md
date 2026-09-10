@@ -15,6 +15,19 @@ including the ECR pull-through cache cold-start optimization.
 
 ## First-time setup
 
+Production publication requires verified image provenance (ADR-0011). Manual
+Batch and EC2 workflow dispatches must supply the full built `image_sha`.
+For direct `src.batch.launch` or submission-mode `src.batch.benchmark`, set
+`FF_TRAIN_GIT_SHA` and the matching numeric `FF_JOB_DEFINITION_REVISION`;
+split/CPU submissions also need `FF_JOB_DEFINITION_CPU_REVISION`. An explicitly
+versioned job-definition name (`name:revision`) is also accepted. The mappings
+are written by the image build under `job-def-revisions/{image_sha}.txt` and
+`job-def-revisions/{image_sha}-cpu.txt` in the training bucket. Launchers register
+the source's full main ancestry before submission, and publishing jobs verify
+it against the image before computation. Use `src.scripts.promote` for an
+intentional rollback; a superseded normal training run cannot publish older
+models. Dry runs and diagnostic/tuning modes do not publish production models.
+
 Prereqs: AWS CLI v2, `gh` CLI, credentials with rights to create IAM + Batch
 resources. The `ff-training` ECR repo must exist (created by the first run of
 [batch-image.yml](../../.github/workflows/batch-image.yml)).

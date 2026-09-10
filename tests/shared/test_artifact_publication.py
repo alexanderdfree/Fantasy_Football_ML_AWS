@@ -300,6 +300,8 @@ def test_launcher_registers_actual_source_before_submitting_all_positions(monkey
     monkeypatch.setattr(launch, "TRAIN_GIT_SHA", NEW)
     monkeypatch.setattr(launch, "JOB_IDS_FILE", None)
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu-def")
+    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "100")
+    monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", "101")
     monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-queue")
     monkeypatch.setattr(
         launch.boto3, "client", lambda service, **_: Batch() if service == "batch" else S3()

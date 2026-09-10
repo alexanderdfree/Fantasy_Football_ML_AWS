@@ -319,6 +319,10 @@ def _stub_main_io(t, monkeypatch, *, runner_returns=_UNSET):
     """
     import pandas as pd
 
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
+    monkeypatch.setattr(t, "load_source", lambda *a: {})
+    monkeypatch.setattr(t.boto3, "client", lambda *a, **k: object())
+
     monkeypatch.setattr(t, "sync_raw_data", lambda bucket: None)
     monkeypatch.setattr(t, "download_data", lambda *a, **k: None)
     monkeypatch.setattr(t, "upload_artifacts", lambda *a, **k: None)

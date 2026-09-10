@@ -10,8 +10,11 @@ Usage:
     python src/batch/launch.py --skip-upload           # assume S3 current (CI)
 
 Source identity (required except for --dry-run):
-    FF_TRAIN_GIT_SHA    Full SHA of the selected training image; the launcher
-                       registers its ancestry before submitting jobs.
+    FF_TRAIN_GIT_SHA    Full SHA of the selected training image.
+    FF_JOB_DEFINITION_REVISION    Numeric revision registered for that image.
+    FF_JOB_DEFINITION_CPU_REVISION    Also required when using CPU/split jobs.
+    The launcher registers ancestry before submitting jobs. A name already
+    suffixed with :<revision> is also accepted as an explicit revision pin.
 
 Other configuration (environment variables, optional):
     FF_S3_BUCKET        (default: ff-predictor-training)
@@ -19,8 +22,6 @@ Other configuration (environment variables, optional):
     FF_JOB_QUEUE_CPU    (optional)                          CPU split queue
     FF_JOB_DEFINITION   (default: ff-training-job)          GPU job definition
     FF_JOB_DEFINITION_CPU  (optional)                       CPU split job definition
-    FF_JOB_DEFINITION_REVISION       (optional)             GPU job-def revision pin
-    FF_JOB_DEFINITION_CPU_REVISION   (optional)             CPU job-def revision pin
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
     FF_BATCH_LIFECYCLE_FILE  (optional)   write per-job orchestration-vs-run
                                           timing ledger JSON to this path
@@ -65,7 +66,7 @@ JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or No
 # stamp it into benchmark_metrics.json. benchmark.py uses it to verify all
 # six positions in a run reflect the same image (catches the lingering
 # manifest-write race when two train-batch runs land in quick succession,
-# even after Layer A pins the job-def revision). Empty -> not passed.
+# even after Layer A pins the job-def revision). Required for job submission.
 TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
 # Optional breadcrumb file recording the submitted Batch job ids. Set by
 # train-batch.yml so its post-timeout recovery step can re-check the SAME jobs
@@ -250,6 +251,24 @@ def _job_queue_for(position: str, branch: str = "full") -> str:
     if position in CPU_ONLY_POSITIONS and JOB_DEFINITION_CPU and JOB_QUEUE_CPU:
         return JOB_QUEUE_CPU
     return JOB_QUEUE
+
+
+def validate_submission_source(positions, *, split=False):
+    """Reject unidentifiable images before allocating any training jobs."""
+    from src.shared.artifact_publication import source_key
+
+    source_key("models", TRAIN_GIT_SHA or "")
+    branches = ("nn", "cpu", "merge") if split else ("full",)
+    for position in positions:
+        for branch in branches:
+            definition = _job_definition_for(position, branch=branch)
+            if not definition.rsplit(":", 1)[-1].isdigit():
+                raise RuntimeError(
+                    "Training requires an immutable Batch job-definition revision. "
+                    "Set FF_JOB_DEFINITION_REVISION (and FF_JOB_DEFINITION_CPU_REVISION "
+                    "for CPU/split jobs) from job-def-revisions/{FF_TRAIN_GIT_SHA}.txt "
+                    "before launching; bare latest job-definition names are not safe."
+                )
 
 
 def submit_job(
@@ -803,6 +822,11 @@ def main():
     if args.dry_run:
         _print_plan(args.positions, args.seed, split=args.split, split_run_id=split_run_id)
         return
+
+    try:
+        validate_submission_source(args.positions, split=args.split)
+    except RuntimeError as exc:
+        parser.error(str(exc))
 
     # Shared boto3 clients — boto3 clients are thread-safe, no need per-thread.
     s3_client = boto3.client("s3", region_name=AWS_REGION)

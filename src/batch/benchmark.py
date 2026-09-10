@@ -9,7 +9,8 @@ Usage:
     python src/batch/benchmark.py --positions RB WR QB     # subset
     python src/batch/benchmark.py --note "attention + LGBM on GPU"
 
-For job submission, set FF_TRAIN_GIT_SHA to the full built-image SHA. The
+For job submission, set FF_TRAIN_GIT_SHA to the full built-image SHA and
+FF_JOB_DEFINITION_REVISION to its registered numeric revision. The
 --git-hash option labels a recorded run; it does not select the training image.
 """
 
@@ -34,6 +35,7 @@ from src.batch.launch import (
     WAIT_TIMEOUT_SECONDS,
     submit_job,
     upload_data,
+    validate_submission_source,
     wait_for_jobs,
 )
 from src.scripts.bench_fingerprint import collect_code_fingerprints
@@ -393,6 +395,12 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    if not args.download_only:
+        try:
+            validate_submission_source(args.positions)
+        except RuntimeError as exc:
+            parser.error(str(exc))
 
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
     os.chdir(project_root)

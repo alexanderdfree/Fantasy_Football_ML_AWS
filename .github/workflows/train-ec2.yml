@@ -18,6 +18,10 @@ on:
       seed:
         description: "Random seed"
         default: "42"
+      image_sha:
+        description: "Required full SHA of an already-built training image"
+        required: true
+        type: string
 
 concurrency:
   group: train-ec2
@@ -253,7 +257,7 @@ jobs:
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
           SEED: ${{ github.event.inputs.seed || '42' }}
-          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
@@ -446,8 +450,7 @@ jobs:
           # from the image-build SHA on rapid back-to-back merges. ``$HEAD_SHA``
           # is the stable image-build SHA that FF_TRAIN_GIT_SHA stamps into the
           # metrics, so the recorded git_hash matches benchmark.py's coherency
-          # check. Empty under workflow_dispatch → benchmark.py falls back to
-          # the workspace HEAD via get_git_hash(). Mirrors train-batch.yml; see
+          # check. Manual dispatch requires image_sha as well. Mirrors train-batch.yml; see
           # the TODO.md "Benchmark git_hash" archive entry for the failure mode.
           NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
           NOTE_SHA="${NOTE_SHA::7}"

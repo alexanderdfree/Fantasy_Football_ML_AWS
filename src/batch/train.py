@@ -8,6 +8,9 @@ Environment variables set via job definition / container overrides:
   LOG_EVERY          = 1
   S3_BUCKET          = ff-predictor-training
   S3_DATA_PREFIX     = data
+  FF_TRAIN_GIT_SHA   = full source SHA matching the built image (required for
+                       full/nn/cpu/merge training; register ancestry via
+                       src.scripts.register_training_source before launch)
 """
 
 import argparse
@@ -33,7 +36,12 @@ import pandas as pd
 import torch
 
 from src.shared.artifact_gc import prune as _gc_prune
-from src.shared.artifact_publication import PublicationSuperseded, load_source, publish_artifact
+from src.shared.artifact_publication import (
+    PublicationSuperseded,
+    load_source,
+    publish_artifact,
+    source_key,
+)
 from src.shared.core_pool import ENV_ADDR, ENV_POS, lease_cores, start_coordinator
 from src.shared.model_sync import manifest_key, new_history_key
 from src.shared.platform_detect import detect_platform
@@ -1178,6 +1186,21 @@ def main():
         sys.argv = tune_argv
         tune_nn.main()
         return
+
+    # Verify actual image and ancestry before GPU, downloads or pipeline/merge.
+    # Diagnostic modes do not publish serving models and retain their own paths.
+    if not (args.dry_run or args.ablation or args.sweep):
+        source_sha = os.environ.get("FF_TRAIN_GIT_SHA", "")
+        try:
+            source_key("models", source_sha)
+            load_source(
+                boto3.client("s3"),
+                os.environ.get("S3_BUCKET", "ff-predictor-training"),
+                os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
+                source_sha,
+            )
+        except RuntimeError as exc:
+            parser.error(str(exc))
 
     # Print build fingerprint so stale container images are immediately obvious.
     _fingerprint_file = os.path.join(os.path.dirname(__file__), "train.py")

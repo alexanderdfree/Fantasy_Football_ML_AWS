@@ -1010,6 +1010,12 @@ class TestArtifactCopy:
 
 
 class TestMainIntegration:
+    @pytest.fixture(autouse=True)
+    def source_verified(self, monkeypatch):
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
+        monkeypatch.setattr("src.batch.train.load_source", lambda *a: {})
+        monkeypatch.setattr("src.batch.train.boto3.client", lambda *a, **k: object())
+
     @mock.patch("src.batch.train.sync_raw_data")
     @mock.patch("src.batch.train.upload_artifacts")
     @mock.patch("src.batch.train.shutil.copytree")
