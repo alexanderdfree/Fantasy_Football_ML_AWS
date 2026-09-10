@@ -1,4 +1,4 @@
-const REFRESH_MS = 5 * 60 * 1000;
+const REFRESH_MS = 60 * 1000;
 const RETRY_MS = 30 * 1000;
 const REQUEST_TIMEOUT_MS = 20 * 1000;
 const MAX_AGE_SECONDS = 4 * 60 * 60;
@@ -35,6 +35,8 @@ export function createUpcomingWeekStore({
     const refresh = () => {
         if (!listeners.size || pending) return pending;
         clearTimer(retryTimer);
+        // Resume immediately on visibility/focus instead of polling background tabs.
+        if (documentTarget?.visibilityState === "hidden") return;
         const requestGeneration = generation;
         const requestController = new AbortController();
         controller = requestController;

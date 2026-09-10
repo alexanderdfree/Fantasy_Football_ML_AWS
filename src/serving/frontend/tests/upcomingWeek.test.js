@@ -39,18 +39,38 @@ function setup(responses) {
     return { store, calls, timers, unsubscribe, tick, windowTarget, documentTarget };
 }
 
-test("ready results revalidate every five minutes and preserve original generation times", async () => {
+test("ready results revalidate every minute and preserve original generation times", async () => {
     const first = good();
     const updated = good({ week: 2 });
     const h = setup([response(first), response(updated)]);
     await flush();
     assert.equal(h.store.getSnapshot().data, first);
     assert.equal(h.calls[0].options.cache, "no-store");
-    await h.tick(300000);
+    await h.tick(60000);
     assert.equal(h.store.getSnapshot().data, updated);
     assert.equal(h.store.getSnapshot().data.generated_at, first.generated_at);
     h.unsubscribe();
     assert.equal(h.timers.size, 0);
+});
+
+test("background polling pauses while hidden and resumes immediately on return", async () => {
+    const first = good();
+    const updated = good({ week: 2 });
+    const h = setup([response(first), response(updated)]);
+    await flush();
+    h.documentTarget.visibilityState = "hidden";
+    h.documentTarget.dispatchEvent(new Event("visibilitychange"));
+    await h.tick(60000);
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.store.getSnapshot().data, first);
+    assert.equal(h.timers.size, 0);
+    h.documentTarget.visibilityState = "visible";
+    h.documentTarget.dispatchEvent(new Event("visibilitychange"));
+    await flush();
+    assert.equal(h.calls.length, 2);
+    assert.equal(h.store.getSnapshot().data, updated);
+    assert.ok([...h.timers.values()].some(({ delay }) => delay === 60000));
+    h.unsubscribe();
 });
 
 test("focus, visible-page return and manual refresh revalidate; hidden-page events do not", async () => {
@@ -124,7 +144,7 @@ test("verified offseason is rechecked, and unavailable data is never labeled off
     ]);
     await flush();
     assert.equal(h.store.getSnapshot().state, "offseason");
-    await h.tick(300000);
+    await h.tick(60000);
     assert.equal(h.store.getSnapshot().state, "error");
     await h.tick(30000);
     assert.equal(h.store.getSnapshot().state, "ready");

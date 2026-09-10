@@ -63,7 +63,12 @@ artifact with the training or explicit rollback workflow.
 
 Bootstrap reconciles the task role's `fantasy-s3-read` inline policy from
 `task-role-policy.json`: model/data reads, bucket listing, and writes limited
-to `models/predictions_cache/*`. Reruns preserve unrelated inline policies.
+to `models/predictions_cache/*`. Prior-version recovery additionally permits
+`GetObjectVersion` only for `models/predictions_cache/upcoming_week.json` and
+`ListBucketVersions` only with that exact prefix. S3 versioning must be enabled.
+Deploy does not reconcile IAM: apply these two statements to the task role before
+rolling out recovery (or use bootstrap for a full infrastructure reconciliation).
+Reruns preserve unrelated inline policies.
 Bootstrap also registers a fresh task definition and redeploys the service.
 
 ## Ongoing

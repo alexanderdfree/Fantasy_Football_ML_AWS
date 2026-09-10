@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
+
 - 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR pending) · → ADR-0018
 
 - 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR #1560) · → ADR-0011, ADR-0014
