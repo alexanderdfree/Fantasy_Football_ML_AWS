@@ -9,6 +9,9 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] macOS tests and benchmarks crashed with multiple OpenMP runtimes
+[Read the incident record](fixed-archive/macos-openmp-runtime-conflict.md).
+
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).
 

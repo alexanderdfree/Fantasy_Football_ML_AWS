@@ -14,7 +14,17 @@
 
 **References.** [src/shared/platform_detect.py](../../src/shared/platform_detect.py), [src/shared/utils.py](../../src/shared/utils.py), [src/shared/pipeline.py](../../src/shared/pipeline.py) (`_nn_device`), [src/shared/training.py](../../src/shared/training.py) (`_autocast` AMP-dtype rationale), [tests/shared/test_platform_detect.py](../../tests/shared/test_platform_detect.py), [tests/shared/test_device_selection.py](../../tests/shared/test_device_selection.py), [platform policy](../../agent-guides/platform.md), [SETUP.md](../../SETUP.md). Extends [D12](0012-training-step-perf-composition.md); pairs with the `FF_AMP_DTYPE` (#640) and `FF_COMPILE` (#641) AMP/compile entries in the Update history.
 
+**macOS dependency setup.** Scientific packages must load one OpenMP runtime per
+process. `scripts/fix_macos_openmp.py --apply` consolidates the selected Python
+environment's bundled LLVM OpenMP copies onto Homebrew's installed runtime,
+preserving originals and checking a fresh subprocess before accepting the
+repair. It uses standard-library OS detection before importing model/platform
+helpers, which would themselves load the conflicting libraries. This setup
+repair does not change device selection, training settings, or other platforms.
+
 ## Changelog
+
+- **2026-09-10** — Add reversible macOS OpenMP environment repair and a fresh-process runtime check after native test/benchmark crashes (PR #1554).
 
 > **Current status (as of 2026-06-22).** Default NN training dtype is **FP32 storage + TF32 matmuls (AMP off)** on every CUDA GPU, **pure FP32** off-CUDA — one FP32 family everywhere, so CPU/CI and cross-GPU benchmarks stay comparable (TF32 is numerically neutral). **FP16** (`FF_AMP_DTYPE=fp16`) and **BF16** (`bf16`, sm_80+) are opt-in. CUDA graphs autodetect ON for sm_80+ (`FF_CUDA_GRAPH{,_FULL,_OPT}` are force-off overrides). On the default path the graphed path is **per-step bit-exact / effectively inert** (graph-on vs -off = dropout-RNG seed-noise; A3 is bit-identical to A2) — **no rebaseline needed**. The ~0.5% worst-target graphed-vs-eager drift and the "graphed rebaseline" discipline apply **only to the opt-in FP16 path**. Dated entries below are historical and may describe the pre-flip FP16-default regime.
 
