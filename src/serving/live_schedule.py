@@ -193,6 +193,19 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
         "url": WEATHER_SOURCE,
         "games": len(enriched),
         "coverage": enriched["_weather_status"].value_counts().to_dict(),
+        "by_game": [
+            {
+                "game_id": str(row["game_id"]),
+                "venue": (row.get("venue") or {}).get("fullName"),
+                "kickoff": row.get("kickoff"),
+                "roof": row["roof"],
+                "weather": {"covered_venue": "indoor", "forecast": "forecast"}.get(
+                    row["_weather_status"], "unavailable"
+                ),
+                "retrieved_at": pd.Timestamp.now("UTC").isoformat(),
+            }
+            for row in enriched.to_dict("records")
+        ],
     }
     columns = list(dict.fromkeys([*base.columns, "temp", "wind"]))
     updates = enriched.reindex(columns=columns)

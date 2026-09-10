@@ -467,7 +467,11 @@ def run_upcoming_inference(
             featurized[keep],
             *[
                 frame.reindex(
-                    columns=list(dict.fromkeys([*keep, "player_display_name", "headshot_url"]))
+                    columns=list(
+                        dict.fromkeys(
+                            [*keep, "player_display_name", "headshot_url", "_is_upcoming"]
+                        )
+                    )
                 )
                 for frame in special_frames.values()
             ],
@@ -515,7 +519,7 @@ def run_upcoming_inference(
             continue
         train, val, _ = splits[pos]
         fitted_through = max(train["season"].max(), val["season"].max())
-        position_frame = special_frames[pos] if pos in special_frames else featurized
+        position_frame = special_frames.get(pos, featurized)
         context = position_frame[position_frame["season"].gt(fitted_through)].copy()
         try:
             if pos in ("K", "DST"):
@@ -877,7 +881,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         sched_rows,
         app_pkg._cache["k_kicks_df"],
         schedule_context=schedule_context,
-        weather_status=weather_metadata,
+        weather_status=weather_metadata["by_game"],
     )
 
     sig = _input_signature(

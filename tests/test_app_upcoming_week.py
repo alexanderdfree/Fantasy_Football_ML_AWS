@@ -671,16 +671,32 @@ def test_special_teams_inference_receives_both_live_history_sources(monkeypatch)
     k["_team_box_score_merged"] = True
     kicks = pd.DataFrame({"season": [2026], "week": [1], "kick_distance": [51]})
     weekly = pd.DataFrame({"season": [2026], "week": [1], "passing_yards": [321]})
-    bundle = SpecialTeamsFrames(k, dst, kicks, weekly, pd.DataFrame(), {}, "changed")
+    bundle = SpecialTeamsFrames(
+        pd.concat([k.assign(season=2024), k], ignore_index=True),
+        pd.concat([dst.assign(season=2024), dst], ignore_index=True),
+        kicks,
+        weekly,
+        pd.DataFrame(),
+        {},
+        "changed",
+    )
     monkeypatch.setattr(upcoming_week.core, "_ensure_base_data", lambda: None)
     monkeypatch.setattr(
-        upcoming_week.app_pkg, "_cache", {"splits": {"K": (k, k, k), "DST": (dst, dst, dst)}}
+        upcoming_week.app_pkg,
+        "_cache",
+        {
+            "splits": {
+                "K": (k.assign(season=2023), k.assign(season=2024), k),
+                "DST": (dst.assign(season=2023), dst.assign(season=2024), dst),
+            }
+        },
     )
     calls = []
 
     def apply(train, val, test, pos, results, **kwargs):
         calls.append(pos)
         assert set(test.position) == {pos}  # both special filters are identities
+        assert set(test.season) == {2026}  # fitted seasons already enter through train/val
         assert set(test.week) == {1, 2}
         if pos == "DST":
             assert "_schedule_merged" not in test

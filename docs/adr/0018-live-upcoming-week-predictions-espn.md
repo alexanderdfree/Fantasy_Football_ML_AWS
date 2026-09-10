@@ -16,6 +16,8 @@
 
 ## K/DST source contract
 
+The six-position CI refresh passes one verified `live_schedule` calendar and its per-game weather coverage into the K/DST builder, so venue, surface, odds, and forecast values agree across all positions. The standalone K/DST builder retains the gazetteer fallback described below when no enriched calendar is supplied.
+
 The CI builder combines historical caches with freshly fetched current-season records. It admits only completed games before the forecast week, appends outcome-free target rows, and never changes `TRAIN_SEASONS`, `VAL_SEASONS`, or `TEST_SEASONS`. DST gets a placeholder QB row per target team so its existing shifted opponent aggregates are materialized for that week; these placeholders never enter the opposing-offense history input. Current kick and opponent histories are function arguments rather than mutations of the serving cache.
 
 Weather uses the event's venue and UTC kickoff. A stadium gazetteer linked from [nflverse-data issue #57](https://github.com/nflverse/nflverse-data/issues/57), plus explicit newer international venues, resolves coordinates. Unknown venue mappings produce unavailable weather instead of a home-city guess. ESPN's outdoor flag overrides inherited venue defaults (the 2026 Melbourne game was labeled a dome in the schedule); an indoor flag alone does not establish a retractable roof's game-day state. [Open-Meteo](https://open-meteo.com/en/docs) forecasts use Fahrenheit and mph, enforce a bounded kickoff-hour match, and expose retrieval time and per-game availability. Historical replay supplies historical context explicitly; it does not fetch today's forecast for a past game.

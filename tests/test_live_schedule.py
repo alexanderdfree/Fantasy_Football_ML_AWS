@@ -80,6 +80,9 @@ def test_neutral_venue_live_odds_weather_and_rest_reach_model(monkeypatch):
     assert result.temp_adjusted.tolist() == [58.0, 58.0]
     assert result.wind_adjusted.tolist() == [11.0, 11.0]
     assert meta["coverage"] == {"forecast": 1}
+    assert meta["by_game"][0]["weather"] == "forecast"
+    assert meta["by_game"][0]["venue"] == "Melbourne Cricket Ground"
+    assert meta["by_game"][0]["roof"] == "outdoors"
 
 
 def test_forecast_outage_is_reported_and_keeps_espn_temperature(monkeypatch):
@@ -90,6 +93,7 @@ def test_forecast_outage_is_reported_and_keeps_espn_temperature(monkeypatch):
     assert enriched.temp.iloc[0] == 55.0
     assert pd.isna(enriched.wind.iloc[0])
     assert meta["coverage"] == {"partial_or_unavailable": 1}
+    assert meta["by_game"][0]["weather"] == "unavailable"
 
 
 def test_forecast_uses_kickoff_hour_and_explicit_units():

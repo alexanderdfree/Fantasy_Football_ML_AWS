@@ -352,9 +352,6 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             )}
 
             <div className="results-info">
-                {data?.sources?.weather?.url && (
-                    <span>Weather: <a href={data.sources.weather.url} target="_blank" rel="noreferrer">Open-Meteo</a></span>
-                )}
                 <span id="homepage-count">
                     {state === "ready" ? `${rows.length.toLocaleString()} player${rows.length !== 1 ? "s" : ""}` : ""}
                 </span>
