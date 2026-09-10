@@ -16,6 +16,28 @@ from src.shared.aggregate_targets import DST_TARGETS, predictions_to_fantasy_poi
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _offline_espn(monkeypatch):
+    monkeypatch.setattr(core, "load_espn_with_gsis_id", lambda seasons: pd.DataFrame())
+
+
+def test_espn_joins_all_formats_and_leaves_missing_players_null():
+    results = _results_frame()
+    raw = _rotowire_raw().assign(fg_yard_points=0.0, pat_points=0.0, fg_misses=0.0, xp_misses=0.0)
+    core._apply_expert_predictions(
+        results,
+        nflcom_loader=lambda **kw: pd.DataFrame(),
+        rotowire_loader=lambda seasons: pd.DataFrame(),
+        espn_loader=lambda seasons: raw,
+    )
+    rb = results.iloc[0]
+    assert rb.espn_pred_ppr == 16
+    assert rb.espn_pred_half_ppr == 15
+    assert rb.espn_pred_standard == 14
+    assert pd.isna(results.iloc[1].espn_pred)
+    assert pd.notna(results.iloc[2].espn_pred)
+
+
 def test_serving_core_does_not_import_analysis_package():
     """Production Docker excludes src/analysis, so serving imports must not rely on it."""
     tree = ast.parse(Path(core.__file__).read_text(encoding="utf-8"))
@@ -223,7 +245,10 @@ def test_apply_expert_predictions_loader_failure_leaves_stable_null_columns():
     def _boom(*args, **kwargs):
         raise RuntimeError("source down")
 
-    core._apply_expert_predictions(results, nflcom_loader=_boom, rotowire_loader=_boom)
+    core._apply_expert_predictions(
+        results, nflcom_loader=_boom, rotowire_loader=_boom, espn_loader=_boom
+    )
+    assert results.espn_pred.isna().all()
 
     for source in ("nflcom", "rotowire"):
         for scoring in ("ppr", "half_ppr", "standard"):

@@ -48,6 +48,7 @@ from src.features.engineer import (
     build_opp_defense_history_arrays,
     get_attn_static_columns,
 )
+from src.serving.espn_projections import load_espn_with_gsis_id, project_espn_to_fantasy
 from src.serving.expert_sources import (
     load_sleeper_with_gsis_id,
     project_nflcom_to_fantasy,
@@ -234,6 +235,7 @@ def _apply_expert_predictions(
     *,
     nflcom_loader=None,
     rotowire_loader=None,
+    espn_loader=None,
 ) -> None:
     """Add optional per-player expert projections to the serving results frame.
 
@@ -252,6 +254,8 @@ def _apply_expert_predictions(
         nflcom_loader = load_nflcom_with_gsis_id
     if rotowire_loader is None:
         rotowire_loader = load_sleeper_with_gsis_id
+    if espn_loader is None:
+        espn_loader = load_espn_with_gsis_id
 
     raw_nflcom = None
     try:
@@ -269,8 +273,22 @@ def _apply_expert_predictions(
     if raw_rotowire is not None and (raw_rotowire.empty or "position" not in raw_rotowire.columns):
         raw_rotowire = None
 
+    raw_espn = None
+    try:
+        raw_espn = espn_loader(seasons)
+    except Exception as e:  # noqa: BLE001 - expert data is optional in serving
+        print(f"[experts] ESPN projections unavailable: {e!r}")
+    if raw_espn is not None and (raw_espn.empty or "position" not in raw_espn.columns):
+        raw_espn = None
+
     for fmt in _VALID_SCORING:
         for pos in _ALL_POSITIONS:
+            if raw_espn is not None:
+                try:
+                    espn = project_espn_to_fantasy(raw_espn, pos, fmt)
+                    _assign_expert_totals(results, "espn", fmt, espn, "espn_pred_total")
+                except Exception as e:  # noqa: BLE001 - one source/position can degrade
+                    print(f"[experts] ESPN {pos}/{fmt} projection failed: {e!r}")
             if raw_nflcom is not None and pos != "DST":
                 try:
                     nfl = project_nflcom_to_fantasy(raw_nflcom, pos, fmt)
@@ -1397,7 +1415,9 @@ _FINGERPRINT_JSON = "fingerprint.json"
 # The fix lives in serving code only, so the model fingerprint is unchanged and a
 # fresh container would otherwise re-hydrate the stale null-NFL.com cache. The
 # schema bump invalidates it so the corrected expert join repopulates the column.
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 7
+# v8 adds ESPN historical projections to every per-row scoring format. Old
+# snapshots must recompute or ESPN would remain null despite the new column.
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 8
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is

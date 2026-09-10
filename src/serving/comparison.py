@@ -25,7 +25,7 @@ from src.shared.evaluation import compute_metrics
 # Comparison tab: our model vs expert projection sources
 # ---------------------------------------------------------------------------
 #
-# The expert (NFL.com / RotoWire) numbers are static — generated offline by
+# The expert (NFL.com / RotoWire / ESPN) numbers are static — generated offline by
 # ``src.analysis.build_comparison_summary`` and committed beside this file. Our
 # model's column is computed LIVE from the loaded models (same metrics path as
 # the Model Performance tab), so it auto-updates on every retrain. The committed
@@ -198,7 +198,7 @@ def _quartile_bias_from_results(results, scoring, pos, n_q=4):
     Bins the position's test rows into ``n_q`` quartiles by **actual** fantasy
     points — Q1 = lowest scorers … Q4 = highest / boom weeks — rank-based so tied
     actuals never collapse a bin. For every prediction source (our four models
-    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the two experts ``nflcom``/``rotowire``,
+    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus ``nflcom``/``rotowire``/``espn``,
     i.e. ``_ROW_PRED_PREFIXES``) it reports per-quartile ``{n, mae, bias}`` where
     ``bias = mean(pred − actual)`` — **bias > 0 ⇒ over-predicts** (same residual
     convention as ``_model_reliabilities_from_results`` / ``expert_uncertainty``).

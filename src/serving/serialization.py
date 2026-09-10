@@ -11,7 +11,7 @@ import numpy as np
 
 _VALID_SCORING = ("ppr", "half_ppr", "standard")
 _MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
-_EXPERT_PRED_PREFIXES = ("nflcom", "rotowire")
+_EXPERT_PRED_PREFIXES = ("nflcom", "rotowire", "espn")
 _ROW_PRED_PREFIXES = (*_MODEL_PRED_PREFIXES, *_EXPERT_PRED_PREFIXES)
 
 # (display_name, column_prefix) pairs — the per-model metrics loop in

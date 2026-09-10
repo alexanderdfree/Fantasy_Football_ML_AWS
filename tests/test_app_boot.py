@@ -282,6 +282,7 @@ def boot_env(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(core, "load_nflcom_with_gsis_id", lambda seasons: pd.DataFrame())
     monkeypatch.setattr(core, "load_sleeper_with_gsis_id", lambda seasons: pd.DataFrame())
+    monkeypatch.setattr(core, "load_espn_with_gsis_id", lambda seasons: pd.DataFrame())
 
     # Reset the module cache so _load_base_data_locked actually runs (the
     # early-return on _cache["base_loaded"] would otherwise skip everything).

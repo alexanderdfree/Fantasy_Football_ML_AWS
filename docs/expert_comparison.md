@@ -18,7 +18,7 @@ This document compares our model's weekly fantasy point predictions against publ
 - Expert sites and our model were not evaluated on identical player pools or seasons. Expert accuracy rankings (e.g., from Fantasy Football Analytics) cover 2019-2023 and use curated pools (top 20 QBs, top 50 RBs/WRs, top 20 TEs), while our test set covers all 2025 rostered players.
 - Most expert accuracy rankings report *relative* rankings (1st, 2nd, 3rd by position) rather than raw MAE values, making direct numerical comparison difficult.
 - Scoring format differences (standard vs. half-PPR vs. full PPR) shift absolute point totals and therefore MAE.
-- One source — **NFL.com** — publishes per-game projections we can score directly; see "NFL.com Head-to-Head Baseline" below for the apples-to-apples MAE.
+- **NFL.com, Sleeper/RotoWire, FFToday and ESPN** provide per-game projections scored directly below. The Comparison tab displays NFL.com, RotoWire and ESPN; FFToday remains an internal benchmark.
 - **Training loss ≠ evaluation metric.** Our models train with Huber loss (robust to the boom/bust tail of fantasy scoring), but every comparison here is on MAE / RMSE / R² over held-out predictions — metrics that don't depend on what any model trained on. Squared error is the consistent scoring rule for the conditional *mean* (which mean-oriented expert projections implicitly target) and absolute error for the *median* (Gneiting 2011); Huber is consistent only for an intermediate robust "Huber mean" functional (Taggart 2022), so we never score a head-to-head *with* Huber. We report MAE (the better-matched summary for heavy-tailed errors) and RMSE side by side — RMSE because it favors the experts' implicit squared-error objective, which makes beating them on it the stronger claim.
 - Despite these limitations, published accuracy thresholds and academic benchmarks provide meaningful context for interpreting our results.
 
@@ -155,6 +155,27 @@ A second expert is wired into the same tool: **RotoWire projections via Sleeper'
 | DST | 544 | 5.092 | 5.133 | -0.041 | [-0.17, 0.10] | 0.49 | -0.006 | 0.92 |
 
 RotoWire is marginally *less* accurate than NFL.com (QB 6.24 vs 5.76). On the current served artifacts the model **ties RotoWire on MAE at every covered position** — including RB and WR, where earlier revisions of this table (computed against the pre-regen model generation) recorded statistically significant losses (Δ +0.217 / +0.132, p ≤ 0.003; now Δ +0.075 / +0.011, p = 0.20 / 0.81) — and QB now reads the same against both experts (a tie; the old "trails NFL.com, ties RotoWire" split was the stale-QB-artifact era, see above). What survives, and decisively, is RotoWire's **RMSE edge at RB and WR** (Δ +0.23 / +0.25, DM p ≤ 8.4e-4), with Spearman ρ trailing at both (0.715 vs 0.749; 0.620 vs 0.654): a boom/bust-tail + rank-ordering edge, the same shape the multi-season rolling-origin study pinned down and monotone recalibration cannot close ([todo/expert-gap-investigation-2026-06.md](../todo/expert-gap-investigation-2026-06.md) §1a/§3). NFL.com shows the same residual shape at WR (ΔRMSE +0.12, DM p = 0.015, on a WR MAE dead-tie). MAE parity with the ordering gap still open is exactly why the action plan targets RB/WR *ordering*, not calibration.
+
+### ESPN historical comparison (added 2026-09-10)
+
+[`src/serving/espn_projections.py`](../src/serving/espn_projections.py) reads ESPN's public fantasy API through the existing timeout/retry client, caches one season per file, and bridges athlete IDs through nflverse's `espn_id` crosswalk; DST uses normalized franchise codes. Requests were verified for 2018–2025. Only regular-season weekly projection entries are accepted (`statSourceId=1`, `statSplitTypeId=1`); actuals, season totals, metadata-only placeholders and the incomplete **2023 Week 1** are excluded. Sparse receiving-only RB forecasts remain valid.
+
+All six positions use this project's raw-stat scoring, rather than ESPN's `appliedTotal`. This matters for WR/TE's target set, two-point conversions, kickers (stat 214 is made-FG yardage, allowing `0.1 * yards + XP - misses`), and DST (our PA/YA tiers, with return TDs counted once). Historical K rows lacking made-FG yardage are excluded rather than approximated from buckets. DST applies the same tier function to projected PA/YA as our models and RotoWire; this is not the expectation over ESPN's bucket probabilities. [ESPN stat dictionary maintained by espn-api](https://github.com/cwendt94/espn-api/blob/master/espn_api/football/constant.py).
+
+The refreshed **2025 expert-versus-actual** PPR summary has these ESPN results. These are source-specific samples, not evidence that ESPN beats another source or our model; the paired script supplies that comparison.
+
+| Position | Matched rows | MAE | RMSE | R² |
+|---|---:|---:|---:|---:|
+| QB | 547 | 6.1134 | 7.5947 | 0.1316 |
+| RB | 1,327 | 4.6947 | 6.3443 | 0.4191 |
+| WR | 2,189 | 4.3996 | 5.9115 | 0.3524 |
+| TE | 1,129 | 3.6536 | 5.1603 | 0.3042 |
+| K | 539 | 4.0939 | 5.1317 | 0.0157 |
+| DST | 544 | 5.1441 | 6.6202 | 0.0970 |
+
+**Provenance limit:** ESPN does not document immutable kickoff snapshots. Fractional forecasts and substantial forecast errors argue against wholesale box-score substitution in the checked data, but do not prove point-in-time integrity. Missing projections stay missing. The 2023 Week 1 exclusion must remain unless a separately verified archive fills it. The 2018–2021 QB archive contains many tiny backup forecasts, so a naive near-exact-error threshold can mistake that cohort for backfilled actuals.
+
+Regenerate the dashboard summary with `python -m src.analysis.build_comparison_summary`; run the paired comparison with `python -m src.analysis.analysis_expert_comparison`. Both include ESPN by default. The summary rebuild also refreshes other expert statistics and actual-based top-12/top-30 cohorts against current nflverse data. Model training inputs and weights are unaffected.
 
 ### Third expert: FFToday (the ≥2013 archive)
 
