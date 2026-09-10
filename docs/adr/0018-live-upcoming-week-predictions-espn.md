@@ -41,7 +41,7 @@ Age/rookie metadata uses the fetched current-season weekly roster and actual gam
 
 ## Changelog
 
-- **2026-09-10** — Mitigate refresh downtime with hourly off-peak scheduling, eligibility-aware concurrency, bounded transfer retries, validated atomic downloads, previous-version cold-start recovery and one-minute conditional S3 / visible-browser polling. Preserve stale warnings and the off-container build/data compatibility boundary. (PR pending.)
+- **2026-09-10** — Mitigate refresh downtime with hourly off-peak scheduling, eligibility-aware concurrency, bounded transfer retries, validated atomic downloads, previous-version cold-start recovery and one-minute conditional S3 / visible-browser polling. Preserve stale warnings and the off-container build/data compatibility boundary. (PR #1572.)
 
 - **2026-09-10** — Recover live roster crosswalk gaps only through a unique current-week team/position/name/date-of-birth match with active weekly status. Share recovered identities with injury/depth consumers; disclose unresolved identity/eligibility and injury exclusions in artifact metadata. Official practice aliases join through current-week GSIS identity, preserving ambiguity and overriding stale fallback reports. Request all game-level QBR observations, including short appearances excluded from qualified leaderboards, while retaining completed-game/identity validation. Historical correction publication is covered by the coherent raw/split release contract in ADR-0026. (PR pending.)
 

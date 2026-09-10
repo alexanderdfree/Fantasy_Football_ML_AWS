@@ -1,6 +1,6 @@
 ### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
 
-**File(s):** `.github/workflows/refresh-upcoming-week.yml`, `src/serving/upcoming_artifact.py`, `src/serving/upcoming_week.py`, `src/serving/frontend/src/lib/upcomingWeek.js`, `infra/aws/task-role-policy.json` (PR pending; baseline `3fca0605`).
+**File(s):** `.github/workflows/refresh-upcoming-week.yml`, `src/serving/upcoming_artifact.py`, `src/serving/upcoming_week.py`, `src/serving/frontend/src/lib/upcomingWeek.js`, `infra/aws/task-role-policy.json` (PR #1572; baseline `3fca0605`).
 
 **What:** The September 1–9 investigation found 45 actual scheduled runs against 72 nominal three-hour ticks. All 45 published, but the median interval between created runs was 4h48m. Runtime/browser pickup added up to 10/5 minutes. Unsuccessful training notifications could replace a useful pending refresh before their job was skipped. Downloaded bytes replaced the cache without validation, and cold containers had no older-version recovery.
 
