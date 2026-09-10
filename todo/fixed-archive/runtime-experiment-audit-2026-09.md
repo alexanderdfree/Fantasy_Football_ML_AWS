@@ -4,7 +4,7 @@
 `src/tuning/ablate_backbone_norm.py`, `src/tuning/ablate_injury_features.py`,
 `src/tuning/ablate_ridge_pca.py`, `src/tuning/ablate_rb_gate.py`,
 `src/tuning/ablate_scheduler_type.py`, `src/shared/error_analysis.py`,
-`src/shared/registry.py`, and offensive-position `targets.py` files.
+`src/shared/registry.py`, `src/dst/data.py`, and offensive-position `targets.py` files.
 Defects reproduced against `92be2873` during the 2026-09-10 audit.
 
 **What**:
@@ -25,6 +25,8 @@ Defects reproduced against `92be2873` during the 2026-09-10 audit.
 - Fixed quartile labels conflicted with duplicate quantile edges. K nested
   inference omitted configured head widths. Two-point conversion adjustments
   falsely warned about correct canonical targets and could hide corruption.
+- Native D/ST data omitted its proven REG season type. The subsequent pass
+  reproduced public `run_cv()` failing the shared fold contract at `0f0fec55`.
 
 **Fix**: Preserve requested seeds and cache them explicitly; share native frame
 preparation and K history closure semantics inside analysis-only helpers.
@@ -35,7 +37,8 @@ shift expanding statistics within player groups, and use the requested format
 with canonical shared projected components. Preserve missing-data status,
 return zero F1 for valid zero overlap, support external result paths, and keep
 tied quantile values together. Mirror K head widths and validate target
-decomposition against the actual upstream scoring contract.
+decomposition against the actual upstream scoring contract. Preserve REG
+metadata from the native D/ST schedule population so shared CV folds can run.
 
 **Validation**: Original-code controls reproduce each defect. Four real
 CONFIG_TINY KEEP/CUT cells ran for K/DST with attention enabled and finite
@@ -43,6 +46,9 @@ predictions. Analysis and legacy tuning suites passed 323 and 307 unit tests
 respectively before combined delivery checks. Six-position checkpoint tests
 verify training/inference shapes; source-table controls retain healthy PPR,
 complete coverage, correctly paired seeds and real-corruption detection.
+The D/ST CV regression reaches all four real fold partitions before a mocked
+training boundary. Its paired normal-pipeline comparison is recorded in
+`benchmark_history/audits/2026-09-10-runtime-dst-comparison.json`.
 
 **Lesson**: A correctly shaped report can still describe a different seed,
 dataset, scoring basis or comparison. Follow the real caller and preserve
