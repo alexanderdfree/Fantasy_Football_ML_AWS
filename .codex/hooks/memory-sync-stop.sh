@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stop hook: best-effort push of local agent memories to their separate S3
-# prefixes. Push both trees so cross-agent memory updates made on this machine
+# prefixes. Push all three trees (Claude/Codex/Gemini) so updates made on this machine
 # are not stranded in one local store.
 set -u
 

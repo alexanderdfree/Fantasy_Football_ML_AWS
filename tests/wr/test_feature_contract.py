@@ -1,7 +1,6 @@
 """Feature contract for the WR-specific features.
 
-Complements ``tests/test_feature_leakage.py`` with a columnar contract: after
-``add_specific_features`` runs, the documented WR-specific columns must:
+After ``add_specific_features`` runs, the documented WR-specific columns must:
 
   * all be present (none silently dropped)
   * be numeric (float dtype)

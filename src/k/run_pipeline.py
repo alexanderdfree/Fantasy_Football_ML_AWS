@@ -68,9 +68,10 @@ def run(seed=42, config=None):
     # Closure over kicks_df so the shared pipeline can build nested history
     # arrays for each split without knowing kicker specifics. The window shape
     # (attn_max_games etc.) is read from ``cfg`` inside the helper so a tuner
-    # override via ``run(config=...)`` takes effect — these keys aren't plumbed
-    # into the cfg dict by ``build_pipeline_config`` (K's nested attention is the
-    # sole consumer), so the closure is the only place a tuner override can land.
+    # override via ``run(config=...)`` takes effect. ``build_pipeline_config``
+    # emits ``attn_max_games`` and ``attn_max_kicks_per_game``; only
+    # ``attn_kick_stats`` uses the POSITION_CONFIG fallback unless the caller
+    # adds a cfg override.
     # Shared with ``run_cv`` via ``_build_kick_history_closure``.
     cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
 

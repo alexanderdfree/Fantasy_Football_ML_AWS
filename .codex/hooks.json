@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/session-start.sh\"",
-            "statusMessage": "Loading Final-Project Codex context"
+            "statusMessage": "Loading Fantasy_Football_ML_AWS Codex context"
           }
         ]
       }

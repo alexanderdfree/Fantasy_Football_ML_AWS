@@ -4,6 +4,12 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 
 ---
 
+### [FIXED] Lint CI drifted from the development Ruff pin
+- **File(s):** [../.github/workflows/tests.yml](../.github/workflows/tests.yml), [../tests/test_dependency_pins.py](../tests/test_dependency_pins.py) (audit #1509; PR pending).
+- **What:** The lint job independently pinned Ruff 0.15.16 while development requirements had advanced to 0.15.20, and then 0.16.6. Existing dependency parity tests did not inspect the lint install command.
+- **Fix:** Read the exact Ruff requirement from `requirements-dev.txt` in the lint install step. The contract test executes that step with a stub `uv` for both the current requirement and a future synthetic pin; development and GPU pins are checked together.
+- **Lesson:** A second hardcoded pin inevitably drifts. Test the consuming install command against the canonical requirement so future dependency bumps reach CI automatically.
+
 ### [FIXED] Current-tree bloat: duplicated experiment execution, copied helpers, and unused skip markers
 - **File(s):** `src/tuning/_execution.py`, `src/tuning/ab_harness.py`, `src/tuning/ablation_runner.py`, `src/tuning/ablate_batch.py`, shared offline helpers in `src/tuning/` and `src/analysis/`, `src/analysis/sleeper_loader.py`, `.github/workflows/skip-sentinel.yml` (removed), `benchmark_history/` (391 placeholder records removed), `AGENTS.md`, `agent-workflows/operating-lessons.md`; implementation `99e977ed`.
 - **What:** Eager ablations and A/B specs duplicated process orchestration and output isolation; Sleeper, feature-audit, topology, and subgroup helpers had copied implementations. The skip workflow kept creating records that both the web and iOS History views hide. Provider mechanics and detailed operating lessons made the startup orientation unnecessarily long. A generated `tune_rb_gate_results.json` was still tracked despite its ignore rule.

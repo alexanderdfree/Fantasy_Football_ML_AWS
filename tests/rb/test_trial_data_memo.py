@@ -59,8 +59,6 @@ def _run_in_tmp(cfg, workdir, *, train_df=None, val_df=None, test_df=None, seed=
     data_raw_src = _find_data_raw_dir()
     try:
         os.chdir(workdir)
-        os.makedirs("src/rb/outputs/models", exist_ok=True)
-        os.makedirs("src/rb/outputs/figures", exist_ok=True)
         dst = os.path.join(workdir, "data", "raw")
         if not os.path.exists(dst):
             os.makedirs(os.path.dirname(dst), exist_ok=True)

@@ -2,8 +2,11 @@
 
 Downstream consumers (training pipeline, serving, tests) read from the
 exported ``POSITION_CONFIG`` exclusively. ``CONFIG_TINY`` and
-``ATTN_STATIC_CATEGORIES`` remain at module level — the former is used by
-direct-import e2e tests, the latter by the attention-static whitelist test.
+``ATTN_STATIC_CATEGORIES`` remain at module level — the former is picked up
+by ``tests/_pipeline_e2e_utils.build_tiny_config('RB')`` and
+``src/shared/run_pipeline_factory.py``'s ``--tiny`` CLI path via a
+``getattr(config_mod, "CONFIG_TINY", None)`` lookup; the latter by the
+attention-static whitelist test.
 """
 
 from src.shared.position_config import (

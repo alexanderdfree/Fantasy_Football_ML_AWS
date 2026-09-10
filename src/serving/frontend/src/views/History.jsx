@@ -118,10 +118,9 @@ function SummaryPills({ entries }) {
 }
 
 function historyColumns(groupByPosition, metric) {
-    // Group-by-position (default): one column per position. These carry no
-    // .{model}-col class, so the page-wide #model-display hide rule is
-    // intentionally inert here (model becomes an inner dimension). Group-by-model:
-    // one column per model, keeping .{model}-col so #model-display still filters.
+    // Group-by-position (default): one column per position, with models inside
+    // each cell. Group-by-model: one column per model, labeled with the selected
+    // metric. The view's grouping and metric controls rebuild these columns.
     if (groupByPosition) {
         return HISTORY_POSITIONS.map(pos => ({ key: pos, label: pos, cls: "col-history-mae" }));
     }
