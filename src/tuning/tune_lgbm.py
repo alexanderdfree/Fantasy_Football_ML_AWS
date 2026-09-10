@@ -33,7 +33,7 @@ from src.config import SPLITS_DIR
 from src.data.split import expanding_window_folds
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 from src.shared.models import LightGBMMultiTarget
-from src.shared.pipeline import _prepare_position_data
+from src.shared.pipeline import _prepare_position_data, _reporting_frame
 from src.tuning.history import append_tuning_run
 
 _DEFAULT_SEEDS = (42, 43, 44)
@@ -510,6 +510,10 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
     def _total(preds):
         return agg(preds) if agg is not None else sum(preds[t] for t in targets)
 
+    report_test = _reporting_frame(
+        pos_test, {**cfg, "aggregate_fn": agg or _total}, y_test_dict, source_frame=test_df
+    )
+
     per_seed = []
     for seed in seeds:
         with _lease_lgbm_cores("tune_lgbm_compare") as leased_n_jobs:
@@ -523,9 +527,13 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
         old_preds = old_model.predict(X_test)
         old_metrics = compute_target_metrics(y_test_dict, old_preds, targets)
 
-        pos_test_old = pos_test.copy()
+        pos_test_old = report_test.copy()
         pos_test_old["pred_lgbm_total"] = _total(old_preds)
-        old_ranking_raw = compute_ranking_metrics(pos_test_old, pred_col="pred_lgbm_total")
+        old_ranking_raw = compute_ranking_metrics(
+            pos_test_old.dropna(subset=["actual_projected_total"]),
+            pred_col="pred_lgbm_total",
+            true_col="actual_projected_total",
+        )
         old_ranking = {
             "hit_rate": old_ranking_raw["season_avg_hit_rate"],
             "spearman": old_ranking_raw["season_avg_spearman"],
@@ -542,9 +550,13 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
         new_preds = new_model.predict(X_test)
         new_metrics = compute_target_metrics(y_test_dict, new_preds, targets)
 
-        pos_test_new = pos_test.copy()
+        pos_test_new = report_test.copy()
         pos_test_new["pred_lgbm_total"] = _total(new_preds)
-        new_ranking_raw = compute_ranking_metrics(pos_test_new, pred_col="pred_lgbm_total")
+        new_ranking_raw = compute_ranking_metrics(
+            pos_test_new.dropna(subset=["actual_projected_total"]),
+            pred_col="pred_lgbm_total",
+            true_col="actual_projected_total",
+        )
         new_ranking = {
             "hit_rate": new_ranking_raw["season_avg_hit_rate"],
             "spearman": new_ranking_raw["season_avg_spearman"],

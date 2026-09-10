@@ -43,7 +43,15 @@ from src.analysis.cohort_analysis import (  # noqa: E402
     available_models,
     per_model_metrics,
 )
+from src.analysis.comparison_data import (  # noqa: E402
+    PROJECTED_ACTUAL,
+    PROJECTED_METADATA,
+    PROJECTED_METADATA_BY_POSITION,
+    attach_comparison_actuals,
+    comparison_actuals,
+)
 from src.config import POSITIONS  # noqa: E402
+from src.shared.comparison_scoring import score_actual_components, scoring_components  # noqa: E402
 
 # The four trained models we compare; ATTN is the subject of the study.
 MODELS = {
@@ -78,13 +86,19 @@ def _run_position(pos: str, seed: int) -> pd.DataFrame:
     """Run one position's production pipeline and return its test_df slice."""
     mod = importlib.import_module(f"src.{pos.lower()}.run_pipeline")
     result = mod.run(seed=seed)
-    df = result["test_df"].copy()
+    df = attach_comparison_actuals(result["test_df"], pos)
     df["position"] = pos
     df["seed"] = seed
-    keep = ["position", "seed", "player_id", "season", "week", ACTUAL] + [
+    keep = ["position", "seed", "player_id", "season", "week", ACTUAL, PROJECTED_ACTUAL] + [
         c for c in MODELS.values() if c in df.columns
     ]
-    # Keep a couple of role/volume columns when present for richer subgrouping.
+    # Raw components let the expert-only report copy use the requested scoring
+    # format, while the standalone diagnostic keeps its original full-FP labels.
+    components = scoring_components(pos)
+    keep += list(components)
+    keep += [
+        f"{total[: -len('total')]}{target}" for total in MODELS.values() for target in components
+    ]
     return df[[c for c in keep if c in df.columns]].reset_index(drop=True)
 
 
@@ -96,7 +110,7 @@ def collect(positions, seeds, cache_dir: str | None) -> pd.DataFrame:
             cpath = None
             if cache_dir:
                 Path(cache_dir).mkdir(parents=True, exist_ok=True)
-                cpath = Path(cache_dir) / f"{pos.lower()}_seed{seed}.parquet"
+                cpath = Path(cache_dir) / f"{pos.lower()}_seed{seed}_shared_v1.parquet"
                 if cpath.exists():
                     print(f"  [cache] {pos} seed={seed}")
                     frames.append(pd.read_parquet(cpath))
@@ -106,7 +120,13 @@ def collect(positions, seeds, cache_dir: str | None) -> pd.DataFrame:
             if cpath is not None:
                 df.to_parquet(cpath, index=False)
             frames.append(df)
-    return pd.concat(frames, ignore_index=True)
+    collected = pd.concat(frames, ignore_index=True)
+    collected.attrs[PROJECTED_METADATA_BY_POSITION] = {
+        str(frame["position"].iloc[0]): frame.attrs[PROJECTED_METADATA]
+        for frame in frames
+        if not frame.empty and PROJECTED_METADATA in frame.attrs
+    }
+    return collected
 
 
 # --------------------------------------------------------------------------- #
@@ -149,6 +169,16 @@ def attach_experts(df: pd.DataFrame, scoring_format: str = "ppr") -> pd.DataFram
         return out.drop_duplicates(["player_id", "season", "week"])
 
     df = df.copy()
+    for pos in df["position"].unique():
+        selected = df["position"].eq(pos)
+        rows = df.loc[selected]
+        df.loc[selected, ACTUAL] = comparison_actuals(rows, pos, scoring_format)
+        if scoring_format != "ppr":
+            for column in MODELS.values():
+                if column in df:
+                    df.loc[selected, column] = score_actual_components(
+                        rows, pos, scoring_format, prefix=column[: -len("total")]
+                    )
     df["player_id"] = df["player_id"].astype(str)
     df["season"] = df["season"].astype(int)
     df["week"] = df["week"].astype(int)
@@ -159,6 +189,7 @@ def attach_experts(df: pd.DataFrame, scoring_format: str = "ppr") -> pd.DataFram
     n_nfl = int(df[EXPERTS["NFL.com"]].notna().sum())
     n_sl = int(df[EXPERTS["Sleeper"]].notna().sum())
     print(f"  matched: NFL.com {n_nfl}/{len(df)} rows, Sleeper {n_sl}/{len(df)} rows")
+    df.attrs["expert_comparison_scoring"] = scoring_format
     return df
 
 
@@ -382,9 +413,11 @@ def _section_experts_weekly(df, out, figdir):
     if n_col not in df.columns or s_col not in df.columns:
         out.append("_Expert columns absent — run with `--experts`._\n")
         return
-    sub = df[df["position"].isin(OFFENSE)].dropna(subset=[n_col, s_col]).copy()
+    compared = [ACTUAL, n_col, s_col, *_models_in(df).values()]
+    sub = df[df["position"].isin(OFFENSE)].replace([np.inf, -np.inf], np.nan)
+    sub = sub.dropna(subset=compared).copy()
     if sub.empty:
-        out.append("_No player-weeks with both NFL.com and Sleeper projections._\n")
+        out.append("_No common player-weeks with matching projected actuals and all forecasts._\n")
         return
     out.append(
         f"Common ground = offense skill positions {OFFENSE} where both experts "
@@ -452,8 +485,7 @@ def main() -> None:
 
     df = collect(positions, seeds, args.cache)
     print(f"Collected {len(df)} prediction rows across {df['position'].nunique()} positions.")
-    if args.experts:
-        df = attach_experts(df, args.scoring)
+    expert_df = attach_experts(df, args.scoring) if args.experts else None
 
     out: list[str] = [
         "# Week-by-week & subgroup accuracy — Attention NN focus\n",
@@ -464,7 +496,8 @@ def main() -> None:
     _section_attn_position(df, out)
     _section_weekly(df, out, args.figdir)
     if args.experts:
-        _section_experts_weekly(df, out, args.figdir)
+        out.append(f"Expert comparison scoring: {args.scoring}; matching projected components.\n")
+        _section_experts_weekly(expert_df, out, args.figdir)
     _section_score_tier(df, out)
     _section_week_phase(df, out)
 

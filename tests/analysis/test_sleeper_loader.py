@@ -19,6 +19,86 @@ from src.analysis import sleeper_loader as mod
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("failure", ["http", "url", "timeout"])
+def test_partial_transient_fetch_recovers_without_force(tmp_path, monkeypatch, failure):
+    from urllib.error import HTTPError, URLError
+
+    from src.serving import expert_sources
+
+    failing = True
+
+    def reader(url):
+        if failing and "/2025/2?" in url:
+            if failure == "http":
+                raise HTTPError(url, 503, "temporary outage", {}, None)
+            if failure == "url":
+                raise URLError("connection reset")
+            raise TimeoutError("timeout")
+        return _fake_reader(url)
+
+    monkeypatch.setattr(expert_sources.time, "sleep", lambda _: None)
+    first = mod.load_sleeper_with_gsis_id(
+        [2025],
+        str(tmp_path),
+        weeks=[1, 2],
+        reader=reader,
+        player_ids_loader=_fake_player_ids,
+    )
+    assert set(first.week) == {1}
+    assert first.attrs[expert_sources._FETCH_COMPLETE_ATTR] is False
+    assert not list(tmp_path.glob("*.parquet"))
+    failing = False
+    healed = mod.load_sleeper_with_gsis_id(
+        [2025],
+        str(tmp_path),
+        weeks=[1, 2],
+        reader=reader,
+        player_ids_loader=_fake_player_ids,
+    )
+    assert set(healed.week) == {1, 2}
+    assert healed.attrs[expert_sources._FETCH_COMPLETE_ATTR] is True
+    cached = mod.load_sleeper_projections(
+        [2025],
+        str(tmp_path),
+        weeks=[1, 2],
+        reader=lambda _: pytest.fail("complete cache should be reused"),
+    )
+    assert set(cached.week) == {1, 2}
+
+
+def test_legacy_partial_sleeper_cache_is_refetched(tmp_path):
+    full = mod.load_sleeper_projections([2025], str(tmp_path), weeks=[1, 2], reader=_fake_reader)
+    path = next(tmp_path.glob("*.parquet"))
+    legacy = full.loc[full.week.eq(1)].copy()
+    legacy.attrs.clear()
+    legacy.to_parquet(path)
+    healed = mod.load_sleeper_projections([2025], str(tmp_path), weeks=[1, 2], reader=_fake_reader)
+    assert set(healed.week) == {1, 2}
+
+
+def test_sleeper_404_is_cacheable_and_failed_refresh_preserves_good_cache(tmp_path, monkeypatch):
+    from urllib.error import HTTPError
+
+    from src.serving import expert_sources
+
+    status = 404
+
+    def reader(url):
+        if "/2025/2?" in url:
+            raise HTTPError(url, status, "source status", {}, None)
+        return _fake_reader(url)
+
+    monkeypatch.setattr(expert_sources.time, "sleep", lambda _: None)
+    known = mod.load_sleeper_projections([2025], str(tmp_path), weeks=[1, 2], reader=reader)
+    assert known.attrs[expert_sources._FETCH_COMPLETE_ATTR] is True
+    path = next(tmp_path.glob("*.parquet"))
+    original = path.read_bytes()
+    status = 503
+    partial = mod.load_sleeper_projections([2025], str(tmp_path), True, weeks=[1, 2], reader=reader)
+    assert partial.attrs[expert_sources._FETCH_COMPLETE_ATTR] is False
+    assert path.read_bytes() == original
+
+
 def _fake_reader(url: str) -> list:
     """Mimic Sleeper's /projections/nfl/{season}/{week} payload (per-record shape)."""
     m = re.search(r"/nfl/(\d+)/(\d+)\?", url)

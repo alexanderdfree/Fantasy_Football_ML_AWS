@@ -64,6 +64,7 @@ FFTODAY_DEFAULT_WEEKS = tuple(range(1, 19))
 # Payload version. Exact season/week signatures below also isolate the older
 # min/max/count cache names, which did not identify every requested value.
 _CACHE_VERSION = "v2"
+_FETCH_COMPLETE_ATTR = "fftoday_fetch_complete_v1"
 
 
 def _seasons_sig(seasons: list[int]) -> str:
@@ -195,6 +196,10 @@ def _parse_projection_html(page: str, position: str) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+class _FFTodayFetchIncompleteError(RuntimeError):
+    """A transient source failure exhausted retries; coverage is unknown."""
+
+
 def _read_one_projection(
     year: int,
     week: int,
@@ -226,8 +231,9 @@ def _read_one_projection(
                 )
                 time.sleep(backoff_s)
                 continue
-            print(f"  WARN fftoday: skip {position} {year} W{week} ({type(e).__name__})")
-            return None
+            raise _FFTodayFetchIncompleteError(
+                f"FFToday {position} {year} W{week}: {type(e).__name__} after retry"
+            ) from e
         else:
             df = _parse_projection_html(page, position)
             if df.empty:
@@ -269,7 +275,9 @@ def load_fftoday_projections(
         f"_{_seasons_sig(seasons)}_{weeks_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
-        return pd.read_parquet(cache_path)
+        cached = pd.read_parquet(cache_path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+            return cached
 
     tasks = [
         (year, week, position)
@@ -278,13 +286,19 @@ def load_fftoday_projections(
         for position in FFTODAY_POSITIONS
     ]
     parts: list[pd.DataFrame] = []
+    fetch_complete = True
     with ThreadPoolExecutor(max_workers=_MAX_FETCH_WORKERS) as executor:
         futures = {
             executor.submit(_read_one_projection, y, w, p, reader=reader): (y, w, p)
             for (y, w, p) in tasks
         }
         for future in as_completed(futures):
-            raw = future.result()
+            try:
+                raw = future.result()
+            except _FFTodayFetchIncompleteError as exc:
+                fetch_complete = False
+                print(f"  WARN fftoday: {exc}; partial result will not be cached")
+                continue
             if raw is not None:
                 parts.append(raw)
 
@@ -295,7 +309,9 @@ def load_fftoday_projections(
         )
     df = pd.concat(parts, ignore_index=True)
     df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
-    atomic_write_parquet(df, cache_path)
+    df.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete:
+        atomic_write_parquet(df, cache_path)
     return df
 
 
@@ -320,17 +336,21 @@ def load_fftoday_with_gsis_id(
         raise ValueError("seasons must be a non-empty list of ints")
     seasons = sorted({int(season) for season in seasons})
     os.makedirs(cache_dir, exist_ok=True)
+    default_rosters = rosters is None
     rate_sig = f"mr{int(round(min_match_rate * 100))}"
     cache_path = (
         f"{cache_dir}/fftoday_projections_joined_{_CACHE_VERSION}"
         f"_{_seasons_sig(seasons)}_{rate_sig}.parquet"
     )
-    if os.path.exists(cache_path) and not force_refresh and rosters is None:
-        return pd.read_parquet(cache_path)
+    if os.path.exists(cache_path) and not force_refresh and default_rosters:
+        cached = pd.read_parquet(cache_path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+            return cached
 
     proj = load_fftoday_projections(
         seasons, cache_dir=cache_dir, force_refresh=force_refresh, reader=reader
     )
+    fetch_complete = proj.attrs.get(_FETCH_COMPLETE_ATTR) is True
     if rosters is None:
         rosters = nfl_source.rosters(list(seasons))
     lookup = _build_roster_lookup(rosters)
@@ -389,5 +409,7 @@ def load_fftoday_with_gsis_id(
     # Drop rows that never matched a gsis_id — the comparison joins on player_id and
     # an NaN id can't pair to a model prediction anyway (mirrors Sleeper/NFL.com).
     primary = primary[primary["player_id"].notna()].reset_index(drop=True)
-    atomic_write_parquet(primary, cache_path)
+    primary.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete and default_rosters:
+        atomic_write_parquet(primary, cache_path)
     return primary

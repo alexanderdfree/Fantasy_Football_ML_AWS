@@ -4,6 +4,9 @@
 # edited file if it is a .py file inside this project. Silent on success.
 set -eu
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib.sh"
+
 # Resolve jq: prefer PATH, fall back to common absolute install locations so the
 # hook works whether or not jq lives at /usr/bin (WSL/dev boxes differ from CI).
 jq_bin=""
@@ -20,8 +23,10 @@ case "$file" in
   *.py) ;;
   *) exit 0 ;;
 esac
+root="$(agent_hooks_abs_path "$CLAUDE_PROJECT_DIR" .)" || exit 0
+file="$(agent_hooks_abs_path "$CLAUDE_PROJECT_DIR" "$file")" || exit 0
 case "$file" in
-  "$CLAUDE_PROJECT_DIR"/*) ;;
+  "$root"/*) ;;
   *) exit 0 ;;
 esac
 

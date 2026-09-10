@@ -47,15 +47,43 @@ agent_hooks_main_worktree() {
   esac
 }
 
-# Resolve a tool path to an absolute path under the repo root ($1).
+# Select a Python 3 interpreter for path resolution and JSON fallbacks.
+agent_hooks_find_python() {
+  local candidate
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+      && "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Resolve aliases and dot segments before comparing a tool path to a worktree.
 agent_hooks_abs_path() {
-  local root="$1"
-  local path="$2"
-  case "$path" in
-    /*) printf '%s\n' "$path" ;;
-    ./*) printf '%s/%s\n' "$root" "${path#./}" ;;
-    *) printf '%s/%s\n' "$root" "$path" ;;
-  esac
+  local py="${3:-}"
+  [ -n "$py" ] || py="$(agent_hooks_find_python)" || return 1
+  "$py" -c 'import os, sys
+sys.stdout.reconfigure(newline="\n")
+path = os.path.normcase(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])))
+print(path.replace(os.sep, "/"))' "$1" "$2"
+}
+
+agent_hooks_current_pr() {
+  local root="$1" jq_bin="$2" branch head metadata
+  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" || return 1
+  head="$(git -C "$root" rev-parse HEAD)" || return 1
+  metadata="$(cd "$root" && gh pr view "$branch" --json state,baseRefName,headRefOid,mergeCommit 2>/dev/null)" || return 1
+  printf '%s' "$metadata" | "$jq_bin" -e --arg head "$head" 'select(.headRefOid == $head)'
+}
+
+agent_hooks_merged_pr_commit() {
+  local metadata jq_bin="$2"
+  metadata="$(agent_hooks_current_pr "$1" "$jq_bin")" || return 1
+  printf '%s' "$metadata" | "$jq_bin" -er '
+    select(.state == "MERGED" and .baseRefName == "main")
+    | .mergeCommit.oid | strings | select(test("^[0-9a-f]{40}$"))'
 }
 
 # Extract the shell command from a run_shell_command tool call's hook JSON

@@ -8,6 +8,7 @@
  * (via onResetFilter) so it can't invisibly constrain the table. */
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useFilterFit } from "../hooks/useFilterFit.js";
+import { sliceAccuracy } from "../lib/predictionFilters.js";
 
 export const AGE_BUCKETS = [
     { value: "ALL", label: "All Ages", test: () => true },
@@ -69,28 +70,17 @@ export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFil
 /* Live readout of the filtered slice — average actual output and which
  * source best predicts these exact rows (updates with every filter change). */
 export function FilterSliceStats({ rows, sources }) {
-    const withActual = rows.filter((p) => p.actual != null);
-    if (!withActual.length) return null;
-    const avgActual = withActual.reduce((s, p) => s + p.actual, 0) / withActual.length;
-    let best = null;
-    for (const src of sources) {
-        let sum = 0;
-        let n = 0;
-        for (const p of withActual) {
-            const v = p[src.key];
-            if (v != null) { sum += Math.abs(v - p.actual); n += 1; }
-        }
-        if (n) {
-            const mae = sum / n;
-            if (!best || mae < best.mae) best = { label: src.label, mae };
-        }
-    }
+    if (!rows.length) return null;
+    const withActual = rows.filter((p) => Number.isFinite(p.actual));
+    const avgActual = withActual.length
+        ? withActual.reduce((s, p) => s + p.actual, 0) / withActual.length : null;
+    const { best, n, cohortN } = sliceAccuracy(rows, sources);
     return (
         <div className="filters-stats-row">
             <div className="stat-block-row">
                 <div className="stat-block">
                     <span className="stat-block-label">Avg Actual</span>
-                    <span className="stat-block-value neutral">{avgActual.toFixed(1)}</span>
+                    <span className="stat-block-value neutral">{avgActual == null ? "--" : avgActual.toFixed(1)}</span>
                 </div>
                 {best && (
                     <div className="stat-block">
@@ -98,6 +88,10 @@ export function FilterSliceStats({ rows, sources }) {
                         <span className="stat-block-value">{best.label}</span>
                     </div>
                 )}
+                <div className="stat-block" title="Matching projected components and forecasts from every available source">
+                    <span className="stat-block-label">Comparison rows</span>
+                    <span className="stat-block-value neutral">{best ? `${n} / ${cohortN}` : "Unavailable"}</span>
+                </div>
                 {best && (
                     <div className="stat-block">
                         <span className="stat-block-label">Best MAE</span>

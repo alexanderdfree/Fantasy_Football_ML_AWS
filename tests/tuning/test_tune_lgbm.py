@@ -252,7 +252,8 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch, object
             "points": {"mae": mae + 1, "rmse": mae + 1.5, "r2": mae * 3, "unit": "pts"},
         }
 
-    def fake_ranking(df, pred_col):
+    def fake_ranking(df, pred_col, true_col):
+        assert true_col == "actual_projected_total"
         val = float(df[pred_col].iloc[0])
         return {"season_avg_hit_rate": val + 100, "season_avg_spearman": val + 200}
 

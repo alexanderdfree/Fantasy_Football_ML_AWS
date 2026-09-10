@@ -378,4 +378,193 @@ final class StoreRegressionTests: XCTestCase {
         XCTAssertEqual(Fmt.vegasSpread(-3.5).label, "Dog")
         XCTAssertEqual(Fmt.vegasSpread(-3.5).value, "+3.5")
     }
+
+    @MainActor
+    func testUpcomingCancelledNavigationCanAutomaticallyReload() async throws {
+        let started = expectation(description: "initial upcoming request started")
+        var calls = 0
+        FixtureURLProtocol.handler = { _ in
+            calls += 1
+            if calls == 1 { started.fulfill() }
+            let body = """
+            {"available":true,"week_label":"revision \(calls)","scoring":{"ppr":[]}}
+            """
+            return .init(status: 200, data: Data(body.utf8), delay: calls == 1 ? 0.5 : 0)
+        }
+        let store = UpcomingStore(api: client())
+        let initial = Task { await store.load() }
+        await fulfillment(of: [started], timeout: 2)
+        initial.cancel() // SwiftUI's .task cancellation when leaving the tab.
+        await initial.value
+        guard case .loading = store.state else {
+            return XCTFail("Cancelled navigation must remain eligible for UpcomingView's reload")
+        }
+        await store.load() // The same .loading condition used on view re-entry.
+        try await Task.sleep(nanoseconds: 600_000_000)
+        guard case let .ready(week) = store.state else {
+            return XCTFail("The renewed request must remain ready after the cancelled completion")
+        }
+        XCTAssertEqual(week.weekLabel, "revision 2")
+    }
+
+    @MainActor
+    func testUpcomingGenuineFailureStillSupportsManualRetry() async throws {
+        var calls = 0
+        FixtureURLProtocol.handler = { _ in
+            calls += 1
+            return .init(status: calls == 1 ? 500 : 200,
+                         data: Data(#"{"available":true,"week_label":"fresh","scoring":{"ppr":[]}}"#.utf8))
+        }
+        let store = UpcomingStore(api: client())
+        await store.load()
+        guard case let .failed(message) = store.state else {
+            return XCTFail("A genuine server failure must remain visible")
+        }
+        XCTAssertTrue(message.contains("500"))
+        await store.load()
+        guard case let .ready(week) = store.state else {
+            return XCTFail("Manual retry should recover normally")
+        }
+        XCTAssertEqual(week.weekLabel, "fresh")
+    }
+
+    @MainActor
+    func testUpcomingOlderRetrySuccessDoesNotReplaceNewerLoad() async throws {
+        try await verifyUpcomingRetryOrdering(earlierStatus: 200)
+    }
+
+    @MainActor
+    func testUpcomingOlderRetryFailureDoesNotReplaceNewerLoad() async throws {
+        try await verifyUpcomingRetryOrdering(earlierStatus: 500)
+    }
+
+    @MainActor
+    private func verifyUpcomingRetryOrdering(earlierStatus: Int) async throws {
+        let started = expectation(description: "earlier upcoming retry started")
+        var calls = 0
+        FixtureURLProtocol.handler = { _ in
+            calls += 1
+            let earlier = calls == 1
+            if earlier { started.fulfill() }
+            let body = """
+            {"available":true,"week_label":"revision \(calls)","scoring":{"ppr":[]}}
+            """
+            return .init(status: earlier ? earlierStatus : 200, data: Data(body.utf8),
+                         delay: earlier ? 0.5 : 0)
+        }
+        let store = UpcomingStore(api: client())
+        let earlier = Task { await store.load() } // Manual retry outlives view disappearance.
+        await fulfillment(of: [started], timeout: 2)
+        await store.load() // Re-entry starts a newer request without cancelling the retry.
+        await earlier.value
+        guard case let .ready(week) = store.state else {
+            return XCTFail("An older completion must not replace newer upcoming data")
+        }
+        XCTAssertEqual(week.weekLabel, "revision 2")
+    }
+
+    @MainActor
+    func testHistoryOlderRetrySuccessDoesNotReplaceNewerLoad() async throws {
+        try await verifyHistoryRetryOrdering(earlierStatus: 200)
+    }
+
+    @MainActor
+    func testHistoryOlderRetryFailureDoesNotReplaceNewerLoad() async throws {
+        try await verifyHistoryRetryOrdering(earlierStatus: 500)
+    }
+
+    @MainActor
+    private func verifyHistoryRetryOrdering(earlierStatus: Int) async throws {
+        let started = expectation(description: "earlier history retry started")
+        var calls = 0
+        FixtureURLProtocol.handler = { _ in
+            calls += 1
+            let earlier = calls == 1
+            if earlier { started.fulfill() }
+            let body = """
+            {"repo_slug":"revision \(calls)","rows":[],"target_labels":{},"target_units":{}}
+            """
+            return .init(status: earlier ? earlierStatus : 200, data: Data(body.utf8),
+                         delay: earlier ? 0.5 : 0)
+        }
+        let store = HistoryStore(api: client())
+        let earlier = Task { await store.load() }
+        await fulfillment(of: [started], timeout: 2)
+        await store.load()
+        await earlier.value
+        XCTAssertEqual(store.state.value?.repoSlug, "revision 2")
+        XCTAssertNil(store.state.errorMessage)
+    }
+
+    @MainActor
+    func testArchitectureRetryOrderingPreservesLoadedCache() async throws {
+        for status in [200, 500] {
+            try await verifyCachedRetryOrdering(earlierStatus: status, payload: { revision in
+                let url = Bundle(for: Self.self).url(forResource: "model_architecture", withExtension: "json")!
+                var value = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+                var overview = value["overview"] as! [String: Any]
+                overview["framework"] = "revision \(revision)"
+                value["overview"] = overview
+                return try JSONSerialization.data(withJSONObject: value)
+            }, make: { api in
+                let store = ArchitectureStore(api: api)
+                return ({ await store.load() }, { store.state.value?.overview.framework })
+            })
+        }
+    }
+
+    @MainActor
+    func testComparisonRetryOrderingPreservesLoadedCache() async throws {
+        for status in [200, 500] {
+            try await verifyCachedRetryOrdering(earlierStatus: status, payload: { revision in
+                let url = Bundle(for: Self.self).url(forResource: "comparison", withExtension: "json")!
+                var value = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+                value["generated_at"] = "revision \(revision)"
+                return try JSONSerialization.data(withJSONObject: value)
+            }, make: { api in
+                let store = ComparisonStore(api: api)
+                return ({ await store.load() }, { store.state.value?.generatedAt })
+            })
+        }
+    }
+
+    @MainActor
+    func testWikiIndexRetryOrderingPreservesLoadedCache() async throws {
+        for status in [200, 500] {
+            try await verifyCachedRetryOrdering(earlierStatus: status, payload: { revision in
+                Data("""
+                [{"slug":"doc","name":"revision \(revision)","group":"Audit"}]
+                """.utf8)
+            }, make: { api in
+                let store = WikiStore(api: api)
+                return ({ await store.loadIndex() }, { store.index.value?.first?.name })
+            })
+        }
+    }
+
+    @MainActor
+    private func verifyCachedRetryOrdering(
+        earlierStatus: Int,
+        payload: @escaping (Int) throws -> Data,
+        make: (APIClient) -> (load: () async -> Void, value: () -> String?)
+    ) async throws {
+        let started = expectation(description: "earlier retry started")
+        var calls = 0
+        FixtureURLProtocol.handler = { _ in
+            calls += 1
+            let earlier = calls == 1
+            if earlier { started.fulfill() }
+            return .init(status: earlier ? earlierStatus : 200, data: try payload(calls),
+                         delay: earlier ? 0.5 : 0)
+        }
+        let store = make(client())
+        let earlier = Task { await store.load() }
+        await fulfillment(of: [started], timeout: 2)
+        await store.load()
+        await earlier.value
+        XCTAssertEqual(store.value(), "revision 2")
+        let previousCalls = calls
+        await store.load()
+        XCTAssertEqual(calls, previousCalls, "Once loaded, scoring-invariant data stays cached")
+    }
 }

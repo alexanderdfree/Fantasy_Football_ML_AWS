@@ -221,7 +221,15 @@ def local_expert_source(spec: LocalExpertSpec) -> ExpertSource:
             raise KeyError(f"local expert projection file missing key columns {missing}")
         pred_col = _local_projection_col(df, spec.pred_col)
         pred = pd.to_numeric(df[pred_col], errors="coerce")
-        valid_pred = pred.gt(0.0) & np.isfinite(pred)
+        has_stat_line = pd.Series(False, index=df.index)
+        for target in scoring_components(pos.upper()):
+            for column in (f"pred_{target}", f"projected_{target}", f"{target}_projection"):
+                if column in df and column != pred_col:
+                    values = pd.to_numeric(df[column], errors="coerce")
+                    has_stat_line |= np.isfinite(values) & values.ne(0)
+        # Populated stats can sum to zero or less (notably DST). They are not
+        # the empty roster placeholders excluded from local projection files.
+        valid_pred = np.isfinite(pred) & (pred.gt(0.0) | has_stat_line)
         df = df.loc[valid_pred].copy()
         if df.empty:
             return pd.DataFrame(columns=[*_KEY_COLS, _EXPERT_PRED_COL])
@@ -720,7 +728,7 @@ def slice_masks(
     if rank is not None:
         elite = rank <= 24
         if elite.any():
-            masks.append(("elite_top24", "elite_top24", elite))
+            masks.append(("seasonal_actual_top24", "seasonal_actual_top24", elite))
         if position == "RB":
             for lo, hi, name in ((1, 12, "rb1"), (13, 24, "rb2"), (25, 36, "flex")):
                 mask = rank.between(lo, hi)

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createLatestRequest } from "../src/lib/latestRequest.js";
-import { meetsMinimumProjection } from "../src/lib/predictionFilters.js";
+import { meetsMinimumProjection, sliceAccuracy } from "../src/lib/predictionFilters.js";
 
 function deferred() {
     let resolve, reject;
@@ -62,4 +62,48 @@ test("minimum points includes the kicker's Ridge projection", () => {
     assert.equal(meetsMinimumProjection({ position: "K" }, 8), false);
     assert.equal(meetsMinimumProjection({ position: "K" }, NaN), true);
     assert.equal(meetsMinimumProjection({ espn_pred: 9 }, 8), true);
+});
+
+const accuracySources = [{ key: "ridge_pred", label: "Ridge" }, { key: "nn_pred", label: "NN" }];
+const comparisonRow = (extra = {}) => ({
+    actual: 16, comparison_actual: 10,
+    comparison_actual_basis: "shared_projected_components_v1", ...extra,
+});
+
+test("slice winner uses one common sample and preserves complete-coverage controls", () => {
+    const sparse = [comparisonRow({ ridge_pred: 11, nn_pred: 10.5 }),
+        comparisonRow({ ridge_pred: null, nn_pred: 30 })];
+    assert.deepEqual(sliceAccuracy(sparse, accuracySources), {
+        n: 1, cohortN: 2, best: { label: "NN", mae: 0.5 },
+    });
+    const full = sparse.map((row) => ({ ...row, ridge_pred: 11, nn_pred: 10.5 }));
+    assert.deepEqual(sliceAccuracy(full, accuracySources), {
+        n: 2, cohortN: 2, best: { label: "NN", mae: 0.5 },
+    });
+});
+
+test("unprojected actuals cannot change a comparison winner", () => {
+    const rows = [comparisonRow({ ridge_pred: 10, nn_pred: 16 })];
+    assert.deepEqual(sliceAccuracy(rows, accuracySources).best, { label: "Ridge", mae: 0 });
+    assert.deepEqual(sliceAccuracy(rows.map((row) => ({ ...row, actual: 100 })), accuracySources).best,
+        { label: "Ridge", mae: 0 });
+});
+
+test("missing legacy truth, unknown components and disjoint forecasts remain unavailable", () => {
+    for (const rows of [
+        [{ actual: 10, ridge_pred: 10, nn_pred: 11 }],
+        [comparisonRow({ comparison_actual: null, ridge_pred: 10, nn_pred: 11 })],
+        [comparisonRow({ ridge_pred: 10 }), comparisonRow({ nn_pred: 11 })],
+        [comparisonRow({ comparison_actual: Infinity, ridge_pred: 10, nn_pred: 11 })],
+    ]) {
+        assert.equal(sliceAccuracy(rows, accuracySources).best, null);
+        assert.equal(sliceAccuracy(rows, accuracySources).n, 0);
+    }
+});
+
+test("zero forecasts stay comparable and excluded kicker sources cannot win", () => {
+    const sources = [...accuracySources, { key: "nflcom_pred", label: "NFL.com" }];
+    const rows = [comparisonRow({ comparison_actual: 0, ridge_pred: 0, nn_pred: 1,
+        nflcom_pred: 0, comparison_excluded_sources: ["nflcom"] })];
+    assert.deepEqual(sliceAccuracy(rows, sources), { n: 1, cohortN: 1, best: { label: "Ridge", mae: 0 } });
 });

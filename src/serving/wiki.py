@@ -292,13 +292,8 @@ def _render_wiki_doc(slug: str) -> str:
         protocols=_WIKI_ALLOWED_PROTOCOLS,
         strip=True,
     )
-    # Re-stat right before caching so the stored mtime matches the bytes we just
-    # rendered (the file could have been rewritten between the read above and
-    # here); a subsequent edit then still produces a newer mtime and re-renders.
+    # Keep the version observed before reading. An edit during rendering must
+    # not label these older bytes with the new file's mtime and cache them forever.
     with app_pkg._wiki_cache_lock:
-        try:
-            render_mtime = os.stat(abs_path).st_mtime
-        except OSError:
-            render_mtime = current_mtime
-        app_pkg._cache[cache_key] = (render_mtime, html)
+        app_pkg._cache[cache_key] = (current_mtime, html)
     return html

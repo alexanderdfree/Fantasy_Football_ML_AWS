@@ -9,6 +9,8 @@ the route handlers keep working unchanged.
 
 import numpy as np
 
+from src.shared.comparison_scoring import ACTUAL_BASIS, EXCLUDED_SOURCES, score_actual_components
+
 _VALID_SCORING = ("ppr", "half_ppr", "standard")
 _MODEL_PRED_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
 _EXPERT_PRED_PREFIXES = ("nflcom", "rotowire", "espn")
@@ -122,6 +124,15 @@ def _records_to_player_rows(df, scoring="ppr"):
     cols = [c for c in _PLAYER_ROW_COLS if c in df.columns]
     actual_key = _actual_col(scoring)
     pred_keys = {prefix: _pred_col(prefix, scoring) for prefix in _ROW_PRED_PREFIXES}
+    rows = df[cols].copy()
+    rows["comparison_actual"] = np.nan
+    if "position" in df:
+        for position in ("QB", "RB", "WR", "TE", "K", "DST"):
+            selected = df["position"].eq(position)
+            if selected.any():
+                rows.loc[selected, "comparison_actual"] = score_actual_components(
+                    df.loc[selected], position, scoring, prefix="actual_"
+                )
     return [
         {
             "player_id": _safe_str(r.get("player_id")),
@@ -130,6 +141,9 @@ def _records_to_player_rows(df, scoring="ppr"):
             "team": _safe_str(r.get("recent_team")),
             "week": int(r["week"]),
             "actual": _round_or_none(r.get(actual_key)),
+            "comparison_actual": _safe_num(r["comparison_actual"]),
+            "comparison_actual_basis": ACTUAL_BASIS,
+            "comparison_excluded_sources": list(EXCLUDED_SOURCES.get(r.get("position"), {})),
             **{
                 f"{prefix}_pred": _safe_num(r.get(pred_keys[prefix]))
                 for prefix in _ROW_PRED_PREFIXES
@@ -138,5 +152,5 @@ def _records_to_player_rows(df, scoring="ppr"):
             "age": _int_or_none(r.get("age")),
             "is_rookie": _bool_or_none(r.get("is_rookie")),
         }
-        for r in df[cols].to_dict(orient="records")
+        for r in rows.to_dict(orient="records")
     ]

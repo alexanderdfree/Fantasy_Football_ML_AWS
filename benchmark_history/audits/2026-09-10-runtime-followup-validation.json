@@ -1,0 +1,109 @@
+{
+  "base_sha": "13fe89d6e470fbccca69361af477e15dff9c225c",
+  "phase": "follow-up fixes before current-main integration",
+  "pipeline": {
+    "worktree": "/private/tmp/final-project-runtime-followup.eOYNNq",
+    "branch": "codex/audit-runtime-correctness",
+    "head": "13fe89d6e470fbccca69361af477e15dff9c225c",
+    "owned_files": [
+      {
+        "path": "src/shared/pipeline.py",
+        "sha256": "24827894be08e1dcb32c295c6109bcdf4a54b4c0a735486d595e8ee5863b4f80"
+      },
+      {
+        "path": "src/tuning/tune_lgbm.py",
+        "sha256": "6029967d49908354665b1424c9129758c0ddbfd05affbbbd6e939dc04ed32949"
+      },
+      {
+        "path": "tests/shared/test_pipeline_reporting_truth.py",
+        "sha256": "fcc2f8d3a350bc5c6c308419578ee6483d4f1cb52e7961f22f802bafcd79dd19"
+      },
+      {
+        "path": "tests/tuning/test_tune_lgbm.py",
+        "sha256": "ab8f7f3d5ede7532f13b21425a2943c5143454d19beaf887559f90306abc8c72"
+      },
+      {
+        "path": "todo/fixed-archive/runtime-experiment-audit-2026-09.md",
+        "sha256": "240fb06fa495b16f9e6325d1d1e58804ee0b37a11ec00867abf0a4bb69393eaa"
+      }
+    ],
+    "unchanged_existing_functions_except_reporting_orchestrators": true,
+    "changed_existing_functions": [
+      "run_pipeline",
+      "run_cv_pipeline"
+    ],
+    "tests": {
+      "red_pipeline": "/tmp/audit-pipeline-truth-before.ITa0Xk",
+      "red_tuning": "/tmp/audit-lgbm-reporting-before.UZPAVw",
+      "green": "/tmp/audit-pipeline-truth-complete.M8HGR4",
+      "passed": 190
+    },
+    "real_cached_proof": "/tmp/audit-pipeline-truth-proof.json",
+    "source_frozen": true
+  },
+  "serving": {
+    "worktree": "/tmp/final-project-runtime-followup.eOYNNq",
+    "frozen_at": "2026-09-10T21:31:53.254878+00:00",
+    "paths": {
+      "src/serving/wiki.py": "9dc8f18e8a12eef7c38f67e35fd902fef7da4bae4552f8abc81c3f69fab7ca2f",
+      "src/serving/expert_sources.py": "48d1da8f2a0e312c2a36bf6cc9114ef54cc7befd5defb9a96718d64c377d370b",
+      "src/serving/serialization.py": "8da44eb3dc338da9ee5c4041306a41362277873193e7ef21a3dd14d4ee30bee1",
+      "src/serving/frontend/src/components/FilterBar.jsx": "e4635bd64506bcdd3249db04530a765547f32daff78d44327da5549c18ff4355",
+      "src/serving/frontend/src/lib/predictionFilters.js": "08994bcc1a321f78fda870abfb588146be23e39b603675a42c463692eb122d8c",
+      "src/serving/frontend/src/views/Timeline.jsx": "45be137e5c6ff838affbc5f787c1a79c23d2c4abe2439f5c60f96a61fb4f79f8",
+      "src/serving/frontend/tests/viewState.test.js": "457ca6c9bfe63d1f6c7db5566d5d1c2ba6a3fa6ffb4432dfd93077b42510f5c3",
+      "src/serving/static/js/app.js": "4705a4f45b5371d76bb3d323249516dfdd1f7024e84672c168ec7c11f6d64dca",
+      "src/analysis/fftoday_loader.py": "bc941a4d6eeeb9f227201503e7c1e3390af7ca4a5ba8a153b5f1bc6acfa487c9",
+      "src/analysis/comparison_data.py": "d936d953ba07fb174222217db8f4d40392d17b3a6ba5c20876677a0415c5a9cc",
+      "src/analysis/analysis_tabpfn_benchmark.py": "10d093579ecb6015844c87f86825e1ea66a3e7a63f82cfd4d4d42825021d6b57",
+      "src/analysis/attn_weekly_accuracy.py": "633ef052601c67005e618a6f120d4db3faf1307c5c9399d97698cd5998576928",
+      "src/analysis/tier_expert_comparison.py": "27ef2f8e695b01f317ce802aba952746b4cd694f42623b61ecf62c692741f614",
+      "src/analysis/topn_expert_gap.py": "7b8be2fe5e5e30316a23eb59e36e732a1fbd204eb173ca673c2337de46b927f5",
+      "tests/analysis/test_sleeper_loader.py": "d173594d98e40747b36cea32e5a0070f853e86209d7ff04ae3bbaac3463606f4",
+      "tests/analysis/test_fftoday_loader.py": "ebf1706d33416b3bdf2cee50805cdaf31392110fefdfc20caeb98da15b564c50",
+      "tests/analysis/test_analysis_tabpfn_benchmark.py": "8b0dbe70d2cf941d3924ca2a62e3cb9f172de4bb3f984e8d8c259e3e8d81bafc",
+      "tests/analysis/test_tier_expert_comparison.py": "58c69c7deeb006e09addf210084f58c67e2c5078d501756bcac0d697c4b4e060",
+      "tests/analysis/test_topn_expert_gap.py": "3a5686a93031076b17b0d5f9d29dc6cebe006ab348c62154db350dbeb053fd3a",
+      "tests/analysis/test_comparison_reporting.py": "9749bd6f7c9e57f167a1a2e94ce735d29cbe7ea19026544ecc3e2a9c052604ca",
+      "tests/test_wiki_cache.py": "437c0369ec79954a76143282053085be5e95e6bc7808f8cd068f395d4ded4349",
+      "tests/test_serving_comparison_rows.py": "3057ec2acb152b2d46151f794ce65af42db48c0b802c9b0fed19492e8ff9ae71",
+      "todo/fixed-archive/runtime-client-audit-2026-09.md": "e78f7ed2bceb919bee21a5fae2a71fcc1d8034457f307e223299e4da950eb1ee",
+      "todo/fixed-archive/runtime-experiment-audit-2026-09.md": "240fb06fa495b16f9e6325d1d1e58804ee0b37a11ec00867abf0a4bb69393eaa"
+    },
+    "tests": {
+      "python": "424 passed, 1 skipped",
+      "node": "22 passed",
+      "logs": [
+        "/tmp/audit-serving-analysis-followup-gate.out",
+        "/tmp/audit-serving-followup-node.out",
+        "/tmp/audit-serving-followup-build.out"
+      ]
+    },
+    "browser": {
+      "before": "/tmp/audit-serving-ui-before.json",
+      "after": "/tmp/audit-serving-ui-after.json",
+      "screenshot": "/tmp/audit-serving-ui-fixed-sparse.png",
+      "cases": 5
+    },
+    "limitations": [
+      "Original source pass found bugs and is not a clean pass.",
+      "Current main integration and final reread remain root-owned pending work.",
+      "No deployed-site or new hardware acceptance claims."
+    ]
+  },
+  "multiseason_weekly_ranking": {
+    "before": "perfect two-season predictions received50percenttop12",
+    "after": "two distinct season-week slates,100percenttop12",
+    "tests_passed": 105
+  },
+  "native": {
+    "unit_tests": 39,
+    "ui_scenarios": 14,
+    "platform": "iOS26.5 iPhone17Pro Simulator",
+    "proof_sha256": "bbbd6b5b016d270bac15a9ff4e2f345e59d12834c35eb70b647686e786a606e6"
+  },
+  "limitations": [
+    "This is targeted follow-up validation, not the final clean full-codebase pass.",
+    "Final integration requires fresh benchmark fingerprints and currentCI."
+  ]
+}

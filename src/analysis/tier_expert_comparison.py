@@ -44,6 +44,7 @@ from src.analysis.cohort_analysis import (
     label_scoring_tier_rows,
     player_prior_season_fp,
 )
+from src.analysis.comparison_data import comparison_actuals
 from src.analysis.position_data import load_position_frames
 from src.config import TEST_SEASONS
 
@@ -75,6 +76,7 @@ def compare_position(
 
     labeled = _normalize_keys(test_df)
     labeled[TIER_BUCKET] = label_scoring_tier_rows(labeled, prior_fp, top_n=tier_topn)
+    labeled[ACTUAL] = comparison_actuals(test_df, pos)
 
     model_cols = list(models.values())
     base = labeled[[*_KEY_COLS, ACTUAL, TIER_BUCKET, *model_cols]]
@@ -88,6 +90,8 @@ def compare_position(
             continue
         expert = _normalize_keys(proj[[*_KEY_COLS, _EXPERT_PRED_COL]])
         joined = base.merge(expert, on=_KEY_COLS, how="inner")
+        compared = [ACTUAL, *model_cols, _EXPERT_PRED_COL]
+        joined = joined.loc[np.isfinite(joined[compared].to_numpy(dtype=float)).all(axis=1)]
         if joined.empty:
             print(f"\n  {pos} vs {src.label}: no matched player-weeks; skipping.")
             continue

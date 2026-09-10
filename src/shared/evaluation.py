@@ -204,8 +204,9 @@ def compute_ranking_metrics(
     from scipy.stats import spearmanr
 
     weekly_results = []
-    for week in sorted(test_df["week"].unique()):
-        week_df = test_df[test_df["week"] == week]
+    week_keys = ["season", "week"] if "season" in test_df else ["week"]
+    for key, week_df in test_df.groupby(week_keys, sort=True):
+        identity = dict(zip(week_keys, key, strict=True))
         if len(week_df) < top_k:
             continue
 
@@ -219,13 +220,13 @@ def compute_ranking_metrics(
 
         if np.isnan(corr):
             print(
-                f"  WARNING: Spearman correlation is NaN for week {week} "
+                f"  WARNING: Spearman correlation is NaN for {identity} "
                 f"(pred_col={pred_col}, n={len(week_df)})"
             )
 
         weekly_results.append(
             {
-                "week": week,
+                **identity,
                 "top_k_hit_rate": hit_rate,
                 "spearman": corr,
             }

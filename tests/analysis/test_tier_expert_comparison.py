@@ -44,6 +44,10 @@ def test_compare_position_slices_by_tier_and_includes_all_models(capsys):
             "week": [1, 1, 1, 1],
             "position": ["WR", "WR", "WR", "WR"],
             "fantasy_points": [25.0, 22.0, 8.0, 6.0],
+            "receiving_yards": [250.0, 220.0, 80.0, 60.0],
+            "receiving_tds": [0.0] * 4,
+            "receptions": [0.0] * 4,
+            "fumbles_lost": [0.0] * 4,
             "pred_ridge_total": [20.0, 18.0, 7.5, 6.5],
             "pred_attn_nn_total": [21.0, 19.0, 7.0, 6.0],
         }

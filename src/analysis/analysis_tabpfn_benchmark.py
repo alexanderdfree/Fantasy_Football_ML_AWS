@@ -34,8 +34,14 @@ import argparse
 import os
 from collections.abc import Sequence
 
+import numpy as np
 import pandas as pd
 
+from src.analysis.comparison_data import (
+    PROJECTED_ACTUAL,
+    attach_comparison_actuals,
+    comparison_actuals,
+)
 from src.config import TEST_SEASONS
 from src.shared.evaluation import compute_metrics
 
@@ -105,7 +111,7 @@ def position_metrics(test_df: pd.DataFrame, top_n: int = 30) -> dict:
 
 
 def rotowire_matched_metrics(
-    test_df: pd.DataFrame, expert_df: pd.DataFrame, top_n: int = 30
+    test_df: pd.DataFrame, expert_df: pd.DataFrame, top_n: int = 30, *, position: str | None = None
 ) -> dict:
     """Inner-join ``expert_df`` onto ``test_df`` and score every model + RotoWire on
     the matched rows.
@@ -118,6 +124,13 @@ def rotowire_matched_metrics(
     """
     idc = _id_col(test_df)
     m = test_df.copy()
+    if position is None and "position" in m and m["position"].nunique() == 1:
+        position = m["position"].iloc[0]
+    if position is None:
+        return {"_n_matched": 0, "_unavailable": "comparison_position_missing"}
+    m["fantasy_points"] = comparison_actuals(m, position)
+    if not m["fantasy_points"].notna().any():
+        return {"_n_matched": 0, "_unavailable": "shared_actual_components_missing"}
     m["_k"] = m[idc].astype(str)
     m["season"] = m["season"].astype(int)
     m["week"] = m["week"].astype(int)
@@ -128,6 +141,8 @@ def rotowire_matched_metrics(
     joined = m.merge(
         e[["_k", "season", "week", _EXPERT_COL]], on=["_k", "season", "week"], how="inner"
     )
+    columns = ["fantasy_points", *_present_pred_cols(joined), _EXPERT_COL]
+    joined = joined.loc[np.isfinite(joined[columns].to_numpy(dtype=float)).all(axis=1)]
     if joined.empty:
         return {"_n_matched": 0}
     y = joined["fantasy_points"].to_numpy(float)
@@ -183,6 +198,9 @@ def format_report(metrics_a: dict, metrics_b: dict, top_n: int = 30) -> str:
         "",
     ]
     for pos, bm in metrics_b.items():
+        if bm and bm.get("_unavailable"):
+            lines += [f"## {pos}: unavailable ({bm['_unavailable']})", ""]
+            continue
         if not bm or bm.get("_n_matched", 0) == 0:
             lines += [f"## {pos}: (no RotoWire overlap)", ""]
             continue
@@ -197,7 +215,7 @@ def format_report(metrics_a: dict, metrics_b: dict, top_n: int = 30) -> str:
 
 # ---------- heavy run path (needs tabpfn + GPU; not unit-tested) -------------
 
-_KEEP_BASE = ("player_id", "team", "season", "week", "fantasy_points")
+_KEEP_BASE = ("player_id", "team", "position", "season", "week", "fantasy_points", PROJECTED_ACTUAL)
 
 
 def run_position(pos: str, seed: int = 42, cache_dir: str | None = None) -> pd.DataFrame:
@@ -211,7 +229,7 @@ def run_position(pos: str, seed: int = 42, cache_dir: str | None = None) -> pd.D
 
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
-        cached = os.path.join(cache_dir, f"tdf_{pos}_seed{seed}.parquet")
+        cached = os.path.join(cache_dir, f"tdf_{pos}_seed{seed}_shared_v1.parquet")
         if os.path.exists(cached):
             return pd.read_parquet(cached)
     runner = importlib.import_module(f"src.{pos.lower()}.run_pipeline")
@@ -220,7 +238,8 @@ def run_position(pos: str, seed: int = 42, cache_dir: str | None = None) -> pd.D
     # Every runner accepts seed/config; skill positions self-load their default
     # frames, and K/DST build their native splits.
     result = runner.run(seed=seed, config=cfg)
-    df = result["test_df"]
+    df = attach_comparison_actuals(result["test_df"], pos)
+    df["position"] = pos
     slim = df[[c for c in _KEEP_BASE if c in df.columns] + _present_pred_cols(df)].copy()
     if cache_dir:
         slim.to_parquet(cached, index=False)
@@ -258,7 +277,9 @@ def main(argv: Sequence[str] | None = None) -> str:
         if not args.no_rotowire and pos in ROTOWIRE_POSITIONS:
             expert = load_rotowire(args.seasons, pos)
             if expert is not None and len(expert):
-                metrics_b[pos] = rotowire_matched_metrics(tdf, expert, top_n=args.top_n)
+                metrics_b[pos] = rotowire_matched_metrics(
+                    tdf, expert, top_n=args.top_n, position=pos
+                )
 
     report = format_report(metrics_a, metrics_b, top_n=args.top_n)
     print("\n" + report)

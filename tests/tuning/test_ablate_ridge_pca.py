@@ -329,7 +329,12 @@ def test_ridge_job_uses_native_frames_and_preserves_holdouts_and_seed(monkeypatc
     assert result["metrics"]["test_mae"] == 2.0
     assert len(calls) == 2
     for index, (tr, va, te, seed, cfg) in enumerate(calls):
-        assert tr is train and va is val
+        assert tr is train
+        if index == 0:
+            assert va.empty
+            assert list(va.columns) == list(val.columns)
+        else:
+            assert va is val
         assert te is (val if index == 0 else test)
         assert seed == 17
         assert cfg["train_ridge"] is True
@@ -338,6 +343,58 @@ def test_ridge_job_uses_native_frames_and_preserves_holdouts_and_seed(monkeypatc
         if position == "K":
             assert cfg["attn_history_builder_fn"] is history_builder
     assert native_calls == ([position] if position in ("K", "DST") else [])
+
+
+@pytest.mark.parametrize(
+    "position,history_column", [("QB", "season_starts_to_date"), ("RB", "career_carries")]
+)
+def test_validation_scoring_preserves_cross_split_history(monkeypatch, position, history_column):
+    import importlib
+    from pathlib import Path
+
+    from src.shared.registry import get_config
+    from src.tuning.ablation_runner import AblationJob
+    from tests.qb.test_pipeline_e2e import _generate_season
+    from tests.rb.conftest import _build_player_games
+
+    features = importlib.import_module(f"src.{position.lower()}.features")
+
+    def make(year):
+        if position == "QB":
+            return _generate_season(year, year, n_players=1, n_weeks=3)
+        return _build_player_games(season=year, n_weeks=3)
+
+    train, val, test = (make(year) for year in (2023, 2024, 2025))
+    frames = {"train": train, "val": val, "test": test}
+    original = {name: frame.copy(deep=True) for name, frame in frames.items()}
+    cfg = dict(get_config(position))
+    cfg["_job_pca_n"] = 30
+
+    def prepare(tr, va, te):
+        prepared = features.add_specific_features(tr.copy(), va.copy(), te.copy())
+        return features.fill_nans(*prepared, cfg["specific_features"])
+
+    canonical = prepare(train, val, test)
+    calls = []
+
+    def run(*, train_df, val_df, test_df, seed, config):
+        calls.append(prepare(train_df, val_df, test_df))
+        assert config["ridge_pca_components"] == 30
+        assert config["ridge_alpha_grids"] == cfg["ridge_alpha_grids"]
+        assert config.get("ridge_cv_folds", 4) == cfg.get("ridge_cv_folds", 4)
+        return {"ridge_metrics": {"total": {"mae": 1.0}}}
+
+    monkeypatch.setattr(abl.pd, "read_parquet", lambda path: frames[Path(path).stem])
+    monkeypatch.setattr(abl, "get_runner", lambda pos: run)
+    job = AblationJob(position, 42, "pca30", "PCA30", abl._execute_ridge_pca_job, cfg, {})
+    abl._execute_ridge_pca_job(job)
+    # Validation is scored with one copy of its player-weeks, so the model sees
+    # precisely the history that the ordinary pipeline's validation frame sees.
+    pd.testing.assert_series_equal(calls[0][2][history_column], canonical[1][history_column])
+    pd.testing.assert_frame_equal(calls[0][0], canonical[0])
+    pd.testing.assert_frame_equal(calls[1][2], canonical[2])
+    for name, frame in frames.items():
+        pd.testing.assert_frame_equal(frame, original[name])
 
 
 def test_summarize_results_baseline_never_consistent_improver():

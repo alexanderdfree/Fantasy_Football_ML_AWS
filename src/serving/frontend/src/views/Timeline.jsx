@@ -116,7 +116,7 @@ export function TimelineView({ scoring, theme }) {
 
     useEffect(() => {
         const cached = timelineCache.get(scoring);
-        if (cached) { setPayload(cached); return undefined; }
+        if (cached) { setPayload(cached); setError(null); return undefined; }
         let cancelled = false;
         setPayload(null);
         setError(null);

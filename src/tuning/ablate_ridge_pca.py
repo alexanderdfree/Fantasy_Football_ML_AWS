@@ -188,7 +188,9 @@ def _execute_ridge_pca_job(job: AblationJob) -> dict[str, Any]:
         run_fn = functools.partial(get_runner(job.position), config=cfg)
 
     # Val-as-test: ridge fits on train, evaluates on val frame (2024 season).
-    result_val = run_fn(train_df=train, val_df=val, test_df=val, seed=job.seed)
+    # Ridge fits/tunes on train only. Supplying val twice would duplicate it
+    # inside QB/RB cross-split history features while scoring this same cohort.
+    result_val = run_fn(train_df=train, val_df=val.iloc[:0].copy(), test_df=val, seed=job.seed)
     rm_val = result_val.get("ridge_metrics")
     if not rm_val or "total" not in rm_val:
         raise RuntimeError(

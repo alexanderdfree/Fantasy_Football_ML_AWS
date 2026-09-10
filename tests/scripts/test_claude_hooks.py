@@ -149,6 +149,9 @@ def _run_merge_hook(
         env.pop(key, None)
     if extra_env:
         env.update(extra_env)
+    stub = cwd / ".test-gh"
+    if stub.is_dir():
+        env["PATH"] = f"{stub}{os.pathsep}{env.get('PATH', '')}"
     return subprocess.run(
         [str(PROJECT_ROOT / ".claude/hooks/post-pr-merge.sh")],
         input=json.dumps(payload),
@@ -194,7 +197,26 @@ def merge_scenario(tmp_path: Path) -> tuple[Path, Path]:
     _git(other, "add", "NEW.md")
     _git(other, "commit", "-m", "advance main")
     _git(other, "push", "origin", "main")
+    _install_merged_pr_stub(worktree, _git(other, "rev-parse", "HEAD").stdout.strip())
     return main, worktree
+
+
+def _install_merged_pr_stub(worktree: Path, merged_commit: str) -> None:
+    """Remote PR metadata is fixture data; hook tests must never contact GitHub."""
+    stub = worktree / ".test-gh"
+    stub.mkdir()
+    (stub / "pr.json").write_text(
+        json.dumps(
+            {
+                "state": "MERGED",
+                "baseRefName": "main",
+                "headRefOid": _git(worktree, "rev-parse", "HEAD").stdout.strip(),
+                "mergeCommit": {"oid": merged_commit},
+            }
+        )
+    )
+    (stub / "gh").write_text('#!/bin/sh\ncat "$(dirname "$0")/pr.json"\n')
+    (stub / "gh").chmod(0o755)
 
 
 @pytest.mark.skipif(not _jq_available(), reason="post-pr-merge hook needs jq to emit context")
@@ -310,6 +332,7 @@ def _setup_promote_repo(tmp_path: Path, *, splits_affecting: bool) -> tuple[Path
     _git(main, "worktree", "add", "-b", "feature", str(worktree), "main")
     _write_splits(main / "data" / "splits", "STALE")
     _write_splits(worktree / "data" / "splits", "FRESH")
+    _install_merged_pr_stub(worktree, _git(main, "rev-parse", "HEAD").stdout.strip())
     return main, worktree
 
 
