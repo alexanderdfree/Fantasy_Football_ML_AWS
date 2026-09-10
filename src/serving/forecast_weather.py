@@ -13,6 +13,8 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
+from src.serving import espn_live
+
 # Immutable community stadium gazetteer linked by nflverse-data issue #57.
 # Resolve the GAME's stadium_id, never the home team's usual stadium.
 _STADIUMS_URL = "https://github.com/user-attachments/files/17464644/stadiums.csv"
@@ -69,6 +71,8 @@ def enrich_forecasts(schedules: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]
 
     ESPN's outdoor flag overrides stale venue defaults (e.g. LA's dome copied
     onto Melbourne). An indoor flag alone does not settle a retractable roof.
+    Neutral-site surfaces also come from the actual ESPN venue, since even
+    a matching nflverse stadium name can retain the home stadium's turf.
     Forecast retrieval time and availability travel with the artifact.
     """
     frame = schedules.copy()
@@ -80,11 +84,15 @@ def enrich_forecasts(schedules: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]
         coordinates = {}
 
     def forecast(row):
+        surface = row.get("surface")
+        if row.get("neutral_site") or pd.isna(surface) or surface == "":
+            surface = espn_live.fetch_venue_surface(row.get("venue_id"))
         status = {
             "game_id": str(row.get("game_id", "")),
             "venue": row.get("venue_name"),
             "kickoff": row.get("kickoff"),
             "retrieved_at": retrieved,
+            "surface": surface if isinstance(surface, str) else "unknown",
         }
         roof = row.get("roof")
         indoor = row.get("venue_indoor")
@@ -95,10 +103,10 @@ def enrich_forecasts(schedules: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]
         status["roof"] = roof if isinstance(roof, str) else "unknown"
         if roof in ("dome", "closed"):
             status["weather"] = "indoor"
-            return roof, 65.0, 0.0, status
+            return roof, 65.0, 0.0, status, surface
         if roof not in ("outdoors", "open"):
             status["weather"] = "unknown_roof"
-            return None, np.nan, np.nan, status
+            return None, np.nan, np.nan, status, surface
         point = _INTERNATIONAL_VENUES.get(row.get("venue_name"))
         # A neutral-site name disagreement makes the schedule's stadium ID
         # untrustworthy too. Unknown new venues degrade instead of guessing.
@@ -108,7 +116,7 @@ def enrich_forecasts(schedules: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]
             point = coordinates.get(str(row.get("stadium_id")))
         if point is None:
             status["weather"] = "unknown_venue"
-            return roof, np.nan, np.nan, status
+            return roof, np.nan, np.nan, status, surface
         try:
             kickoff = pd.to_datetime(row.get("kickoff"), utc=True)
             if pd.isna(kickoff) or kickoff <= pd.Timestamp.now(tz="UTC"):
@@ -126,14 +134,14 @@ def enrich_forecasts(schedules: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]
             )
             temp, wind = _forecast_at(json.loads(_read_url(f"{_FORECAST_URL}?{query}")), kickoff)
             status.update(weather="forecast", latitude=point[0], longitude=point[1])
-            return roof, temp, wind, status
+            return roof, temp, wind, status, surface
         except Exception as exc:  # noqa: BLE001 - optional forecast boundary
             status["weather"] = "unavailable"
             print(f"[forecast_weather] {status['game_id']}: {exc!r}")
-            return roof, np.nan, np.nan, status
+            return roof, np.nan, np.nan, status, surface
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         values = list(pool.map(forecast, frame.to_dict("records")))
-    for col, idx in (("roof", 0), ("temp", 1), ("wind", 2)):
+    for col, idx in (("roof", 0), ("temp", 1), ("wind", 2), ("surface", 4)):
         frame[col] = [v[idx] for v in values]
     return frame, [v[3] for v in values]

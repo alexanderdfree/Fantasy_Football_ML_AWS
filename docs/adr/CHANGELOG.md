@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Correct implied-total signs in shared/K loaders and resolve neutral-site grass from the actual event venue, completing the remaining #1529 metadata gap · (PR pending) · → ADR-0006, ADR-0018
+
 
 - 2026-09-10 · ESPN historical expert comparisons (2018+, all six positions), shared raw-stat scoring, per-season cache and 2023 Week 1 exclusion; Comparison accuracy + quartile bias, refreshed 2025 summary and serving cache schema 8; no retrain · (PR pending) · → ADR-0018
 - 2026-09-10 · Share the eager/A-B grid executor and output isolation; preserve reporting and Batch contracts · (PR #1542) · → ADR-0020

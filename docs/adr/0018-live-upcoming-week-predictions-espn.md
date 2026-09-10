@@ -22,9 +22,12 @@ Weather uses the event's venue and UTC kickoff. A stadium gazetteer linked from 
 
 Availability is separate from model improvement. This extension does not retune weights, change feature whitelists, or claim an accuracy gain. A new opponent-starter or opportunity feature remains a separate measured A/B decision.
 
+Surface follows the actual ESPN event venue for neutral-site fixtures, and when the schedule's surface is missing. Its boolean grass flag maps to `grass` or generic `artificial`, without inventing a turf subtype. Known ordinary-game surfaces remain unchanged. Missing venue IDs, unavailable metadata, or non-boolean flags leave surface unknown and record that status in the artifact. This is separate from roof/forecast resolution: nflverse labeled the Melbourne ground correctly by name but still supplied the nominal home stadium's artificial surface (#1529).
+
 
 ## Changelog
 
+- **2026-09-10** — Completed the remaining #1529 surface gap after PR #1544 supplied live rest/division/roof metadata, matchup joins, and signature invalidation. The parser carries the actual venue ID and forecast enrichment resolves its grass flag; a cache-to-feature test verifies Melbourne reaches models as `is_grass=1`.
 
 - **2026-09-10** — ESPN load/scoring completeness is carried on the results frame; incomplete frames remain usable in memory but are not persisted/uploaded, preventing a transient source outage from becoming a permanent all-null schema-8 cache. Complete existing snapshots are preserved and later cold boots retry the feed. (PR #1539)
 

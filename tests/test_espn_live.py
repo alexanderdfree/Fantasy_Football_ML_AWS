@@ -100,6 +100,41 @@ def test_parse_scoreboard_flips_spread_to_home_perspective():
 
 
 @pytest.mark.unit
+def test_slate_preserves_actual_event_venue_id(monkeypatch):
+    payload = {
+        "season": {"year": 2026},
+        "week": {"number": 1},
+        "events": [
+            {
+                "id": "401872657",
+                "date": "2026-09-11T00:35Z",
+                "competitions": [
+                    {
+                        "status": {"type": {"name": "STATUS_SCHEDULED"}},
+                        "neutralSite": True,
+                        "venue": {
+                            "id": "9119",
+                            "fullName": "Melbourne Cricket Ground",
+                            "indoor": False,
+                        },
+                        "competitors": [
+                            {"homeAway": "home", "team": {"abbreviation": "LAR", "id": "14"}},
+                            {"homeAway": "away", "team": {"abbreviation": "SF", "id": "25"}},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        espn_live, "fetch_games", lambda *_: espn_live._parse_scoreboard_games(payload)
+    )
+    _, schedules = espn_live.fetch_slate(2026, 1)
+    assert schedules.iloc[0]["venue_id"] == "9119"
+    assert schedules.iloc[0]["venue_name"] == "Melbourne Cricket Ground"
+
+
+@pytest.mark.unit
 def test_parse_scoreboard_handles_missing_odds():
     payload = {
         "season": {"year": 2026},

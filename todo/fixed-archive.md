@@ -4,6 +4,18 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 
 ---
 
+### [FIXED] Home/away implied totals reversed nflverse's spread convention
+- **File(s):** [../src/shared/weather_features.py](../src/shared/weather_features.py), [../src/k/data.py](../src/k/data.py), shared weather and K loader tests (audit #1519; PR pending).
+- **What:** Both shared lookups and K's historical merge treated negative spreads as home-favored, although nflverse uses positive spreads. BAL-at-KC 2024 Week 1 (+3, total 46) produced KC 21.5 / BAL 24.5 instead of 24.5 / 21.5. Synthetic tests repeated the mistaken convention; K's `_schedule_merged` sentinel prevents the shared merge from repairing its copy.
+- **Fix:** Correct all three formulas and preserve own-team spread signs and missing-line behavior. Captured-game controls exercise both shared lookups, direct feature engineering, K loading, and parity with the already-correct live special-teams context. QB/RB/WR/TE/K consume these inputs; DST's raw-spread feature is unchanged.
+- **Lesson:** Verify source signs against real games, trace bypassing loaders, and check feature values directly. A column permutation can preserve Ridge predictions, so zero metric delta alone does not prove a correction failed to activate.
+
+### [FIXED] Neutral-site surface retained the nominal home stadium's turf
+- **File(s):** [../src/serving/espn_live.py](../src/serving/espn_live.py), [../src/serving/forecast_weather.py](../src/serving/forecast_weather.py), ESPN and forecast tests (remaining audit #1529 gap after PR #1544; PR pending).
+- **What:** PR #1544 supplied missing rest/division/roof context and matchup-keyed schedule joins. The 2026 SF–LA fixture still carried `surface=matrixturf` despite naming Melbourne Cricket Ground, whose actual ESPN venue reports grass. The forecast stage corrected its roof but did not replace its inherited surface, leaving `is_grass=0`.
+- **Fix:** Carry the event venue ID and resolve its boolean grass flag for neutral fixtures or missing surfaces. Preserve known ordinary surfaces; unknown venue metadata stays unknown and is disclosed. The regression test follows the surface through forecast enrichment, schedule-cache augmentation, and the real weather feature merge.
+- **Lesson:** Correct venue identity and roof metadata do not establish surface semantics. Verify each consumed property and narrow follow-up work against changes that have already landed on main.
+
 
 ### [FIXED] Lint CI drifted from the development Ruff pin
 - **File(s):** [../.github/workflows/tests.yml](../.github/workflows/tests.yml), [../tests/test_dependency_pins.py](../tests/test_dependency_pins.py) (audit #1509; PR pending).

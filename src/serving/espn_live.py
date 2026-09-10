@@ -263,6 +263,7 @@ def _parse_scoreboard_games(payload: dict) -> list[dict]:
                 "away_team_id": str(away["team"].get("id")) if away["team"].get("id") else None,
                 "is_scheduled": status == "STATUS_SCHEDULED",
                 "kickoff": ev.get("date"),
+                "venue_id": str(venue["id"]) if venue.get("id") else None,
                 "venue_name": venue.get("fullName"),
                 "venue_indoor": venue.get("indoor"),
                 "neutral_site": bool(comp.get("neutralSite")),
@@ -440,6 +441,18 @@ def next_unplayed_week(season: int, lookahead_seasons: int = 1) -> tuple[int, in
     return None
 
 
+def fetch_venue_surface(venue_id: str | None) -> str | None:
+    """Resolve the event venue's grass flag without guessing a turf subtype."""
+    if not venue_id:
+        return None
+    try:
+        grass = _get_json(f"{_CORE_BASE}/venues/{venue_id}").get("grass")
+    except Exception as exc:  # noqa: BLE001 - optional venue source
+        print(f"[espn_live] venue {venue_id} surface unavailable: {exc!r}")
+        return None
+    return "grass" if grass is True else "artificial" if grass is False else None
+
+
 def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return ``(team_rows, schedule_rows)`` for one upcoming (season, week).
 
@@ -474,6 +487,7 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
                 "spread_line": g["spread_line"],
                 "total_line": g["total_line"],
                 "kickoff": g.get("kickoff"),
+                "venue_id": g.get("venue_id"),
                 "venue_name": g.get("venue_name"),
                 "venue_indoor": g.get("venue_indoor"),
                 "neutral_site": g.get("neutral_site", False),

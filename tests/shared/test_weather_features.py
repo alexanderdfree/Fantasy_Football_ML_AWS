@@ -121,6 +121,16 @@ def test_engineer_and_weather_merge_agree_on_nflverse_totals(monkeypatch, nflver
 
 
 @pytest.mark.unit
+def test_live_kicker_context_matches_shared_totals(nflverse_opener_schedule):
+    from src.serving.upcoming_special_teams import team_schedule
+
+    current = team_schedule(nflverse_opener_schedule).set_index("recent_team")
+    historical = _build_team_schedule_lookup(nflverse_opener_schedule).set_index("recent_team")
+    np.testing.assert_allclose(current["implied_team_total"], historical["implied_team_total"])
+    np.testing.assert_allclose(current.loc[["KC", "BAL"], "implied_team_total"], [24.5, 21.5])
+
+
+@pytest.mark.unit
 class TestMergeScheduleFeatures:
     @patch("src.shared.weather_features._load_schedules")
     def test_adds_weather_columns(self, mock_load, fake_schedules, player_df_factory):
