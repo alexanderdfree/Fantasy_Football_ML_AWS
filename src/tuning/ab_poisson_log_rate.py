@@ -11,6 +11,8 @@ switch. Full fantasy metrics accompany per-head bias, RMSE and zero fraction;
 sparse-event MAE alone rewards a collapsed zero predictor.
 """
 
+import sys
+
 import numpy as np
 
 from src.shared.registry import get_config
@@ -45,7 +47,10 @@ def metric_fn(result, position):
         for target in sorted(poisson):
             column = f"pred_{prefix}_{target}"
             if column not in frame:
-                continue
+                raise ValueError(
+                    f"Sparse-head validation requires {column}; use eager execution "
+                    "(--no-stacked-seeds) so per-target predictions are retained."
+                )
             predicted = frame[column].to_numpy(dtype=float)
             actual = frame[target].to_numpy(dtype=float)
             error = predicted - actual
@@ -64,5 +69,12 @@ def metric_fn(result, position):
     return metrics
 
 
+def main(argv=None):
+    # The stacked harness retains only attention totals. This spec needs the
+    # individual heads to detect collapse; default to the eager production path.
+    args = sys.argv[1:] if argv is None else argv
+    return ab_main("src.tuning.ab_poisson_log_rate", ["--no-stacked-seeds", *args])
+
+
 if __name__ == "__main__":
-    ab_main(__spec__.name)
+    main()
