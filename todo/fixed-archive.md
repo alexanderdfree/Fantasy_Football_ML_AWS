@@ -24,6 +24,9 @@
 ### [FIXED] Timeline used incompatible actuals, source populations, and hindsight winners
 [Read the incident record](fixed-archive/timeline-fair-comparisons.md).
 
+### [FIXED] NN checkpoint and tuning metrics differed from reported fantasy-point RMSE
+[Read the incident record](fixed-archive/nn-selection-metric-alignment.md).
+
 ### [FIXED] Live QBR qualification and roster/practice identity joins omitted available data
 [Read the incident record](fixed-archive/live-source-identity-qbr-2026-09.md).
 

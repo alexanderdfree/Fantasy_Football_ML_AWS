@@ -159,6 +159,7 @@ IGNORED_FIELDS: frozenset[str] = frozenset(
         "nn_epochs",
         "nn_batch_size",
         "nn_patience",
+        "nn_selection_metric",
         "nn_use_amp",
         "scheduler_type",
         "cosine_t0",

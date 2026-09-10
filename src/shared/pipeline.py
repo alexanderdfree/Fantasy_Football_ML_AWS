@@ -350,6 +350,7 @@ def _run_nn_training(
         scheduler_per_batch=scheduler_per_batch,
         log_every=_resolve_nn_log_every(cfg),
         epoch_callback=cfg_epoch_cb,
+        selection_metric=cfg.get("nn_selection_metric", "weighted_rmse"),
         use_amp=cfg.get("nn_use_amp", False),
     )
     return trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
@@ -2174,7 +2175,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         result["attn_nn_ranking"] = attn_nn_ranking
         # Per-epoch attention training curves (dict of "val_loss" / "train_loss"
         # / "val_mae_{t}" / "val_loss_{t}" lists). Exposed for src/tuning/
-        # tune_nn.py — the tuner uses min(history["val_loss"]) as the Optuna
+        # tune_nn.py — the tuner uses min(history["val_fantasy_rmse_ppr"]) as the Optuna
         # trial objective so the search optimizes against val, not the leakage-
         # prone test metrics above.
         result["attn_history"] = attn_history

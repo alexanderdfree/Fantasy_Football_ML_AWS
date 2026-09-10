@@ -5,7 +5,10 @@ share the same S3/local naming contract without importing ``src.tuning.tune_nn``
 and pulling in Optuna.
 """
 
-SEARCH_SPACE_VERSION = "scheduler_v2"
+# Changing the objective changes the meaning/units of every Optuna score.
+# Separate both scope roots from all prior combined-loss studies and artifacts.
+OBJECTIVE_METRIC = "fantasy_rmse_ppr"
+SEARCH_SPACE_VERSION = "scheduler_v2_fp_rmse_ppr_v1"
 
 # Root namespace for the attention game-history-branch tuner (``tune_nn
 # --scope history``). v2 (isolation) searches ONLY attn_max_seq_len + the
@@ -16,7 +19,7 @@ SEARCH_SPACE_VERSION = "scheduler_v2"
 # confounded its objective — GH #1239). The graph/mps/full suffixing below
 # applies to this root too — a graphed history tune is still a different
 # trajectory from an eager one.
-HISTORY_SEARCH_SPACE_VERSION = "history_v2"
+HISTORY_SEARCH_SPACE_VERSION = "history_v2_fp_rmse_ppr_v1"
 
 # Search-space roots selectable by ``--scope``. ``resolve_search_space_version``
 # applies the execution-profile (mps/graph/full) suffixes to whichever root.

@@ -113,8 +113,8 @@ def _format_markdown_summary(merged: dict) -> str:
     lines = [
         "# Tune NN results",
         "",
-        "| Position | Best val_loss | Trial # | Trials | Elapsed (s) | d_model / n_heads / lr |",
-        "|---|---|---|---|---|---|",
+        "| Position | Validation metric | Best value | Trial # | Trials | Elapsed (s) | d_model / n_heads / lr |",
+        "|---|---|---|---|---|---|---|",
     ]
     for pos in sorted(merged):
         entry = merged[pos]
@@ -125,7 +125,8 @@ def _format_markdown_summary(merged: dict) -> str:
         lr_str = f"{lr:.4g}" if isinstance(lr, (int, float)) else lr
         lines.append(
             f"| {pos} "
-            f"| {entry.get('best_val_loss', 0):.4f} "
+            f"| {entry.get('objective_metric', 'combined_loss')} "
+            f"| {entry.get('best_validation_rmse', entry.get('best_val_loss', 0)):.4f} "
             f"| {entry.get('best_trial', '?')} "
             f"| {entry.get('n_trials', '?')} "
             f"| {entry.get('elapsed_seconds', '?')} "

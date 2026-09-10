@@ -335,32 +335,34 @@ def _optimizer_hyperparams(trainer) -> dict:
     }
 
 
-def stacked_val_losses(template, params, buffers, criterion, val_loader, device) -> list[float]:
-    """Per-member combined val loss (mean over val batches), eval mode.
+def stacked_val_rmse(template, params, buffers, position, val_loader, device) -> list[float]:
+    """Per-member PPR fantasy RMSE, pooling rows before roots and seed averaging."""
+    from src.shared.aggregate_targets import predictions_to_fantasy_points
 
-    Mirrors the trainer's val pass semantics (``model.eval()`` + no_grad +
-    the combined criterion averaged over batches) so a stacked tune trial
-    reports the same quantity per member that an eager trial reports.
-    """
-
-    def member_loss_eval(p, b, feats, y):
+    def member_squared_error(p, b, feats, y):
         preds = torch.func.functional_call(template, (p, b), feats)
-        return criterion.compute_combined_capturable(preds, y)
+        # Float64 matches the canonical NumPy reporting path. Only validation
+        # scoring changes dtype; model forwards and gradients remain FP32.
+        predicted = predictions_to_fantasy_points(
+            position, {k: v.double() for k, v in preds.items()}
+        )
+        actual = predictions_to_fantasy_points(position, {k: v.double() for k, v in y.items()})
+        return (predicted - actual).square().sum()
 
-    veval = torch.vmap(member_loss_eval, in_dims=(0, 0, None, None))
+    veval = torch.vmap(member_squared_error, in_dims=(0, 0, None, None))
     template.eval()
     totals = None
-    n_batches = 0
+    n_rows = 0
     with torch.no_grad():
         for batch in val_loader:
             feats, y = _batch_to_device(batch, device)
-            losses = veval(params, buffers, feats, y)
-            totals = losses if totals is None else totals + losses
-            n_batches += 1
+            squared_errors = veval(params, buffers, feats, y)
+            totals = squared_errors if totals is None else totals + squared_errors
+            n_rows += next(iter(y.values())).shape[0]
     template.train()
-    if totals is None or n_batches == 0:
+    if totals is None or n_rows == 0:
         raise RuntimeError("stacked val pass saw no batches — empty val loader?")
-    return [float(v) for v in (totals / n_batches).cpu()]
+    return [v if np.isfinite(v) else float("inf") for v in (totals / n_rows).sqrt().cpu().tolist()]
 
 
 def train_stacked(
@@ -379,14 +381,16 @@ def train_stacked(
     capturable combined loss is the same function the full-step CUDA graph
     uses, so loss math shares one source of truth with production.
 
-    ``epoch_callback(epoch, mean_val_loss)`` — when set, a stacked val pass
+    ``epoch_callback(epoch, mean_val_rmse)`` — when set, a stacked val pass
     runs after every epoch and the callback receives the across-member MEAN
-    combined val loss (the stacked tune objective's per-epoch report; an
+    PPR fantasy-point RMSE (the stacked tune objective's per-epoch report; an
     ``optuna.TrialPruned`` raised inside it propagates out).
     """
     from src.shared.pipeline import _build_scheduler
 
     trainer0 = captures[0]["trainer"]
+    if epoch_callback is not None and trainer0.selection_metric != "fantasy_rmse_ppr":
+        raise ValueError("Stacked tuning requires fantasy_rmse_ppr checkpoint selection")
     criterion = trainer0.criterion
     train_loader = captures[0]["train_loader"]
     val_loader = captures[0]["val_loader"]
@@ -420,8 +424,8 @@ def train_stacked(
         if not per_batch:
             scheduler.step()
         if epoch_callback is not None:
-            member_vals = stacked_val_losses(
-                template, params, buffers, criterion, val_loader, device
+            member_vals = stacked_val_rmse(
+                template, params, buffers, trainer0.selection_position, val_loader, device
             )
             epoch_callback(epoch, sum(member_vals) / len(member_vals))
     return params, buffers, template

@@ -19,6 +19,23 @@ from src.shared.aggregate_targets import (
     aggregate_fn_for,
     predictions_to_fantasy_points,
 )
+from src.shared.registry import get_config
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_tensor_scoring_matches_numpy_with_leading_member_dimension(position):
+    targets = get_config(position)["targets"]
+    values = np.array([[0.0, 7.0, 14.0], [1.0, 28.0, 35.0]])
+    arrays = {t: values for t in targets}
+    tensors = {t: torch.tensor(values, requires_grad=True) for t in targets}
+    actual = predictions_to_fantasy_points(position, tensors)
+    assert isinstance(actual, torch.Tensor)
+    np.testing.assert_allclose(
+        actual.detach().numpy(), predictions_to_fantasy_points(position, arrays)
+    )
+    actual.sum().backward()
+    assert any(t.grad is not None for t in tensors.values())
 
 
 @pytest.mark.unit

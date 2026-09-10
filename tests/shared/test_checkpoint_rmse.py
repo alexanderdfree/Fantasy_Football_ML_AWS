@@ -5,6 +5,7 @@ import pytest
 import torch
 from torch import nn
 
+from src.rb.config import POSITION_CONFIG as RB_CONFIG
 from src.shared.training import MultiHeadTrainer, MultiTargetLoss, _GPUResidentBatcher
 
 pytestmark = pytest.mark.unit
@@ -32,12 +33,26 @@ class ScriptedPredictions(nn.Module):
         return {name: values[self.epoch, rows] for name, values in self.predictions.items()}
 
 
-def run_trajectory(predictions, *, weights=None, patience=20, batch_size=2, empty_val=False):
+def run_trajectory(
+    predictions,
+    *,
+    weights=None,
+    patience=20,
+    batch_size=2,
+    empty_val=False,
+    selection_metric="weighted_rmse",
+    epoch_callback=None,
+    plateau=False,
+):
     model = ScriptedPredictions(predictions)
     epochs, rows = next(iter(model.predictions.values())).shape
     targets = list(predictions)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
+    scheduler = (
+        torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+        if plateau
+        else torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
+    )
     trainer = MultiHeadTrainer(
         model,
         optimizer,
@@ -47,6 +62,8 @@ def run_trajectory(predictions, *, weights=None, patience=20, batch_size=2, empt
         targets,
         patience=patience,
         log_every=1,
+        selection_metric=selection_metric,
+        epoch_callback=epoch_callback,
     )
     # Exercise the production resident batcher's full batches plus ragged tail.
     x = torch.arange(rows, dtype=torch.float32).reshape(-1, 1)
@@ -69,7 +86,7 @@ def test_restores_rmse_winner_when_mae_prefers_another_epoch(patience, monkeypat
     assert trainer.best_val_metric == pytest.approx(2.5)
     assert trainer.model.epoch.item() == 1
     assert trainer.epochs_without_improvement == 1
-    assert "RMSE wtd:" in capsys.readouterr().out
+    assert "weighted_rmse:" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -114,3 +131,54 @@ def test_perfect_validation_has_zero_rmse():
     trainer, history = run_trajectory({"yards": [[0.0] * 3]})
     assert history["val_rmse_weighted"] == [0.0]
     assert trainer.best_model_state is not None
+
+
+@pytest.mark.parametrize("patience", [1, 20], ids=["early-stop", "epoch-limit"])
+def test_fantasy_selector_callback_and_scheduler_agree(patience):
+    # The old per-stat score favors one TD error over two reception errors;
+    # PPR correctly prefers the two-point miss over the six-point miss.
+    predictions = {t: [[0.0] * 3 for _ in range(3)] for t in RB_CONFIG.targets}
+    predictions["rushing_tds"][0] = [1.0] * 3
+    predictions["receptions"][1:] = [[2.0] * 3, [3.0] * 3]
+    reports = []
+    trainer, history = run_trajectory(
+        predictions,
+        weights=RB_CONFIG.loss_weights,
+        patience=patience,
+        selection_metric="fantasy_rmse_ppr",
+        plateau=True,
+        epoch_callback=lambda epoch, value: reports.append((epoch, value)),
+    )
+    assert np.argmin(history["val_rmse_weighted"]) == 0
+    assert reports == [(0, 6.0), (1, 2.0), (2, 3.0)]
+    assert trainer.scheduler.best == 2.0
+    assert trainer.best_val_metric == 2.0
+    assert trainer.model.epoch.item() == 1
+    selection = history["checkpoint_selection"]
+    assert selection["metric"] == "fantasy_rmse_ppr"
+    assert selection["epoch"] == 2
+    assert selection["score"] == 2.0
+    assert selection["validation_metrics"]["val_fantasy_rmse_standard"] == 0.0
+    assert selection["validation_metrics"]["val_fantasy_rmse_half_ppr"] == 1.0
+
+
+def test_fantasy_rmse_aggregates_errors_before_reduction():
+    predictions = {t: [[0.0] * 3] for t in RB_CONFIG.targets}
+    predictions["rushing_yards"] = [[60.0] * 3]
+    predictions["fumbles_lost"] = [[3.0] * 3]
+    _, history = run_trajectory(predictions, selection_metric="fantasy_rmse_ppr")
+    assert history["val_rmse_weighted"][0] > 0.0
+    assert history["val_fantasy_rmse_ppr"] == [0.0]
+
+
+def test_fantasy_selector_rejects_incomplete_targets():
+    with pytest.raises(ValueError, match="complete known position"):
+        run_trajectory({"yards": [[0.0] * 3]}, selection_metric="fantasy_rmse_ppr")
+
+
+def test_legacy_mae_selector_is_available_for_comparison():
+    trainer, history = run_trajectory(
+        {"yards": [[0.0, 0.0, 6.0], [2.5] * 3]}, selection_metric="weighted_mae"
+    )
+    assert trainer.model.epoch.item() == 0
+    assert history["checkpoint_selection"]["metric"] == "weighted_mae"

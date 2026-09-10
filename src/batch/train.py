@@ -616,6 +616,10 @@ def _extract_metrics(position, result):
         m = result.get(m_key)
         if not m:
             continue
+        history_key = "attn_history" if model_key == "attn_nn" else "history"
+        selection = (result.get(history_key) or {}).get("checkpoint_selection")
+        if model_key in ("nn", "attn_nn") and selection is not None:
+            metrics[f"{model_key}_selection"] = selection
         metrics[m_key] = {
             "total": {
                 k: (round(v, 4) if isinstance(v, (int, float)) else v)
@@ -1035,7 +1039,7 @@ def _merged_split_metrics(
     }
     for branch, branch_metrics in (("nn", nn_metrics), ("cpu", cpu_metrics)):
         for key, value in branch_metrics.items():
-            if key.endswith("_metrics") or key.endswith("_ranking"):
+            if key.endswith(("_metrics", "_ranking", "_selection")):
                 if key in metrics:
                     raise RuntimeError(f"Duplicate metric key during split merge: {key}")
                 metrics[key] = value
