@@ -446,3 +446,6 @@ The original headings remain here so existing fragment links still resolve.
 
 ### [FIXED] Huber delta asymmetry across targets starved count heads
 [Read the incident record](fixed-archive/fixed-huber-delta-asymmetry-across-targets-starved-count-heads-f28ba594.md).
+
+### [FIXED] Live projections hid source outages, retained stale views and omitted current player metadata
+[Read the incident record](fixed-archive/fixed-live-projection-freshness-and-coverage.md).

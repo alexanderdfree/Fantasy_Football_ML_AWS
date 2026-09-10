@@ -35,6 +35,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pandas as pd
 
@@ -283,6 +285,8 @@ def _parse_roster_players(
 
     Skips inactive groups (IR / suspended / practice squad). ``id`` is the ESPN
     athlete id (still a string); the gsis mapping is applied by the caller.
+    Display-only metadata keeps a ``roster_`` prefix so it cannot overwrite
+    training features, and retains the source season for safe rookie matching.
     """
     players: list[dict] = []
     for group in payload.get("athletes", []) or []:
@@ -303,6 +307,10 @@ def _parse_roster_players(
                     "espn_name": item.get("displayName"),
                     "position": pos,
                     "recent_team": team_code,
+                    "roster_birth_date": item.get("dateOfBirth"),
+                    "roster_debut_year": item.get("debutYear"),
+                    "roster_experience_years": (item.get("experience") or {}).get("years"),
+                    "roster_season": (payload.get("season") or {}).get("year"),
                 }
             )
     return players
@@ -542,6 +550,10 @@ def fetch_active_rosters(
                     "recent_team": team_code,
                     "espn_name": p["espn_name"],
                     "espn_id": p["espn_id"],
+                    "roster_birth_date": p["roster_birth_date"],
+                    "roster_debut_year": p["roster_debut_year"],
+                    "roster_experience_years": p["roster_experience_years"],
+                    "roster_season": p["roster_season"],
                 }
             )
     if unmapped:
@@ -555,7 +567,7 @@ def fetch_active_rosters(
 _INJURIES_COLUMNS = ["gsis_id", "position", "team", "season", "week", "report_status"]
 
 
-def fetch_injuries_df(season: int, week: int) -> pd.DataFrame:
+def fetch_injuries_df(season: int, week: int, *, records: list[dict] | None = None) -> pd.DataFrame:
     """Return OUT/Doubtful players shaped for ``build_features``' role-inheritance
     feature: columns ``(gsis_id, position, team, season, week, report_status)``.
 
@@ -566,11 +578,12 @@ def fetch_injuries_df(season: int, week: int) -> pd.DataFrame:
     """
     crosswalk = espn_to_gsis_map()
     rows: list[dict] = []
-    try:
-        records = _parse_injuries(_get_json(f"{_ESPN_BASE}/injuries"))
-    except Exception as e:  # noqa: BLE001 - network boundary
-        print(f"[espn_live] injuries fetch failed: {e!r}")
-        return pd.DataFrame(columns=_INJURIES_COLUMNS)
+    if records is None:
+        try:
+            records = _parse_injuries(_get_json(f"{_ESPN_BASE}/injuries"))
+        except Exception as e:  # noqa: BLE001 - network boundary
+            print(f"[espn_live] injuries fetch failed: {e!r}")
+            return pd.DataFrame(columns=_INJURIES_COLUMNS)
     for rec in records:
         report = _INJURY_STATUS_MAP.get(rec["status"].lower())
         if report is None:
@@ -748,7 +761,9 @@ def fetch_fantasy_projections(season: int, week: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def fetch_injury_status_map(season: int, week: int) -> dict[str, float]:
+def fetch_injury_status_map(
+    season: int, week: int, *, records: list[dict] | None = None
+) -> dict[str, float]:
     """``{player_id: game_status}`` from ESPN injuries, on the training encoding.
 
     Maps ESPN status -> the same numeric scale as src/data/loader.py's
@@ -759,11 +774,12 @@ def fetch_injury_status_map(season: int, week: int) -> dict[str, float]:
     """
     crosswalk = espn_to_gsis_map()
     out: dict[str, float] = {}
-    try:
-        records = _parse_injuries(_get_json(f"{_ESPN_BASE}/injuries"))
-    except Exception as e:  # noqa: BLE001 - network boundary
-        print(f"[espn_live] injury status fetch failed: {e!r}")
-        return {}
+    if records is None:
+        try:
+            records = _parse_injuries(_get_json(f"{_ESPN_BASE}/injuries"))
+        except Exception as e:  # noqa: BLE001 - network boundary
+            print(f"[espn_live] injury status fetch failed: {e!r}")
+            return {}
     for rec in records:
         num = _GAME_STATUS_NUM.get((rec.get("status") or "").lower())
         if num is None:
@@ -773,3 +789,68 @@ def fetch_injury_status_map(season: int, week: int) -> dict[str, float]:
             continue
         out[gsis] = min(num, out.get(gsis, 1.0))
     return out
+
+
+@dataclass
+class InjuryReport:
+    injuries: pd.DataFrame
+    statuses: dict[str, float]
+    metadata: dict
+
+
+def fetch_injury_report(
+    season: int,
+    week: int,
+    team_id_to_code: dict[str, str],
+    *,
+    now: datetime | None = None,
+) -> InjuryReport:
+    """One validated snapshot for Out exclusions, vacancies and game status.
+
+    Live publication requires a recent, successful response covering every
+    scheduled team. A missing/old/partial feed is not an empty injury list.
+    Legacy best-effort adapters remain available to historical callers.
+    """
+    url = f"{_ESPN_BASE}/injuries"
+    payload = _get_json(url)
+    now = now or datetime.now(UTC)
+    if payload.get("status") != "success" or (payload.get("season") or {}).get("year") != season:
+        raise ValueError("ESPN injury report did not confirm the requested season")
+    timestamp = pd.to_datetime(payload.get("timestamp"), utc=True, errors="coerce")
+    age = (pd.Timestamp(now) - timestamp).total_seconds() if pd.notna(timestamp) else None
+    if age is None or not -300 <= age <= 4 * 3600:
+        raise ValueError("ESPN injury report timestamp is missing, stale or in the future")
+    blocks = payload.get("injuries")
+    if not isinstance(blocks, list) or any(
+        not isinstance(block, dict) or not isinstance(block.get("injuries"), list)
+        for block in blocks
+    ):
+        raise ValueError("ESPN injury report schema is incomplete")
+    covered = {str(block.get("id")) for block in blocks}
+    missing = set(map(str, team_id_to_code)) - covered
+    if missing:
+        teams = sorted(team_id_to_code[tid] for tid in missing)
+        raise ValueError(f"ESPN injury report is missing scheduled teams: {teams}")
+    records = _parse_injuries(payload)
+    if any(not record["espn_id"] for record in records):
+        raise ValueError("ESPN injury report contains an athlete without a usable identity")
+    # A new provider status must not silently become the healthy default.
+    known = {*_GAME_STATUS_NUM, *_INJURY_STATUS_MAP, "active"}
+    unknown = sorted({record["status"].lower() for record in records} - known)
+    if unknown:
+        raise ValueError(f"ESPN injury report has unknown statuses: {unknown}")
+    return InjuryReport(
+        injuries=fetch_injuries_df(season, week, records=records),
+        statuses=fetch_injury_status_map(season, week, records=records),
+        metadata={
+            "provider": "ESPN",
+            "status": "available",
+            "url": url,
+            "season": season,
+            "week": week,
+            "source_updated_at": timestamp.isoformat(),
+            "fetched_at": now.isoformat(),
+            "covered_teams": sorted(team_id_to_code.values()),
+            "reported_players": len(records),
+        },
+    )

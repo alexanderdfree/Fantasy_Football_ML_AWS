@@ -2,6 +2,7 @@
 
 - 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR #1554) · → ADR-0017
 - 2026-09-10 · Delete superseded recommendations and consolidate agent rules and memory retrieval pointers · (PR #1553) · → ADR-0025
+- 2026-09-10 · Verify live injury/roster snapshots, publish availability transitions, expose freshness/coverage, recover upstream QBR and current player metadata, revalidate browser projections · (PR pending) · → ADR-0018
 
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017
 - 2026-09-10 · Repair skill/prompt loading and shared workflow scope, authorization, isolation, and merge checks · (PR #1558) · → ADR-0025

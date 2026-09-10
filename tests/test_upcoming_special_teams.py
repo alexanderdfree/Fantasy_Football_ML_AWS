@@ -139,6 +139,10 @@ def test_live_roster_includes_pk_but_not_punter_or_inactive():
             "espn_name": "Kicker",
             "position": "K",
             "recent_team": "BUF",
+            "roster_birth_date": None,
+            "roster_debut_year": None,
+            "roster_experience_years": None,
+            "roster_season": None,
         }
     ]
 

@@ -15,6 +15,40 @@ def missing_live_snaps(monkeypatch):
         raise ConnectionError("snap_counts_2026.parquet: 404")
 
     monkeypatch.setattr(live.nfl_source, "snap_counts", unavailable)
+    monkeypatch.setattr(live.live_qbr, "recover_qbr", lambda frame, *args: (frame, {}))
+
+
+def test_supplementary_coverage_counts_completed_observations_not_nonempty_files():
+    current = pd.DataFrame(
+        {
+            "player_id": ["qb", "rb", "wr", "idle"],
+            "season": [2026] * 4,
+            "week": [1] * 4,
+            "position": ["QB", "RB", "WR", "TE"],
+            "attempts": [30, 0, 0, 0],
+            "carries": [1, 10, 0, 0],
+            "targets": [0, 2, 5, 0],
+            "snap_pct": [0.9, None, 0.6, None],
+            "qbr_total": [78.6, None, None, None],
+            "pts_added": [3.0, None, None, None],
+        }
+    )
+    opportunity = current.iloc[:2][["player_id", "season", "week"]].assign(
+        **{col: 0.0 for col in live.FF_OPP_FEATURE_COLUMNS}
+    )
+    result = live._history_source_coverage(current, opportunity)
+    assert result == {
+        "snap_counts": {"status": "partial", "observed": 2, "expected": 4},
+        "ff_opportunity": {"status": "partial", "observed": 2, "expected": 3},
+        "qbr": {"status": "available", "observed": 1, "expected": 1},
+    }
+    # Complete-looking keys with absent source statistics are still unavailable.
+    missing_values = opportunity.assign(**{live.FF_OPP_FEATURE_COLUMNS[0]: float("nan")})
+    assert live._history_source_coverage(current, missing_values)["ff_opportunity"] == {
+        "status": "unavailable",
+        "observed": 0,
+        "expected": 3,
+    }
 
 
 @pytest.mark.parametrize("opportunity_week", [-1, None, 1, 2])
@@ -48,7 +82,7 @@ def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path, 
         if cache_dir and opportunity_week != -1:
             opportunity = current.loc[
                 current.week.eq(opportunity_week), ["player_id", "season", "week"]
-            ]
+            ].assign(**{column: 0.0 for column in live.FF_OPP_FEATURE_COLUMNS})
             opportunity.to_parquet(f"{cache_dir}/ff_opportunity_2026_2026.parquet")
         return old.copy() if len(seasons) > 1 else current.copy()
 

@@ -110,6 +110,240 @@ class TestAttachAgeAndRookie:
         assert out.loc[1, "age"] == 30.0
 
 
+class TestLiveRosterMetadata:
+    @pytest.fixture
+    def live_schedules(self):
+        return pd.DataFrame(
+            {
+                "season": [2026],
+                "week": [1],
+                "gameday": ["2026-09-10"],
+                "home_team": ["KC"],
+                "away_team": ["BUF"],
+            }
+        )
+
+    def test_live_rosters_replace_historical_cache_without_mutating_it(
+        self, meta_env, live_schedules, monkeypatch
+    ):
+        historical = roster_meta.attach_age_and_rookie(_results_frame())
+        live_rosters = pd.DataFrame(
+            {
+                "gsis_id": ["P1", "P2", "P3"],
+                "season": [2026, 2026, 2026],
+                "week": [1, 1, 1],
+                "birth_date": ["2000-03-15", "1995-11-02", "2004-09-10"],
+                "rookie_year": [2025, 2017, 2026],
+            }
+        )
+        expected_rosters = live_rosters.copy(deep=True)
+        expected_schedules = live_schedules.copy(deep=True)
+        # Both explicit frames must work without any cache reads or network.
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                roster_meta,
+                "load_roster_meta",
+                lambda: pytest.fail("live enrichment read historical roster cache"),
+            )
+            patch.setattr(
+                roster_meta,
+                "load_gameday_map",
+                lambda: pytest.fail("live enrichment read historical schedule cache"),
+            )
+            out = roster_meta.attach_age_and_rookie(
+                _results_frame().assign(season=2026, week=1),
+                rosters=live_rosters,
+                schedules=live_schedules,
+            )
+        assert out["age"].iloc[:3].tolist() == [26.0, 30.0, 22.0]
+        assert out["is_rookie"].iloc[:3].tolist() == [0.0, 0.0, 1.0]
+        assert out.loc[3, ["age", "is_rookie"]].isna().all()
+        pd.testing.assert_frame_equal(live_rosters, expected_rosters)
+        pd.testing.assert_frame_equal(live_schedules, expected_schedules)
+        pd.testing.assert_frame_equal(
+            roster_meta.attach_age_and_rookie(_results_frame()), historical
+        )
+
+    @pytest.mark.parametrize(
+        ("birthday", "gameday", "age"),
+        [
+            ("2003-09-10", "2026-09-09", 22.0),
+            ("2003-09-10", "2026-09-10", 23.0),
+            ("2003-09-10", "2026-09-11", 23.0),
+            ("2004-02-29", "2026-02-28", 21.0),
+            ("2004-02-29", "2026-03-01", 22.0),
+        ],
+    )
+    def test_calendar_age_changes_on_birthday(self, live_schedules, birthday, gameday, age):
+        rosters = pd.DataFrame({"player_id": ["P1"], "season": [2026], "birth_date": [birthday]})
+        out = roster_meta.attach_age_and_rookie(
+            _results_frame().iloc[:1].assign(season=2026, week=1),
+            rosters=rosters,
+            schedules=live_schedules.assign(gameday=gameday),
+        )
+        assert out.loc[0, "age"] == age
+        assert np.isnan(out.loc[0, "is_rookie"])
+
+    def test_duplicate_snapshots_keep_identity_and_result_index(self, live_schedules):
+        rosters = pd.DataFrame(
+            {
+                "player_id": ["P1", "P2", "P1", None],
+                "season": [2026] * 4,
+                "week": [1, 1, 2, 2],
+                "team": ["BUF", "BUF", "KC", "KC"],
+                "birth_date": ["2000-03-15", "1995-11-02", "2000-03-16", "2000-01-01"],
+                "entry_year": [2025, 2017, 2025, 2026],
+            }
+        )
+        frame = _results_frame().assign(season=2026, week=1)
+        frame.index = [10, 20, 40, 30]
+        out = roster_meta.attach_age_and_rookie(
+            frame, rosters=rosters, schedules=live_schedules.assign(gameday="2026-03-15")
+        )
+        assert out.index.tolist() == frame.index.tolist()
+        assert len(out) == len(frame)
+        # The corrected birth date in the later snapshot is March 16.
+        assert out.loc[10, "age"] == 25.0
+        assert out.loc[20, "age"] == 30.0
+        assert out.loc[10, "is_rookie"] == 0.0
+        assert out.loc[[40, 30], ["age", "is_rookie"]].isna().all().all()
+
+    @pytest.mark.parametrize(
+        "rosters",
+        [
+            pd.DataFrame(),
+            pd.DataFrame({"player_id": ["P1"], "season": [2026]}),
+            pd.DataFrame({"unexpected_schema": [1]}),
+            pd.DataFrame(
+                {
+                    "player_id": ["P1"],
+                    "season": [2025],
+                    "birth_date": ["2000-03-15"],
+                    "entry_year": [2025],
+                }
+            ),
+        ],
+    )
+    def test_absent_metadata_never_borrows_another_season(self, meta_env, live_schedules, rosters):
+        out = roster_meta.attach_age_and_rookie(
+            _results_frame().assign(season=2026, week=1),
+            rosters=rosters,
+            schedules=live_schedules,
+        )
+        assert out[["age", "is_rookie"]].isna().all().all()
+
+    def test_dst_is_not_a_person_even_if_source_has_a_matching_id(self, live_schedules):
+        rosters = pd.DataFrame(
+            {
+                "player_id": ["KC"],
+                "season": [2026],
+                "birth_date": ["2000-01-01"],
+                "entry_year": [2026],
+            }
+        )
+        out = roster_meta.attach_age_and_rookie(
+            _results_frame().assign(season=2026, week=1),
+            rosters=rosters,
+            schedules=live_schedules,
+        )
+        assert out.loc[3, ["age", "is_rookie"]].isna().all()
+
+
+class TestEspnMetadataFallback:
+    def _schedule(self):
+        return pd.DataFrame(
+            {
+                "season": [2026],
+                "week": [1],
+                "gameday": ["2026-09-10"],
+                "home_team": ["KC"],
+                "away_team": ["BUF"],
+            }
+        )
+
+    def test_fallback_fills_only_missing_nflverse_values(self):
+        nflverse = pd.DataFrame(
+            {
+                "player_id": ["P1"],
+                "season": [2026],
+                "birth_date": ["2000-03-15"],
+                "entry_year": [2025],
+            }
+        )
+        live_roster = pd.DataFrame(
+            {
+                "player_id": ["P1", "P2", "P3", "KC"],
+                "roster_season": [2026] * 4,
+                "roster_birth_date": [
+                    "2001-01-01T07:00Z",
+                    "1998-03-17T08:00Z",
+                    "2003-07-03T07:00Z",
+                    "2000-01-01T00:00Z",
+                ],
+                "roster_debut_year": [2026, 2020, None, None],
+                "roster_experience_years": [0, 6, 0, 0],
+            }
+        )
+        out = roster_meta.attach_age_and_rookie(
+            _results_frame().assign(season=2026, week=1),
+            rosters=nflverse,
+            schedules=self._schedule(),
+            live_roster=live_roster,
+        )
+        assert out["age"].iloc[:3].tolist() == [26.0, 28.0, 23.0]
+        assert out["is_rookie"].iloc[:3].tolist() == [0.0, 0.0, 1.0]
+        assert out.loc[3, ["age", "is_rookie"]].isna().all()
+
+    @pytest.mark.parametrize("roster_season", [2025, None])
+    def test_stale_or_undated_espn_metadata_is_not_applied(self, roster_season):
+        live_roster = pd.DataFrame(
+            {
+                "player_id": ["P1"],
+                "roster_season": [roster_season],
+                "roster_birth_date": ["2003-07-03T07:00Z"],
+                "roster_experience_years": [0],
+            }
+        )
+        out = roster_meta.attach_age_and_rookie(
+            _results_frame().assign(season=2026, week=1),
+            rosters=pd.DataFrame(),
+            schedules=self._schedule(),
+            live_roster=live_roster,
+        )
+        assert out[["age", "is_rookie"]].isna().all().all()
+
+    @pytest.mark.parametrize(
+        ("debut", "experience", "rookie"),
+        [
+            (2018, None, 0.0),
+            (2026, None, None),
+            (None, 0, 1.0),
+            (None, None, None),
+            (None, -1, None),
+        ],
+    )
+    def test_debut_and_experience_do_not_invent_entry_year(self, debut, experience, rookie):
+        live_roster = pd.DataFrame(
+            {
+                "player_id": ["P1"],
+                "roster_season": [2026],
+                "roster_debut_year": [debut],
+                "roster_experience_years": [experience],
+            }
+        )
+        out = roster_meta.attach_age_and_rookie(
+            _results_frame().assign(season=2026, week=1),
+            rosters=pd.DataFrame(),
+            schedules=self._schedule(),
+            live_roster=live_roster,
+        )
+        assert out["age"].isna().all()
+        if rookie is None:
+            assert np.isnan(out.loc[0, "is_rookie"])
+        else:
+            assert out.loc[0, "is_rookie"] == rookie
+
+
 class TestRowSerialization:
     def test_rows_carry_int_age_and_bool_rookie(self):
         df = pd.DataFrame(
