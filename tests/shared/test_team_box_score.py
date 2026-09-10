@@ -16,6 +16,41 @@ import src.shared.team_box_score as tbs
 pytestmark = pytest.mark.unit
 
 
+def test_opponent_score_merge_keeps_perspective_and_reaches_history(monkeypatch):
+    from src.features.engineer import build_game_history_arrays
+
+    lookup = pd.DataFrame(
+        {
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "team": ["KC", "BUF"],
+            "team_points_scored": [31.0, 17.0],
+            "opp_team_points_scored": [17.0, 31.0],
+        }
+    )
+    for col in tbs.TEAM_BOX_SCORE_FEATURES:
+        if col not in lookup:
+            lookup[col] = 0.0
+    monkeypatch.setattr(tbs, "_build_team_box_score_lookup", lambda: lookup)
+    players = pd.DataFrame(
+        {
+            "player_id": ["KC_QB", "BUF_QB", "KC_QB"],
+            "season": [2025] * 3,
+            "week": [1, 1, 2],
+            "recent_team": ["KC", "BUF", "KC"],
+            "opponent_team": ["BUF", "KC", "BUF"],
+        }
+    )
+    tbs.merge_team_box_score_features(players)
+    assert players.loc[:1, "team_points_scored"].tolist() == [31, 17]
+    assert players.loc[:1, "opp_team_points_scored"].tolist() == [17, 31]
+    history, mask = build_game_history_arrays(
+        players, history_stats=["team_points_scored", "opp_team_points_scored"]
+    )
+    assert mask[2, 0]
+    assert history[2, 0].tolist() == [31, 17]
+
+
 def test_legacy_schedule_team_codes_normalized_before_points_merge(monkeypatch):
     # 2015 Raiders game: schedules still say "OAK"; team_stats says "LV".
     schedules = pd.DataFrame(

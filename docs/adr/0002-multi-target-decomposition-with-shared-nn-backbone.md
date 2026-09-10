@@ -6,6 +6,8 @@
 
 Current target sets (6 for QB/RB, 4 for WR/TE/K, 10 for DST):
 
+Target definitions must remain identical across source eras. D/ST `yards_allowed` is opponent **net** offense: gross passing + rushing + nflverse's signed-negative `sack_yards_lost`. K `fg_misses`/`xp_misses` count all unsuccessful attempts, including blocks; the modern weekly feed separates blocked counts, so the K loader adds them to the miss counts to match the pre-2025 PBP path. These corrections change target values and require a benchmark rebaseline, without changing head shapes or scoring coefficients.
+
 | Pos | Targets |
 |---|---|
 | QB | `passing_yards`, `rushing_yards`, `passing_tds`, `rushing_tds`, `interceptions`, `fumbles_lost` |
@@ -42,6 +44,8 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
 **References.** [src/shared/aggregate_targets.py](../../src/shared/aggregate_targets.py) (aggregator + `TARGET_UNITS`), [src/config.py](../../src/config.py) (`SCORING_PPR`, `SCORING_HALF_PPR`, `SCORING_STANDARD`), [src/shared/neural_net.py:256-313](../../src/shared/neural_net.py) (`MultiHeadNet`), [src/shared/training.py](../../src/shared/training.py) (`MultiTargetLoss`), per-position target builders in `src/qb/targets.py`, `src/rb/targets.py`, `src/wr/targets.py`, `src/te/targets.py`, `src/k/targets.py`, `src/dst/targets.py`, and `src/{pos}/config.py` `POSITION_CONFIG` objects (target lists + loss weights + Huber deltas in raw-stat units). Consolidated in commit `99d7086`; raw-stat migration follows. Backbone-normalization rationale + ablation: [src/tuning/ablate_backbone_norm.py](../../src/tuning/ablate_backbone_norm.py), `benchmark_history/ablations/*_backbone_norm.json`.
 
 ## Changelog
+
+- **2026-09-10** — Correct D/ST net-yard labels and normalize blocked K attempts into misses across the PBP/weekly source boundary. (PR pending)
 
 - **2026-06-01** — Corrected references after the config consolidation: target builders are named per file, K target signs live on `POSITION_CONFIG`, and the stale `KickerConfig`/`compute_{pos}_targets` wording is gone. Documentation-only.
 - **2026-06-01** — Removed the stale `POINT_EQUIVALENT_MULTIPLIER` reference after deleting that unused display-only constant; fantasy-point aggregation still lives in `aggregate_targets.py`. Documentation-only.

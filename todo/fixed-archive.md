@@ -12,6 +12,12 @@ The original headings remain here so existing fragment links still resolve.
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).
 
+### [FIXED] Training population and score semantics hid played games and changed targets
+- **File(s):** `src/data/participation.py`, `src/data/loader.py`, `src/shared/team_box_score.py`, `src/dst/data.py`, `src/k/data.py`; regression tests in `tests/test_participation.py`, `tests/shared/test_team_box_score.py`, `tests/dst/test_data_build.py`, `tests/k/test_data_loaders.py` (PR pending).
+- **What:** A production audit found 8,875 eligible played player-weeks absent from the statistical event table; every prepared offensive opponent-score token duplicated the player's own team score; D/ST yardage omitted sack losses (1,703 of 6,814 scoring tiers changed); and the 2025 K source excluded blocked attempts from misses (34 omitted penalties across 33 games). Related QBR coverage and implied-total inversion fixes landed independently in PR #1545; K no-attempt games/history landed in PR #1543 and are preserved.
+- **Fix:** Restore zero-stat offensive appearances from positive participation with roster identity and source-game coverage guards before all merges/features. Join the opponent's own score. Add signed sack yards to gross opponent offense. Normalize modern K miss counts to include blocked attempts, matching the PBP era. Validate with asymmetric real-game values, positive-control regressions, fresh split reconstruction, and the production pipeline.
+- **Lesson:** Column presence and finite matrices do not establish completeness or correct semantics. Compare observation populations against participation, validate both sides of joins against independent scores, and reconcile target definitions whenever a source changes. Population/label corrections require explicit cohort and metric rebaselines.
+
 ### [FIXED] K no-attempt games disappeared from training and nested history
 [Read the incident record](fixed-archive/fixed-k-no-attempt-games-disappeared-from-training-and-nested-history-8e454eb2.md).
 

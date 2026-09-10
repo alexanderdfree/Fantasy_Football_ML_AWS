@@ -24,6 +24,7 @@ from src.data.external_sources import (
     load_qbr_weekly,
 )
 from src.data.nflcom_loader import schedule_team_code_normalization
+from src.data.participation import restore_offensive_appearances
 from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
 
 # Re-export the redzone_pbp feature list as a list (for ``not in df.columns``
@@ -462,6 +463,7 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         snap_counts = snap_counts.merge(
             pfr_to_gsis, left_on="pfr_player_id", right_on="pfr_id", how="left"
         )
+        weekly = restore_offensive_appearances(weekly, snap_counts, roster_pos)
         snap_merged = snap_counts[["gsis_id", "season", "week", "offense_pct"]].dropna(
             subset=["gsis_id"]
         )

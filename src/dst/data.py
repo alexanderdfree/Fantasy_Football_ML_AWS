@@ -27,7 +27,7 @@ def build_data(
       - def_tds / def_safeties / def_fumbles_forced: from nflverse stats_team
         (full history, much better fill than per-player aggregation)
       - def_blocked_kicks: opponent's fg_blocked + pat_blocked from stats_team
-      - yards_allowed: opponent's passing_yards + rushing_yards from stats_team
+      - yards_allowed: opponent's net passing + rushing yards from stats_team
       - Special teams TDs: from player stats per team (mostly complete)
     """
     # Read src.config lazily (module-attr access, not an import-time name bind)
@@ -181,12 +181,15 @@ def build_data(
     ].rename(columns={"fumble_recovery_opp": "def_fumble_rec"})
 
     # --- 5b. Opponent-derived columns from team_stats ---
-    # yards_allowed = opponent's passing_yards + rushing_yards
+    # NFL team offense is NET of sacks. nflverse sack_yards_lost is signed
+    # negative, so add it to gross passing yards before applying fantasy tiers.
     # def_blocked_kicks = opponent's fg_blocked + pat_blocked (we blocked them)
     team_stats_aug = team_stats.copy()
-    team_stats_aug["_opp_yards"] = team_stats_aug["passing_yards"].fillna(0) + team_stats_aug[
-        "rushing_yards"
-    ].fillna(0)
+    team_stats_aug["_opp_yards"] = (
+        team_stats_aug["passing_yards"].fillna(0)
+        + team_stats_aug["rushing_yards"].fillna(0)
+        + team_stats_aug["sack_yards_lost"].fillna(0)
+    )
     team_stats_aug["_opp_blocked"] = team_stats_aug["fg_blocked"].fillna(0) + team_stats_aug[
         "pat_blocked"
     ].fillna(0)

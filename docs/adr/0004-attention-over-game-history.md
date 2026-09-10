@@ -6,6 +6,8 @@
 
 **Context.** Rolling means lose order — "three good games then a bad one" looks identical to "one bad then three good." Attention over the last N games lets the model weight recent games higher, attend more to games pre-injury, and in principle learn role-change signals (backup becomes starter) that a fixed window can't capture.
 
+**Score perspective and played games (2026-09-10).** The own-team and opponent-score history tokens must describe distinct sides of the same prior game. When joining on the opponent key, select the opponent's own score; selecting its already-relative opponent score would duplicate the player's own team score. Positive offensive participation also retains zero-stat games in the QB/RB/WR/TE sequence, with a valid history mask, before rolling/contextual features are built. No token contains the target game's outcome.
+
 **Options considered.**
 
 | Option | Signal captured | Sample-efficient? |
@@ -31,6 +33,8 @@
 **K game-index contract.** The weekly observation frame defines the games in both nested-history branches. It includes observed games with no FG/PAT attempts: their game mask is true and every kick mask is false. Unused history slots have both masks false. Callers supply the complete in-season weekly history, and the builder selects strictly earlier games before joining kick records; an event-only table cannot define the outer slots. Existing weekly observations are preserved, and historical omissions are recovered only from actual special-teams participation by roster-designated kickers. This does not synthesize appearances from season rosters, byes, or inactive weeks. Per-game FG/PAT counts retain opportunity information alongside the pooled individual made/missed kicks.
 
 ## Changelog
+
+- **2026-09-10** — Correct the opponent-score lookup perspective and retain played offensive zero-stat observations in history. (PR pending)
 
 - **2026-09-10** — **K empty-game history.** K's weekly game index now retains zero-FG/zero-PAT games already in the weekly feed and restores missing historical appearances from cached special-teams snaps, restricted to players designated K in the season roster. Identity resolution uses cached roster PFR/GSIS IDs and unique exact normalized roster aliases, with no live ID-feed dependency. Undefined no-attempt mean distance/probability stay NaN in both data eras so rolling means agree. Byes and inactive weeks are not synthesized from rosters. Both training and serving build the nested outer slots from the same weekly rows as their per-game aggregate branch: a real no-attempt game has a valid outer mask and an empty inner mask, while padding has both masks false. Made and missed kicks remain individual inner tokens; the existing 17-game/10-kick caps, same-season boundary, and four aggregate outputs remain unchanged. Empty games obtain venue/weather from schedules and contribute zero opportunity to subsequent rolling features. This changes K's training/evaluation population and requires retraining; it does not claim an architecture or accuracy improvement. (PR pending)
 
