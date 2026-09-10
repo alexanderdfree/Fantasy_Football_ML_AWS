@@ -11,8 +11,8 @@ Covers:
 - The ``post_fork`` hook in ``gunicorn.conf.py`` spawns a daemon thread
   and returns immediately (so the worker isn't blocked from accepting
   requests by a slow warm).
-- Atomic write: two concurrent ``_persist_cache_to_disk`` calls leave
-  the destination triple in a consistent, parseable state.
+- Atomic publication: concurrent writers expose one complete immutable
+  prediction/metrics/fingerprint/snapshot generation.
 
 The fingerprint test files live under ``tmp_path``; ``_iter_fingerprint_paths``
 is monkeypatched to yield them, which avoids needing a real
@@ -24,6 +24,7 @@ touched.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -41,6 +42,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import src.serving.core as core
+from src.shared.prediction_cache import current_generation, publish_generation, read_generation
 
 pytestmark = pytest.mark.unit
 
@@ -88,6 +90,174 @@ def _fake_metrics() -> dict:
         "half_ppr": {"Ridge Regression": {"overall": None, "by_position": []}},
         "standard": {"Ridge Regression": {"overall": None, "by_position": []}},
     }
+
+
+def _persist_fixture_cache():
+    """The synthetic cache was computed against these unchanged model inputs."""
+    core.app_pkg._cache.setdefault(
+        "prediction_inputs_fingerprint", core._compute_models_fingerprint()[0]
+    )
+    core._persist_cache_to_disk()
+
+
+def _generation(cache_dir: Path) -> Path:
+    directory = current_generation(cache_dir)
+    assert directory is not None, "a complete generation must have been committed"
+    return directory
+
+
+def test_sentinel_only_invalidation_rejects_old_generation_without_deleting_readers(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache["results"] = _fake_results()
+    core.app_pkg._cache["metrics_by_format"] = _fake_metrics()
+    _persist_fixture_cache()
+    old, files = read_generation(cache_dir)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+    assert old.is_dir()
+    assert core._snapshot_path() is None
+    assert core._try_hydrate_from_disk() is False
+
+    # Another process can finish a new generation without our invalidation
+    # deleting or quarantining its pointer, even when input bytes are unchanged.
+    snapshot = json.loads(files["snapshot.json"])
+    snapshot["generated_at"] = "2026-09-10T13:00:00+00:00"
+    publish_generation(cache_dir, {**files, "snapshot.json": json.dumps(snapshot).encode()})
+    assert core._snapshot_path() is not None
+    assert core._try_hydrate_from_disk() is True
+
+
+def test_replacement_worker_cannot_hydrate_or_upload_invalidated_generation(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    from src.shared import prediction_cache
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    old, files = read_generation(cache_dir)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+
+    # Replacement gunicorn worker has no predecessor's in-memory error marker.
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+    assert core._snapshot_path() is None
+    with pytest.raises(ValueError):
+        prediction_cache.bundle_generation(cache_dir)
+    assert (old / "predictions.parquet").read_bytes() == files["predictions.parquet"]
+
+
+@pytest.mark.parametrize("endpoint", ["/api/metrics", "/api/predictions?position=QB"])
+def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
+    cache_dir, fingerprint_files, monkeypatch, endpoint
+):
+    """B records the advanced sentinel before A revokes B's stale generation."""
+    positions = tuple(core._ALL_POSITIONS)
+    mtimes = dict.fromkeys(positions, 100.0)
+    worker_a = {
+        "results": pd.DataFrame(
+            {
+                "player_id": positions,
+                "player_display_name": positions,
+                "position": positions,
+                "week": [1] * 6,
+                "fantasy_points": [10.0] * 6,
+                "ridge_pred_ppr": [11.0] * 6,
+            }
+        ),
+        "metrics_by_format": {"ppr": {"Ridge Regression": {"overall": {"mae": 1.0}}}},
+        "positions_loaded": set(positions),
+        "positions_mtime": dict(mtimes),
+    }
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_a)
+    monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes[pos])
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    _persist_fixture_cache()
+
+    # B hydrates the old generation after the sentinel changes but before A
+    # writes its tombstone. Its mtimes therefore cannot reveal stale predictions.
+    mtimes["QB"] = 200.0
+    worker_b = {}
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_b)
+    assert core._try_hydrate_from_disk()
+    assert worker_b["positions_mtime"]["QB"] == 200.0
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_a)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_b)
+    calls = []
+
+    def load_splits(results):
+        core.app_pkg._cache["splits"] = dict.fromkeys(positions, (None, None, None))
+
+    def apply(train, val, test, pos, results):
+        calls.append(pos)
+        results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
+
+    monkeypatch.setattr(core, "_load_splits_locked", load_splits)
+    monkeypatch.setattr(core, "_apply_position_models", apply)
+    response = core.app_pkg.app.test_client().get(endpoint)
+    assert response.status_code == 200
+    if endpoint == "/api/metrics":
+        assert set(calls) == set(positions)
+        assert response.get_json()["Ridge Regression"]["overall"]["mae"] == 89.0
+    else:
+        assert calls == ["QB"]
+        assert response.get_json()["players"][0]["ridge_pred"] == 99.0
+
+
+def test_delayed_invalidation_preserves_another_workers_new_generation(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    from src.shared import prediction_cache
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    worker_a = dict(core.app_pkg._cache)
+    old, _ = read_generation(cache_dir)
+
+    # B consumes the same initial generation, recomputes, and commits first.
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+    _persist_fixture_cache()
+    new, new_files = read_generation(cache_dir)
+    assert new != old
+    core.app_pkg._cache.clear()
+    core.app_pkg._cache.update(worker_a)
+    core._invalidate_metrics_cache(reason="worker-a-delayed-refresh")
+
+    assert prediction_cache.is_invalidated(cache_dir, old.name)
+    assert not prediction_cache.is_invalidated(cache_dir, new.name)
+    assert read_generation(cache_dir) == (new, new_files)
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+    assert core.app_pkg._cache["prediction_cache_generation"] == new.name
+
+
+def test_recompute_identical_predictions_publishes_new_generation_after_invalidation(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    # Even an absent/unchanged optional snapshot cannot be the uniqueness key.
+    monkeypatch.setattr(core, "_snapshot_bytes", lambda: None)
+    results, metrics = _fake_results(), _fake_metrics()
+    core.app_pkg._cache.update(results=results, metrics_by_format=metrics)
+    _persist_fixture_cache()
+    old, old_files = read_generation(cache_dir)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+    core.app_pkg._cache["metrics_by_format"] = metrics
+    _persist_fixture_cache()
+    new, new_files = read_generation(cache_dir)
+
+    assert new != old
+    assert new_files["predictions.parquet"] == old_files["predictions.parquet"]
+    assert new_files["metrics.json"] == old_files["metrics.json"]
+    old_fp, new_fp = (json.loads(files["fingerprint.json"]) for files in (old_files, new_files))
+    assert old_fp["sha256"] == new_fp["sha256"]
+    assert old_fp["computation_id"] != new_fp["computation_id"]
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
 
 
 @pytest.fixture
@@ -183,6 +353,59 @@ def test_fingerprint_changes_on_size_change(fingerprint_files):
     Path(fingerprint_files[0]).write_bytes(b"alpha-extended")
     sha2, _ = core._compute_models_fingerprint()
     assert sha2 != sha1
+
+
+@pytest.mark.parametrize("position", core._ALL_POSITIONS)
+def test_manifest_identity_changes_fingerprint_even_with_identical_models(
+    tmp_path, monkeypatch, position
+):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    outputs = tmp_path / "src" / position.lower() / "outputs"
+    models = outputs / "models"
+    models.mkdir(parents=True)
+    (models / "weights.pt").write_bytes(b"unchanged model bytes")
+    sidecar = outputs / ".manifest-etag"
+    sidecar.write_text('"manifest-a"')
+    before, paths = core._compute_models_fingerprint()
+    assert any(entry["path"].endswith("outputs/.manifest-etag") for entry in paths)
+
+    # Equal-length identity changes must affect content hash, not just size.
+    sidecar.write_text('"manifest-b"')
+    after, _ = core._compute_models_fingerprint()
+    assert after != before
+
+
+def test_equal_manifest_identity_hydrates_across_containers_with_different_timestamps(
+    cache_dir, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    roots = [tmp_path / "producer", tmp_path / "consumer"]
+    for root, timestamp in zip(roots, (100.0, 900.0), strict=True):
+        for position in core._ALL_POSITIONS:
+            outputs = root / "src" / position.lower() / "outputs"
+            (outputs / "models").mkdir(parents=True)
+            (outputs / "models/weights.pt").write_bytes(position.encode())
+            sidecar = outputs / ".manifest-etag"
+            sidecar.write_text(f'"{position}-same-manifest"')
+            os.utime(sidecar, (timestamp, timestamp))
+            sentinel = outputs / ".refreshed_at"
+            sentinel.write_text(str(timestamp))
+            os.utime(sentinel, (timestamp, timestamp))
+
+    monkeypatch.setattr(core, "_REPO_ROOT", str(roots[0]))
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    producer_fingerprint = core._compute_models_fingerprint()[0]
+    monkeypatch.setattr(core, "_REPO_ROOT", str(roots[1]))
+    assert core._compute_models_fingerprint()[0] == producer_fingerprint
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+
+    # A changed manifest in another container rejects the otherwise same bundle.
+    (roots[1] / "src/qb/outputs/.manifest-etag").write_text('"QB-new-manifest"')
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+    assert core._snapshot_path() is None
 
 
 def test_fingerprint_skips_missing_paths(tmp_path, monkeypatch):
@@ -291,17 +514,20 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
     app_mod._cache["metrics_by_format"] = metrics
     app_mod._cache["metrics"] = metrics["ppr"]
 
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
-    # All three artifacts present after persist.
+    # All artifacts share the same immutable generation.
+    generation = _generation(cache_dir)
     for name in ("predictions.parquet", "metrics.json", "fingerprint.json"):
-        assert (cache_dir / name).is_file()
-    with open(cache_dir / "fingerprint.json") as f:
+        assert (generation / name).is_file()
+        assert not (cache_dir / name).exists()
+    with open(generation / "fingerprint.json") as f:
         fp = json.load(f)
     assert fp["schema_version"] == core._PREDICTIONS_CACHE_SCHEMA_VERSION
 
     # Clear the in-memory cache and hydrate from disk.
     app_mod._cache.clear()
+    app_mod._cache["base_load_error"] = "Shared data initialization failed"
     assert core._try_hydrate_from_disk() is True
 
     assert "results" in app_mod._cache
@@ -309,6 +535,7 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
     assert app_mod._cache["metrics"] == metrics["ppr"]
     assert app_mod._cache["positions_loaded"] == set(app_mod._ALL_POSITIONS)
     assert app_mod._cache.get("base_loaded") is True
+    assert "base_load_error" not in app_mod._cache
 
     pd.testing.assert_frame_equal(
         app_mod._cache["results"].reset_index(drop=True),
@@ -327,20 +554,22 @@ def test_espn_outage_cannot_publish_a_reusable_null_cache(
     results.attrs["espn_complete"] = False
     app_mod._cache["results"] = results
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    core._persist_cache_to_disk()
-    assert not (cache_dir / "fingerprint.json").exists()
+    _persist_fixture_cache()
+    assert current_generation(cache_dir) is None
     assert uploads == []
     assert core._try_hydrate_from_disk() is False
 
     # Once a retry succeeds, persistence/hydration resume. A later failed
     # refresh must also leave this complete on-disk snapshot untouched.
     results.attrs["espn_complete"] = True
-    core._persist_cache_to_disk()
-    before = (cache_dir / "predictions.parquet").read_bytes()
+    _persist_fixture_cache()
+    before = _generation(cache_dir)
+    before_files = read_generation(cache_dir)[1]
     assert uploads == [True]
     results.attrs["espn_complete"] = False
-    core._persist_cache_to_disk()
-    assert (cache_dir / "predictions.parquet").read_bytes() == before
+    _persist_fixture_cache()
+    assert _generation(cache_dir) == before
+    assert read_generation(cache_dir)[1] == before_files
     assert uploads == [True]
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is True
@@ -353,7 +582,7 @@ def test_hydrate_returns_false_on_fingerprint_mismatch(cache_dir, fingerprint_fi
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
     # Mutate a fingerprint input — live fingerprint will diverge from the
     # one written into fingerprint.json.
@@ -364,6 +593,65 @@ def test_hydrate_returns_false_on_fingerprint_mismatch(cache_dir, fingerprint_fi
     # Cache stayed empty — no partial state.
     assert "results" not in app_mod._cache
     assert "metrics_by_format" not in app_mod._cache
+    assert app_mod.app.test_client().get("/api/snapshot").status_code == 404
+
+
+def test_persist_requires_pre_inference_fingerprint(cache_dir, fingerprint_files, monkeypatch):
+    uploads = []
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: uploads.append(True))
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+
+    core._persist_cache_to_disk()
+
+    assert current_generation(cache_dir) is None
+    assert uploads == []
+
+
+@pytest.mark.parametrize("change_during_serialization", [False, True])
+def test_changed_model_inputs_cannot_relabel_existing_predictions(
+    cache_dir, fingerprint_files, monkeypatch, change_during_serialization
+):
+    uploads = []
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: uploads.append(True))
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    previous, previous_files = read_generation(cache_dir)
+    assert uploads == [True]
+
+    if change_during_serialization:
+        serialize = pd.DataFrame.to_parquet
+
+        def replace_model_after_serialize(frame, *args, **kwargs):
+            result = serialize(frame, *args, **kwargs)
+            Path(fingerprint_files[0]).write_bytes(b"new-model-during-serialization")
+            return result
+
+        monkeypatch.setattr(pd.DataFrame, "to_parquet", replace_model_after_serialize)
+    else:
+        Path(fingerprint_files[0]).write_bytes(b"new-model-since-inference")
+
+    # The old predictions retain the old pre-inference fingerprint.
+    core._persist_cache_to_disk()
+
+    assert read_generation(cache_dir) == (previous, previous_files)
+    assert uploads == [True]
+
+
+def test_hydrate_rejects_model_change_during_parse(cache_dir, fingerprint_files, monkeypatch):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    core.app_pkg._cache.clear()
+    read_parquet = pd.read_parquet
+
+    def model_changes_while_reading(*args, **kwargs):
+        results = read_parquet(*args, **kwargs)
+        Path(fingerprint_files[0]).write_bytes(b"new-model-during-hydration")
+        return results
+
+    monkeypatch.setattr(pd, "read_parquet", model_changes_while_reading)
+    assert core._try_hydrate_from_disk() is False
+    assert not core.app_pkg._cache
 
 
 def test_hydrate_returns_false_on_old_cache_schema(cache_dir, fingerprint_files, monkeypatch):
@@ -372,18 +660,23 @@ def test_hydrate_returns_false_on_old_cache_schema(cache_dir, fingerprint_files,
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
-    with open(cache_dir / "fingerprint.json") as f:
-        fp = json.load(f)
+    # A well-formed generation with an old application schema must be refused,
+    # independently of storage integrity/checksum validation.
+    _, files = read_generation(cache_dir)
+    fp = json.loads(files["fingerprint.json"])
     fp.pop("schema_version")
-    (cache_dir / "fingerprint.json").write_text(json.dumps(fp))
-    assert (cache_dir / "snapshot.json").is_file()
+    files["fingerprint.json"] = json.dumps(fp).encode()
+    old_schema = publish_generation(cache_dir, files)
+    assert (old_schema / "snapshot.json").is_file()
 
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is False
     assert "results" not in app_mod._cache
-    assert not (cache_dir / "snapshot.json").exists()
+    assert app_mod.app.test_client().get("/api/snapshot").status_code == 404
+    # Readers can still finish consuming immutable old generations.
+    assert (old_schema / "snapshot.json").is_file()
 
 
 @pytest.mark.parametrize(
@@ -398,11 +691,12 @@ def test_hydrate_returns_false_when_any_cache_file_missing(
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
-    (cache_dir / drop).unlink()
+    (_generation(cache_dir) / drop).unlink()
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is False
+    assert app_mod.app.test_client().get("/api/snapshot").status_code == 404
 
 
 def test_hydrate_returns_false_when_fingerprint_unreadable(
@@ -414,11 +708,45 @@ def test_hydrate_returns_false_when_fingerprint_unreadable(
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
-    (cache_dir / "fingerprint.json").write_text("not-valid-json")
+    _, files = read_generation(cache_dir)
+    files["fingerprint.json"] = b"not-valid-json"
+    publish_generation(cache_dir, files)
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is False
+
+
+@pytest.mark.parametrize(
+    "member", ["predictions.parquet", "metrics.json", "fingerprint.json", "snapshot.json"]
+)
+def test_hydrate_and_snapshot_refuse_changed_immutable_members(
+    cache_dir, fingerprint_files, monkeypatch, member
+):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    (_generation(cache_dir) / member).write_bytes(b"tampered after commit")
+    core.app_pkg._cache.clear()
+
+    assert core._try_hydrate_from_disk() is False
+    assert not core.app_pkg._cache
+    assert core.app_pkg.app.test_client().get("/api/snapshot").status_code == 404
+
+
+def test_hydrate_ignores_valid_legacy_loose_files(cache_dir, fingerprint_files, monkeypatch):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    _, files = read_generation(cache_dir)
+    for name, content in files.items():
+        (cache_dir / name).write_bytes(content)
+    (cache_dir / "current.json").unlink()
+    core.app_pkg._cache.clear()
+
+    assert core._try_hydrate_from_disk() is False
+    assert not core.app_pkg._cache
+    assert core.app_pkg.app.test_client().get("/api/snapshot").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -427,47 +755,63 @@ def test_hydrate_returns_false_when_fingerprint_unreadable(
 
 
 def test_atomic_write_survives_concurrent_persist(cache_dir, fingerprint_files, monkeypatch):
-    """Two threads calling ``_persist_cache_to_disk`` must leave the
-    destination triple in a consistent, parseable state (no zero-length or
-    half-written files).
-    """
-    import src.serving.app as app_mod
-
+    """Two workers with different predictions commit whole browser/API views."""
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    worker = threading.local()
 
-    app_mod._cache["results"] = _fake_results()
-    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    class IsolatedWorker:
+        # Gunicorn has a cache per process; thread-local state models that
+        # isolation while both writers share the real publication directory.
+        @property
+        def _cache(self):
+            return worker.cache
+
+    monkeypatch.setattr(core, "app_pkg", IsolatedWorker())
 
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
 
-    def _writer():
+    def _writer(value):
         try:
+            results = _fake_results()
+            results["ridge_pred_ppr"] = float(value)
+            metrics = _fake_metrics()
+            metrics["ppr"]["Ridge Regression"]["overall"]["mae"] = value
+            worker.cache = {"results": results, "metrics_by_format": metrics}
             barrier.wait(timeout=5)
-            core._persist_cache_to_disk()
+            _persist_fixture_cache()
         except BaseException as e:  # noqa: BLE001 — record + re-raise outside thread
             errors.append(e)
 
-    threads = [threading.Thread(target=_writer) for _ in range(2)]
+    threads = [threading.Thread(target=_writer, args=(value,)) for value in (11, 99)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=15)
+        assert not t.is_alive()
     assert not errors, f"writer raised: {errors!r}"
 
-    # All three files parseable.
-    df = pd.read_parquet(cache_dir / "predictions.parquet")
-    assert len(df) == 4
-    with open(cache_dir / "metrics.json") as f:
-        json.load(f)
-    with open(cache_dir / "fingerprint.json") as f:
-        fp = json.load(f)
-    assert isinstance(fp.get("sha256"), str)
+    # Both complete generations survive. Every constituent matches the same
+    # writer; checking parseability alone would miss the original mixing bug.
+    directories = list((cache_dir / "generations").iterdir())
+    assert len(directories) == 2
+    values = set()
+    for directory in directories:
+        predictions = pd.read_parquet(directory / "predictions.parquet")
+        value = predictions["ridge_pred_ppr"].iloc[0]
+        values.add(value)
+        assert predictions["ridge_pred_ppr"].eq(value).all()
+        metrics = json.loads((directory / "metrics.json").read_bytes())
+        assert metrics["metrics_by_format"]["ppr"]["Ridge Regression"]["overall"]["mae"] == value
+        snapshot = json.loads((directory / "snapshot.json").read_bytes())
+        assert {row["ridge_pred"] for row in snapshot["scoring"]["ppr"]} == {value}
+    assert values == {11, 99}
 
-    # No leftover temp files (each writer cleans up its own on success or
-    # failure, and atomic replace consumes the temp).
-    leftovers = [p.name for p in cache_dir.iterdir() if p.name.endswith(".tmp")]
-    assert not leftovers, f"unexpected tmp leftovers: {leftovers}"
+    selected, files = read_generation(cache_dir)
+    assert selected in directories
+    assert len(pd.read_parquet(io.BytesIO(files["predictions.parquet"]))) == 4
+    assert not list(cache_dir.rglob(".staging-*"))
+    assert not list(cache_dir.glob(".current-*"))
 
 
 # ---------------------------------------------------------------------------
@@ -569,9 +913,9 @@ def test_persist_writes_browser_snapshot(cache_dir, fingerprint_files, monkeypat
     app_mod._cache["results"] = results
     app_mod._cache["metrics_by_format"] = _fake_metrics()
 
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
-    snap_path = cache_dir / "snapshot.json"
+    snap_path = _generation(cache_dir) / "snapshot.json"
     assert snap_path.is_file()
     snap = json.loads(snap_path.read_text())
     assert set(snap["scoring"]) == {"ppr", "half_ppr", "standard"}
@@ -584,8 +928,8 @@ def test_persist_writes_browser_snapshot(cache_dir, fingerprint_files, monkeypat
 
 
 def test_hydrate_regenerates_snapshot_when_absent(cache_dir, fingerprint_files, monkeypatch):
-    """A container hydrating a cache written before snapshots existed (triple
-    present, ``snapshot.json`` absent) regenerates the snapshot locally so
+    """A valid generation whose manifest omits the optional snapshot regenerates
+    it locally from the selected generation so
     ``/api/snapshot`` serves without waiting for the next retrain.
     """
     import src.serving.app as app_mod
@@ -593,18 +937,27 @@ def test_hydrate_regenerates_snapshot_when_absent(cache_dir, fingerprint_files, 
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     app_mod._cache["results"] = _fake_results()
     app_mod._cache["metrics_by_format"] = _fake_metrics()
-    core._persist_cache_to_disk()
+    _persist_fixture_cache()
 
-    # Simulate the pre-snapshot cache shape: drop the snapshot, keep the triple.
-    (cache_dir / "snapshot.json").unlink()
-    assert not (cache_dir / "snapshot.json").exists()
+    # Commit the supported snapshot-absent shape. Deleting a member listed in
+    # an immutable manifest instead constitutes corruption and must be refused.
+    _, files = read_generation(cache_dir)
+    files.pop("snapshot.json")
+    without_snapshot = publish_generation(cache_dir, files)
+    assert not (without_snapshot / "snapshot.json").exists()
 
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is True
-    assert (cache_dir / "snapshot.json").is_file(), "hydrate should regenerate the missing snapshot"
+    regenerated = _generation(cache_dir)
+    assert regenerated != without_snapshot
+    assert (regenerated / "snapshot.json").is_file()
+    assert not (without_snapshot / "snapshot.json").exists()
+    assert app_mod.app.test_client().get("/api/snapshot").status_code == 200
 
 
-def test_snapshot_route_serves_file_without_triggering_compute(cache_dir, monkeypatch):
+def test_snapshot_route_serves_file_without_triggering_compute(
+    cache_dir, fingerprint_files, monkeypatch
+):
     """``/api/snapshot`` serves straight off disk and MUST NOT call the heavy
     ``_ensure_metrics`` model-load path — that decoupling is the whole point.
     """
@@ -614,13 +967,12 @@ def test_snapshot_route_serves_file_without_triggering_compute(cache_dir, monkey
         raise AssertionError("/api/snapshot must not call _ensure_metrics")
 
     monkeypatch.setattr(core, "_ensure_metrics", _boom)
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    app_mod._cache["results"] = _fake_results()
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    _persist_fixture_cache()
 
-    payload = {
-        "weeks": [1, 2],
-        "degraded_positions": [],
-        "scoring": {"ppr": [], "half_ppr": [], "standard": []},
-    }
-    (cache_dir / "snapshot.json").write_text(json.dumps(payload))
+    payload = json.loads((_generation(cache_dir) / "snapshot.json").read_bytes())
 
     resp = app_mod.app.test_client().get("/api/snapshot")
     assert resp.status_code == 200

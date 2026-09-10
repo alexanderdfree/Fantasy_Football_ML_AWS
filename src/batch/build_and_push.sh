@@ -23,6 +23,14 @@
 #   PULL_THROUGH_PREFIX    override the prefix string entirely
 set -euo pipefail
 
+BUILD_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$BUILD_ROOT"
+TRAIN_GIT_SHA=$(git rev-parse --verify HEAD)
+if [[ -n "$(git status --porcelain --untracked-files=all -- src)" ]]; then
+  echo "ERROR: commit source changes before building; the image must match its recorded SHA." >&2
+  exit 1
+fi
+
 AWS_REGION="${AWS_REGION:-us-east-1}"
 ECR_REPO="${ECR_REPO:-ff-training}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
@@ -40,6 +48,7 @@ PULL_THROUGH_PREFIX="${PULL_THROUGH_PREFIX:-}"
 echo "==> Account:    ${ACCOUNT_ID}"
 echo "==> Region:     ${AWS_REGION}"
 echo "==> Image:      ${IMAGE_URI}"
+echo "==> Source SHA: ${TRAIN_GIT_SHA}"
 echo "==> Base prefix: ${PULL_THROUGH_PREFIX:-<Docker Hub>}"
 
 echo "==> docker login to ECR"
@@ -50,6 +59,7 @@ echo "==> docker build"
 docker build \
   --platform linux/amd64 \
   --build-arg PULL_THROUGH_PREFIX="$PULL_THROUGH_PREFIX" \
+  --build-arg TRAIN_GIT_SHA="$TRAIN_GIT_SHA" \
   -f src/batch/Dockerfile.train \
   -t "$IMAGE_URI" \
   .

@@ -247,6 +247,13 @@ def test_find_git_sha_divergence_skips_positions_without_sha():
 # --------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def source_registration(monkeypatch):
+    monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
+    monkeypatch.setattr("src.batch.benchmark.boto3.client", lambda *a, **k: object())
+    monkeypatch.setattr("src.batch.benchmark.validate_submission_source", lambda *a, **k: None)
+
+
 @pytest.fixture()
 def _main_stubs(tmp_path, monkeypatch):
     """Stub every external call main() makes. Returns the tmp project root."""
@@ -261,6 +268,10 @@ def _main_stubs(tmp_path, monkeypatch):
     # which our append_to_history stub won't touch).
 
     launched: list[dict] = []
+    monkeypatch.setattr(
+        "src.shared.artifact_publication.register_source",
+        lambda *_args: launched.append({"source_registration": True}),
+    )
 
     def _submit_job(pos, seed):
         launched.append({"pos": pos, "seed": seed})
@@ -378,6 +389,7 @@ def test_main_full_launch_path(_main_stubs, monkeypatch):
     bb.main()
 
     # upload_data(bucket) was called, plus submit_job for each of 2 positions.
+    assert launched[0] == {"source_registration": True}
     assert any("upload" in entry for entry in launched)
     submitted = [e["pos"] for e in launched if "pos" in e]
     assert sorted(submitted) == ["QB", "RB"]
@@ -428,7 +440,9 @@ def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(bb, "wait_for_jobs", _wait)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})  # early-exit after
     monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "RB"])
-    bb.main()
+    with pytest.raises(SystemExit) as exc:
+        bb.main()
+    assert exc.value.code == 1
     out = capsys.readouterr().out
     assert "Failed positions" in out
     assert "QB" in out
@@ -455,7 +469,9 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(bb, "wait_for_jobs", _wait)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
     monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "RB"])
-    bb.main()
+    with pytest.raises(SystemExit) as exc:
+        bb.main()
+    assert exc.value.code == 1
     out = capsys.readouterr().out
     # Both submit failures must be logged with the position name + the
     # underlying error message, so a one-line CI tail still pinpoints which

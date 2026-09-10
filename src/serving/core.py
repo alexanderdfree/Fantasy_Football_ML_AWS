@@ -10,12 +10,12 @@ Shared mutable state (``_cache`` + locks) stays in ``app.py`` and is reached via
 route handlers in ``app.py`` call these functions as ``core.<fn>``.
 """
 
-import contextlib
 import hashlib
+import io
 import json
 import os
-import threading
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -64,6 +64,7 @@ from src.serving.serialization import (
     _records_to_player_rows,
     _safe_num,
 )
+from src.shared import prediction_cache
 from src.shared.aggregate_targets import (
     DST_TARGETS,
     POSITION_TARGET_MAP,
@@ -821,7 +822,15 @@ def _ensure_base_data():
         # fast-path check and lock acquisition.
         if app_pkg._cache.get("base_loaded") or "results" in app_pkg._cache:
             return
-        _load_base_data_locked()
+        try:
+            _load_base_data_locked()
+        except Exception:
+            # This shared loader runs before per-position error bookkeeping.
+            # Retain an affirmative failure for /health while the exception
+            # propagates to the request/prewarm logger; never expose its text.
+            app_pkg._cache["base_load_error"] = "Shared data initialization failed"
+            raise
+        app_pkg._cache.pop("base_load_error", None)
 
 
 def _load_reg(path):
@@ -1163,6 +1172,7 @@ def _ensure_position_loaded(pos):
     from disk on the next request. Inert when the sentinel doesn't exist
     (dev, CI, before the first refresh).
     """
+    _discard_invalidated_generation()
     _ensure_base_data()
     sentinel_mtime = refresh_sentinel_mtime(pos)
     loaded_mtime = app_pkg._cache.get("positions_mtime", {}).get(pos, -1.0)
@@ -1440,12 +1450,8 @@ _FINGERPRINT_JSON = "fingerprint.json"
 # v8 adds ESPN historical projections to every per-row scoring format. Old
 # snapshots must recompute or ESPN would remain null despite the new column.
 _PREDICTIONS_CACHE_SCHEMA_VERSION = 8
-# Browser-ready snapshot the frontend hydrates its first paint from (see
-# /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
-# its absence is non-fatal (frontend falls back to /api/predictions), so it is
-# deliberately NOT part of model_sync._PREDICTIONS_CACHE_FILES (that tuple is
-# all-or-nothing; a missing member forces a 30-60s recompute). It rides the
-# best-effort model_sync._PREDICTIONS_CACHE_OPTIONAL path instead.
+# Optional browser snapshot, committed with its prediction/metric generation.
+# Its absence permits hydration and local regeneration from those same bytes.
 _SNAPSHOT_JSON = "snapshot.json"
 _EXPERT_SOURCE_CACHE_PREFIXES = (
     "nflcom_projections_",
@@ -1488,6 +1494,11 @@ def _iter_fingerprint_paths():
     ECS even when the actual serving inputs are identical.
     """
     for pos in _ALL_POSITIONS:
+        # Boot and refresh record the exact manifest GET consumed. Its content
+        # is stable across containers, unlike each local refresh sentinel mtime.
+        manifest_etag = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", ".manifest-etag")
+        if os.path.isfile(manifest_etag):
+            yield manifest_etag
         model_dir = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", "models")
         if not os.path.isdir(model_dir):
             continue
@@ -1556,256 +1567,158 @@ def _compute_models_fingerprint():
     return h.hexdigest(), files
 
 
-def _write_snapshot_json():
-    """Write the browser-ready predictions snapshot to ``snapshot.json``.
-
-    Built from the same ``_records_to_player_rows`` serializer ``/api/predictions``
-    uses, so the static snapshot can never drift from the live API shape. Carries
-    every player-week row for all three scoring formats plus the week list and
-    degraded-position set, so the frontend can filter/sort/scoring-switch entirely
-    client-side off a single fetch.
-
-    Best-effort and auxiliary: a write failure logs and returns (serving
-    continues; the frontend falls back to ``/api/predictions``). Atomic
-    ``os.replace`` so a concurrent reader never sees a half-written file. Caller
-    must hold ``_cache_lock`` and have ``_cache["results"]`` populated.
-    """
+def _snapshot_bytes():
+    """Serialize the same locked results as the cache, without a separate commit."""
     results = app_pkg._cache.get("results")
     if results is None:
-        return
-    path = os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)
-    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-    # Payload construction (results["week"], _records_to_player_rows) is inside
-    # the try so a malformed/partial results frame can't break the caller — this
-    # writer is auxiliary and must never abort _persist_cache_to_disk or the S3
-    # upload that follows it. path/tmp stay above the try (pure string ops) so
-    # the except's os.unlink(tmp) cleanup always has a bound name.
+        return None
     try:
-        payload = {
-            "generated_at": datetime.now(UTC).isoformat(),
-            "weeks": sorted(int(w) for w in results["week"].unique()),
-            "degraded_positions": _degraded_positions(),
-            "scoring": {
-                fmt: _records_to_player_rows(results, scoring=fmt) for fmt in _VALID_SCORING
-            },
-        }
-        os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
-        with open(tmp, "w") as f:
-            json.dump(payload, f)
-        os.replace(tmp, path)
-    except Exception as e:  # noqa: BLE001 — snapshot is best-effort, must not break serving
-        print(f"[snapshot] write failed: {e!r} — frontend will fall back to /api/predictions")
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        return
-    print(
-        f"[snapshot] wrote {path} (weeks={len(payload['weeks'])}, rows/format={len(payload['scoring']['ppr'])})"
-    )
+        return json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "weeks": sorted(int(w) for w in results["week"].unique()),
+                "degraded_positions": _degraded_positions(),
+                "scoring": {
+                    fmt: _records_to_player_rows(results, scoring=fmt) for fmt in _VALID_SCORING
+                },
+            }
+        ).encode()
+    except Exception as exc:
+        print(f"[snapshot] serialization failed: {exc!r}")
+        return None
 
 
-def _drop_snapshot_json(reason: str) -> None:
-    """Remove the optional browser snapshot when the required cache is invalid."""
-    path = os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)
-    if os.path.isfile(path):
-        with contextlib.suppress(OSError):
-            os.unlink(path)
-        print(f"[snapshot] dropped stale snapshot ({reason})")
+def _snapshot_path():
+    """Resolve one verified generation without loading models or running inference."""
+    try:
+        directory, files = prediction_cache.read_generation(_PREDICTIONS_CACHE_DIR)
+        if directory.name == app_pkg._cache.get("invalidated_generation"):
+            return None
+        fingerprint = json.loads(files[_FINGERPRINT_JSON])
+        if not isinstance(fingerprint, dict):
+            return None
+        if fingerprint.get("schema_version") != _PREDICTIONS_CACHE_SCHEMA_VERSION:
+            return None
+        if fingerprint.get("sha256") != _compute_models_fingerprint()[0]:
+            return None
+        if prediction_cache.is_invalidated(_PREDICTIONS_CACHE_DIR, directory.name):
+            return None
+        return str(directory / _SNAPSHOT_JSON) if _SNAPSHOT_JSON in files else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def _try_hydrate_from_disk():
-    """Populate ``_cache`` directly from data/serving_cache/ when the stored
-    fingerprint matches the live one. Caller must hold ``_cache_lock``.
-    Returns ``True`` on hit (caller can skip the heavy compute path).
-
-    Restores ``position_details`` (per-target MAE for ``/api/position_details``)
-    and ``position_load_errors`` (for ``/health`` + degraded_positions) when
-    they're present in the cache. Older caches written before M16 lacked these
-    keys; we fall through gracefully — the endpoints already handle missing
-    keys defensively, the next recompute populates them, and the next persist
-    writes the full payload.
-    """
-    parquet_path = os.path.join(_PREDICTIONS_CACHE_DIR, _PREDICTIONS_PARQUET)
-    metrics_path = os.path.join(_PREDICTIONS_CACHE_DIR, _METRICS_JSON)
-    fingerprint_path = os.path.join(_PREDICTIONS_CACHE_DIR, _FINGERPRINT_JSON)
-    if not (
-        os.path.isfile(parquet_path)
-        and os.path.isfile(metrics_path)
-        and os.path.isfile(fingerprint_path)
-    ):
-        _drop_snapshot_json("required-cache-file-missing")
-        return False
+    """Hydrate a single verified immutable generation matching the current inputs."""
     try:
-        with open(fingerprint_path) as f:
-            stored = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[predcache] fingerprint read failed: {e!r} — will recompute")
-        _drop_snapshot_json("fingerprint-read-failed")
-        return False
-    live_sha, _ = _compute_models_fingerprint()
-    if stored.get("schema_version") != _PREDICTIONS_CACHE_SCHEMA_VERSION:
-        print(
-            f"[predcache] schema mismatch "
-            f"(cache={stored.get('schema_version')!r}, "
-            f"live={_PREDICTIONS_CACHE_SCHEMA_VERSION}) — will recompute"
-        )
-        _drop_snapshot_json("schema-mismatch")
-        return False
-    if stored.get("sha256") != live_sha:
-        print(
-            f"[predcache] fingerprint mismatch "
-            f"(cache={(stored.get('sha256') or '<none>')[:8]}, live={live_sha[:8]}) "
-            f"— will recompute"
-        )
-        _drop_snapshot_json("fingerprint-mismatch")
-        return False
-    try:
-        results = pd.read_parquet(parquet_path)
-        with open(metrics_path) as f:
-            metrics_payload = json.load(f)
-    except Exception as e:  # noqa: BLE001 — corrupt cache must not crash boot
-        print(f"[predcache] cache read failed: {e!r} — will recompute")
-        _drop_snapshot_json("cache-read-failed")
-        return False
-    # metrics.json schema:
-    #   Old (pre-M16): the bare metrics_by_format dict ({"ppr": {...}, ...}).
-    #   New (M16+): a wrapper {"metrics_by_format": {...},
-    #                          "position_details": {...},
-    #                          "position_load_errors": {...}}.
-    # Detect by presence of the wrapper key to stay compatible with caches
-    # written by older containers in the S3 bucket.
-    if isinstance(metrics_payload, dict) and "metrics_by_format" in metrics_payload:
+        directory, files = prediction_cache.read_generation(_PREDICTIONS_CACHE_DIR)
+        if directory.name == app_pkg._cache.get("invalidated_generation"):
+            return False
+        stored = json.loads(files[_FINGERPRINT_JSON])
+        mtimes = {pos: refresh_sentinel_mtime(pos) for pos in _ALL_POSITIONS}
+        live_sha, _ = _compute_models_fingerprint()
+        if stored.get("schema_version") != _PREDICTIONS_CACHE_SCHEMA_VERSION:
+            print("[predcache] schema mismatch — will recompute")
+            return False
+        if stored.get("sha256") != live_sha:
+            print("[predcache] fingerprint mismatch — will recompute")
+            return False
+        results = pd.read_parquet(io.BytesIO(files[_PREDICTIONS_PARQUET]))
+        metrics_payload = json.loads(files[_METRICS_JSON])
         metrics_by_format = metrics_payload["metrics_by_format"]
         position_details = metrics_payload.get("position_details") or {}
         position_load_errors = metrics_payload.get("position_load_errors") or {}
-    else:
-        # Legacy bare-dict format — no position_details / position_load_errors
-        # to restore. Endpoints already tolerate missing keys.
-        metrics_by_format = metrics_payload
-        position_details = {}
-        position_load_errors = {}
+        if _compute_models_fingerprint()[0] != live_sha:
+            return False
+        if prediction_cache.is_invalidated(_PREDICTIONS_CACHE_DIR, directory.name):
+            return False
+    except Exception as exc:
+        print(f"[predcache] generation unavailable: {exc!r} — will recompute")
+        return False
     app_pkg._cache["results"] = results
     app_pkg._cache["metrics_by_format"] = metrics_by_format
     app_pkg._cache["metrics"] = metrics_by_format.get("ppr", {})
-    # Exclude positions that carried over a load error: marking them loaded
-    # would let _ensure_position_loaded's fast-path skip the real load forever
-    # (hydrated_mtimes below seeds their mtime == current sentinel), so a failed
-    # position would never retry on a hydrated container (#834). Error keys are
-    # ``{pos}`` or ``{pos}_{model}``; take the position prefix.
     errored_positions = {key.split("_", 1)[0] for key in position_load_errors}
     app_pkg._cache["positions_loaded"] = set(_ALL_POSITIONS) - errored_positions
-    # Seed positions_mtime from the current on-disk sentinel for each position.
-    # Without this seed, ``_ensure_position_loaded``'s in-flight refresh path
-    # is dead on hydrated containers: ``loaded_mtime`` defaults to -1.0, the
-    # invalidation condition ``sentinel > loaded_mtime AND loaded_mtime != -1.0``
-    # never fires, and a post-hydration model refresh wouldn't trigger a reload.
-    # Reading the sentinel here records "we hydrated against whatever model is
-    # currently on disk" — any subsequent poller-driven advance will be detected.
-    hydrated_mtimes = {pos: refresh_sentinel_mtime(pos) for pos in _ALL_POSITIONS}
-    app_pkg._cache["positions_mtime"] = hydrated_mtimes
+    app_pkg._cache["positions_failed"] = set()
+    app_pkg._cache["positions_failed_mtime"] = {}
+    app_pkg._cache["positions_mtime"] = mtimes
     app_pkg._cache["base_loaded"] = True
-    if position_details:
-        app_pkg._cache["position_details"] = position_details
-    if position_load_errors:
-        app_pkg._cache["position_load_errors"] = position_load_errors
-    print(
-        f"[predcache] hydrated from disk "
-        f"(sha={live_sha[:8]}, rows={len(results)}, "
-        f"position_details={len(position_details)}, "
-        f"errors={len(position_load_errors)})"
-    )
-    # The browser snapshot may be absent on caches written by pre-snapshot
-    # containers (the core triple synced from S3, snapshot.json did not exist
-    # there yet). Regenerate it locally from the just-hydrated results so
-    # /api/snapshot serves on this container without waiting for the next
-    # retrain. Local-only (no S3 upload): regeneration is a cheap in-memory
-    # serialize, and the canonical snapshot lands in S3 via the full-compute
-    # _persist_cache_to_disk path. Off the request path (hydrate runs in the
-    # post_fork warm thread).
-    if not os.path.isfile(os.path.join(_PREDICTIONS_CACHE_DIR, _SNAPSHOT_JSON)):
-        _write_snapshot_json()
+    app_pkg._cache.pop("base_load_error", None)
+    app_pkg._cache["position_details"] = position_details
+    app_pkg._cache["position_load_errors"] = position_load_errors
+    app_pkg._cache["prediction_inputs_fingerprint"] = live_sha
+    app_pkg._cache["prediction_cache_generation"] = directory.name
+    print(f"[predcache] hydrated generation (sha={live_sha[:8]}, rows={len(results)})")
+    if _SNAPSHOT_JSON not in files:
+        snapshot = _snapshot_bytes()
+        if snapshot is not None and not prediction_cache.is_invalidated(
+            _PREDICTIONS_CACHE_DIR, directory.name
+        ):
+            try:
+                # Use captured bytes, never re-resolve a pointer another worker changed.
+                regenerated = prediction_cache.publish_generation(
+                    _PREDICTIONS_CACHE_DIR, {**files, _SNAPSHOT_JSON: snapshot}
+                )
+                app_pkg._cache["prediction_cache_generation"] = regenerated.name
+            except (OSError, ValueError) as exc:
+                print(f"[snapshot] generation publish failed: {exc!r}")
     return True
 
 
 def _persist_cache_to_disk():
-    """Atomic write of predictions.parquet + metrics.json + fingerprint.json,
-    followed by a best-effort S3 upload. Caller must hold ``_cache_lock``.
+    """Commit predictions, metrics and snapshot together, then upload one bundle.
 
-    Two concurrent workers' pre-warm threads can race on cold-container
-    first-boot: each computes, each writes its own temp file, ``os.replace``
-    is atomic per-file so the final state is one consistent triple (whichever
-    worker finished last for each file). Both workers then populate their
-    own in-memory ``_cache`` from the compute they already finished — no
-    cross-process re-read needed.
+    The caller holds _cache_lock for its in-memory results. Immutable generations
+    and one atomic pointer keep concurrent workers' publications separate.
     """
     if "results" not in app_pkg._cache or "metrics_by_format" not in app_pkg._cache:
         return
-    # A temporary ESPN failure may serve nulls in this process, but must not
-    # publish a reusable all-null snapshot. A later boot then retries the feed
-    # instead of hydrating nulls forever under the same model fingerprint.
     if app_pkg._cache["results"].attrs.get("espn_complete") is False:
-        print("[predcache] ESPN unavailable — not persisting or uploading incomplete results")
+        print("[predcache] ESPN unavailable — not publishing incomplete results")
         return
-    os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
-    sha, files = _compute_models_fingerprint()
-    parquet_path = os.path.join(_PREDICTIONS_CACHE_DIR, _PREDICTIONS_PARQUET)
-    metrics_path = os.path.join(_PREDICTIONS_CACHE_DIR, _METRICS_JSON)
-    fingerprint_path = os.path.join(_PREDICTIONS_CACHE_DIR, _FINGERPRINT_JSON)
-    # PID alone isn't enough — two pre-warm threads in the same worker would
-    # collide on the temp name; thread id makes the suffix unique per writer.
-    suffix = f"{os.getpid()}.{threading.get_ident()}.tmp"
-    parquet_tmp = f"{parquet_path}.{suffix}"
-    metrics_tmp = f"{metrics_path}.{suffix}"
-    fingerprint_tmp = f"{fingerprint_path}.{suffix}"
-    # M16: persist position_details + position_load_errors so hydrate restores
-    # them on the next boot. Folded into metrics.json (rather than a separate
-    # file) to keep the artifact triple {parquet, json, json} unchanged — the
-    # S3 sync helper iterates _PREDICTIONS_CACHE_FILES, so adding a new file
-    # would require touching model_sync.py. _try_hydrate_from_disk reads
-    # either schema transparently.
+    sha, input_files = _compute_models_fingerprint()
+    expected = app_pkg._cache.get("prediction_inputs_fingerprint")
+    if expected != sha or _any_position_sentinel_advanced():
+        print("[predcache] inputs changed or not recorded before inference — skipping publication")
+        return
     metrics_payload = {
         "metrics_by_format": app_pkg._cache["metrics_by_format"],
         "position_details": app_pkg._cache.get("position_details", {}),
         "position_load_errors": app_pkg._cache.get("position_load_errors", {}),
     }
     try:
-        app_pkg._cache["results"].to_parquet(parquet_tmp, index=True)
-        with open(metrics_tmp, "w") as f:
-            json.dump(metrics_payload, f)
-        with open(fingerprint_tmp, "w") as f:
-            json.dump(
+        parquet = io.BytesIO()
+        app_pkg._cache["results"].to_parquet(parquet, index=True)
+        files = {
+            _PREDICTIONS_PARQUET: parquet.getvalue(),
+            _METRICS_JSON: json.dumps(metrics_payload).encode(),
+            _FINGERPRINT_JSON: json.dumps(
                 {
                     "schema_version": _PREDICTIONS_CACHE_SCHEMA_VERSION,
+                    "computation_id": uuid.uuid4().hex,
                     "sha256": sha,
-                    "files": files,
-                },
-                f,
-            )
-        os.replace(parquet_tmp, parquet_path)
-        os.replace(metrics_tmp, metrics_path)
-        os.replace(fingerprint_tmp, fingerprint_path)
-    except Exception as e:  # noqa: BLE001 — persist must not break serving
-        print(f"[predcache] persist failed: {e!r} — serving continues from in-memory cache")
-        for tmp in (parquet_tmp, metrics_tmp, fingerprint_tmp):
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-        # A partial os.replace sequence may have committed a new parquet/metrics
-        # while leaving the OLD fingerprint.json in place — _try_hydrate_from_disk
-        # would then treat the mismatched triple as a valid cache. Drop the commit
-        # marker so the next boot recomputes instead of serving stale metrics. (#817)
-        with contextlib.suppress(OSError):
-            os.unlink(fingerprint_path)
-        return
-    print(f"[predcache] wrote cache to {_PREDICTIONS_CACHE_DIR} (sha={sha[:8]})")
-    # Write the browser snapshot before uploading so the upload (which also
-    # pushes the auxiliary snapshot.json) finds it on disk.
-    _write_snapshot_json()
-    try:
+                    "files": input_files,
+                }
+            ).encode(),
+        }
+        snapshot = _snapshot_bytes()
+        if snapshot is not None:
+            files[_SNAPSHOT_JSON] = snapshot
+        if _compute_models_fingerprint()[0] != expected or _any_position_sentinel_advanced():
+            print("[predcache] inputs changed during serialization — skipping publication")
+            return
+        directory = prediction_cache.publish_generation(_PREDICTIONS_CACHE_DIR, files)
+        app_pkg._cache["prediction_cache_generation"] = directory.name
+        app_pkg._cache.pop("invalidated_generation", None)
+        print(f"[predcache] committed generation {directory.name[:12]}")
         upload_predictions_cache_to_s3()
-    except Exception as e:  # noqa: BLE001 — upload best-effort
-        print(f"[predcache] upload failed: {e!r}")
+    except Exception as exc:
+        print(f"[predcache] publication failed: {exc!r} — serving in-memory results")
 
 
 def _ensure_metrics():
+    _discard_invalidated_generation()
     if (
         "metrics_by_format" in app_pkg._cache
         and not _any_position_sentinel_advanced()
@@ -1821,7 +1734,7 @@ def _ensure_metrics():
             return
         # A sentinel advanced under us — drop the cached aggregate so it
         # rebuilds against the freshly-loaded per-position predictions. The
-        # per-position invalidation in ``_ensure_position_loaded`` already
+        # Per-position invalidation in ``_ensure_position_loaded`` already
         # discards ``metrics_by_format`` when one position re-loads, but
         # ``_ensure_metrics`` can also be hit *before* a per-position re-load
         # (e.g. /api/metrics with all positions still marked loaded against
@@ -1847,8 +1760,8 @@ def _ensure_metrics():
         # (see ``_positions_pending``). Returning on the hydrate hit alone would
         # serve the degraded/NaN aggregate forever, because every aggregate entry
         # point funnels through here and the fast path above can never see the
-        # excluded positions (``_any_position_sentinel_advanced`` iterates only
-        # ``positions_loaded``). Only short-circuit when nothing is pending;
+        # excluded positions (they have no recorded attempt mtime yet). Only
+        # short-circuit when nothing is pending;
         # otherwise fall through to retry the pending positions once at hydrate
         # time and recompute the aggregate. A genuine re-failure lands the
         # position in ``positions_failed`` (stamped by
@@ -1856,21 +1769,28 @@ def _ensure_metrics():
         # no retry storm. (#1442)
         if not sentinel_advanced and _try_hydrate_from_disk() and not _positions_pending():
             return
+        _ensure_base_data()
+        app_pkg._cache["prediction_inputs_fingerprint"] = _compute_models_fingerprint()[0]
         _ensure_all_positions_loaded()
         _compute_metrics_locked()
 
 
 def _any_position_sentinel_advanced() -> bool:
-    """True iff any loaded position's on-disk sentinel mtime is greater than
-    the value recorded when we last loaded that position. Used as the second
-    line of defense for ``_ensure_metrics`` — see comment there.
+    """True iff a loaded or failed position has newer on-disk artifacts.
+
+    Failed positions use the sentinel recorded at their last failed attempt so
+    aggregate requests retry them once after a refresh, never on every request.
     """
     stored = app_pkg._cache.get("positions_mtime", {})
-    # Snapshot to a tuple: another thread can add/discard positions_loaded under
+    failed_at = app_pkg._cache.get("positions_failed_mtime", {})
+    # Snapshot to tuples: another thread can add/discard positions under
     # _cache_lock while this lock-free fast path iterates it, which would raise
     # "Set changed size during iteration". (#1014)
     loaded = tuple(app_pkg._cache.get("positions_loaded", ()))
-    return any(refresh_sentinel_mtime(pos) > stored.get(pos, -1.0) for pos in loaded)
+    failed = tuple(app_pkg._cache.get("positions_failed", ()))
+    return any(refresh_sentinel_mtime(pos) > stored.get(pos, -1.0) for pos in loaded) or any(
+        refresh_sentinel_mtime(pos) > failed_at.get(pos, -1.0) for pos in failed
+    )
 
 
 def _positions_pending() -> bool:
@@ -1907,21 +1827,52 @@ def _positions_pending() -> bool:
     return any(pos not in loaded and pos not in failed for pos in _ALL_POSITIONS)
 
 
+def _discard_invalidated_generation() -> None:
+    """Stop using a generation another worker revoked after this worker hydrated.
+
+    Hydration can record an already-advanced sentinel just before a peer marks
+    the old generation invalid. That worker's matching mtimes cannot establish
+    freshness: discard its model-load bookkeeping so the next request either
+    hydrates a newer generation or actually reapplies the models.
+    """
+    generation = app_pkg._cache.get("prediction_cache_generation")
+    if generation is None or not prediction_cache.is_invalidated(
+        _PREDICTIONS_CACHE_DIR, generation
+    ):
+        return
+    with app_pkg._cache_lock:
+        generation = app_pkg._cache.get("prediction_cache_generation")
+        if generation is None or not prediction_cache.is_invalidated(
+            _PREDICTIONS_CACHE_DIR, generation
+        ):
+            return
+        _invalidate_metrics_cache(reason="shared-generation-invalidation")
+        app_pkg._cache.pop("prediction_cache_generation", None)
+        app_pkg._cache.pop("prediction_inputs_fingerprint", None)
+        for key in ("positions_loaded", "positions_failed"):
+            app_pkg._cache[key] = set()
+        for key in (
+            "positions_mtime",
+            "positions_failed_mtime",
+            "position_load_errors",
+            "position_details",
+        ):
+            app_pkg._cache[key] = {}
+
+
 def _invalidate_metrics_cache(*, reason: str) -> None:
-    """Pop the in-memory ``metrics_by_format`` and delete the persisted
-    artifacts on disk. The disk files would otherwise survive an in-memory
-    invalidation — and ``_try_hydrate_from_disk`` could then re-hydrate them
-    on the next boot, restoring the same stale metrics we just invalidated.
-    (S3 cleanup is out of scope here; the next ``_persist_cache_to_disk``
-    call after recompute will overwrite the S3 object with fresh content.)
+    """Invalidate this worker's consumed generation across all local workers.
+
+    Fingerprint mismatches exclude old snapshots. Sentinel refresh skips hydrate
+    and commits a new generation after inference; in-progress readers keep theirs.
     """
     app_pkg._cache.pop("metrics_by_format", None)
     app_pkg._cache.pop("metrics", None)
-    for name in (_PREDICTIONS_PARQUET, _METRICS_JSON, _FINGERPRINT_JSON, _SNAPSHOT_JSON):
-        path = os.path.join(_PREDICTIONS_CACHE_DIR, name)
-        with contextlib.suppress(OSError):
-            os.unlink(path)
-    print(f"[predcache] invalidated in-memory + on-disk cache ({reason})")
+    generation = app_pkg._cache.get("prediction_cache_generation")
+    if generation is not None:
+        app_pkg._cache["invalidated_generation"] = generation
+        prediction_cache.invalidate_generation(_PREDICTIONS_CACHE_DIR, generation)
+    print(f"[predcache] invalidated in-memory cache ({reason})")
 
 
 def _compute_metrics_locked():

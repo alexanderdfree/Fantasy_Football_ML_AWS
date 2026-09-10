@@ -93,7 +93,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D8 | [Two Docker images](adr/0008-two-docker-images.md) | Accepted |
 | D9 | [Warm training host](adr/0009-warm-training-host.md) | Accepted |
 | D10 | [Trunk-based CI/CD with test-gated deploys](adr/0010-trunk-based-ci-cd-with-test-gated-deploys.md) | Accepted |
-| D11 | [Smoke-test gate + always-stable artifact (manifest v2)](adr/0011-smoke-test-gate-always-stable-artifact.md) | Accepted |
+| D11 | [Smoke-test gate + ordered artifact publication (manifest v3)](adr/0011-smoke-test-gate-always-stable-artifact.md) | Accepted |
 | D12 | [Training-step perf composition (torch.compile rejected on T4)](adr/0012-training-step-perf-composition.md) | Accepted |
 | D13 | [Spot fan-out via AWS Batch (overrides D7 when BATCH_ACTIVE=true)](adr/0013-spot-fan-out-via-aws-batch.md) | Accepted |
 | D14 | [Serving prediction-cache + post_fork pre-warm](adr/0014-serving-prediction-cache-post-fork-pre-warm.md) | Accepted |

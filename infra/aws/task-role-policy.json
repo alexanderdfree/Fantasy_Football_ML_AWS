@@ -2,10 +2,25 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadModelsFromS3",
+      "Sid": "ReadServingArtifacts",
       "Effect": "Allow",
       "Action": ["s3:GetObject"],
-      "Resource": "arn:aws:s3:::ff-predictor-training/models/*"
+      "Resource": [
+        "arn:aws:s3:::ff-predictor-training/models/*",
+        "arn:aws:s3:::ff-predictor-training/data/*"
+      ]
+    },
+    {
+      "Sid": "ListServingArtifacts",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::ff-predictor-training"
+    },
+    {
+      "Sid": "WritePredictionsCache",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": "arn:aws:s3:::ff-predictor-training/models/predictions_cache/*"
     }
   ]
 }

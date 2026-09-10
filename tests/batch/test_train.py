@@ -1,6 +1,7 @@
 """Tests for src/batch/train.py — position registry, S3 staging, artifact handling."""
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -65,7 +66,11 @@ class _FakeS3Producer:
             self.objects[Key] = f.read()
         self.ops.append(("upload_file", Key))
 
-    def put_object(self, Bucket, Key, Body, ContentType=None):  # noqa: N803
+    def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
+        if (conditions.get("IfNoneMatch") == "*" and Key in self.objects) or (
+            conditions.get("IfMatch") and conditions["IfMatch"] != self._etag(Key)
+        ):
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         if hasattr(Body, "read"):
             Body = Body.read()
         self.objects[Key] = Body
@@ -74,7 +79,10 @@ class _FakeS3Producer:
     def get_object(self, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
             raise _nosuchkey_error(Key)
-        return {"Body": _FakeBody(self.objects[Key])}
+        return {"Body": _FakeBody(self.objects[Key]), "ETag": self._etag(Key)}
+
+    def _etag(self, key):
+        return '"' + hashlib.sha256(self.objects.get(key, b"")).hexdigest() + '"'
 
     def get_paginator(self, op):
         assert op == "list_objects_v2"
@@ -409,6 +417,17 @@ class TestUploadArtifacts:
     removed in Layer C of the parallel-train-batch race fix — see the
     docstring on upload_artifacts."""
 
+    @pytest.fixture(autouse=True)
+    def registered_source(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.batch.train.load_source",
+            lambda *a: {
+                "source_sha": "a" * 40,
+                "source_order": 1,
+                "lineage": ["a" * 40],
+            },
+        )
+
     @mock.patch("src.batch.train.boto3.client")
     def test_uploads_versioned_key_and_writes_manifest(self, mock_boto_client, tmp_path):
         from src.batch.train import upload_artifacts
@@ -423,14 +442,14 @@ class TestUploadArtifacts:
         upload_artifacts("my-bucket", "RB", str(d))
 
         # Exactly one versioned history key was written.
-        history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/history/")]
+        history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/releases/history/")]
         assert len(history_keys) == 1
         history_key = history_keys[0]
         assert history_key.endswith("/model.tar.gz")
 
         # Manifest is present and points current at the versioned key.
-        manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
-        assert manifest["schema_version"] == 2
+        manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
+        assert manifest["schema_version"] == 3
         assert manifest["current"]["key"] == history_key
         assert manifest["previous"] is None  # first write
         assert history_key in manifest["history"]
@@ -464,7 +483,7 @@ class TestUploadArtifacts:
             upload_artifacts("my-bucket", "RB", str(d))
 
         # Manifest must NOT have been written — the promotion didn't happen.
-        assert "models/RB/manifest.json" not in fake_s3.objects
+        assert "models/RB/releases/manifest.json" not in fake_s3.objects
         # Legacy mirror must NOT have been overwritten.
         assert "models/RB/model.tar.gz" not in fake_s3.objects
 
@@ -497,7 +516,7 @@ class TestUploadArtifacts:
         finally:
             fake_s3.upload_file = original_upload  # type: ignore[method-assign]
 
-        assert "models/RB/manifest.json" not in fake_s3.objects
+        assert "models/RB/releases/manifest.json" not in fake_s3.objects
 
     @mock.patch("src.batch.train.boto3.client")
     def test_second_upload_promotes_old_current_to_previous(self, mock_boto_client, tmp_path):
@@ -515,14 +534,14 @@ class TestUploadArtifacts:
         _write_fake_model_dir(d, "RB")
 
         upload_artifacts("my-bucket", "RB", str(d))
-        first_manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+        first_manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
         first_current_key = first_manifest["current"]["key"]
 
         # Second upload with slightly different bytes so sha7 differs.
         (d / "benchmark_metrics.json").write_bytes(b'{"position":"RB","round":2}')
         upload_artifacts("my-bucket", "RB", str(d))
 
-        second_manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+        second_manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
         assert second_manifest["previous"] is not None
         assert second_manifest["previous"]["key"] == first_current_key
         assert second_manifest["current"]["key"] != first_current_key
@@ -991,6 +1010,12 @@ class TestArtifactCopy:
 
 
 class TestMainIntegration:
+    @pytest.fixture(autouse=True)
+    def source_verified(self, monkeypatch):
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
+        monkeypatch.setattr("src.batch.train.load_source", lambda *a: {})
+        monkeypatch.setattr("src.batch.train.boto3.client", lambda *a, **k: object())
+
     @mock.patch("src.batch.train.sync_raw_data")
     @mock.patch("src.batch.train.upload_artifacts")
     @mock.patch("src.batch.train.shutil.copytree")

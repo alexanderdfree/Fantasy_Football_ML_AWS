@@ -18,6 +18,10 @@ on:
       seed:
         description: "Random seed"
         default: "42"
+      image_sha:
+        description: "Required full SHA of an already-built training image"
+        required: true
+        type: string
 
 concurrency:
   group: train-ec2
@@ -168,6 +172,21 @@ jobs:
             rm -f "$tmp"
             echo "ff-train patched with FF_TRAIN_GIT_SHA passthrough"
           fi
+          # Existing warm hosts must select the requested immutable image tag.
+          if ! grep -q 'IMAGE%:\*' /usr/local/bin/ff-train; then
+            tmp=$(mktemp)
+            awk '
+              { print }
+              /^IMAGE=/ {
+                print "if [ -n \"${FF_TRAIN_GIT_SHA:-}\" ]; then"
+                print "  IMAGE=\"${IMAGE%:*}:$FF_TRAIN_GIT_SHA\""
+                print "fi"
+              }
+            ' /usr/local/bin/ff-train > "$tmp"
+            sed -i 's/imageTag=latest/imageTag="${FF_TRAIN_GIT_SHA:-latest}"/' "$tmp"
+            install -m 755 "$tmp" /usr/local/bin/ff-train
+            rm -f "$tmp"
+          fi
           BASH
           PARAMS=$(jq -n --arg s "$SCRIPT" '{commands: [$s]}')
           CMD_ID=$(aws ssm send-command \
@@ -238,10 +257,11 @@ jobs:
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
           SEED: ${{ github.event.inputs.seed || '42' }}
-          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
+          python -m src.scripts.register_training_source --sha "$FF_TRAIN_GIT_SHA" --bucket "$S3_BUCKET"
           case "$SEED" in
             ""|*[!0-9]*)
               echo "Invalid seed: $SEED" >&2
@@ -348,7 +368,7 @@ jobs:
             # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "${model_prefix}/$POS/manifest.json" \
+              --key "${model_prefix}/$POS/releases/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')
@@ -396,7 +416,7 @@ jobs:
           # path filters look safe; routing through env vars makes the value
           # a normal shell variable that downstream commands can quote.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           # Resolve the PR number from the merge commit so the serving UI's
           # History tab can deep-link rows to GitHub. Direct pushes to main
@@ -430,8 +450,7 @@ jobs:
           # from the image-build SHA on rapid back-to-back merges. ``$HEAD_SHA``
           # is the stable image-build SHA that FF_TRAIN_GIT_SHA stamps into the
           # metrics, so the recorded git_hash matches benchmark.py's coherency
-          # check. Empty under workflow_dispatch → benchmark.py falls back to
-          # the workspace HEAD via get_git_hash(). Mirrors train-batch.yml; see
+          # check. Manual dispatch requires image_sha as well. Mirrors train-batch.yml; see
           # the TODO.md "Benchmark git_hash" archive entry for the failure mode.
           NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
           NOTE_SHA="${NOTE_SHA::7}"

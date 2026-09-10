@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Stand up the full ECS/ALB/ACM stack for alexfree.me.
-# Idempotent — every step is gated on `describe || create`, so reruns are safe.
+# Reconciles roles and resources; reruns register a task definition and deploy it.
 #
 # Prereqs (run before this script):
-#   1. Gap 1 merged to main (shared/model_sync.py exists in the image).
-#   2. infra/aws/seed_s3_models.sh executed (S3 has all 6 model tarballs).
+#   1. Project Python environment installed (PYTHON may select its interpreter).
+#   2. S3 has usable manifests for all 6 positions (training or seed_s3_models.sh).
 #   3. One seed ARM64 image pushed to ECR:
 #        aws ecr get-login-password --region us-east-1 \
 #          | docker login --username AWS --password-stdin \
@@ -36,11 +36,21 @@ DOMAIN_WWW="www.alexfree.me"
 IMAGE_TAG="${IMAGE_TAG:-bootstrap}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PYTHON="${PYTHON:-python}"
 OUT_FILE="$SCRIPT_DIR/.env.out"
-: > "$OUT_FILE"
 
 log() { echo "[bootstrap] $*"; }
 out() { echo "$1=$2" >> "$OUT_FILE"; }
+
+# Validate through the real manifest consumer before changing AWS resources.
+# Legacy model.tar.gz objects do not establish that today's image can boot.
+log "Checking manifest-backed model artifacts for all 6 positions..."
+(
+  cd "$REPO_ROOT"
+  "$PYTHON" -m src.scripts.seed_s3_models --verify-only --bucket "$S3_BUCKET" --region "$REGION"
+)
+: > "$OUT_FILE"
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 log "Account $ACCOUNT_ID in $REGION"
@@ -78,7 +88,7 @@ EXEC_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/$EXEC_ROLE"
 out EXEC_ROLE_ARN "$EXEC_ROLE_ARN"
 
 if ! aws iam get-role --role-name "$TASK_ROLE" >/dev/null 2>&1; then
-  log "Creating $TASK_ROLE (S3 read for models)..."
+  log "Creating $TASK_ROLE (serving artifact access)..."
   aws iam create-role \
     --role-name "$TASK_ROLE" \
     --assume-role-policy-document "file://$SCRIPT_DIR/task-trust-policy.json" >/dev/null
@@ -267,20 +277,9 @@ fi
 # ---------------------------------------------------------------------------
 # Step 9: Task definition
 # ---------------------------------------------------------------------------
-# Require all 6 tarballs in S3. Model .pkl/.pt files are gitignored, so
-# images built by CI (from a fresh git clone) contain NO model fallback.
-# Only the locally-built seed image has models baked in, and we can't rely on
-# that surviving the first deploy.yml run.
-for POS in QB RB WR TE K DST; do
-  if ! aws s3api head-object --bucket "$S3_BUCKET" --key "models/$POS/model.tar.gz" \
-       --region "$REGION" >/dev/null 2>&1; then
-    log "ERROR: s3://$S3_BUCKET/models/$POS/model.tar.gz missing."
-    log "Run: bash infra/aws/seed_s3_models.sh  (then re-run this script)"
-    exit 1
-  fi
-done
+# Models were downloaded, extracted, and smoke-tested in the read-only preflight.
 TASK_BUCKET_VALUE="$S3_BUCKET"
-log "All 6 S3 tarballs present — task will sync from S3 at boot."
+log "Manifest-backed artifacts verified — task will sync from S3 at boot."
 
 TASK_DEF_JSON=$(sed \
   -e "s|__ACCOUNT_ID__|$ACCOUNT_ID|g" \

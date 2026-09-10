@@ -648,6 +648,9 @@ def test_health_route_degraded_returns_200_when_some_positions_loaded(monkeypatc
         body = resp.get_json()
         assert body["status"] == "degraded"
         assert "DST_ridge" in body["position_load_errors"]
+        assert body["position_load_errors"]["DST_ridge"] == (
+            "Position or model initialization failed"
+        )
         assert set(body["positions_loaded"]) == {"QB", "RB", "WR", "TE", "K"}
 
 

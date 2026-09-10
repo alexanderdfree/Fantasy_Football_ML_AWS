@@ -25,12 +25,13 @@ on:
         description: "Random seed"
         default: "42"
       image_sha:
-        description: "Optional image SHA whose Batch job-definition revision should be pinned"
-        default: ""
+        description: "Required full SHA of an already-built training image"
+        required: true
+        type: string
 
 concurrency:
   # Group keyed by the SHA the upstream image was built from (workflow_run)
-  # or the dispatch ref (workflow_dispatch). Different SHAs preserve the
+  # or the explicitly selected image SHA (workflow_dispatch). Different SHAs preserve the
   # Spot fan-out + cross-PR parallelism the original no-concurrency comment
   # intended; same-SHA duplicates serialize. GitHub Actions fires
   # workflow_run.completed multiple times per upstream completion (observed
@@ -43,7 +44,7 @@ concurrency:
   # ~1 min on detect/dedup-API-call rather than the full ~15 min. The
   # constrained warm-EC2 path keeps its own `train-ec2` cancel-in-progress
   # group; that decision lives with the constrained path.
-  group: train-batch-${{ github.event_name }}-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: train-batch-${{ github.event_name }}-${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
   cancel-in-progress: false
 
 env:
@@ -251,19 +252,15 @@ jobs:
         # so two parallel train-batch runs (image A and image B, both
         # registered in the same window) submit against the same (latest)
         # revision, and the run triggered by image A can silently train image
-        # B's code. Manual dispatch can opt into the same pin by passing
-        # image_sha; omitted image_sha intentionally preserves break-glass
-        # bare-name resolution.
+        # B's code. Manual dispatch requires image_sha and uses the same pin.
         id: revision
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
           BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
         run: |
-          if [ -z "$HEAD_SHA" ]; then
-            echo "No image SHA supplied; falling back to bare job-definition resolution."
-            echo "revision=" >> "$GITHUB_OUTPUT"
-            echo "cpu_revision=" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: supply image_sha as the full SHA of an already-built image." >&2
+            exit 1
           fi
           REVISION=$(aws s3 cp \
             "s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" - \
@@ -370,17 +367,14 @@ jobs:
           # has a durable baseline. Otherwise the ledger is log-only/ephemeral
           # (only the [timing] phase=batch_lifecycle CloudWatch lines survive).
           FF_BATCH_LIFECYCLE_FILE: batch_lifecycle.json
-          # Empty when workflow_dispatch (no upstream image build to pin to);
-          # launch.py treats empty as "no revision" and falls back to name-only
-          # resolution (current behavior).
+          # Automatic and manual runs both require immutable revision pins.
           FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
           FF_JOB_DEFINITION_CPU_REVISION: ${{ steps.revision.outputs.cpu_revision }}
           # The SHA the image being trained was built from. Threads through
           # launch.py → containerOverrides → train.py → benchmark_metrics.json,
           # so benchmark.py can warn when any position's recorded SHA diverges
-          # from the run's expected SHA. Manual dispatch stamps the dispatch
-          # ref SHA unless image_sha was provided for a specific image.
-          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+          # from the run's expected SHA. Manual dispatch supplies image_sha.
+          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
           # CUDA graphs autodetect ON in the container on the Batch GPU pool
           # (g6/L4 sm_89 primary, g5/A10G sm_86 fallback) —
           # cuda_graph_enabled() defaults on for sm_80+, so the fan-out is
@@ -398,7 +392,6 @@ jobs:
           # full eager). launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH_FULL: ${{ vars.FF_BATCH_CUDA_GRAPH_FULL }}
           BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
-          EVENT_NAME: ${{ github.event_name }}
           SEED: ${{ github.event.inputs.seed || '42' }}
         run: |
           STARTED_AT=$(date +%s)
@@ -426,12 +419,8 @@ jobs:
           split_active=$(echo "${BATCH_SPLIT_ACTIVE:-false}" | tr 'A-Z' 'a-z')
           if [ "$split_active" = "true" ]; then
             if [ -z "${FF_JOB_DEFINITION_CPU_REVISION:-}" ]; then
-              if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-                echo "Split mode has no CPU revision pin on workflow_dispatch; using bare CPU job definition."
-              else
-                echo "ERROR: split mode is active but FF_JOB_DEFINITION_CPU_REVISION is empty." >&2
-                exit 1
-              fi
+              echo "ERROR: split mode requires FF_JOB_DEFINITION_CPU_REVISION." >&2
+              exit 1
             fi
             export FF_JOB_DEFINITION_CPU="ff-training-cpu-job"
             export FF_JOB_QUEUE_CPU="ff-cpu-training-queue"
@@ -461,7 +450,7 @@ jobs:
         if: steps.train.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           set -u
           recovered=false
@@ -531,7 +520,7 @@ jobs:
         # file-existence guard below skips cleanly.
         if: always()
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           if [ ! -f batch_lifecycle.json ]; then
             echo "No batch_lifecycle.json — launch.py wrote no ledger (no jobs reached terminal state); skipping."
@@ -582,7 +571,7 @@ jobs:
             # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "${model_prefix}/$POS/manifest.json" \
+              --key "${model_prefix}/$POS/releases/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')
@@ -664,10 +653,8 @@ jobs:
           # FF_TRAIN_GIT_SHA stamps into each position's metrics, so the
           # recorded ``git_hash`` matches benchmark.py's per-position
           # coherency check (find_git_sha_divergence) instead of
-          # false-flagging divergence. Empty under workflow_dispatch (no
-          # upstream image build); benchmark.py then falls back to the
-          # workspace HEAD via get_git_hash(), which is correct for a
-          # manual run. See TODO.md "Benchmark git_hash recorded the wrong
+          # false-flagging divergence. Manual dispatch supplies the required
+          # image_sha explicitly; the moving workspace HEAD is never substituted. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
           # Hardware label for the History tab is DERIVED AT RUNTIME by
           # src/batch/benchmark.py from the gpu_name + cuda_graph_active fields
@@ -777,7 +764,7 @@ jobs:
         # skips, exactly as before the recovery flow existed.)
         if: steps.train.outcome == 'failure' && steps.recover.outputs.recovered != 'true'
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha || github.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           echo "::error::Training for ${HEAD_SHA::7} did not complete within the wait + recovery window — failing the run. See the recovery step's tracking issue."
           exit 1

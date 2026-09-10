@@ -14,6 +14,12 @@ from unittest import mock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def registered_source(monkeypatch):
+    monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
+    monkeypatch.setattr("src.batch.launch.validate_submission_source", lambda *a, **k: None)
+
+
 @pytest.mark.unit
 def test_print_plan_emits_expected_lines(capsys):
     """``_print_plan`` should list every region/bucket/queue/def line + the

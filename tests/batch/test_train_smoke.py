@@ -14,6 +14,7 @@ manifest's ``stable`` slot:
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
@@ -29,6 +30,18 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.shared.smoke_test import SmokeTestFailed
+
+
+@pytest.fixture(autouse=True)
+def registered_source(monkeypatch):
+    monkeypatch.setattr(
+        "src.batch.train.load_source",
+        lambda *a: {
+            "source_sha": "a" * 40,
+            "source_order": 1,
+            "lineage": ["a" * 40],
+        },
+    )
 
 
 def _nosuchkey_error(key: str) -> ClientError:
@@ -65,7 +78,7 @@ class _FakeS3Producer:
             self.objects[Key] = f.read()
         self.ops.append(("upload_file", Key))
 
-    def put_object(self, Bucket, Key, Body, ContentType=None):  # noqa: N803
+    def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
         if hasattr(Body, "read"):
             Body = Body.read()
         self.objects[Key] = Body
@@ -74,7 +87,10 @@ class _FakeS3Producer:
     def get_object(self, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
             raise _nosuchkey_error(Key)
-        return {"Body": _FakeBody(self.objects[Key])}
+        return {
+            "Body": _FakeBody(self.objects[Key]),
+            "ETag": hashlib.sha256(self.objects[Key]).hexdigest(),
+        }
 
     def get_paginator(self, op):
         assert op == "list_objects_v2"
@@ -129,8 +145,8 @@ def test_smoke_pass_advances_stable_on_first_upload(mock_smoke, mock_boto, tmp_p
 
     upload_artifacts("my-bucket", "RB", str(d))
 
-    manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
-    assert manifest["schema_version"] == 2
+    manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
+    assert manifest["schema_version"] == 3
     assert manifest["stable"] is not None
     assert manifest["stable"]["key"] == manifest["current"]["key"]
     assert "[smoke_test] RB: PASS" in capsys.readouterr().out
@@ -155,7 +171,7 @@ def test_smoke_fail_pins_stable_to_old_value(mock_smoke, mock_boto, tmp_path, ca
     # Upload #1 — smoke passes, stable advances.
     mock_smoke.side_effect = [None]
     upload_artifacts("my-bucket", "RB", str(d))
-    first_manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+    first_manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
     first_stable_key = first_manifest["stable"]["key"]
     first_current_key = first_manifest["current"]["key"]
     assert first_stable_key == first_current_key
@@ -165,7 +181,7 @@ def test_smoke_fail_pins_stable_to_old_value(mock_smoke, mock_boto, tmp_path, ca
     mock_smoke.side_effect = SmokeTestFailed("simulated NaN prediction")
     upload_artifacts("my-bucket", "RB", str(d))
 
-    second_manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+    second_manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
     # Stable is pinned to upload #1.
     assert second_manifest["stable"]["key"] == first_stable_key
     # Current advanced to the broken upload.
@@ -200,7 +216,7 @@ def test_smoke_fail_first_run_leaves_stable_null(mock_smoke, mock_boto, tmp_path
 
     upload_artifacts("my-bucket", "RB", str(d))
 
-    manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+    manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
     assert manifest["stable"] is None
     assert manifest["current"] is not None  # still recorded for forensics
 
@@ -226,9 +242,9 @@ def test_smoke_fail_does_not_block_upload_completion(mock_smoke, mock_boto, tmp_
 
     # Both producer writes still happened: history key + manifest. The legacy
     # mirror is no longer written (Layer C of the race fix).
-    history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/history/")]
+    history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/releases/history/")]
     assert len(history_keys) == 1
-    assert "models/RB/manifest.json" in fake_s3.objects
+    assert "models/RB/releases/manifest.json" in fake_s3.objects
     assert "models/RB/model.tar.gz" not in fake_s3.objects
 
 
@@ -251,7 +267,7 @@ def test_unexpected_smoke_exception_is_treated_as_failure(mock_smoke, mock_boto,
 
     upload_artifacts("my-bucket", "RB", str(d))
 
-    manifest = json.loads(fake_s3.objects["models/RB/manifest.json"])
+    manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
     assert manifest["stable"] is None
     out = capsys.readouterr().out
     assert "UNEXPECTED" in out
@@ -277,19 +293,19 @@ def test_smoke_pass_after_prior_failure_recovers_stable(mock_smoke, mock_boto, t
     # #1 passes — stable=v1.
     mock_smoke.side_effect = [None]
     upload_artifacts("my-bucket", "RB", str(d))
-    v1_stable = json.loads(fake_s3.objects["models/RB/manifest.json"])["stable"]["key"]
+    v1_stable = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])["stable"]["key"]
 
     # #2 fails — stable still v1.
     (d / "benchmark_metrics.json").write_bytes(b'{"r":2}')
     mock_smoke.side_effect = SmokeTestFailed("broken")
     upload_artifacts("my-bucket", "RB", str(d))
-    v2 = json.loads(fake_s3.objects["models/RB/manifest.json"])
+    v2 = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
     assert v2["stable"]["key"] == v1_stable
 
     # #3 passes — stable advances to #3's key.
     (d / "benchmark_metrics.json").write_bytes(b'{"r":3}')
     mock_smoke.side_effect = [None]
     upload_artifacts("my-bucket", "RB", str(d))
-    v3 = json.loads(fake_s3.objects["models/RB/manifest.json"])
+    v3 = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
     assert v3["stable"]["key"] == v3["current"]["key"]
     assert v3["stable"]["key"] != v1_stable

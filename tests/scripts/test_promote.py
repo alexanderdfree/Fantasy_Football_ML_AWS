@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
@@ -55,13 +56,16 @@ class _FakeS3:
         if Key not in self.objects:
             raise _nosuchkey_error(Key)
         self.ops.append(("get", Key))
-        return {"Body": _FakeBody(self.objects[Key])}
+        return {"Body": _FakeBody(self.objects[Key]), "ETag": self._etag(Key)}
 
-    def put_object(self, Bucket, Key, Body, ContentType=None):  # noqa: N803
+    def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
         if hasattr(Body, "read"):
             Body = Body.read()
         self.objects[Key] = Body
         self.ops.append(("put", Key))
+
+    def _etag(self, key):
+        return hashlib.sha256(self.objects.get(key, b"")).hexdigest()
 
     def head_object(self, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
@@ -106,7 +110,8 @@ def _make_manifest(current_key: str, previous_key: str | None, history: list[str
             "uploaded_at": "2026-04-22T00-00-00Z",
         }
     return {
-        "schema_version": 1,
+        "schema_version": 3,
+        "publication_source": {"source_sha": "a" * 40, "source_order": 1},
         "current": cur,
         "previous": prev,
         "history": history,
@@ -221,9 +226,11 @@ class TestPromote:
 
         new = promote.promote(fake, "b", "models", "WR", target)
 
-        assert new["current"]["key"] == target
+        assert new["current"]["rollback_of"] == target
+        assert new["stable"] == new["current"]
+        assert new["current"]["key"] != target
         assert new["previous"]["key"] == _hist_key(5)
-        assert new["history"] == [_hist_key(5), _hist_key(4), _hist_key(3)]
+        assert new["history"][1:] == [_hist_key(5), _hist_key(4), _hist_key(3)]
 
         # Manifest was actually written.
         on_disk = json.loads(fake.objects[manifest_key("models", "WR")])
@@ -279,7 +286,7 @@ class TestPromote:
         orig_manifest_bytes = fake.objects[manifest_key("models", "WR")]
 
         new = promote.promote(fake, "b", "models", "WR", _hist_key(3), dry_run=True)
-        assert new["current"]["key"] == _hist_key(3)
+        assert new["current"]["rollback_of"] == _hist_key(3)
 
         # No put/copy was issued.
         assert not any(op[0] in ("put", "copy") for op in fake.ops)
@@ -299,7 +306,7 @@ class TestPromote:
             history=[_hist_key(5), _hist_key(4)],
         )
         new = promote.promote(fake, "b", "models", "WR", _hist_key(4))
-        assert new["current"]["key"] == _hist_key(4)
+        assert new["current"]["rollback_of"] == _hist_key(4)
         assert new["previous"]["key"] == _hist_key(5)
 
     def test_raises_when_no_manifest_exists(self):
@@ -316,7 +323,7 @@ class TestPromote:
         untouched (write is atomic), so no rollback is needed."""
 
         class _PutAngryS3(_FakeS3):
-            def put_object(self, Bucket, Key, Body, ContentType=None):  # noqa: N803
+            def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
                 raise ClientError(
                     error_response={"Error": {"Code": "AccessDenied", "Message": "no"}},
                     operation_name="PutObject",
@@ -405,10 +412,11 @@ class TestMainCLI:
         rc = promote.main(["--position", "WR", "--to", _hist_key(3)])
         out = capsys.readouterr().out
         assert rc == 0
-        assert f"Promoted WR: current → {_hist_key(3)}" in out
+        assert "Promoted WR: stable and current → models/WR/releases/history/" in out
+        assert f"rollback source: {_hist_key(3)}" in out
         # Manifest actually changed.
         m = json.loads(fake.objects[manifest_key("models", "WR")])
-        assert m["current"]["key"] == _hist_key(3)
+        assert m["current"]["rollback_of"] == _hist_key(3)
 
     def test_to_with_dry_run_prints_json_does_not_write(self, stub_boto3, capsys):
         fake = _bucket_with_manifest(
@@ -426,7 +434,7 @@ class TestMainCLI:
         assert "[dry-run]" in out
         # JSON is emitted and parseable.
         planned = json.loads(out.split("\n", 1)[1])
-        assert planned["current"]["key"] == _hist_key(3)
+        assert planned["current"]["rollback_of"] == _hist_key(3)
         # Manifest bytes unchanged.
         assert fake.objects[manifest_key("models", "WR")] == orig
 

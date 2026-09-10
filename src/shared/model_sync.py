@@ -32,6 +32,7 @@ import shutil
 import tarfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
@@ -42,19 +43,11 @@ _SPLIT_KEYS = ("train.parquet", "val.parquet", "test.parquet")
 _RAW_PREFIX = "data/raw/"
 _RAW_EXCLUDE_SUFFIX = "_2023_2023.parquet"
 
-# Manifest schema lives in a single place so producer + consumer can't drift.
-# Schema v2:
-#   {
-#     "schema_version": 2,
-#     "current":  {"key": "...", "sha7": "...", "bytes": int, "uploaded_at": "..."},
-#     "stable":   <same shape> | null,    // last upload that PASSED smoke test
-#     "previous": <same shape> | null,    // the prior current (forensics)
-#     "history":  ["key0", "key1", ...]   // newest-first, capped at HISTORY_KEEP_N
-#   }
-# v1 manifests (no "stable") are read transparently — the consumer falls
-# through to "current" until the next successful smoke test populates
-# "stable". This keeps the migration window safe.
-MANIFEST_SCHEMA_VERSION = 2
+# V3 retains stable/current/previous/history plus publication_source (the main
+# ancestry high-water mark) and retired (keys removed by a successful CAS).
+# Its releases/ namespace isolates it from queued legacy writers and sweep GC.
+# Consumers read legacy v1/v2 only while a position has no v3 manifest.
+MANIFEST_SCHEMA_VERSION = 3
 HISTORY_KEEP_N = 5
 
 
@@ -69,41 +62,48 @@ def _repo_root() -> Path:
 
 
 def manifest_key(prefix: str, pos: str) -> str:
-    return f"{prefix}/{pos}/manifest.json"
+    return f"{prefix}/{pos}/releases/manifest.json"
 
 
 def history_prefix(prefix: str, pos: str) -> str:
-    return f"{prefix}/{pos}/history/"
+    return f"{prefix}/{pos}/releases/history/"
 
 
 def new_history_key(prefix: str, pos: str, ts: str, sha7: str) -> str:
-    return f"{history_prefix(prefix, pos)}{ts}-{sha7}/model.tar.gz"
+    return f"{history_prefix(prefix, pos)}{ts}-{uuid.uuid4().hex}-{sha7}/model.tar.gz"
 
 
 def load_manifest(s3_client, bucket: str, prefix: str, pos: str) -> dict | None:
-    """Return the parsed manifest.json for ``pos``, or ``None`` if absent.
+    """Prefer v3; read a legacy manifest only before per-position migration."""
+    return _load_manifest_with_etag(s3_client, bucket, prefix, pos)[0]
+
+
+def _load_manifest_with_etag(s3_client, bucket, prefix, pos):
+    """Return the manifest and ETag from one GET, or (None, None) if absent.
 
     Re-raises any other S3 error so the caller can't silently confuse a
     missing manifest with a permissions / transient failure.
     """
     from botocore.exceptions import ClientError
 
-    try:
-        obj = s3_client.get_object(Bucket=bucket, Key=manifest_key(prefix, pos))
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "")
-        if code in ("NoSuchKey", "404"):
-            return None
-        raise
-    return json.loads(obj["Body"].read())
+    for key in (manifest_key(prefix, pos), f"{prefix}/{pos}/manifest.json"):
+        try:
+            obj = s3_client.get_object(Bucket=bucket, Key=key)
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code", "") in ("NoSuchKey", "404"):
+                continue
+            raise
+        return json.loads(obj["Body"].read()), obj.get("ETag")
+    return None, None
 
 
-def write_manifest(s3_client, bucket: str, prefix: str, pos: str, manifest: dict) -> None:
-    """Publish a ``manifest.json``. This write IS the atomic promotion —
-    after the put returns, subsequent consumer syncs will pull the new
-    artifact. Earlier steps in the producer (validation, history upload)
-    only raise; a raise leaves the old manifest in place and the site keeps
-    serving the previous good artifact.
+def write_manifest(
+    s3_client, bucket: str, prefix: str, pos: str, manifest: dict, *, etag: str | None = None
+) -> None:
+    """Conditionally publish v3: create if absent, otherwise match the read ETag.
+
+    Callers must build from that same snapshot and reevaluate source order after
+    a conflict. Use artifact_publication.publish_artifact for normal publication.
     """
     body = json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8")
     s3_client.put_object(
@@ -111,6 +111,7 @@ def write_manifest(s3_client, bucket: str, prefix: str, pos: str, manifest: dict
         Key=manifest_key(prefix, pos),
         Body=body,
         ContentType="application/json",
+        **({"IfMatch": etag} if etag else {"IfNoneMatch": "*"}),
     )
 
 
@@ -195,7 +196,7 @@ def _resolve_manifest_extract(s3_client, bucket: str, prefix: str, pos: str, des
     """
     from botocore.exceptions import ClientError
 
-    manifest = load_manifest(s3_client, bucket, prefix, pos)
+    manifest, consumed_etag = _load_manifest_with_etag(s3_client, bucket, prefix, pos)
 
     if manifest is None:
         # Pre-migration buckets are no longer expected. Pre-schema-v2 buckets
@@ -232,7 +233,7 @@ def _resolve_manifest_extract(s3_client, bucket: str, prefix: str, pos: str, des
             )
             continue
         print(f"[model_sync] {pos}: source={label} ({r['key']})", flush=True)
-        return {"pos": pos, "source": label, **r}
+        return {"pos": pos, "source": label, "manifest_etag": consumed_etag, **r}
 
     raise RuntimeError(f"[model_sync] {pos}: all manifest entries failed: {tried!r}")
 
@@ -254,7 +255,10 @@ def _sync_one(s3_client, bucket: str, prefix: str, pos: str, root: Path) -> dict
     over it during the rename refactor.
     """
     dest = root / "src" / pos.lower() / "outputs" / "models"
-    return _resolve_manifest_extract(s3_client, bucket, prefix, pos, dest)
+    result = _resolve_manifest_extract(s3_client, bucket, prefix, pos, dest)
+    if isinstance(result.get("manifest_etag"), str):
+        (dest.parent / ".manifest-etag").write_text(result["manifest_etag"])
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -378,12 +382,24 @@ def refresh_position(
     from botocore.exceptions import ClientError
 
     try:
-        head = s3_client.head_object(Bucket=bucket, Key=manifest_key(prefix, pos))
+        try:
+            head = s3_client.head_object(Bucket=bucket, Key=manifest_key(prefix, pos))
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") not in ("NoSuchKey", "404"):
+                raise
+            head = s3_client.head_object(Bucket=bucket, Key=f"{prefix}/{pos}/manifest.json")
     except (ClientError, OSError) as e:
         print(f"[refresh] {pos} head_object failed: {e!r}", flush=True)
         return last_etag, False
 
     new_etag = head.get("ETag")
+    etag_path = paths["sentinel"].with_name(".manifest-etag")
+    if last_etag is None:
+        # Compare with the manifest GET actually consumed at boot. A publication
+        # between boot and this first HEAD must trigger a refresh, not bootstrap
+        # the new ETag while keeping the old model indefinitely.
+        with contextlib.suppress(OSError):
+            last_etag = etag_path.read_text().strip() or None
     if new_etag == last_etag:
         return new_etag, False
 
@@ -443,6 +459,11 @@ def refresh_position(
     if dest_bak.exists():
         shutil.rmtree(dest_bak, ignore_errors=True)
 
+    # The pointer can change again between HEAD and GET. Track the version GET
+    # actually consumed, so a subsequent poll neither skips nor mislabels it.
+    new_etag = result.get("manifest_etag") or new_etag
+    with contextlib.suppress(OSError):
+        etag_path.write_text(new_etag)
     sentinel.parent.mkdir(parents=True, exist_ok=True)
     sentinel.touch()
     print(
@@ -842,181 +863,74 @@ def sync_data_from_s3() -> dict | None:
 
 _PREDICTIONS_CACHE_DIR_REL = "data/serving_cache"
 _PREDICTIONS_CACHE_FILES = ("predictions.parquet", "metrics.json", "fingerprint.json")
-# Auxiliary cache files synced/uploaded best-effort. Their absence is NOT a
-# partial-sync (it never triggers the cleanup-and-recompute path that a missing
-# required file does) — the consumer tolerates them being absent. snapshot.json
-# is the browser-ready predictions payload the frontend hydrates first paint
-# from (see src/serving/core.py::_write_snapshot_json + /api/snapshot); if it is
-# missing the frontend simply falls back to /api/predictions.
 _PREDICTIONS_CACHE_OPTIONAL = ("snapshot.json",)
 
 
 def sync_predictions_cache_from_s3() -> dict | None:
-    """Download the three serving-cache files from S3 into data/serving_cache/.
+    """Install one verified cache bundle; failed sync preserves the prior generation.
 
-    Missing keys are not errors: a freshly-seeded bucket has no cache until
-    the first container computes + uploads. Other S3 errors are logged and
-    swallowed — the worst case is the pre-warm thread recomputes and
-    re-uploads.
-
-    Gated on FF_MODEL_S3_BUCKET like every other sync. Unset/empty -> no-op.
+    The new key isolates this protocol from queued jobs/old ECS images that still
+    upload loose files. Those files cannot prove a common generation and are not
+    used as a fallback. A missing bundle follows the existing cache-miss path.
     """
+    from src.shared import prediction_cache
+
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
-        print(
-            f"[predcache_sync] {_ENV_BUCKET} unset — skipping S3 sync, "
-            f"using on-disk cache (if present)."
-        )
+        print(f"[predcache_sync] {_ENV_BUCKET} unset — skipping S3 sync")
         return None
-
-    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
-    s3_prefix = f"{prefix}/predictions_cache"
-    root = _repo_root()
-    dest_dir = root / _PREDICTIONS_CACHE_DIR_REL
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
     import boto3
     from botocore.exceptions import ClientError
 
-    s3 = boto3.client("s3")
-
-    print(f"[predcache_sync] syncing s3://{bucket}/{s3_prefix}/ -> {dest_dir}")
-    t0 = time.time()
-    results: list[dict] = []
-    missing: list[str] = []
-    failed: list[str] = []
-    for name in _PREDICTIONS_CACHE_FILES:
-        key = f"{s3_prefix}/{name}"
-        dest = dest_dir / name
-        try:
-            r = _download_file(s3, bucket, key, dest)
-            results.append(r)
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in ("NoSuchKey", "404"):
-                missing.append(name)
-                continue
-            failed.append(name)
-            print(f"[predcache_sync] {name} FAILED: {e!r} — skipping (will recompute)")
-        except Exception as e:  # noqa: BLE001 — best-effort sync
-            failed.append(name)
-            print(f"[predcache_sync] {name} FAILED: {e!r} — skipping (will recompute)")
-
-    total = round(time.time() - t0, 2)
-    total_bytes = sum(r["bytes"] for r in results)
-    # ANY incomplete sync (missing OR failed for non-404 reasons) leaves the
-    # cache in a state where the consumer-side fingerprint check will fail,
-    # but a stale parquet from a prior boot could still mistakenly be paired
-    # with a fresh fingerprint.json from this run. Clean up partial downloads
-    # in both cases so hydrate either finds all three files coherently or
-    # nothing.
-    if missing or failed:
-        for partial in results:
-            with contextlib.suppress(OSError):
-                (dest_dir / Path(partial["key"]).name).unlink(missing_ok=True)
-        # Keep the original log shape when only 404s fired (no behavioural
-        # change for the steady-state "fresh bucket" path) — surface the
-        # failed-with-error case separately so operators can distinguish a
-        # cold bucket from an S3 permissions/network issue.
-        if failed:
-            print(
-                f"[predcache_sync] partial sync (missing={missing}, failed={failed}) "
-                f"— cleaned partial downloads; first request will compute + upload."
-            )
-        else:
-            print(
-                f"[predcache_sync] no cache available (missing: {missing}) "
-                f"— first request will compute + upload."
-            )
-        return {
-            "total_secs": total,
-            "total_bytes": 0,
-            "files": 0,
-            "missing": missing,
-            "failed": failed,
-        }
-    # Required triple is complete. Pull auxiliary files (browser snapshot)
-    # best-effort: a 404 means no container has uploaded one yet (the serving
-    # app regenerates it locally on hydrate), and any other error just leaves
-    # the frontend to fall back to /api/predictions — neither invalidates the
-    # hydrate-gating triple above.
-    for name in _PREDICTIONS_CACHE_OPTIONAL:
-        try:
-            _download_file(s3, bucket, f"{s3_prefix}/{name}", dest_dir / name)
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code not in ("NoSuchKey", "404"):
-                print(f"[predcache_sync] optional {name} FAILED: {e!r} — skipping")
-        except Exception as e:  # noqa: BLE001 — best-effort
-            print(f"[predcache_sync] optional {name} FAILED: {e!r} — skipping")
-
-    print(
-        f"[predcache_sync] done in {total}s, {total_bytes / 1e6:.1f} MB across {len(results)} files"
-    )
-    return {"total_secs": total, "total_bytes": total_bytes, "files": len(results)}
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+    key = f"{prefix}/predictions_cache/{prediction_cache.BUNDLE_NAME}"
+    started = time.time()
+    try:
+        data = boto3.client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
+        generation = prediction_cache.install_bundle(
+            _repo_root() / _PREDICTIONS_CACHE_DIR_REL, data
+        )
+    except Exception as exc:  # noqa: BLE001 — boot can compute on a cache miss
+        missing = isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") in (
+            "NoSuchKey",
+            "404",
+        )
+        print(f"[predcache_sync] bundle unavailable: {exc!r} — prior generation retained")
+        return {"files": 0, "missing": [key] if missing else [], "failed": [] if missing else [key]}
+    return {
+        "total_secs": round(time.time() - started, 2),
+        "total_bytes": len(data),
+        "files": len(_PREDICTIONS_CACHE_FILES),
+        "generation": generation.name,
+    }
 
 
 def upload_predictions_cache_to_s3() -> dict | None:
-    """Upload the three serving-cache files from data/serving_cache/ to S3.
+    """Publish one complete generation with one atomic S3 object replacement."""
+    from src.shared import prediction_cache
 
-    Best-effort: missing local files (cache wasn't written), unset env var,
-    or any S3 error all log and return rather than raising — the user-facing
-    request that triggered the compute has already succeeded.
-    """
     bucket = os.environ.get(_ENV_BUCKET, "").strip()
     if not bucket:
         return None
-
-    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
-    s3_prefix = f"{prefix}/predictions_cache"
-    root = _repo_root()
-    src_dir = root / _PREDICTIONS_CACHE_DIR_REL
-
-    missing = [n for n in _PREDICTIONS_CACHE_FILES if not (src_dir / n).is_file()]
-    if missing:
-        print(f"[predcache_upload] local files missing: {missing} — skipping upload")
-        return None
-
     import boto3
 
-    s3 = boto3.client("s3")
-
-    t0 = time.time()
-    total_bytes = 0
+    prefix = os.environ.get(_ENV_PREFIX, "models").strip("/")
+    key = f"{prefix}/predictions_cache/{prediction_cache.BUNDLE_NAME}"
+    started = time.time()
     try:
-        for name in _PREDICTIONS_CACHE_FILES:
-            src = src_dir / name
-            data = src.read_bytes()
-            content_type = (
-                "application/json" if name.endswith(".json") else "application/octet-stream"
-            )
-            s3.put_object(
-                Bucket=bucket,
-                Key=f"{s3_prefix}/{name}",
-                Body=data,
-                ContentType=content_type,
-            )
-            total_bytes += len(data)
-        # Auxiliary files (browser snapshot): upload when present, skip silently
-        # when absent — never gates the required-triple upload above.
-        for name in _PREDICTIONS_CACHE_OPTIONAL:
-            src = src_dir / name
-            if not src.is_file():
-                continue
-            data = src.read_bytes()
-            s3.put_object(
-                Bucket=bucket,
-                Key=f"{s3_prefix}/{name}",
-                Body=data,
-                ContentType="application/json",
-            )
-            total_bytes += len(data)
-    except Exception as e:  # noqa: BLE001 — best-effort upload
-        print(f"[predcache_upload] FAILED: {e!r}")
+        generation, data = prediction_cache.bundle_generation(
+            _repo_root() / _PREDICTIONS_CACHE_DIR_REL
+        )
+        boto3.client("s3").put_object(
+            Bucket=bucket, Key=key, Body=data, ContentType="application/gzip"
+        )
+    except Exception as exc:  # noqa: BLE001 — cache publication must not break serving
+        print(f"[predcache_upload] FAILED: {exc!r}")
         return None
-    total = round(time.time() - t0, 2)
-    print(
-        f"[predcache_upload] done in {total}s, "
-        f"{total_bytes / 1e6:.1f} MB across {len(_PREDICTIONS_CACHE_FILES)} files"
-    )
-    return {"total_secs": total, "total_bytes": total_bytes, "files": len(_PREDICTIONS_CACHE_FILES)}
+    print(f"[predcache_upload] published generation {generation[:12]}")
+    return {
+        "total_secs": round(time.time() - started, 2),
+        "total_bytes": len(data),
+        "files": len(_PREDICTIONS_CACHE_FILES),
+        "generation": generation,
+    }

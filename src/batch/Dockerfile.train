@@ -72,4 +72,8 @@ RUN python -c "import torch, lightgbm, sklearn, scipy, pandas, numpy, pyarrow; p
 # (Flask UI, scratch scripts, tests); src/ is the only Python copy needed.
 COPY src/ src/
 
+# Filesystem metadata cannot be relabeled through container environment overrides.
+ARG TRAIN_GIT_SHA
+RUN printf '%s' "$TRAIN_GIT_SHA" > /opt/ml/code/.training-source-sha
+
 ENTRYPOINT ["python", "-m", "src.batch.train"]

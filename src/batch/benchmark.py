@@ -8,6 +8,10 @@ Usage:
     python src/batch/benchmark.py                          # all 6 positions
     python src/batch/benchmark.py --positions RB WR QB     # subset
     python src/batch/benchmark.py --note "attention + LGBM on GPU"
+
+For job submission, set FF_TRAIN_GIT_SHA to the full built-image SHA and
+FF_JOB_DEFINITION_REVISION to its registered numeric revision. The
+--git-hash option labels a recorded run; it does not select the training image.
 """
 
 import argparse
@@ -27,9 +31,11 @@ from src.batch.launch import (
     ALL_POSITIONS,
     AWS_REGION,
     S3_BUCKET,
+    TRAIN_GIT_SHA,
     WAIT_TIMEOUT_SECONDS,
     submit_job,
     upload_data,
+    validate_submission_source,
     wait_for_jobs,
 )
 from src.scripts.bench_fingerprint import collect_code_fingerprints
@@ -113,11 +119,11 @@ def _model_s3_prefix() -> str:
 def download_metrics(positions):
     """Download benchmark_metrics.json from each position's model artifacts.
 
-    Resolves the per-position artifact via ``models/{POS}/manifest.json`` rather
+    Resolves the per-position artifact via ``models/{POS}/releases/manifest.json`` rather
     than the legacy ``models/{POS}/model.tar.gz`` mirror. Two parallel
     train-batch runs writing the same position's legacy key were last-write-
     wins; the manifest's ``current`` entry is an atomic single-PUT promotion
-    paired with a versioned ``models/{POS}/history/{ts}-{sha7}/model.tar.gz``
+    paired with a versioned ``models/{POS}/releases/history/{ts}-{uuid}-{sha7}/model.tar.gz``
     key, so each consumer reads exactly the artifact the producer's manifest
     write committed to.
 
@@ -140,7 +146,7 @@ def download_metrics(positions):
             # already prints a per-position WARNING when metrics are missing,
             # and one stale position shouldn't kill a six-position aggregation.
             print(
-                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/manifest.json"
+                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/releases/manifest.json"
             )
             return pos, None
 
@@ -390,10 +396,24 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.download_only:
+        try:
+            validate_submission_source(args.positions)
+        except RuntimeError as exc:
+            parser.error(str(exc))
+
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
     os.chdir(project_root)
 
     if not args.download_only:
+        from src.shared.artifact_publication import register_source
+
+        register_source(
+            boto3.client("s3", region_name=AWS_REGION),
+            S3_BUCKET,
+            _model_s3_prefix(),
+            TRAIN_GIT_SHA or "",
+        )
         # Upload data
         print("Uploading data splits to S3...")
         upload_data(S3_BUCKET)
@@ -424,9 +444,12 @@ def main():
         total_elapsed = time.time() - total_t0
         print(f"\nAll jobs completed in {total_elapsed:.0f}s wall time")
 
-        failed = [p for p, (status, _) in results.items() if status == "FAILED"]
+        failed = [p for p in args.positions if p not in results or results[p][0] != "SUCCEEDED"]
         if failed:
             print(f"Failed positions: {failed}")
+            # In particular, a superseded job must not relabel newer active
+            # artifacts as this benchmark run's own output.
+            sys.exit(1)
 
     # Download metrics, build the comparison table, and record the run (writes
     # benchmark_history/{run_id}.json + S3 mirror). Shared with
