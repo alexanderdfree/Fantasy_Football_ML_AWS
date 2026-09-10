@@ -64,7 +64,7 @@ _KEYS = ["player_id", "season", "week"]
 
 # Which expert covers which position (mirrors analysis_expert_comparison): NFL.com
 # has no DST projections; RotoWire/Sleeper is offense + DST (K is totals-only).
-_NFLCOM_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "K"})
+_NFLCOM_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 _ROTOWIRE_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "DST"})
 
 _NFLCOM_NOTE = (
@@ -268,7 +268,7 @@ def build_summary(
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "used_for_live_accuracy": False,
-        "actual_basis": "full_regular_season_fantasy_points",
+        "actual_basis": "shared_projected_components_v1",
         "sample_basis": "per_source_coverage",
         "scoring": SCORING_FORMAT,
         "test_seasons": list(eval_seasons),

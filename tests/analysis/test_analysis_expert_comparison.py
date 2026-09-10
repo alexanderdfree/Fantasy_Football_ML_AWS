@@ -54,6 +54,12 @@ def _model_df_qb() -> pd.DataFrame:
                     "season": 2025,
                     "week": wk,
                     "fantasy_points": actual,
+                    "passing_yards": actual * 25,
+                    "passing_tds": 0.0,
+                    "rushing_yards": 0.0,
+                    "rushing_tds": 0.0,
+                    "interceptions": 0.0,
+                    "fumbles_lost": 0.0,
                     "pred_attn_nn_total": actual + (0.5 if i % 2 else -0.7),
                 }
             )
@@ -116,6 +122,10 @@ def _model_df_dst() -> pd.DataFrame:
                     "season": 2025,
                     "week": wk,
                     "fantasy_points": actual,
+                    **dict.fromkeys(mod.DST_TARGETS, 0.0),
+                    "def_sacks": actual,
+                    "points_allowed": 21.0,
+                    "yards_allowed": 350.0,
                     "pred_attn_nn_total": actual + (0.5 if i % 2 else -0.7),
                 }
             )

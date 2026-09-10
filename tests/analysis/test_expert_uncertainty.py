@@ -207,11 +207,11 @@ def test_position_coverage_gaps():
     assert pos["DST"]["nflcom"] is None
     assert pos["DST"]["rotowire"] is not None  # RotoWire covers DST
     assert pos["K"]["rotowire"] is None
-    assert pos["K"]["nflcom"] is not None  # NFL.com covers K (totals-only)
+    assert pos["K"]["nflcom"] is None  # Native totals do not match our K components.
 
 
-def test_kicker_flagged_totals_only():
-    assert _reliability()["positions"]["K"]["nflcom"].get("totals_only") is True
+def test_kicker_native_totals_cannot_enter_matched_reliability():
+    assert _reliability()["positions"]["K"]["nflcom"] is None
     # Non-totals positions don't carry the flag.
     assert "totals_only" not in _reliability()["positions"]["QB"]["nflcom"]
 

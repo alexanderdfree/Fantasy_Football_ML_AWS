@@ -27,7 +27,15 @@ def frame(n=30):
             "season": 2025,
             "week": 1,
             "fantasy_points": np.arange(n, dtype=float),
-            "prior_season_mean_fantasy_points": np.arange(n, dtype=float),
+            "receiving_yards": np.arange(n, dtype=float) * 10,
+            "receiving_tds": 0.0,
+            "receptions": 0.0,
+            "fumbles_lost": 0.0,
+            "fg_yard_points": np.arange(n, dtype=float),
+            "pat_points": 0.0,
+            "fg_misses": 0.0,
+            "xp_misses": 0.0,
+            "prior_season_mean_shared_component_points": np.arange(n, dtype=float),
             "pred_ridge_total": np.arange(n, dtype=float) + 1,
             "pred_nn_total": np.arange(n, dtype=float) - 2,
         }
@@ -82,21 +90,22 @@ def test_legacy_week_numbers_exclude_postseason_without_type_column():
     assert regular_season_rows(data).index.tolist() == [0, 2]
 
 
-def test_cohorts_have_distinct_definitions_and_full_fantasy_errors():
+def test_cohorts_have_distinct_definitions_and_shared_component_errors():
     data = frame()
     data["fantasy_points"] += 7  # e.g. WR rushing points outside the receiving heads
     block = build_cohorts("WR", data, reference=reference())
     assert block["weekly_reference_top24"]["n"] == 24
     assert block["elite_top24"]["n"] == 24
     assert block["weekly_reference_top24"]["cohort_hash"] != block["elite_top24"]["cohort_hash"]
-    assert block["weekly_reference_top24"]["models"]["Ridge"]["bias"] == -6
-    assert block["weekly_reference_top24"]["models"]["Ridge"]["mae"] == 6
+    assert block["weekly_reference_top24"]["models"]["Ridge"]["bias"] == 1
+    assert block["weekly_reference_top24"]["models"]["Ridge"]["mae"] == 1
+    assert block["weekly_reference_top24"]["actual_basis"] == "shared_projected_components_v1"
     assert block["weekly_actual_top24"]["models"]["Ridge"]["hit_rate"] == 1
 
 
 def test_missing_reference_and_prior_information_are_explicit(monkeypatch):
     monkeypatch.setattr("src.shared.evaluation_cohorts.load_reference", lambda: None)
-    block = build_cohorts("WR", frame().drop(columns="prior_season_mean_fantasy_points"))
+    block = build_cohorts("WR", frame().drop(columns="prior_season_mean_shared_component_points"))
     for name in ("elite_top24", "weekly_reference_top24"):
         assert block[name]["status"] == "unavailable"
         assert block[name]["n"] is None
@@ -111,6 +120,14 @@ def test_k_does_not_use_offensive_prior_scores():
     assert without["elite_top24"]["status"] == "unavailable"
     with_native_totals = build_cohorts("K", data, prior_frames=(past,), reference=reference())
     assert with_native_totals["elite_top24"]["n"] == 24
+
+
+def test_full_fantasy_prior_mean_is_not_a_shared_component_prior():
+    data = frame().rename(
+        columns={"prior_season_mean_shared_component_points": "prior_season_mean_fantasy_points"}
+    )
+    block = build_cohorts("WR", data, reference=reference())
+    assert block["elite_top24"]["reason"] == "prior_season_scores_missing"
 
 
 def test_batch_extract_merge_and_history_summary_preserve_identical_cohorts():
@@ -141,7 +158,7 @@ def test_split_merge_rejects_different_truth_or_reference_membership():
     a = build_cohorts("WR", frame().drop(columns="pred_nn_total"), reference=reference())
     b = build_cohorts(
         "WR",
-        frame().drop(columns="pred_ridge_total").assign(fantasy_points=999),
+        frame().drop(columns="pred_ridge_total").assign(receiving_yards=9999),
         reference=reference(),
     )
     with pytest.raises(ValueError, match="cohort mismatch"):

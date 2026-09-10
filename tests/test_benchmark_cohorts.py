@@ -28,6 +28,15 @@ def _frame(**overrides) -> pd.DataFrame:
             "season": [2025] * _N,
             "week": [1, 1, 2, 3, 4, 5, 6, 7],
             "fantasy_points": actual,
+            "passing_yards": 0.0,
+            "passing_tds": 0.0,
+            "interceptions": 0.0,
+            "rushing_yards": actual * 10,
+            "rushing_tds": 0.0,
+            "receiving_yards": 0.0,
+            "receiving_tds": 0.0,
+            "receptions": 0.0,
+            "fumbles_lost": 0.0,
             # Ridge predicts exactly +1 over actual on every row -> bias +1.0.
             "pred_ridge_total": actual + 1.0,
             "pred_nn_total": actual - 0.5,
@@ -36,7 +45,7 @@ def _frame(**overrides) -> pd.DataFrame:
             "is_returning_from_absence": [0, 1, 0, 1, 0, 0, 0, 0],
             "game_status": [1.0, 0.5, 1.0, 1.0, 0.1, 1.0, 1.0, 1.0],
             "inherited_opportunity": [0.0, 3.2, 0.0, 0.0, 0.0, 1.1, 0.0, 0.0],
-            "prior_season_mean_fantasy_points": np.linspace(2.0, 16.0, _N),
+            "prior_season_mean_shared_component_points": np.linspace(2.0, 16.0, _N),
         }
     )
     for col, val in overrides.items():
@@ -78,7 +87,9 @@ def test_missing_column_omits_cohort_only():
 
 def test_empty_cohort_reports_n_zero():
     block = _cohorts_block("QB", {"test_df": _frame(game_status=1.0)})
-    assert block["questionable"] == {"n": 0, "models": {}}
+    assert block["questionable"]["n"] == 0
+    assert block["questionable"]["models"] == {}
+    assert block["questionable"]["actual_basis"] == "shared_projected_components_v1"
 
 
 def test_elite_top24_caps_at_24_players():
@@ -90,8 +101,12 @@ def test_elite_top24_caps_at_24_players():
             "season": [2025] * n,
             "week": [w % 17 + 2 for w in range(n)],  # no week-1 rows needed here
             "fantasy_points": actual,
+            "receiving_yards": actual * 10,
+            "receiving_tds": 0.0,
+            "receptions": 0.0,
+            "fumbles_lost": 0.0,
             "pred_ridge_total": actual + 1.0,
-            "prior_season_mean_fantasy_points": np.arange(n, dtype=float),
+            "prior_season_mean_shared_component_points": np.arange(n, dtype=float),
         }
     )
     block = _cohorts_block("WR", {"test_df": df})

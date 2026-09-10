@@ -91,7 +91,9 @@ from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     predictions_to_fantasy_points,
 )
+from src.shared.comparison_scoring import ACTUAL_BASIS, score_actual_components, scoring_components
 from src.shared.evaluation import compute_metrics, compute_ranking_metrics
+from src.shared.evaluation_cohorts import regular_season_rows
 from src.shared.registry import get_runner
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
@@ -297,6 +299,8 @@ def _compare_one_position(
         }
 
     model = model_df[list(needed)].copy()
+    model["fantasy_points"] = score_actual_components(model_df, pos, scoring_format)
+    model = regular_season_rows(model).dropna(subset=["fantasy_points", model_col])
     model = model[model["season"].astype(int).isin(eval_set)]
     model["player_id"] = model["player_id"].astype(str)
     model["season"] = model["season"].astype(int)
@@ -352,6 +356,8 @@ def _compare_one_position(
         "position": pos,
         "expert_name": expert_name,
         "n_matched": int(len(joined)),
+        "actual_basis": ACTUAL_BASIS,
+        "scoring_components": list(scoring_components(pos)),
         "model_col": model_col,
         "model": {
             "mae": model_metrics["mae"],

@@ -19,6 +19,12 @@ from src.serving.serialization import (
     _actual_col,
     _pred_col,
 )
+from src.shared.comparison_scoring import (
+    ACTUAL_BASIS,
+    EXCLUDED_SOURCES,
+    score_actual_components,
+    scoring_components,
+)
 from src.shared.evaluation import compute_metrics
 from src.shared.evaluation_cohorts import (
     load_reference,
@@ -34,7 +40,7 @@ from src.shared.evaluation_cohorts import (
 #
 # The committed JSON is retained for historical research and source metadata.
 # Runtime accuracy and cohort membership come exclusively from cached forecasts
-# and the separately versioned pregame reference, using full fantasy actuals.
+# and the separately versioned pregame reference, using shared scoring components.
 _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_experts.json")
 # Per-projection prediction intervals (80% floor–ceiling bands) for the expert
 # sources, generated offline by ``src.analysis.expert_intervals`` and committed
@@ -69,7 +75,7 @@ def _shared_rows(frame, scoring, columns=None):
 
 
 def comparison_tables(results, scoring="ppr", *, reference=None):
-    """Full-fantasy, regular-season, same-player-week accuracy for every source.
+    """Shared-component, regular-season, same-player-week accuracy for every source.
 
     Cohorts are selected before source coverage is applied. In particular, the
     weekly reference already has ranks from the full pregame forecast pool.
@@ -97,8 +103,23 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
         df = df.copy()
         df["player_id"] = df["player_id"].astype(str)
         actual = _actual_col(scoring)
-        if actual != "fantasy_points":
-            df["fantasy_points"] = df[actual]
+        df[actual] = score_actual_components(df, pos, scoring, prefix="actual_")
+        df["fantasy_points"] = df[actual]
+        for source in EXCLUDED_SOURCES.get(pos, {}):
+            df[_pred_col(source, scoring)] = np.nan
+        if df[actual].notna().sum() == 0:
+            for name in COMPARISON_SUBSETS:
+                subsets[name][pos] = dict(empty)
+                coverage[name][pos] = {
+                    "status": "unavailable",
+                    "n": 0,
+                    "reason": "shared_actual_components_missing",
+                    "actual_basis": ACTUAL_BASIS,
+                    "scoring_components": list(scoring_components(pos)),
+                }
+            quartiles[pos] = None
+            rankings[pos] = {}
+            continue
         df = df[df[actual].notna()]
         masks = {"all": pd.Series(True, index=df.index)}
         masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
@@ -117,6 +138,9 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                     )
             subsets[name][pos] = cells
             coverage[name][pos] = {
+                "actual_basis": ACTUAL_BASIS,
+                "scoring_components": list(scoring_components(pos)),
+                "excluded_sources": EXCLUDED_SOURCES.get(pos, {}),
                 "status": "available" if len(common) else "unavailable",
                 "n": int(len(common)),
                 "cohort_n": int(len(cohort)),

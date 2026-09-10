@@ -13,11 +13,10 @@ Outputs:
   stdout                              -- pretty-printed table
 
 Notes:
-  - DST is hard-skipped (no NFL.com DST projections in hvpkod's archive).
-  - K is totals-only: NFL.com's K projection is per-distance-bucket FG attempts
-    which doesn't decompose to our raw-stat targets, so we use NFL.com's own
-    ``nflcom_projected_pts`` (standard scoring, format-invariant for K) vs the
-    actual ``fantasy_points`` column from nflverse.
+  - DST is skipped (no NFL.com DST projections in hvpkod's archive).
+  - K is skipped in comparisons: NFL.com's bucket-scored total cannot be
+    decomposed into our made-yardage and miss targets. The native-total helper
+    remains available for source inspection.
   - Scoring format is parameterized so callers can rerun under half-PPR /
     standard without changing code.
 
@@ -39,8 +38,7 @@ from datetime import UTC, datetime
 import numpy as np
 import pandas as pd
 
-from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD, TEST_SEASONS
-from src.data.loader import compute_fantasy_points
+from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
@@ -58,7 +56,7 @@ OUTPUT_DIR_DEFAULT = "analysis_output"
 # Positions where NFL.com can't be decomposed per-target. K's projection
 # schema is per-distance-bucket FG attempts; DST has no upstream file at all.
 _TOTALS_ONLY_POSITIONS = {"K"}
-_SKIPPED_POSITIONS = {"DST"}
+_SKIPPED_POSITIONS = {"DST", "K"}
 
 # nflverse stats_player_week parquets — one per season, covers all positions
 # including K (which the legacy nfl_data_py weekly feed omitted).
@@ -144,8 +142,8 @@ def _actuals_for_position(
             else:
                 df[c] = 0.0
             extra_cols.append(c)
-    # Preserve all scoring stats, including WR/TE rushing and QB receiving.
-    # Restricting this frame to a model's heads changes the actual-score label.
+    # Keep the raw frame intact; the comparison scorer explicitly selects the
+    # common projected components on both the forecast and observed sides.
     return df.reset_index(drop=True)
 
 
@@ -201,29 +199,17 @@ def _aggregate_actuals_to_ppr(actuals: pd.DataFrame, pos: str, scoring_format: s
         fg_missed = actuals["fg_missed"].to_numpy()
         pat_missed = actuals["pat_missed"].to_numpy()
         return fg_yards * 0.1 + pat_made - fg_missed - pat_missed
-    scoring = {"ppr": SCORING_PPR, "half_ppr": SCORING_HALF_PPR, "standard": SCORING_STANDARD}[
-        scoring_format
-    ]
-    frame = actuals.copy()
-    for col in (
-        "passing_yards",
-        "passing_tds",
-        "interceptions",
-        "rushing_yards",
-        "rushing_tds",
-        "receptions",
-        "receiving_yards",
-        "receiving_tds",
-    ):
-        if col not in frame:
-            frame[col] = 0.0
-    fumbles = ("sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost")
-    if not any(col in frame for col in fumbles):
-        frame["sack_fumbles_lost"] = frame.get("fumbles_lost", 0.0)
-    for col in fumbles:
-        if col not in frame:
-            frame[col] = 0.0
-    return compute_fantasy_points(frame, scoring).to_numpy()
+    targets = POSITION_TARGET_MAP[pos]
+    # The loader normalizes sparse observed-stat fields to zero. Unlike full
+    # fantasy scoring, WR/TE rushing and QB receiving do not enter this label.
+    return predictions_to_fantasy_points(
+        pos,
+        {
+            name: actuals[name].fillna(0).to_numpy() if name in actuals else np.zeros(len(actuals))
+            for name in targets
+        },
+        scoring_format,
+    )
 
 
 def _per_target_breakout(joined: pd.DataFrame, pos: str) -> dict:

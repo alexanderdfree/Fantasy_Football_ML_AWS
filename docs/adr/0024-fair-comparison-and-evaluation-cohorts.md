@@ -14,8 +14,16 @@ reporting, leaving the `elite_top24` follow-up gate (#1354/#1537) without eviden
 ## Decision
 
 All displayed comparison sources are evaluated from the same cached prediction
-table, against full regular-season PPR actuals, on a common player-week
-intersection. Source metadata may come from the historical JSON; its accuracy
+table, against regular-season actuals scored on the **same projected components**
+as the forecasts, on a common player-week intersection. The owner clarified this
+contract on 2026-09-10: compare only quantities both the models and experts
+calculate. This replaces the initial full-fantasy actual basis without restoring
+the old asymmetry between model and expert labels. Components are declared in
+`src/shared/comparison_scoring.py`: QB passing/rushing/turnovers; RB
+rushing/receiving/lost fumbles; WR/TE receiving/lost fumbles; K made-yardage, PATs
+and misses; DST the common defensive stats and PA/YA tiers. Missing actual
+components make a row unavailable; they never fall back to full fantasy points.
+Source metadata may come from the historical JSON; its accuracy
 cells and stored player IDs are never a fallback for a missing live table.
 The UI reports common sample sizes and missing data. Quartile bias uses the same
 common sample. Ranking metrics evaluate each source's own selections on that
@@ -26,8 +34,8 @@ Four cohort definitions remain separate:
 | Name | Selection | Purpose |
 |---|---|---|
 | `weekly_reference_top24` | Top 24 per position/week by a fixed archived expert reference | Primary expected-starter accuracy and bias |
-| `elite_top24` | Top 24 distinct players by prior-season mean full fantasy points | Historical continuity; pre-season importance |
-| `seasonal_actual_top24` | Top 24 by current-season regular-season actual total | Retrospective season-leader accuracy |
+| `elite_top24` | Top 24 distinct players by prior-season mean shared-component points | Historical continuity; pre-season importance |
+| `seasonal_actual_top24` | Top 24 by current-season regular-season shared-component actual total | Retrospective season-leader accuracy |
 | `weekly_actual_top24` | Actual weekly top 24 versus each source's predicted selection | Hit rate, points captured, and lineup regret |
 
 The Comparison tab also retains explicitly retrospective season-leader top-12
@@ -41,7 +49,10 @@ calibration target: selection on realized outcomes creates that pattern.
 `data/raw/weekly_evaluation_reference_v1.parquet` contains only player/week keys,
 position, pregame reference score/rank, source recipe, and generation metadata.
 The versioned recipe is the mean of archived NFL.com and RotoWire forecasts for
-QB/RB/WR/TE, NFL.com for K, and RotoWire for DST. Both required offense sources
+QB/RB/WR/TE, ESPN for K, and RotoWire for DST. The current recipe is
+`shared_components_v2`; old recipe rows are preserved in the versioned parquet.
+NFL.com K is excluded from matched comparisons because its native bucket total
+cannot represent our made-yardage and miss targets. ESPN supplies those targets. Both required offense sources
 must exist for a candidate; it never becomes a mean of whichever happens to be
 available. This is a two-provider reference, not a claim of industry consensus.
 
@@ -66,25 +77,30 @@ Other seasons and recipe versions remain intact.
 `src/shared/evaluation_cohorts.py` computes compact JSON-safe summaries while
 held-out rows still exist, including normal, split-branch, and CV pipeline
 returns. Local/parallel/rolling-origin, Batch, and EC2 summaries preserve them.
-Every origin retains its own cohort report. A missing row set or prior/reference
+Every origin retains its own cohort report. A missing row set or prior/reference/component
 data produces an explicit unavailable entry with `n: null`, not an omitted key
 or a zero score. Valid empty cohorts are distinct.
 
 K/DST prior importance is computed from their position-native post-target
 training/validation totals; the offensive-only generic split is not a valid
 substitute. Reports include per-model sample counts, MAE, RMSE, signed bias,
-cohort identity, and reference identity. Split merges combine disjoint model
+cohort identity, reference identity, `actual_basis`, and the component list.
+Prior-season importance is recomputed from raw components; a precomputed full-score
+prior mean is not a substitute for missing component history. Split merges combine disjoint model
 blocks and reject differing cohorts/truth/reference vintages.
 
-Regression tests cover equal forecasts receiving equal scores, cross-position
-scoring components, missing forecast weeks, postseason exclusion, reference
+Regression tests cover equal forecasts receiving equal scores, invariance to
+unprojected actual stats, missing components, exclusion of NFL.com K, ESPN K
+reference selection, cross-position scoring components, missing forecast weeks, postseason exclusion, reference
 selection independent of actuals/model forecasts, no rank-25 promotion when an
 actual is missing, and serialized Batch/rolling-origin output.
 
 ## Rejected alternatives
 
 - Updating only static expert numbers: leaves coverage and future data drift.
-- Scoring everyone only on modeled targets: excludes genuine fantasy points.
+- Combining full-fantasy model actuals with restricted expert actuals: different
+  labels cannot be compared. Full-fantasy scoring remains a distinct benchmark;
+  this comparison intentionally measures shared projected components.
 - Each model's own top-24 pool for MAE comparison: changes the grading population.
 - Actual weekly winners as the primary bias target: confuses hindsight selection
   with forecast miscalibration.
@@ -104,3 +120,7 @@ to the corrected primary metric without rerunning their evaluation.
 
 - 2026-09-10 — Establish matched full-score comparison and versioned pregame
   top-24 reporting across all benchmark paths (PR pending).
+
+- 2026-09-10 — Owner clarification: score only common projected components on
+  both sides; version reference as shared_components_v2 with ESPN K, retain
+  paired coverage and explicit scoring metadata (PR pending).
