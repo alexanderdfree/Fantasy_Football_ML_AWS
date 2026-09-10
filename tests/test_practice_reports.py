@@ -126,6 +126,90 @@ def test_ambiguous_name_does_not_assign_an_injury_to_wrong_player(roster):
     assert "a" not in result.values and "b" not in result.values
 
 
+def test_official_gsis_alias_overrides_fallback_and_resolves_healthy_teammate(roster, monkeypatch):
+    roster.loc[0, "espn_name"] = "Drew Ogletree"
+    reference = pd.DataFrame(
+        {
+            "player_id": ["a"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Andrew Ogletree"],
+        }
+    )
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Andrew Ogletree"), s, w),
+    )
+    monkeypatch.setattr(
+        pr.nfl_source,
+        "injuries",
+        lambda _: pd.DataFrame(
+            {
+                "season": [2026],
+                "week": [1],
+                "team": ["BAL"],
+                "gsis_id": ["a"],
+                "practice_status": ["Full Participation in Practice"],
+            }
+        ),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster, rosters_df=reference)
+    assert report.values["a"] == 1.0
+    assert report.values["b"] == 2.0
+    assert report.metadata["unmatched_report_names"] == []
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [("season", 2025), ("week", 2), ("team", "NE"), ("position", "TE"), ("player_id", "elsewhere")],
+)
+def test_alias_from_other_roster_context_cannot_assign_practice(roster, monkeypatch, column, value):
+    roster.loc[0, "espn_name"] = "Drew Ogletree"
+    reference = pd.DataFrame(
+        {
+            "player_id": ["a"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Andrew Ogletree"],
+        }
+    )
+    reference.loc[0, column] = value
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Andrew Ogletree"), s, w),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster, rosters_df=reference)
+    assert "a" not in report.values and "b" not in report.values
+
+
+def test_alias_ambiguity_including_primary_name_stays_unknown(roster, monkeypatch):
+    roster.loc[0, "espn_name"] = "Drew Ogletree"
+    roster.loc[1, "espn_name"] = "Andrew Ogletree"
+    reference = pd.DataFrame(
+        {
+            "player_id": ["a"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Andrew Ogletree"],
+        }
+    )
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Andrew Ogletree"), s, w),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster, rosters_df=reference)
+    assert "a" not in report.values and "b" not in report.values
+
+
 def test_historical_team_directory_aliases_are_canonicalized(roster, monkeypatch):
     roster.loc[:1, "recent_team"] = "LV"
     monkeypatch.setattr(

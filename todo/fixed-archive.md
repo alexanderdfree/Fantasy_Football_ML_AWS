@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Live QBR qualification and roster/practice identity joins omitted available data
+[Read the incident record](fixed-archive/live-source-identity-qbr-2026-09.md).
+
 ### [FIXED] Concurrent model/cache publication and serving recovery failures
 [Read the incident record](fixed-archive/serving-publication-concurrency-2026-09.md).
 

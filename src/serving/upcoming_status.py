@@ -69,6 +69,15 @@ def data_quality(sources: dict) -> dict:
             ],
         }
     issues = []
+    roster = sources.get("roster") or {}
+    unresolved = roster.get("unresolved_players") or []
+    if unresolved:
+        issues.append(
+            {
+                "source": "roster",
+                "message": f"Some roster players are omitted because their identity or active eligibility could not be verified ({len(unresolved)} affected).",
+            }
+        )
     if (sources.get("injuries") or {}).get("status") != "available":
         issues.append(
             {

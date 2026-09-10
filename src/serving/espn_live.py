@@ -42,6 +42,7 @@ from datetime import UTC, datetime
 import pandas as pd
 
 from src.data import nfl_source
+from src.serving import roster_identity
 
 _ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 # Depth charts live on the separate "core" host (the site API doesn't expose
@@ -551,18 +552,28 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def fetch_active_rosters(
-    team_id_to_code: dict[str, str], *, include_kickers: bool = False
+    team_id_to_code: dict[str, str],
+    *,
+    include_kickers: bool = False,
+    season: int | None = None,
+    week: int | None = None,
+    rosters_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Fetch active skill-position rosters for the given teams.
 
     ``team_id_to_code`` maps each ESPN team id to its nflverse ``recent_team``
     code (built from the slate). Returns a DataFrame with ``player_id`` (gsis),
-    ``position``, ``recent_team`` — players whose ESPN id can't be mapped to a
-    gsis id are dropped (count logged). Empty on total failure.
+    ``position``, ``recent_team``. Missing crosswalk entries can use a verified
+    current-week name/DOB match. Unresolved identities and eligibility are
+    recorded in ``attrs['source_metadata']``, never silently treated as complete.
     """
     crosswalk = espn_to_gsis_map()
+    reference = roster_identity.current_rosters(rosters_df, season, week)
     rows: list[dict] = []
-    unmapped = 0
+    unresolved = []
+    recovered = {}
+    parsed = 0
+    failed_teams = []
     for team_id, team_code in team_id_to_code.items():
         if not team_id:
             continue
@@ -570,14 +581,24 @@ def fetch_active_rosters(
             payload = _get_json(f"{_ESPN_BASE}/teams/{team_id}/roster")
         except Exception as e:  # noqa: BLE001 - network boundary
             print(f"[espn_live] roster fetch failed for team {team_id}: {e!r}")
+            failed_teams.append(team_code)
             continue
+        if season is not None and (payload.get("season") or {}).get("year") != season:
+            raise ValueError(f"ESPN roster for {team_code} did not confirm season {season}")
         for p in _parse_roster_players(
             payload, team_code=team_code, include_kickers=include_kickers
         ):
-            gsis = crosswalk.get(p["espn_id"])
+            parsed += 1
+            gsis = roster_identity.player_id(crosswalk.get(p["espn_id"]))
             if not gsis:
-                unmapped += 1
-                continue
+                gsis, reason = roster_identity.resolve_player(p, reference)
+                if not gsis:
+                    unresolved.append(
+                        {k: p[k] for k in ("espn_id", "espn_name", "position", "recent_team")}
+                        | {"reason": reason}
+                    )
+                    continue
+                recovered[p["espn_id"]] = gsis
             rows.append(
                 {
                     "player_id": gsis,
@@ -591,12 +612,26 @@ def fetch_active_rosters(
                     "roster_season": p["roster_season"],
                 }
             )
-    if unmapped:
-        print(f"[espn_live] dropped {unmapped} roster players with no gsis mapping")
+    # Later injury/depth lookups in this build must use the same resolved IDs.
+    with _crosswalk_lock:
+        crosswalk.update(recovered)
+    if unresolved:
+        print(f"[espn_live] unresolved roster identities/eligibility: {len(unresolved)}")
     # A player can appear on two ESPN rosters mid-offseason churn; keep the last.
+    result = pd.DataFrame(rows)
     if rows:
-        return pd.DataFrame(rows).drop_duplicates(subset="player_id", keep="last")
-    return pd.DataFrame(rows)
+        result = result.drop_duplicates(subset="player_id", keep="last")
+    result.attrs["source_metadata"] = {
+        "status": "partial" if unresolved or failed_teams else "available",
+        "fetched_at": datetime.now(UTC).isoformat(),
+        "parsed_players": parsed,
+        "mapped_players": len(result),
+        "recovered_players": len(recovered),
+        "identity_reference_rows": len(reference),
+        "unresolved_players": unresolved,
+        "failed_teams": sorted(failed_teams),
+    }
+    return result
 
 
 _INJURIES_COLUMNS = ["gsis_id", "position", "team", "season", "week", "report_status"]

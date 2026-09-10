@@ -72,6 +72,33 @@ def test_upload_verifies_raw_splits_sidecars_and_records_coverage(producer):
     assert "data/train.parquet" not in s3.objects
 
 
+def test_stat_correction_replaces_warm_raw_and_split_caches_together(producer, tmp_path):
+    """A corrected historical value must reach both live history and split readers."""
+    s3 = FakeS3()
+    raw, splits = producer["raw_dir"], producer["splits_dir"]
+    consumer = dict(raw_dir=tmp_path / "consumer/raw", splits_dir=tmp_path / "consumer/splits")
+    releases = []
+    for yards in (-2, 3):
+        corrected = pd.DataFrame(
+            {"player_id": ["00-0039918"], "season": [2025], "week": [6], "rushing_yards": [yards]}
+        )
+        corrected.to_parquet(raw / "weekly.parquet")
+        for name in release.SPLIT_NAMES:
+            corrected.to_parquet(splits / name)
+        release.seal_inputs(**producer)
+        releases.append(release.publish_release(s3, "bucket", **producer))
+        result = release.download_release(s3, "bucket", **consumer)
+        assert result["release_id"] == releases[-1]
+        assert pd.read_parquet(consumer["raw_dir"] / "weekly.parquet").rushing_yards.tolist() == [
+            yards
+        ]
+        for name in release.SPLIT_NAMES:
+            assert pd.read_parquet(consumer["splits_dir"] / name).rushing_yards.tolist() == [yards]
+    assert releases[0] != releases[1]
+    # A pinned historical run remains reproducible after correction publication.
+    assert release.resolve_release(s3, "bucket", release_id=releases[0])[0] == releases[0]
+
+
 def test_failed_upload_leaves_old_pointer_untouched(producer):
     s3 = FakeS3()
     old = release.publish_release(s3, "bucket", **producer)

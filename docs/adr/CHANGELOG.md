@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR pending) · → ADR-0018
+
 - 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR #1560) · → ADR-0011, ADR-0014
 - 2026-09-10 · Correct training event/identity/depth/availability semantics and K filtering; publish coherent data releases with safe live overlays and rollout gates · (PR #1564) · → ADR-0001, ADR-0002, ADR-0004, ADR-0026
 

@@ -37,6 +37,8 @@ Age/rookie metadata uses the fetched current-season weekly roster and actual gam
 
 ## Changelog
 
+- **2026-09-10** — Recover live roster crosswalk gaps only through a unique current-week team/position/name/date-of-birth match with active weekly status. Share recovered identities with injury/depth consumers; disclose unresolved identity/eligibility and injury exclusions in artifact metadata. Official practice aliases join through current-week GSIS identity, preserving ambiguity and overriding stale fallback reports. Request all game-level QBR observations, including short appearances excluded from qualified leaderboards, while retaining completed-game/identity validation. Historical correction publication is covered by the coherent raw/split release contract in ADR-0026. (PR pending.)
+
 - **2026-09-10** — Enforce scoreboard/injury/roster publication boundaries and publish offseason transitions; add read-time source/artifact freshness, browser revalidation, partial-history coverage, faithful live QBR recovery, season-bound player metadata and explicit NFL.com archive policy. Training features and recipes unchanged. (PR #1555.)
 
 - **2026-09-10** — Review hardening: carry intervening archived years into the fixed feature-consumer caches, verify neutral venue IDs and both physical flags, and report opportunity availability only when completed player-games are present. Preserve current-calendar odds when ESPN omits them, keep unknown roofs imputed, and avoid synthetic healthy statuses for unresolved player aliases. (PR #1545.)

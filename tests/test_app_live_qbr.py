@@ -93,6 +93,25 @@ def test_recovers_exact_qbr_and_points_added_only_for_qbs(inputs):
     assert metadata["retrieved_at"]
 
 
+def test_recovers_short_appearance_excluded_from_qualified_leaderboard(inputs, monkeypatch):
+    current, schedules = inputs
+    current.loc[8, "attempts"] = 2
+
+    def query(url):
+        payload = _payload()
+        if parse_qs(urlparse(url).query)["isqualified"] == ["true"]:
+            payload["athletes"] = []
+        else:
+            payload["athletes"][0]["categories"][0]["totals"] = ["2.1", "-1.0", "2.0"]
+        return payload
+
+    monkeypatch.setattr(live_qbr.espn_live, "_get_json", query)
+    result, metadata = live_qbr.recover_qbr(current, schedules, 2026)
+    assert result.loc[8, "qbr_total"] == 2.1
+    assert result.loc[8, "pts_added"] == -1.0
+    assert metadata["observed_rows"] == metadata["eligible_qb_rows"] == 1
+
+
 def test_preserves_archive_observation_when_filling_other_stat(inputs):
     current, schedules = inputs
     current.loc[8, "qbr_total"] = 77.0
@@ -219,7 +238,7 @@ def test_parallel_week_fetches_report_partial_coverage_on_outage(inputs, monkeyp
     monkeypatch.setattr(live_qbr.espn_live, "_get_json", fetch)
     result, metadata = live_qbr.recover_qbr(current, schedules, 2026)
     assert len(seen) == 2
-    assert all(params["isqualified"] == ["true"] for params in seen)
+    assert all(params["isqualified"] == ["false"] for params in seen)
     assert metadata["status"] == "partial"
     assert metadata["requested_weeks"] == [1, 2]
     assert metadata["observed_rows"] == 1

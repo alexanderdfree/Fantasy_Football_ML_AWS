@@ -993,7 +993,22 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         return read_cached_artifact()
     schedule_context, weather_metadata = live_schedule.fetch_schedule_context(season, sched_rows)
     team_id_to_code = dict(zip(slate["team_id"], slate["recent_team"], strict=False))
-    roster = espn_live.fetch_active_rosters(team_id_to_code, include_kickers=True)
+    # One weekly reference supplies identity aliases and reserve/inactive
+    # statuses to every live consumer. Failure remains explicit in coverage.
+    try:
+        rosters_df = nfl_source.rosters_weekly([season])
+    except Exception as e:  # noqa: BLE001 - network/data boundary
+        print(f"[upcoming_week] rosters_weekly({season}) failed: {e!r}; out-set -> injuries-only")
+        rosters_df = None
+    roster = espn_live.fetch_active_rosters(
+        team_id_to_code,
+        include_kickers=True,
+        season=season,
+        week=week,
+        rosters_df=rosters_df,
+    )
+    roster_source = dict(roster.attrs.get("source_metadata", {}))
+    roster_source["weekly_reference_available"] = bool(roster_source.get("identity_reference_rows"))
     if roster.empty:
         _write_unavailable("no_roster")
         return read_cached_artifact()
@@ -1007,22 +1022,10 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # snapshot. An outage leaves the last published artifact untouched.
     injury_report = espn_live.fetch_injury_report(season, week, team_id_to_code)
     injuries_df = injury_report.injuries
-    # Weekly rosters (RES/INA reserve/inactive) size the inheritance vacancy
-    # out-set the same way training's refresh-splits does (which passes both
-    # injuries_df AND rosters_df). Must be rosters_weekly — the seasonal frame is
-    # ~1 row/player and registers no vacancies (#1277). Single season keeps the
-    # fetch light; only the current (season, week) out-set feeds the served rows.
-    # Optional enrichment: on a fetch failure degrade to None (the inheritance
-    # feature handles it — pre-#1277 behavior) rather than crash the whole
-    # refresh, matching the sibling live_sources.fetch_* network boundaries.
-    try:
-        rosters_df = nfl_source.rosters_weekly([season])
-    except Exception as e:  # noqa: BLE001 - network/data boundary
-        print(f"[upcoming_week] rosters_weekly({season}) failed: {e!r}; out-set -> injuries-only")
-        rosters_df = None
     # Don't surface projections for players ruled OUT (they won't play); keep
     # them in injuries_df so the role-inheritance feature still sizes vacancies.
     out_ids = set(injuries_df.loc[injuries_df["report_status"] == "Out", "gsis_id"])
+    roster_source["injury_excluded_players"] = int(roster["player_id"].isin(out_ids).sum())
     if out_ids:
         roster = roster[~roster["player_id"].isin(out_ids)].copy()
 
@@ -1031,7 +1034,9 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # practice_status; nflverse OTC sets the current-season contract_* values.
     depth_chart_ranks = espn_live.fetch_depth_chart_ranks(season, team_id_to_code)
     game_status_map = injury_report.statuses
-    practice_report = practice_reports.fetch_practice_report(season, week, roster)
+    practice_report = practice_reports.fetch_practice_report(
+        season, week, roster, rosters_df=rosters_df
+    )
     practice_status_map = practice_report.values
     contract_features = live_sources.fetch_contract_features(season)
 
@@ -1103,6 +1108,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         "roster": {
             "provider": "ESPN",
             "status": "available",
+            **roster_source,
             "covered_teams": sorted(set(roster["recent_team"])),
             "player_rows": len(roster),
         },
