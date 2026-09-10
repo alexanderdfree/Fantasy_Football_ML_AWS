@@ -21,6 +21,8 @@ K's four heads (`fg_yard_points`, `pat_points`, `fg_misses`, `xp_misses`) are ou
 
 **Context.** Fantasy points collapse heterogeneous events (a receiving TD is structurally very different from a passing yard) into a single scalar. Decomposing lets each head specialize, lets us apply different loss deltas per component, and — critically — keeps MAE reporting interpretable in native stat units ("the model is off by ±18 passing yards, ±0.4 passing TDs per game") rather than in ambiguous point buckets. An earlier iteration of this ADR had targets like `passing_floor = passing_yards × 0.04` and `td_points = pass_TD × 4 + rush_TD × 6` baked in; the migration to raw stats moved all scoring coefficients to one place and decoupled model error from scoring-format choice.
 
+**Checkpoint selection.** NN early stopping and best-checkpoint restoration minimize the loss-weighted mean of per-target validation RMSE across all six positions: `sum(weight[t] * sqrt(mean(error[t] ** 2))) / sum(weight[t])`. Each target pools the entire validation set, including a short final batch, before taking its root. This preserves the existing balance between stat scales while penalizing large errors more than MAE. Training history records `val_rmse_{target}` and `val_rmse_weighted`, retains MAE for comparison, and plots RMSE for new runs. Raw-stat training losses and their coupled weights remain unchanged; the Optuna callback and plateau scheduler still consume combined validation loss. Production-pipeline comparisons are required to assess the effect on held-out metrics.
+
 **Options considered.**
 
 | Option | Complexity | MAE interpretability | Scoring-format flexibility |
@@ -51,6 +53,8 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
   existing head shapes, coefficients, points-allowed contract and yardage
   tiers. The audited 6,814-game population had 441 corrected totals (+292 TDs,
   -1 spurious TD, +162 punt blocks). (PR pending)
+
+- **2026-09-10** — Replace weighted MAE checkpoint selection with weighted per-target RMSE, record both error histories, and show the selection metric in training curves. (PR pending)
 
 - **2026-09-10** — Correct D/ST net-yard labels and normalize blocked K attempts into misses across the PBP/weekly source boundary. (PR pending)
 

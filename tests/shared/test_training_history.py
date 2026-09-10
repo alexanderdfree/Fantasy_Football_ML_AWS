@@ -483,6 +483,10 @@ class TestMultiHeadHistoryTrainer:
             "val_mae_rushing_yards",
             "val_mae_receiving_yards",
             "val_mae_rushing_tds",
+            "val_rmse_weighted",
+            "val_rmse_rushing_yards",
+            "val_rmse_receiving_yards",
+            "val_rmse_rushing_tds",
         }
         assert expected_keys.issubset(set(history.keys()))
 

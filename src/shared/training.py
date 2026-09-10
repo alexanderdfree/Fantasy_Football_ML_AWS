@@ -1476,13 +1476,15 @@ class MultiHeadTrainer:
             for k in [
                 "train_loss",
                 "val_loss",
+                "val_rmse_weighted",
                 "epoch_sec",
                 "peak_mem_gb",
                 *[f"val_loss_{t}" for t in self.target_names],
                 *[f"val_mae_{t}" for t in self.target_names],
+                *[f"val_rmse_{t}" for t in self.target_names],
             ]
         }
-        # Weighted MAE used for early stopping mirrors the training loss's
+        # Weighted per-target RMSE used for early stopping mirrors the loss's
         # per-target weighting so high-scale targets (yards) don't dominate
         # the selection criterion.
         loss_weights = getattr(self.criterion, "loss_weights", None) or {}
@@ -1698,7 +1700,7 @@ class MultiHeadTrainer:
                 else:
                     history[f"val_loss_{t}"].append(0.0)
 
-            # Per-target MAE — single GPU→CPU transfer per target per epoch
+            # Per-target errors — single GPU→CPU transfer per target per epoch
             # (was per-batch). ``all_preds[k]`` / ``all_targets[k]`` are lists
             # of GPU tensors accumulated above; ``torch.cat`` stays on-device
             # and the trailing ``.cpu().numpy()`` is the only host transfer.
@@ -1710,9 +1712,14 @@ class MultiHeadTrainer:
                 if n_val_batches > 0:
                     y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
                     y_true_all = torch.cat(all_targets[k]).cpu().numpy()
-                    history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
+                    errors = y_pred_all - y_true_all
+                    history[f"val_mae_{k}"].append(np.mean(np.abs(errors)))
+                    # Pool every validation row before taking the root; averaging
+                    # batch RMSEs would overweight a short final batch.
+                    history[f"val_rmse_{k}"].append(np.sqrt(np.mean(np.square(errors))))
                 else:
                     history[f"val_mae_{k}"].append(float("inf"))
+                    history[f"val_rmse_{k}"].append(float("inf"))
 
             # Per-epoch wall-clock is a host-side measurement; the
             # ``.item()`` on the loss accumulators and the ``.cpu().numpy()``
@@ -1742,16 +1749,17 @@ class MultiHeadTrainer:
                 if self._graphed_opt is not None:
                     self._graphed_opt.refresh_lr_from_scheduler()
 
-            # --- Early Stopping (loss-weighted MAE) ---
-            val_mae_weighted = (
+            # --- Early Stopping (loss-weighted per-target RMSE) ---
+            val_rmse_weighted = (
                 sum(
-                    loss_weights.get(t, 1.0) * history[f"val_mae_{t}"][-1]
+                    loss_weights.get(t, 1.0) * history[f"val_rmse_{t}"][-1]
                     for t in self.target_names
                 )
                 / weight_sum
             )
-            if val_mae_weighted < self.best_val_metric:
-                self.best_val_metric = val_mae_weighted
+            history["val_rmse_weighted"].append(val_rmse_weighted)
+            if val_rmse_weighted < self.best_val_metric:
+                self.best_val_metric = val_rmse_weighted
                 self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
                 self.epochs_without_improvement = 0
             else:
@@ -1761,21 +1769,21 @@ class MultiHeadTrainer:
                     if self.best_model_state is not None:
                         self.model.load_state_dict(self.best_model_state)
                     else:
-                        print("  WARNING: no valid checkpoint saved (all epochs had NaN MAE)")
+                        print("  WARNING: no valid checkpoint saved (non-finite validation RMSE)")
                     break
 
             # --- Logging ---
             if (epoch + 1) % self.log_every == 0:
-                target_maes = " | ".join(
-                    f"{t}: {history[f'val_mae_{t}'][-1]:.3f}" for t in self.target_names
+                target_rmses = " | ".join(
+                    f"{t}: {history[f'val_rmse_{t}'][-1]:.3f}" for t in self.target_names
                 )
                 print(
                     f"Epoch {epoch + 1:3d} | "
                     f"Train: {avg_train_loss:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
-                    f"MAE wtd: {val_mae_weighted:.3f} | "
+                    f"RMSE wtd: {val_rmse_weighted:.3f} | "
                     f"epoch_sec={_epoch_sec:.2f} peak_mem_gb={_peak_mem_gb:.3f} | "
-                    f"{target_maes}"
+                    f"{target_rmses}"
                 )
         else:
             # Loop completed all n_epochs without early stopping. Without this,
@@ -2147,14 +2155,15 @@ def plot_training_curves(history: dict, target_names: list[str], save_path: str)
     axes[1].set_title("Per-Target Validation Loss")
     axes[1].legend()
 
-    # Panel 3: Per-target MAE
+    # Panel 3: Per-target checkpoint metric (MAE for older histories).
+    metric = "rmse" if any(f"val_rmse_{t}" in history for t in target_names) else "mae"
     for t in target_names:
-        key = f"val_mae_{t}"
+        key = f"val_{metric}_{t}"
         if key in history:
             axes[2].plot(history[key], label=t.replace("_", " ").title())
     axes[2].set_xlabel("Epoch")
-    axes[2].set_ylabel("MAE")
-    axes[2].set_title("Per-Target Validation MAE")
+    axes[2].set_ylabel(metric.upper())
+    axes[2].set_title(f"Per-Target Validation {metric.upper()}")
     axes[2].legend()
 
     plt.tight_layout()
