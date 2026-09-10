@@ -213,8 +213,10 @@ def merge_team_box_score_features(df: pd.DataFrame, label: str | None = None) ->
     team_lookup = lookup[["season", "week", "team"] + TEAM_BOX_SCORE_FEATURES].rename(
         columns={"team": "recent_team"}
     )
-    opp_lookup = lookup[["season", "week", "team"] + OPP_BOX_SCORE_FEATURES].rename(
-        columns={"team": "opponent_team"}
+    # The lookup's opp_team_points_scored is already relative to its team.
+    # Joining by opponent requires that opponent's OWN score, not its opponent's.
+    opp_lookup = lookup[["season", "week", "team", "team_points_scored"]].rename(
+        columns={"team": "opponent_team", "team_points_scored": "opp_team_points_scored"}
     )
 
     n_before = len(df)

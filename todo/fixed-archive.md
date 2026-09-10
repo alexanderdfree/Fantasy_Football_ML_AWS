@@ -12,6 +12,9 @@ The original headings remain here so existing fragment links still resolve.
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).
 
+### [FIXED] Training population and score semantics hid played games and changed targets
+[Read the incident record](fixed-archive/training-data-semantics-2026-09.md).
+
 ### [FIXED] K no-attempt games disappeared from training and nested history
 [Read the incident record](fixed-archive/fixed-k-no-attempt-games-disappeared-from-training-and-nested-history-8e454eb2.md).
 

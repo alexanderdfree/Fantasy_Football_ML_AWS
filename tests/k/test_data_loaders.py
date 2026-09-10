@@ -1270,12 +1270,14 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
             "week": [1, 1],
             "position": ["K", "WR"],
             "season_type": ["REG", "REG"],
-            "fg_att": [3.0, 0.0],
+            "fg_att": [4.0, 0.0],
             "fg_made": [2.0, 0.0],
             "fg_missed": [1.0, 0.0],
-            "pat_att": [3.0, 0.0],
+            "fg_blocked": [1.0, 0.0],
+            "pat_att": [4.0, 0.0],
             "pat_made": [3.0, 0.0],
             "pat_missed": [0.0, 0.0],
+            "pat_blocked": [1.0, 0.0],
         }
     ).to_parquet(weekly_path)
 
@@ -1302,6 +1304,11 @@ def test_load_kicker_data_includes_2025_weekly_branch(tmp_path, monkeypatch):
     assert 2025 in df["season"].values
     # 2025 weekly WR row must have been filtered out.
     assert (df["player_id"] != "WR01").all()
+    modern = df.loc[df["season"].eq(2025)].iloc[0]
+    assert modern["fg_missed"] == 2
+    assert modern["pat_missed"] == 1
+    # The pre-2025 PBP count already includes blocks and must not be changed.
+    assert df.loc[df["season"].eq(2024), "fg_missed"].iloc[0] == 1
 
 
 @pytest.mark.unit

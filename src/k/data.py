@@ -477,6 +477,12 @@ def load_data(
             & (weekly["season_type"] == "REG")
             & (weekly["season"].isin(weekly_seasons))
         ].copy()
+        # PBP's pre-2025 miss flags include blocked attempts. The modern weekly
+        # feed separates blocks; normalize at this boundary so both eras train
+        # and score the same unsuccessful-kick targets.
+        for missed, blocked in (("fg_missed", "fg_blocked"), ("pat_missed", "pat_blocked")):
+            if blocked in k_weekly:
+                k_weekly[missed] = k_weekly[missed].fillna(0) + k_weekly[blocked].fillna(0)
         # Add PBP-derived columns with NaN (will be filled later)
         for col in [
             "avg_fg_distance",

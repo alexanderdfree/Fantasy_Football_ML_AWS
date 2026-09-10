@@ -2,6 +2,7 @@
 
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017
 - 2026-09-10 · Owner-selected shared-component comparison truth, ESPN K reference, and explicit scoring metadata · (PR pending) · → ADR-0024
+- 2026-09-10 · Restore played offensive observations, correct opponent-score history, and align D/ST net-yard and K blocked-miss targets · (PR pending) · → ADR-0001, ADR-0002, ADR-0004
 
 
 - 2026-09-10 · ESPN historical expert comparisons (2018+, all six positions), shared raw-stat scoring, per-season cache and 2023 Week 1 exclusion; Comparison accuracy + quartile bias, refreshed 2025 summary and serving cache schema 8; no retrain · (PR pending) · → ADR-0018

@@ -108,6 +108,7 @@ def _make_team_stats(seed: int = 1) -> pd.DataFrame:
                         "fumble_recovery_opp": int(rng.integers(0, 4)),
                         "passing_yards": float(rng.integers(150, 400)),
                         "rushing_yards": float(rng.integers(50, 180)),
+                        "sack_yards_lost": 0.0,
                         "fg_blocked": 0,
                         "pat_blocked": 0,
                     }
@@ -156,6 +157,22 @@ def synthetic_parquets(tmp_path, monkeypatch):
 
 
 # --- Tests --------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_yards_allowed_uses_opponent_net_offense_and_scoring_tier(synthetic_parquets, monkeypatch):
+    import src.dst.data as dst_data
+    from src.dst.targets import _yds_allowed_to_bonus
+
+    stats = _make_team_stats()
+    stats["passing_yards"] = 300.0
+    stats["rushing_yards"] = 75.0
+    stats["sack_yards_lost"] = -30.0
+    monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons: stats)
+    df = dst_data.build_data()
+    assert df["yards_allowed"].eq(345).all()
+    assert df["yards_allowed"].map(_yds_allowed_to_bonus).eq(0).all()
+    assert _yds_allowed_to_bonus(375) == -1
 
 
 @pytest.mark.unit
