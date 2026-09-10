@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -108,6 +109,7 @@ def test_development_and_gpu_ruff_pins_match():
 
 
 @pytest.mark.parametrize("future_pin", [False, True])
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Workflow shell contract requires Bash")
 def test_lint_workflow_uses_development_ruff_pin(tmp_path: Path, future_pin: bool):
     """Run the actual install step with a stub uv; a version bump must flow through."""
     workflow = yaml.safe_load(TEST_WORKFLOW.read_text())
