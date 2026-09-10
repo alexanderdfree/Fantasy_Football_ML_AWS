@@ -148,6 +148,64 @@ def test_replacement_worker_cannot_hydrate_or_upload_invalidated_generation(
     assert (old / "predictions.parquet").read_bytes() == files["predictions.parquet"]
 
 
+@pytest.mark.parametrize("endpoint", ["/api/metrics", "/api/predictions?position=QB"])
+def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
+    cache_dir, fingerprint_files, monkeypatch, endpoint
+):
+    """B records the advanced sentinel before A revokes B's stale generation."""
+    positions = tuple(core._ALL_POSITIONS)
+    mtimes = dict.fromkeys(positions, 100.0)
+    worker_a = {
+        "results": pd.DataFrame(
+            {
+                "player_id": positions,
+                "player_display_name": positions,
+                "position": positions,
+                "week": [1] * 6,
+                "fantasy_points": [10.0] * 6,
+                "ridge_pred_ppr": [11.0] * 6,
+            }
+        ),
+        "metrics_by_format": {"ppr": {"Ridge Regression": {"overall": {"mae": 1.0}}}},
+        "positions_loaded": set(positions),
+        "positions_mtime": dict(mtimes),
+    }
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_a)
+    monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes[pos])
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    _persist_fixture_cache()
+
+    # B hydrates the old generation after the sentinel changes but before A
+    # writes its tombstone. Its mtimes therefore cannot reveal stale predictions.
+    mtimes["QB"] = 200.0
+    worker_b = {}
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_b)
+    assert core._try_hydrate_from_disk()
+    assert worker_b["positions_mtime"]["QB"] == 200.0
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_a)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+    monkeypatch.setattr(core.app_pkg, "_cache", worker_b)
+    calls = []
+
+    def load_splits(results):
+        core.app_pkg._cache["splits"] = dict.fromkeys(positions, (None, None, None))
+
+    def apply(train, val, test, pos, results):
+        calls.append(pos)
+        results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
+
+    monkeypatch.setattr(core, "_load_splits_locked", load_splits)
+    monkeypatch.setattr(core, "_apply_position_models", apply)
+    response = core.app_pkg.app.test_client().get(endpoint)
+    assert response.status_code == 200
+    if endpoint == "/api/metrics":
+        assert set(calls) == set(positions)
+        assert response.get_json()["Ridge Regression"]["overall"]["mae"] == 89.0
+    else:
+        assert calls == ["QB"]
+        assert response.get_json()["players"][0]["ridge_pred"] == 99.0
+
+
 def test_delayed_invalidation_preserves_another_workers_new_generation(
     cache_dir, fingerprint_files, monkeypatch
 ):

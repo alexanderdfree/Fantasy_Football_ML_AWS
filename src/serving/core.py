@@ -1172,6 +1172,7 @@ def _ensure_position_loaded(pos):
     from disk on the next request. Inert when the sentinel doesn't exist
     (dev, CI, before the first refresh).
     """
+    _discard_invalidated_generation()
     _ensure_base_data()
     sentinel_mtime = refresh_sentinel_mtime(pos)
     loaded_mtime = app_pkg._cache.get("positions_mtime", {}).get(pos, -1.0)
@@ -1717,6 +1718,7 @@ def _persist_cache_to_disk():
 
 
 def _ensure_metrics():
+    _discard_invalidated_generation()
     if (
         "metrics_by_format" in app_pkg._cache
         and not _any_position_sentinel_advanced()
@@ -1823,6 +1825,39 @@ def _positions_pending() -> bool:
     loaded = frozenset(loaded)
     failed = frozenset(app_pkg._cache.get("positions_failed", ()))
     return any(pos not in loaded and pos not in failed for pos in _ALL_POSITIONS)
+
+
+def _discard_invalidated_generation() -> None:
+    """Stop using a generation another worker revoked after this worker hydrated.
+
+    Hydration can record an already-advanced sentinel just before a peer marks
+    the old generation invalid. That worker's matching mtimes cannot establish
+    freshness: discard its model-load bookkeeping so the next request either
+    hydrates a newer generation or actually reapplies the models.
+    """
+    generation = app_pkg._cache.get("prediction_cache_generation")
+    if generation is None or not prediction_cache.is_invalidated(
+        _PREDICTIONS_CACHE_DIR, generation
+    ):
+        return
+    with app_pkg._cache_lock:
+        generation = app_pkg._cache.get("prediction_cache_generation")
+        if generation is None or not prediction_cache.is_invalidated(
+            _PREDICTIONS_CACHE_DIR, generation
+        ):
+            return
+        _invalidate_metrics_cache(reason="shared-generation-invalidation")
+        app_pkg._cache.pop("prediction_cache_generation", None)
+        app_pkg._cache.pop("prediction_inputs_fingerprint", None)
+        for key in ("positions_loaded", "positions_failed"):
+            app_pkg._cache[key] = set()
+        for key in (
+            "positions_mtime",
+            "positions_failed_mtime",
+            "position_load_errors",
+            "position_details",
+        ):
+            app_pkg._cache[key] = {}
 
 
 def _invalidate_metrics_cache(*, reason: str) -> None:
