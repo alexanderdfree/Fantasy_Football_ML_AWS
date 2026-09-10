@@ -144,9 +144,12 @@ def build_nested_kick_history(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Assemble nested per-game kick history aligned with weekly rows.
 
-    For each row in `weekly_df`, gathers that kicker's prior-week kicks from
-    `kicks_df` (same player_id, same season, `kicks.week < weekly.week`),
-    bucketed by prior-game index. Outer dim is game-ordered newest-first
+    ``weekly_df`` is the game index, including games with no FG/PAT attempts.
+    For each row, gathers that kicker's earlier games in the same season,
+    then joins their kick records. This uses the same game slots as the
+    parallel ``build_game_history_arrays`` aggregate branch. A real empty
+    game has outer_mask=True and all inner_mask=False; padding has both False.
+    Outer dim is game-ordered newest-first
     (most recent game at outer index 0, older games at higher indices,
     right-padded — mirrors :func:`src.features.engineer.build_game_history_arrays`
     so the attention branch's positional embedding is recency-indexed). Within a
@@ -175,38 +178,22 @@ def build_nested_kick_history(
 
     weekly = weekly_df.reset_index(drop=True)
 
-    if len(kicks_df) == 0:
-        return X_history, outer_mask, inner_mask
-
     # play_id is the secondary sort when present (per-attempt ordering within a
     # game); fall back to whatever original row order kicks_df had if absent.
     sort_keys = ["player_id", "season", "week"]
     if "play_id" in kicks_df.columns:
         sort_keys.append("play_id")
     kicks_sorted = kicks_df.sort_values(sort_keys, kind="stable").reset_index(drop=True)
-    kick_values = kicks_sorted[kick_stats].to_numpy(dtype=np.float32)
+    kick_values = kicks_sorted[kick_stats].to_numpy(dtype=np.float32, copy=True)
     np.nan_to_num(kick_values, copy=False, nan=0.0)
 
-    # Pre-group: (pid, sea) -> (weeks_sorted[W], kick_indices_by_week[W])
-    # where W = number of unique kick weeks for that player-season.
+    # Kick rows supply only the inner sequence, never the game index. Building
+    # the outer slots from kicks silently erased empty games and shifted their
+    # neighbors away from the per-game aggregate branch's slots.
     kicks_by_week = kicks_sorted.groupby(["player_id", "season", "week"]).indices
-    per_pid_sea: dict[tuple, tuple[np.ndarray, list]] = {}
-    for (pid, sea, wk), kick_idx in kicks_by_week.items():
-        entry = per_pid_sea.setdefault((pid, sea), ([], []))
-        entry[0].append(wk)
-        entry[1].append(kick_idx)
-    # Sort each player-season's weeks ascending so searchsorted + slicing
-    # below yield "all prior kick-weeks" in oldest-first order.
-    for key, (weeks_list, idx_list) in per_pid_sea.items():
-        order = np.argsort(np.asarray(weeks_list))
-        per_pid_sea[key] = (
-            np.asarray(weeks_list, dtype=int)[order],
-            [idx_list[i] for i in order],
-        )
-
     for (pid, sea), grp in weekly.groupby(["player_id", "season"], sort=False):
-        prior_weeks_arr, prior_idx_list = per_pid_sea.get((pid, sea), (np.empty(0, dtype=int), []))
         grp_sorted = grp.sort_values("week", kind="stable")
+        prior_weeks_arr = grp_sorted["week"].to_numpy()
         for wk, row_pos in zip(
             grp_sorted["week"].to_numpy(), grp_sorted.index.to_numpy(), strict=True
         ):
@@ -218,7 +205,7 @@ def build_nested_kick_history(
             # older games at higher indices (newest-first, right-padded). Within
             # a game the kick ordering below is unchanged.
             for g_idx, slot in enumerate(reversed(range(start, cut))):
-                kick_idx = prior_idx_list[slot]
+                kick_idx = kicks_by_week.get((pid, sea, prior_weeks_arr[slot]), [])
                 if len(kick_idx) > max_kicks_per_game:
                     kick_idx = kick_idx[-max_kicks_per_game:]
                 n_kicks = len(kick_idx)

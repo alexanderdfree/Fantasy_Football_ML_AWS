@@ -12,6 +12,8 @@
 Terse, chronological log of architecture changes — one line each: `YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`. Full rationale lives in the per-decision
 files in this directory; pre-split detail is in [../architecture-history.md](../architecture-history.md).
 
+- 2026-09-10 · Retain K no-attempt appearances and align nested kick/game history masks in training and serving; current history caps and target schema preserved · (PR pending) · → ADR-0004
+
 - 2026-09-10 · Clarify the React component kit's live DropdownMenu and dormant primitives, with pointers to the components used by current views · (PR pending) · → ADR-0023
 - 2026-09-10 · Refresh Python, frontend, and CI dependencies; Torch 2.14 across CPU/CUDA environments, NumPy hold lifted, Optuna 5 sampler settings preserved, React 19.3 + Chart.js 4.5.1 · (PR pending) · → ADR-0008, ADR-0015, ADR-0023
 

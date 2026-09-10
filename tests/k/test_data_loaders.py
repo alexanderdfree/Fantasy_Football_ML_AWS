@@ -19,6 +19,16 @@ import pytest
 # --------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _empty_participation_cache(tmp_path):
+    """Legacy loader fixtures have no extra appearances; targeted tests replace this."""
+    from src.config import SEASONS
+
+    pd.DataFrame(columns=["season", "week", "game_type", "position", "st_snaps"]).to_parquet(
+        tmp_path / f"snap_counts_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    )
+
+
 def _kicker_pbp_cache_row(player_id: str, season: int, week: int, recent_team: str = "KC") -> dict:
     """One row matching the schema written by ``reconstruct_kicker_weekly_from_pbp``.
 
@@ -1028,6 +1038,197 @@ def test_backfill_2025_pbp_early_returns_when_no_matching_seasons():
     k_data._backfill_2025_pbp_columns(k_df, [2025])
     # k_df unchanged (no Wobbly side effects).
     assert k_df.iloc[0]["season"] == 2023
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("season", [2023, 2025])
+def test_load_data_keeps_observed_empty_games(tmp_path, monkeypatch, season):
+    """Participation restores historical zeros; existing weekly zeros survive too."""
+    import src.k.data as k_data
+    from src.config import SEASONS
+    from src.k.targets import compute_targets
+
+    monkeypatch.setattr(k_data, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(k_data, "SEASONS", [season])
+
+    def backfill_attempt_means(df, years):
+        attempted = df["season"].isin(years) & df["fg_att"].gt(0)
+        df.loc[attempted, "avg_fg_distance"] = 35.0
+        df.loc[attempted, "avg_fg_prob"] = 0.85
+
+    monkeypatch.setattr(k_data, "_backfill_2025_pbp_columns", backfill_attempt_means)
+
+    def unavailable_ids():
+        raise AssertionError("Cached K loading must not fetch live player IDs")
+
+    monkeypatch.setattr(k_data.nfl_source, "player_ids", unavailable_ids)
+    signature = f"{SEASONS[0]}_{SEASONS[-1]}"
+    made = _kicker_pbp_cache_row("K1", season, 1)
+    if season < 2025:
+        pd.DataFrame([made]).to_parquet(tmp_path / f"kicker_pbp_{season}_{season}.parquet")
+    else:
+        empty = {**made, "week": 2}
+        for col in (
+            "fg_att",
+            "fg_made",
+            "fg_missed",
+            "fg_yards_made",
+            "pat_att",
+            "pat_made",
+            "pat_missed",
+        ):
+            empty[col] = 0.0
+        pd.DataFrame([made, empty]).to_parquet(tmp_path / f"weekly_{signature}.parquet")
+
+    # K1's second week has only special-teams participation. A rostered but
+    # inactive K and a punter mislabeled K in snaps must not create fake zeros.
+    pd.DataFrame(
+        {
+            "season": [season] * 5,
+            "week": [1, 2, 3, 2, 4],
+            "game_type": ["REG", "REG", "REG", "REG", "POST"],
+            "position": ["K"] * 5,
+            "st_snaps": [5, 1, 0, 2, 4],
+            "pfr_player_id": [
+                "pfr-kicker",
+                "pfr-kicker",
+                "pfr-inactive",
+                "pfr-punter",
+                "pfr-kicker",
+            ],
+            "player": [
+                "Jonathan Kicker",
+                "Jonathan Kicker",
+                "Inactive Kicker",
+                "A Punter",
+                "Jonathan Kicker",
+            ],
+            "team": ["KC"] * 5,
+        }
+    ).to_parquet(tmp_path / f"snap_counts_{signature}.parquet")
+    pd.DataFrame(
+        {
+            "season": [season] * 3,
+            "position": ["K", "K", "P"],
+            "player_id": ["K1", "K2", "P1"],
+            "pfr_id": ["None", "None", "pfr-punter"],
+            "full_name" if season == 2025 else "player_name": [
+                "Jon Kicker",
+                "Inactive Kicker",
+                "A Punter",
+            ],
+            "first_name": ["Jonathan", "Inactive", "A"],
+            "last_name": ["Kicker", "Kicker", "Punter"],
+        }
+    ).to_parquet(tmp_path / f"rosters_{signature}.parquet")
+    if season < 2025:
+        # The PFR spelling only appears in a later roster snapshot, but the
+        # exact globally-unique alias still identifies the same GSIS player.
+        path = tmp_path / f"rosters_{signature}.parquet"
+        roster = pd.read_parquet(path)
+        alias = roster.iloc[[0]].assign(season=season + 1)
+        roster.loc[roster.player_id.eq("K1"), "first_name"] = "Jon"
+        pd.concat([roster, alias]).to_parquet(path)
+    pd.DataFrame(
+        {
+            "season": [season] * 3,
+            "week": [1, 2, 3],
+            "home_team": ["KC"] * 3,
+            "away_team": ["BUF"] * 3,
+            "spread_line": [0.0] * 3,
+            "total_line": [42.0] * 3,
+            "game_type": ["REG"] * 3,
+            "roof": ["outdoors"] * 3,
+            "surface": ["grass"] * 3,
+            "wind": [8.0] * 3,
+            "temp": [52.0] * 3,
+        }
+    ).to_parquet(tmp_path / f"schedules_{signature}.parquet")
+
+    loaded = compute_targets(k_data.load_data())
+    assert set(zip(loaded.player_id, loaded.week, strict=True)) == {("K1", 1), ("K1", 2)}
+    assert len(loaded) == 2  # no duplicated observed week or specialist/inactive rows
+    zero = loaded.loc[loaded.week.eq(2)].iloc[0]
+    assert zero["fantasy_points"] == 0
+    assert zero["fg_att"] == zero["pat_att"] == 0
+    assert pd.isna(zero["avg_fg_distance"])
+    assert pd.isna(zero["avg_fg_prob"])
+    assert zero["is_home"] == 1
+    assert zero["implied_team_total"] == 21
+    assert zero["roof"] == "outdoors"
+    if season < 2025:
+        assert zero["game_wind"] == 8
+        assert zero["game_temp"] == 52
+    # Adding empty rows must not alter actual kick outcomes.
+    assert loaded.loc[loaded.week.eq(1), "fg_yards_made"].item() == made["fg_yards_made"]
+
+    # The next game's rolling opportunity includes the empty game, but its
+    # average-distance/difficulty features must not invent a zero-yard kick.
+    from src.k.features import compute_features
+
+    future = loaded.loc[loaded.week.eq(1)].assign(week=3)
+    history = pd.concat([loaded, future], ignore_index=True)
+    compute_features(history)
+    next_game = history.loc[history.week.eq(3)].iloc[0]
+    assert next_game["fg_attempts_L3"] == 1.5
+    assert next_game["pat_volume_L3"] == 1.5
+    assert next_game["avg_fg_distance_L3"] == 35.0
+    assert next_game["avg_fg_prob_L3"] == 0.85
+
+    # Participation in a season whose stats failed to load is NOT evidence
+    # that every game in that season had zero attempts.
+    monkeypatch.setattr(k_data, "SEASONS", [season, season + 1])
+    for prefix in ("snap_counts", "rosters"):
+        path = tmp_path / f"{prefix}_{signature}.parquet"
+        frame = pd.read_parquet(path)
+        pd.concat([frame, frame.assign(season=season + 1)]).to_parquet(path)
+    restored = k_data._restore_no_attempt_games(loaded)
+    assert set(restored.season) == {season}
+    assert len(restored) == len(loaded)
+
+
+@pytest.mark.unit
+def test_supplied_live_k_frames_keep_empty_games_without_raw_cache(monkeypatch):
+    import src.k.data as k_data
+
+    row = _kicker_pbp_cache_row("K1", 2026, 1)
+    for col in (
+        "fg_att",
+        "fg_made",
+        "fg_missed",
+        "fg_yards_made",
+        "pat_att",
+        "pat_made",
+        "pat_missed",
+    ):
+        row[col] = 0.0
+    weekly = pd.DataFrame([row])
+    schedules = pd.DataFrame(
+        [
+            {
+                "season": 2026,
+                "week": 1,
+                "game_type": "REG",
+                "home_team": "KC",
+                "away_team": "BUF",
+                "spread_line": 0.0,
+                "total_line": 42.0,
+                "roof": "outdoors",
+                "surface": "grass",
+            }
+        ]
+    )
+    pbp = _synthetic_pbp(2026).assign(field_goal_attempt=0, extra_point_attempt=0)
+
+    def no_cache(*args, **kwargs):
+        raise AssertionError("Supplied live frames must not read historical raw caches")
+
+    monkeypatch.setattr(pd, "read_parquet", no_cache)
+    loaded = k_data.load_data(seasons=[2026], weekly=weekly, schedules=schedules, pbp=pbp)
+    assert len(loaded) == 1
+    assert loaded["fg_att"].item() == loaded["pat_att"].item() == 0
+    assert loaded["avg_fg_distance"].isna().all()
+    assert loaded["avg_fg_prob"].isna().all()
 
 
 @pytest.mark.unit

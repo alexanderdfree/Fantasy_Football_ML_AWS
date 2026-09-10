@@ -319,6 +319,127 @@ def reconstruct_kicker_weekly_from_pbp(
 # ---------------------------------------------------------------------------
 
 
+def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
+    """Add observed K appearances missing from the attempt-based weekly rows.
+
+    Special-teams snaps establish that the player actually appeared in a
+    game; a season roster alone would invent zeros for byes/inactive weeks.
+    The roster's K designation excludes punters mislabeled K by snap counts.
+    Both parquet inputs already belong to the shared raw-data cache.
+    """
+    signature = f"{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}"
+    snaps = pd.read_parquet(f"{CACHE_DIR}/snap_counts_{signature}.parquet")
+    snaps = snaps.loc[
+        snaps["season"].isin(SEASONS)
+        # A failed PBP season is missing data, not a season of zero attempts.
+        & snaps["season"].isin(k_df["season"].unique())
+        & snaps["game_type"].eq("REG")
+        & snaps["position"].eq("K")
+        & snaps["st_snaps"].gt(0)
+    ].copy()
+    if snaps.empty:
+        return k_df
+
+    rosters = pd.read_parquet(f"{CACHE_DIR}/rosters_{signature}.parquet")
+    # Resolve identities entirely from the already-synced roster cache. A live
+    # player-ID lookup here would make offline/cache-hit K loading depend on
+    # a new external service. Keep all roster positions until after matching:
+    # snap counts occasionally label a punter K, and we must identify/exclude it.
+    ids = rosters[["pfr_id", "player_id"]]
+    ids = ids.replace({"None": None, "nan": None, "": None}).dropna()
+    ids = ids.sort_values(["pfr_id", "player_id"]).drop_duplicates("pfr_id")
+    snaps = snaps.merge(
+        ids, left_on="pfr_player_id", right_on="pfr_id", how="left", validate="many_to_one"
+    )
+
+    # Historical ID releases omit a few kickers. An exact normalized name +
+    # season match to a unique roster ID recovers those without fuzzy matching.
+    def name_key(names):
+        return (
+            names.str.normalize("NFKD")
+            .str.encode("ascii", errors="ignore")
+            .str.decode("ascii")
+            .str.lower()
+            .str.replace(r"[^a-z0-9]", "", regex=True)
+        )
+
+    # Older raw caches use player_name; current nflverse rosters use full_name.
+    name_column = "player_name" if "player_name" in rosters.columns else "full_name"
+    rosters["_name_key"] = name_key(rosters[name_column])
+    formal_names = rosters.assign(
+        _name_key=name_key(rosters["first_name"] + " " + rosters["last_name"])
+    )
+    aliases = pd.concat([rosters, formal_names])[
+        ["season", "_name_key", "player_id"]
+    ].drop_duplicates()
+    names = aliases.loc[~aliases.duplicated(["season", "_name_key"], keep=False)]
+    snaps["_name_key"] = name_key(snaps["player"])
+    snaps = snaps.merge(
+        names.rename(columns={"player_id": "roster_id"}),
+        on=["season", "_name_key"],
+        how="left",
+        validate="many_to_one",
+    )
+    snaps["player_id"] = snaps["player_id"].fillna(snaps["roster_id"])
+    # A spelling may change between seasons (Steven/Stephen Hauschka). An
+    # exact alias seen elsewhere in the cache is safe only when it identifies
+    # one GSIS ID globally; ambiguous names are never guessed.
+    global_names = aliases[["_name_key", "player_id"]].drop_duplicates()
+    global_names = global_names.loc[~global_names.duplicated("_name_key", keep=False)]
+    snaps["player_id"] = snaps["player_id"].fillna(
+        snaps["_name_key"].map(global_names.set_index("_name_key")["player_id"])
+    )
+    # A missing identity is not evidence for a zero stat line. Keep existing
+    # scoring rows authoritative, and never synthesize an unidentified player.
+    if snaps["player_id"].isna().any():
+        missing_names = snaps.loc[snaps["player_id"].isna(), "player"].unique().tolist()
+        raise ValueError(f"K game index has unmapped snap-count player IDs: {missing_names}")
+    snaps = snaps.merge(
+        rosters.loc[rosters["position"].eq("K"), ["season", "player_id"]].drop_duplicates(),
+        on=["season", "player_id"],
+        how="inner",
+        validate="many_to_one",
+    )
+    snaps["recent_team"] = snaps["team"].replace(TEAM_CODE_NORMALIZATION)
+    keys = ["player_id", "season", "week"]
+    games = snaps.rename(columns={"player": "player_name"})[
+        keys + ["player_name", "recent_team"]
+    ].drop_duplicates(keys)
+    missing = games.merge(k_df[keys].drop_duplicates(), on=keys, how="left", indicator=True)
+    missing = missing.loc[missing["_merge"].eq("left_only")].drop(columns="_merge")
+    if missing.empty:
+        return k_df
+    missing["position"] = "K"
+    missing["season_type"] = "REG"
+    for col in (
+        "fg_att",
+        "fg_made",
+        "fg_missed",
+        "fg_yards_made",
+        "pat_att",
+        "pat_made",
+        "pat_missed",
+        "fg_made_40_49",
+        "fg_made_50_59",
+        "fg_made_60_",
+        "fg_missed_40_49",
+        "fg_missed_50_59",
+        "fg_missed_60_",
+        "q4_fg_att",
+        "q4_fg_made",
+        "long_fg_att",
+        "long_fg_made",
+    ):
+        missing[col] = 0.0
+    # An empty game has zero attempts but no defined mean distance/difficulty.
+    # Match the weekly/PBP-backfill path: rolling means skip these NaNs instead
+    # of treating a no-attempt game as a zero-yard, zero-probability kick.
+    missing["avg_fg_distance"] = float("nan")
+    missing["avg_fg_prob"] = float("nan")
+    print(f"  Restored {len(missing)} no-attempt kicker games from participation data")
+    return pd.concat([k_df, missing], ignore_index=True)
+
+
 def load_data(
     *,
     seasons: list[int] | None = None,
@@ -356,7 +477,6 @@ def load_data(
             & (weekly["season_type"] == "REG")
             & (weekly["season"].isin(weekly_seasons))
         ].copy()
-        k_weekly = k_weekly[k_weekly["fg_att"].fillna(0) + k_weekly["pat_att"].fillna(0) > 0].copy()
         # Add PBP-derived columns with NaN (will be filled later)
         for col in [
             "avg_fg_distance",
@@ -384,6 +504,11 @@ def load_data(
         parts.append(k_weekly)
 
     k_df = pd.concat(parts, ignore_index=True)
+    if pbp_seasons:
+        # The historical event-only reconstruction needs a participation index.
+        # Modern weekly feeds already provide game rows (including zero attempts),
+        # and injected live frames must not acquire a historical-cache dependency.
+        k_df = _restore_no_attempt_games(k_df)
 
     # --- Backfill PBP-derived columns for 2025 from PBP ---
     if weekly_seasons:
@@ -391,6 +516,11 @@ def load_data(
             _backfill_2025_pbp_columns(k_df, weekly_seasons)
         else:
             _backfill_2025_pbp_columns(k_df, weekly_seasons, pbp=pbp)
+
+    # Normalize both source eras, including pre-existing cached weekly values.
+    # Counts are zero for no-attempt games; mean kick attributes are undefined.
+    no_attempts = k_df["fg_att"].fillna(0).add(k_df["pat_att"].fillna(0)).eq(0)
+    k_df.loc[no_attempts, ["avg_fg_distance", "avg_fg_prob"]] = float("nan")
 
     # NOTE: the per-(player_id, season) ``MIN_GAMES`` filter is applied
     # **train-only** inside ``season_split`` (mirroring the shared pipeline's
@@ -414,7 +544,8 @@ def load_data(
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     has_venue = {"roof", "surface"}.issubset(schedules_reg.columns)
     venue_cols = ["roof", "surface"] if has_venue else []
-    base_cols = ["season", "week", "spread_line", "total_line"] + venue_cols
+    weather_cols = [c for c in ("wind", "temp") if c in schedules_reg.columns]
+    base_cols = ["season", "week", "spread_line", "total_line"] + venue_cols + weather_cols
 
     home = schedules_reg[base_cols + ["home_team"]].rename(columns={"home_team": "recent_team"})
     home["is_home"] = 1
@@ -440,6 +571,16 @@ def load_data(
         )
 
     k_df = k_df.merge(schedule_info, on=["recent_team", "season", "week"], how="left")
+    # Reconstructed empty games have no FG/XP play from which to read weather.
+    # Schedules supply their game context; existing attempt-game values retain
+    # the PBP path and its established missing-weather imputation.
+    no_attempts = k_df["fg_att"].fillna(0).add(k_df["pat_att"].fillna(0)).eq(0)
+    for source, target in (("wind", "game_wind"), ("temp", "game_temp")):
+        if source in weather_cols:
+            k_df.loc[no_attempts, target] = k_df.loc[no_attempts, target].fillna(
+                k_df.loc[no_attempts, source]
+            )
+    k_df = k_df.drop(columns=weather_cols)
 
     # Fill missing Vegas lines with the TRAIN-only median, applied to every
     # split. Fitting the median on the full concatenated frame (train+val+test)
