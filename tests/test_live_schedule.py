@@ -116,3 +116,21 @@ def test_missing_schedule_context_fails_instead_of_neutralizing_every_feature():
     slate, schedules = sample()
     with pytest.raises(ValueError, match="missing"):
         live.enrich_schedule_rows(slate, schedules.drop(columns=["roof"]))
+
+
+@pytest.mark.parametrize(
+    "venue_id,detail",
+    [
+        (None, {"grass": True, "indoor": False}),
+        ("9119", {}),
+        ("9119", {"grass": True}),
+        ("9119", {"indoor": False}),
+        ("9119", {"grass": None, "indoor": False}),
+    ],
+)
+def test_neutral_venue_requires_complete_authoritative_details(monkeypatch, venue_id, detail):
+    slate, schedules = sample()
+    slate.at[0, "venue"] = {"id": venue_id}
+    monkeypatch.setattr(live.espn_live, "_get_json", lambda url: detail)
+    with pytest.raises(ValueError, match="Cannot verify a neutral"):
+        live.enrich_schedule_rows(slate, schedules)

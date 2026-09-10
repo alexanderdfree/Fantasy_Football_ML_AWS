@@ -156,9 +156,15 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
         row["away_score"] = np.nan
         venue = row.get("venue") or {}
         venue_id = venue.get("id")
+        if row.get("neutral_site") and not venue_id:
+            raise ValueError("Cannot verify a neutral game's venue without an ID")
         if venue_id:
             try:
                 detail = espn_live._get_json(f"{espn_live._CORE_BASE}/venues/{venue_id}")
+                if row.get("neutral_site") and not all(
+                    isinstance(detail.get(key), bool) for key in ("grass", "indoor")
+                ):
+                    raise ValueError("Neutral venue details require grass and indoor flags")
                 if "grass" in detail:
                     row["surface"] = "grass" if detail["grass"] else "artificial"
                 # A neutral game's nflverse roof can still describe the nominal

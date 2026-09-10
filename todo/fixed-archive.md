@@ -52,6 +52,7 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **File(s):** `src/serving/upcoming_week.py`, `src/serving/espn_live.py`, `tests/test_live_history.py`, `tests/test_app_upcoming_week.py` (PR pending).
 - **What:** The live loader stopped at 2025, and inference supplied only train/validation plus 2026 rows. Eight returning QBs received rookie_early=1; 86 RBs omitted 2025 carries (Jeanty 0 instead of 266). Later 2026 weeks would also have empty current-season attention histories.
 - **Fix:** Load completed live-season player and team data afresh without changing evaluation seasons; retain the held-out year for inference and exclude already-fitted years. Mark synthetic rows and serialize only scheduled games, avoiding duplicate observed/synthetic rows after an early-week game finishes.
+- **Review follow-up (#1545):** Republish intervening archived seasons into the fixed schedule/team cache paths at rollover, including a season opener with no live games. Opportunity coverage requires observed player-game rows, not just an existing parquet file.
 - **Lesson:** Preserving current-season rows is insufficient for features rebuilt across years; trace the complete train/validation/inference input union. Real season-opener validation also found PFR snaps and ff_opportunity not yet published for 2026. Late snaps use an explicitly empty disposable cache (retried next build); existing missing-data encodings remain, and the artifact reports unavailable supplementary sources. Completed player/team stats remain required.
 
 ### [FIXED] QBR's schema-valid source was frozen at 2023
@@ -70,6 +71,7 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **File(s):** `src/serving/live_schedule.py`, `src/serving/espn_live.py`, `src/shared/weather_features.py`, `src/k/data.py`, `tests/test_live_schedule.py`, `tests/shared/test_weather_features.py` (issues #1519/#1529; PR pending).
 - **What:** ESPN-only schedule rows dropped venue/rest/weather fields, making all live inputs outdoor, 65F, windless, and seven days rested. Shared/K formulas assigned the favored team the underdog's implied points.
 - **Fix:** Join live lines to the current calendar, verify neutral-site surfaces/roof, and supply kickoff forecasts with source coverage. Use home=(total+spread)/2 for nflverse's positive-home-favorite spread and the inverse for away. Validate the actual downstream feature merge and rebaseline the changed model inputs.
+- **Review follow-up (#1545):** Neutral games require an authoritative venue ID plus boolean grass/indoor details; successful but incomplete source responses cannot preserve a nominal home-stadium default.
 - **Lesson:** Reusing feature-building code does not establish source parity; verify event identity, source sign conventions, and the values after the last merge.
 
 ### [FIXED] Machine-specific Codex catalog path prevented session startup on macOS

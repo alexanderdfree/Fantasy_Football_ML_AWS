@@ -135,7 +135,28 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
     archived = tuple(range(SEASONS[0], season))
     with _history_lock:
         if _history_cache is None or _history_seasons != archived:
-            _history_cache = preprocess(load_raw_data(list(archived)))
+            archived_history = preprocess(load_raw_data(list(archived)))
+            if archived[-1] > SEASONS[-1]:
+                # The loader names dynamic archives by their year range, but
+                # feature consumers keep reading the fixed evaluation paths.
+                # Carry every intervening season into those paths, even at a
+                # season opener with no current-season observations yet.
+                archived_schedules = pd.read_parquet(
+                    os.path.join(CACHE_DIR, f"schedules_{archived[0]}_{archived[-1]}.parquet")
+                )
+                archived_teams = load_team_week_stats(list(archived))
+                needed = set(range(SEASONS[-1] + 1, season))
+                if archived_teams.empty or needed - set(archived_teams["season"]):
+                    raise RuntimeError(
+                        "Archived team stats are not available for every history season"
+                    )
+                atomic_write_parquet(archived_schedules, _schedules_path())
+                atomic_write_parquet(
+                    archived_teams,
+                    os.path.join(CACHE_DIR, f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet"),
+                )
+                weather_features._schedule_cache = None
+            _history_cache = archived_history
             _history_seasons = archived
         history = _history_cache
 
@@ -175,13 +196,15 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         )
         current = preprocess(load_raw_data([season], cache_dir=fresh_cache))
         current = current.merge(keys, on=["season", "week", "recent_team"], how="inner")
-        opportunity_status = (
-            "available"
-            if os.path.isfile(
-                os.path.join(fresh_cache, f"ff_opportunity_{season}_{season}.parquet")
+        opportunity_path = os.path.join(fresh_cache, f"ff_opportunity_{season}_{season}.parquet")
+        opportunity_rows = 0
+        if os.path.isfile(opportunity_path):
+            opportunity_keys = ["player_id", "season", "week"]
+            opportunity = pd.read_parquet(opportunity_path, columns=opportunity_keys)
+            opportunity_rows = len(
+                opportunity.merge(current[opportunity_keys], on=opportunity_keys, how="inner")
             )
-            else "unavailable"
-        )
+        opportunity_status = "available" if opportunity_rows else "unavailable"
         actual = pd.MultiIndex.from_frame(current[["season", "week", "recent_team"]])
         missing = pd.MultiIndex.from_frame(keys).difference(actual)
         if len(missing):
@@ -212,6 +235,7 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         "player_rows": len(current),
         "snap_counts": snap_status,
         "ff_opportunity": opportunity_status,
+        "ff_opportunity_rows": opportunity_rows,
         "qbr_observed_rows": int(current["qbr_total"].notna().sum())
         if "qbr_total" in current
         else 0,

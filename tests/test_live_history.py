@@ -17,7 +17,8 @@ def missing_live_snaps(monkeypatch):
     monkeypatch.setattr(live.nfl_source, "snap_counts", unavailable)
 
 
-def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path):
+@pytest.mark.parametrize("opportunity_week", [-1, None, 1, 2])
+def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path, opportunity_week):
     old = pd.DataFrame(
         {"player_id": ["old"], "season": [2025], "week": [1], "recent_team": ["SEA"]}
     )
@@ -44,6 +45,11 @@ def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path):
 
     def load(seasons, cache_dir=None):
         calls.append((seasons, cache_dir))
+        if cache_dir and opportunity_week != -1:
+            opportunity = current.loc[
+                current.week.eq(opportunity_week), ["player_id", "season", "week"]
+            ]
+            opportunity.to_parquet(f"{cache_dir}/ff_opportunity_2026_2026.parquet")
         return old.copy() if len(seasons) > 1 else current.copy()
 
     def teams(seasons, cache_dir=None):
@@ -65,7 +71,12 @@ def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path):
     assert calls[1][1] != calls[2][1]  # no stale current-season file reuse
     assert one.attrs["live_history_sources"]["snap_counts"] == "unavailable"
     assert one.attrs["live_history_sources"]["player_rows"] == 2
-    assert one.attrs["live_history_sources"]["ff_opportunity"] == "unavailable"
+    assert one.attrs["live_history_sources"]["ff_opportunity"] == (
+        "available" if opportunity_week == 1 else "unavailable"
+    )
+    assert one.attrs["live_history_sources"]["ff_opportunity_rows"] == (
+        2 if opportunity_week == 1 else 0
+    )
     assert one.attrs["live_history_sources"]["qbr_observed_rows"] == 0
     team_cache = pd.read_parquet(tmp_path / "team_stats_2012_2025.parquet")
     assert set(team_cache.loc[team_cache.season.eq(2026), "team"]) == {"SEA", "NE"}
@@ -93,6 +104,45 @@ def test_current_season_missing_completed_team_fails(monkeypatch, tmp_path):
     )
     with pytest.raises(RuntimeError, match="not available yet"):
         live._load_history(2026, 1, schedule)
+
+
+def test_rollover_publishes_intervening_history_to_fixed_consumers(monkeypatch, tmp_path):
+    from src.data.loader import load_team_week_stats
+
+    history = pd.DataFrame(
+        {"player_id": ["A"], "season": [2026], "week": [1], "recent_team": ["SEA"]}
+    )
+    archived_schedule = pd.DataFrame(
+        {
+            "season": [2026],
+            "week": [1],
+            "game_type": ["REG"],
+            "home_team": ["SEA"],
+            "away_team": ["NE"],
+            "home_score": [27],
+            "away_score": [20],
+            "temp": [51.0],
+            "wind": [18.0],
+        }
+    )
+    archived_schedule.to_parquet(tmp_path / "schedules_2012_2026.parquet")
+    teams = pd.DataFrame({"season": [2026], "week": [1], "team": ["SEA"], "passing_yards": [310]})
+    monkeypatch.setattr(live, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(live.weather_features, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(live.weather_features, "_schedule_cache", pd.DataFrame())
+    monkeypatch.setattr(live, "_history_cache", None)
+    monkeypatch.setattr(live, "_history_seasons", None)
+    monkeypatch.setattr(live, "load_raw_data", lambda seasons: history)
+    monkeypatch.setattr(live, "load_team_week_stats", lambda seasons: teams)
+    monkeypatch.setattr(live, "preprocess", lambda frame: frame)
+    opener = archived_schedule.assign(season=2027, home_score=float("nan"), away_score=float("nan"))
+    pd.testing.assert_frame_equal(live._load_history(2027, 1, opener), history)
+    # Read through the same fixed-range paths used by schedule features and
+    # attention team tokens, even though there are no live-year games yet.
+    pd.testing.assert_frame_equal(live.weather_features._load_schedules(), archived_schedule)
+    pd.testing.assert_frame_equal(
+        load_team_week_stats(live.SEASONS, cache_dir=str(tmp_path)), teams
+    )
 
 
 def test_inference_keeps_heldout_year_without_repeating_fit_years(monkeypatch):
