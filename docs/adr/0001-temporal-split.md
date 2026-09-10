@@ -31,11 +31,11 @@ six-game filter. Validation/test retain every observed game.
 
 **References.** [src/data/split.py:6-37](../../src/data/split.py), season constants in [src/config.py](../../src/config.py). Knowledge cutoff to 2012 landed in commit `f400a5c`.
 
-**Fold-specific preprocessing.** Native D/ST CV and rolling-origin preparation
+**Fold-specific preprocessing.** Native K/D/ST CV and rolling-origin preparation
 must leave distribution-dependent context fills missing until the actual fold
 has been sliced. Fit those means/medians on that fold's training frame, then
 apply them to its validation/test frames before ordinary feature filling.
-Using the global 2013–2023 training years leaks later seasons into earlier
+Using the global training-year cutoff leaks later seasons into earlier
 origins. Public CV, its final refit, rolling-origin reports and LightGBM CV use
 the same existing fill hook. Ordinary production loading retains its configured
 training-year behavior. Explicit fold fitting never falls back to holdout data.
@@ -46,6 +46,7 @@ Such cancellation is not evidence that a game was unplayed.
 
 ## Changelog
 
+- **2026-09-10** — Extend fold-local context fitting to K's total/implied Vegas lines. Preserve default loader behavior; on real historical inputs with one missing line, later-season perturbations no longer change the earlier training matrix. Current observed REG schedules have no missing lines. (PR pending)
 - **2026-09-10** — Recover missing participation identities, exclude invalid
   identifiers before joins, expose absent source coverage, and align K's
   effective minimum-games threshold with its configuration. (PR pending)

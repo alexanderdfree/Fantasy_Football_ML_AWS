@@ -236,9 +236,11 @@ def _prepare_cv_folds(pos, cfg):
         # Kickers use a PBP-reconstructed dataset (2015+), not the general splits.
         from src.k.data import load_data, season_split
         from src.k.features import compute_features
+        from src.k.run_pipeline import with_fold_imputation
         from src.k.targets import compute_targets
 
-        k_df = load_data()
+        k_df = load_data(impute_context=False)
+        cfg = with_fold_imputation(cfg)
         k_df = compute_targets(k_df)
         compute_features(k_df)
         train_df, val_df, _ = season_split(k_df)

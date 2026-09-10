@@ -267,7 +267,11 @@ def test_k_rolling_origin_reuses_run_pipeline_kick_history_closure(monkeypatch):
     sentinel = object()
     seen: dict = {}
 
-    monkeypatch.setattr(k_data, "load_data", lambda: weekly.copy())
+    def _load(*, impute_context):
+        assert impute_context is False
+        return weekly.copy()
+
+    monkeypatch.setattr(k_data, "load_data", _load)
     monkeypatch.setattr(k_data, "load_kicks", lambda df: kicks)
     monkeypatch.setattr(k_targets, "compute_targets", lambda df: df)
     monkeypatch.setattr(k_features, "compute_features", lambda df: None)

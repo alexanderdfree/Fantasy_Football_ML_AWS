@@ -229,5 +229,44 @@
       }
     ],
     "full_pass_without_new_finding": false
+  },
+  "k_fold_context": {
+    "source_base_sha": "f197e0b2ed34b0e1a96811944285445360dbfd2a",
+    "files": {
+      "src/k/data.py": "93dcf9cbfa7a621b75ed985a8c79f4c3a1a26a15a28a2592b4845eb2db6b9b44",
+      "src/k/run_pipeline.py": "f8b01b0ecde6229ca4bd0a16bf6b192eaab4c089ecf723a3d1969610f4e3e2c4",
+      "src/benchmarking/benchmark.py": "7f36cb4f812875a47ed7aeabc186a1b665de5f5fcf0a6d27b5113870a8851b2e",
+      "src/tuning/tune_lgbm.py": "b4d785d26558343c84d8c5123f1ba296b98bd77785d51191d0d8f07fd6fa5446",
+      "tests/k/test_fold_imputation.py": "4f3011efe3b2f4ac277e03b8c09abf99c539a71084fae8a05a4a7da40c2313b3",
+      "tests/k/test_run_cv_pipeline.py": "2c947b7640b5855d79e06873df4d6296b4c2607eb95ae28b28b2e9988f39faf2",
+      "tests/test_benchmark_rolling_origin.py": "31dbaafeeac2a7a2c72ceb21f065d56e03f09369757c7fe36f6db3279cf5a361"
+    },
+    "frozen": true,
+    "finding": "K native CV filled missing Vegas context from fixed<=2023 data before origin slicing",
+    "current_data_incidence": {
+      "REG_schedule_2015_2025_missing_total_line": 0,
+      "REG_schedule_2015_2025_missing_spread_line": 0,
+      "interpretation": "Verified supported missing-data boundary, not an observed default-cohort leak"
+    },
+    "before_proof": "/tmp/audit-k-cv-prepared-proof.json",
+    "after_proof": "/tmp/audit-k-cv-prepared-fixed-proof.json",
+    "default_identity": "/tmp/audit-k-default-frame-identity.json",
+    "changes": [
+      "load_data(impute_context=True) retains existing defaults; False leaves only total_line/implied_team_total missing until fold preparation.",
+      "K fold callback fits medians on actual filtered train frame and applies to train/val/test, with zero only when no train evidence exists.",
+      "Native run_cv, benchmark K origin helper, and tune_lgbm._prepare_cv_folds use deferred load and fold config.",
+      "Ordinary K run and LGBM final comparison keep default loader; existing native kwargs mocks updated and caller config preservation asserted."
+    ],
+    "checks": {
+      "before": "6 failed,1 healthy positivecontrol passed (/tmp/audit-k-fold-imputation-before.log)",
+      "after": "96passed (/tmp/audit-k-fold-imputation-after.log)",
+      "actual_native_matrix": "3573x19; changed training rows2 before,0after for heldout2023shock",
+      "default_frame_identity": "5272x37historical rows exact againstf197 source, both fullyobserved and missing2015week1 inputs",
+      "final_refit": "public native CV cfg reused at real final preparation boundary; train median controls pass",
+      "style": "Ruff/format/diff checks pass",
+      "training_runs": 0,
+      "workers": 2
+    },
+    "remaining": "Root final fresh all6x3seed comparison alreadyplanned; no extra default data effect claimed. Full source pass was interrupted by this verified finding and must continue/repeat before cleanpass claim."
   }
 }

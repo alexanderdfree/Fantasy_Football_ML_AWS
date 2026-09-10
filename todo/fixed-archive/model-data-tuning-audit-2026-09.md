@@ -4,7 +4,8 @@
 `src/shared/registry.py`, `src/shared/training.py`, `src/shared/count_math.py`,
 `src/shared/models.py`, `src/shared/utils.py`, `src/data/preprocessing.py`,
 `src/wr/features.py`, `src/te/features.py`, `src/dst/data.py`,
-`src/dst/run_pipeline.py`, `src/benchmarking/benchmark.py`, and the affected
+`src/dst/run_pipeline.py`, `src/k/data.py`, `src/k/run_pipeline.py`,
+`src/benchmarking/benchmark.py`, and the affected
 `src/tuning/` entrypoints. Reproduced against `0f0fec55` in the 2026-09-10 audit.
 
 **What**:
@@ -22,6 +23,12 @@
 - D/ST CV/origin preparation filled missing features using global training
   years before slicing earlier folds. Perturbing only 2023 held-out scores
   changed 2013–2021 training rows and 2022 validation season openers.
+- K CV/origin preparation similarly filled missing total/implied Vegas lines
+  before slicing the fold. In a real 3,573 × 19 prepared matrix with one
+  deliberately missing historical line, a later-season change altered two
+  training rows. Current 2015–2025 REG schedules have no missing Vegas lines,
+  so this is a supported missing-data boundary rather than observed default
+  cohort incidence.
 - Concurrent stacked tuner trials installed process-global capture stubs and
   could steal each other's trainers, retain hooks after failure, or intercept
   unrelated training. Read-only best-study lookup selected a graph namespace
@@ -63,6 +70,8 @@ Existing fraction-one fits are a positive control; historical tuned fractions
 do not establish the corrected recipe's accuracy.
 Both ordinary and captured ensemble loops reject empty or exhausted training
 epochs before validating, reporting progress, or returning a trained model.
+K CV uses the same deferred-fill pattern, fitting its two context medians on
+the actual filtered training frame. Ordinary K loading retains its defaults.
 
 **Validation**: Regression suites retain ordinary Poisson, likelihood-gradient,
 six-position reload, mixed precision, vmap, same-team, zero-event, empty-tail,
@@ -80,6 +89,10 @@ CUDA probes are retained under `benchmark_history/audits/2026-09-10-model-*`.
 They precede subsequent numerical fixes and main merges, so they do not establish
 final-branch metric neutrality. The MPS record separately distinguishes passing
 RNG controls from the unsupported stacked backend smoke.
+K's real prepared-matrix perturbation changes zero training rows after the
+repair, while its training-value control remains active. Default loader output
+is identical across 5,272 historical rows and 37 columns for both observed and
+deliberately missing-context inputs; 96 focused checks passed.
 
 **Lesson**: Keep distribution parameters distinct from reported expectations,
 fit preprocessing on the population actually used for training, and preserve

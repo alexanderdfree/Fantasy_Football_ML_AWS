@@ -451,13 +451,16 @@ def load_data(
     weekly: pd.DataFrame | None = None,
     schedules: pd.DataFrame | None = None,
     pbp: pd.DataFrame | None = None,
+    impute_context: bool = True,
 ) -> pd.DataFrame:
     """Load kicker data combining PBP reconstruction (≤ 2024) + weekly (≥ 2025).
 
     The lower bound on the PBP arm comes from ``SEASONS`` (which starts at
     2015 per the post-PAT-rule-change cutoff).
 
-    Merges schedule info for Vegas lines and home/away.
+    Merges schedule info for Vegas lines and home/away. Native CV defers
+    distribution-based Vegas fills with ``impute_context=False`` until its
+    actual training fold is known.
     """
     seasons = SEASONS if seasons is None else seasons
     pbp_seasons = [s for s in seasons if s <= 2024]
@@ -603,13 +606,14 @@ def load_data(
     # fine — dropping a few low-game train rows from the median fit doesn't
     # reintroduce leakage. Falls back to the full-frame median only when there
     # are no train rows (synthetic fixtures), preserving prior behaviour there.
-    train_mask = k_df["season"] <= _TRAIN_MAX_SEASON
-    for col in ["total_line", "implied_team_total"]:
-        train_vals = k_df.loc[train_mask, col]
-        median_val = train_vals.median()
-        if pd.isna(median_val):
-            median_val = k_df[col].median()
-        k_df[col] = k_df[col].fillna(median_val)
+    if impute_context:
+        train_mask = k_df["season"] <= _TRAIN_MAX_SEASON
+        for col in ["total_line", "implied_team_total"]:
+            train_vals = k_df.loc[train_mask, col]
+            median_val = train_vals.median()
+            if pd.isna(median_val):
+                median_val = k_df[col].median()
+            k_df[col] = k_df[col].fillna(median_val)
     if "is_home" not in k_df.columns or k_df["is_home"].isna().any():
         k_df["is_home"] = k_df["is_home"].fillna(0)
 
@@ -676,6 +680,17 @@ def load_data(
     )
 
     return k_df
+
+
+def impute_context_from_train(df: pd.DataFrame, *, fit_on: pd.DataFrame) -> pd.DataFrame:
+    """Fill a native CV split using only its actual training cohort's Vegas data."""
+    result = df.copy()
+    for column in ("total_line", "implied_team_total"):
+        median = fit_on[column].median()
+        # No training evidence means the shared neutral fill, never a statistic
+        # learned from validation/test. Ordinary load_data retains its defaults.
+        result[column] = result[column].fillna(0.0 if pd.isna(median) else median)
+    return result
 
 
 def _load_backfill_pbp(season: int) -> pd.DataFrame:

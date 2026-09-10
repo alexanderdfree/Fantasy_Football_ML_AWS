@@ -249,14 +249,14 @@ def _self_load_full_frame_and_cfg(position):
         from src.k.config import POSITION_CONFIG
         from src.k.data import load_data, load_kicks
         from src.k.features import compute_features
-        from src.k.run_pipeline import CONFIG, _build_kick_history_closure
+        from src.k.run_pipeline import CONFIG, _build_kick_history_closure, with_fold_imputation
         from src.k.targets import compute_targets
 
-        df = load_data()
+        df = load_data(impute_context=False)
         df = compute_targets(df)
         compute_features(df)
         kicks_df = load_kicks(df)
-        cfg = dict(CONFIG)
+        cfg = with_fold_imputation(CONFIG)
         cfg.setdefault("attn_kick_stats", POSITION_CONFIG.attn_kick_stats)
         cfg.setdefault("attn_max_games", POSITION_CONFIG.attn_max_games)
         cfg.setdefault("attn_max_kicks_per_game", POSITION_CONFIG.attn_max_kicks_per_game)

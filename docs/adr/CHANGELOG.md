@@ -1,7 +1,7 @@
 # ADR Changelog
 
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
-
+- 2026-09-10 · Fit missing K Vegas context on each actual CV training cohort while preserving ordinary loader behavior · (PR pending) · → ADR-0001
 - 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR pending) · → ADR-0018
 - 2026-09-10 · Stabilize count likelihoods and expectations, reject empty training, and honor LightGBM row-sampling fractions with new tuning studies · (PR pending) · → ADR-0002, ADR-0003
 - 2026-09-10 · Seed explicit Apple MPS runs, preserve captured stacked devices, and expose unsupported Apple MPS stacking · (PR pending) · → ADR-0017
