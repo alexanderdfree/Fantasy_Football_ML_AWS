@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from contextlib import suppress
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -43,7 +44,7 @@ import pyarrow.parquet as pq
 from src.config import CACHE_DIR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
-from src.data.release import assert_source_fetch_allowed
+from src.data.release import DataReleaseError, assert_source_fetch_allowed
 
 # --- ff_opportunity (ffverse expected points) ------------------------------
 # Union of the expected-stat columns the skill positions wire into their
@@ -144,16 +145,30 @@ def _coerce_merge_keys(df: pd.DataFrame) -> pd.DataFrame:
 def _read_external_cache(
     path: str, required: tuple[str, ...], keep: list[str]
 ) -> pd.DataFrame | None:
-    """Ignore malformed cached source data so the next fetch can repair it."""
+    """Repair live caches; preserve schema-valid emptiness during pinned replay."""
     if not os.path.exists(path):
         return None
     try:
-        if _cached_parquet_has_columns(path, required):
-            cached = _coerce_merge_keys(pd.read_parquet(path))[keep]
-            if not cached.empty:
-                return cached
+        if not _cached_parquet_has_columns(path, required):
+            return None
+        cached = _coerce_merge_keys(pd.read_parquet(path))[keep]
     except Exception as e:
         print(f"WARNING: invalid external-source cache at {path} ({e}); refetching")
+        return None
+    if not cached.empty:
+        return cached
+    # A selected release or explicit cache-only verification treats a complete
+    # empty source as data. Reuse the directory-aware replay gate only after
+    # schema/key validation; malformed/missing caches still fail the fetch guard.
+    try:
+        assert_source_fetch_allowed(path)
+    except DataReleaseError:
+        return cached
+    # This live read judged the empty file stale. If recovery fails, leaving it
+    # here would let later cache-only verification bless the transient fallback
+    # as a complete empty source. Never remove a pinned/replay cache above.
+    with suppress(FileNotFoundError):
+        os.unlink(path)
     return None
 
 

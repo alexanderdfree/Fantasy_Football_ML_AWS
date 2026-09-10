@@ -13,16 +13,17 @@ import pytest
 import yaml
 
 from src.tuning import launch_tune
+from tests.batch.test_remote_data_binding import RECIPE_A, SHA_A, remote  # noqa: F401
 
 pytestmark = pytest.mark.unit
 _ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("graph", ["true", "false", "TRUE", "1", "off"])
-def test_retune_workflow_collects_every_submitted_namespace(tmp_path, monkeypatch, graph):
-    batch = MagicMock()
-    batch.submit_job.return_value = {"jobId": "local-job"}
-    monkeypatch.setattr(launch_tune.boto3, "client", lambda *args, **kwargs: batch)
+def test_retune_workflow_collects_every_submitted_namespace(remote, tmp_path, monkeypatch, graph):
+    batch, s3 = remote
+    release_id = s3.published(RECIPE_A)
+    monkeypatch.setattr(batch, "submit_job", MagicMock(wraps=batch.submit_job))
     monkeypatch.setattr(sys, "argv", ["launch_tune", "--cuda-graph", graph, "--wait", "false"])
     launch_tune.main()
     published = {}
@@ -31,6 +32,9 @@ def test_retune_workflow_collects_every_submitted_namespace(tmp_path, monkeypatc
         override = call.kwargs["containerOverrides"]
         pos = override["command"][1]
         env = {item["name"]: item["value"] for item in override["environment"]}
+        assert call.kwargs["jobDefinition"] == "gpu:7"
+        assert env["FF_TRAIN_GIT_SHA"] == SHA_A
+        assert env["FF_DATA_RELEASE"] == release_id
         version = env["TUNE_NN_STORAGE_VERSION"]
         expected_versions[pos] = version
         published[f"tune_nn/{version}/{pos.lower()}/results.json"] = {

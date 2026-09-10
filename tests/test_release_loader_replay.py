@@ -1,5 +1,6 @@
 """The seal must reject transient fallbacks that pinned historical readers cannot replay."""
 
+from contextlib import nullcontext
 from pathlib import Path
 
 import pandas as pd
@@ -139,7 +140,10 @@ def test_complete_cached_empty_sources_seal_and_replay_without_changing_bytes(
     cached_inputs, monkeypatch
 ):
     raw, splits, calls = cached_inputs
-    before = loader.load_raw_data(SEASONS, cache_dir=str(raw))
+    # These fixtures explicitly describe complete sources, including known
+    # emptiness. Ordinary unpinned live reads may recover an old empty cache.
+    with release.require_cached_sources(raw):
+        before = loader.load_raw_data(SEASONS, cache_dir=str(raw))
     hashes = {path.name: release._hash(path) for path in raw.iterdir()}
     manifest = release.seal_inputs(raw_dir=raw, splits_dir=splits)
     assert (splits / release.SEAL_NAME).is_file()
@@ -151,6 +155,33 @@ def test_complete_cached_empty_sources_seal_and_replay_without_changing_bytes(
     after = loader.load_raw_data(SEASONS, cache_dir=str(raw))
     pd.testing.assert_frame_equal(before, after)
     assert hashes == {path.name: release._hash(path) for path in raw.iterdir()}
+    assert calls == []
+
+
+@pytest.mark.parametrize("mode", ["replay", "selected_release", "disk_marker"])
+@pytest.mark.parametrize(
+    "name,source_loader",
+    [
+        ("ff_opportunity", external.load_ff_opportunity),
+        ("qbr_weekly_v2", external.load_qbr_weekly),
+        ("contracts", external.load_contracts),
+    ],
+)
+def test_verified_empty_external_source_replays_without_refetch(
+    cached_inputs, monkeypatch, mode, name, source_loader
+):
+    raw, _, calls = cached_inputs
+    path = raw / f"{name}_{SIGNATURE}.parquet"
+    before = release._hash(path)
+    if mode == "selected_release":
+        monkeypatch.setenv("FF_DATA_RELEASE", "a" * 64)
+    elif mode == "disk_marker":
+        (raw / ".release.json").write_text("{}")
+    context = release.require_cached_sources(raw) if mode == "replay" else nullcontext()
+    with context:
+        result = source_loader(SEASONS, cache_dir=str(raw))
+    assert result.empty
+    assert release._hash(path) == before
     assert calls == []
 
 
@@ -201,6 +232,30 @@ def test_uncached_optional_outage_blocks_prewarm_before_other_producers(cached_i
     )
     with pytest.raises(release.DataReleaseError):
         release.prewarm_training_dependencies()
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "name,source_loader",
+    [
+        ("ff_opportunity", external.load_ff_opportunity),
+        ("qbr_weekly_v2", external.load_qbr_weekly),
+        ("contracts", external.load_contracts),
+    ],
+)
+def test_failed_live_recovery_of_stale_empty_source_cannot_be_sealed(
+    cached_inputs, name, source_loader
+):
+    raw, splits, calls = cached_inputs
+    # An unpinned live read rejects this unverified empty file and attempts
+    # recovery. If that fails, later cache-only verification must not bless
+    # the stale bytes as a complete empty source.
+    assert source_loader(SEASONS, cache_dir=str(raw)).empty
+    assert calls == ["network"]
+    calls.clear()
+    with pytest.raises(release.DataReleaseError, match=name):
+        release.seal_inputs(raw_dir=raw, splits_dir=splits)
+    assert not (splits / release.SEAL_NAME).exists()
     assert calls == []
 
 

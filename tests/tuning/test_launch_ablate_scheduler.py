@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.tuning import launch_ablate_scheduler as las
+from tests.batch.test_remote_data_binding import RECIPE_A, SHA_A, remote  # noqa: F401
 
 pytestmark = pytest.mark.unit
 
@@ -82,13 +83,20 @@ def test_dry_run_makes_no_aws_calls(capsys):
         ("true", "success"),
     ],
 )
-def test_scheduler_launcher_requires_complete_success(monkeypatch, wait, case):
+def test_scheduler_launcher_requires_complete_success(remote, monkeypatch, wait, case):
     import sys
 
     monkeypatch.setattr(sys, "argv", ["prog", "--positions", "QB", "RB", "--wait", wait])
-    monkeypatch.setattr(las.boto3, "client", lambda *a, **k: object())
+    batch, s3 = remote
+    s3.published(RECIPE_A)
 
     def submit(position, **kwargs):
+        assert kwargs["batch_client"] is batch
+        assert kwargs["binding"] == {
+            "image_sha": SHA_A,
+            "gpu_definition": "gpu:7",
+            "cpu_definition": "",
+        }
         if case == "submit" and position == "RB":
             raise RuntimeError("submission failed")
         return position, f"job-{position}"

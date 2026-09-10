@@ -173,6 +173,7 @@ def test_runtime_lookup_changes_invalidate_prepared_features(monkeypatch, disk_h
 @pytest.mark.unit
 @pytest.mark.parametrize("source", ["schedule", "box_score"])
 def test_runtime_lookup_disk_reload_changes_cache_key(tmp_path, monkeypatch, source):
+    from src.data import nfl_source
     from src.data.loader import load_team_week_stats
     from src.shared.pipeline import _prepare_position_data
 
@@ -181,8 +182,14 @@ def test_runtime_lookup_disk_reload_changes_cache_key(tmp_path, monkeypatch, sou
     schedule_path = raw / "schedules_2025_2025.parquet"
     box_path = raw / "team_stats_2025_2025.parquet"
     schedule, box = _schedule_input(), _box_input()
+    box["_team_stats_schema_v2"] = True
     schedule.to_parquet(schedule_path)
     box.to_parquet(box_path)
+    monkeypatch.setattr(
+        nfl_source,
+        "team_week_stats_release",
+        lambda *args, **kwargs: pytest.fail("A valid disk-cache fixture must not fetch live data"),
+    )
     monkeypatch.setattr(weather_features, "CACHE_DIR", str(raw))
     monkeypatch.setattr(weather_features, "SEASONS", [2025])
     monkeypatch.setattr(weather_features, "_schedule_cache", None)

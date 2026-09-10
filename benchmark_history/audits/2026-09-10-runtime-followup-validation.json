@@ -105,5 +105,64 @@
   "limitations": [
     "This is targeted follow-up validation, not the final clean full-codebase pass.",
     "Final integration requires fresh benchmark fingerprints and currentCI."
-  ]
+  ],
+  "main_integration": {
+    "main_sha": "3fca0605",
+    "initial_full_unit": {
+      "passed": 4741,
+      "failed": 38,
+      "skipped": 2
+    },
+    "data_replay": {
+      "worktree": "/private/tmp/final-project-runtime-followup.eOYNNq",
+      "branch": "codex/audit-runtime-correctness",
+      "base_sha": "e8abfc0432bb61bafaa9b6235851a9f5f4a3cb11",
+      "files": {
+        "src/data/external_sources.py": "e97eed8be1f09d38c18b1fa5db6454f348157865deebf754492452d671f0ca7e",
+        "tests/test_target_diagnostics.py": "a24702a33dba1ed50724570f208e82f20d321cbd8afee6dac649d5b7b59e4cd4",
+        "tests/test_release_loader_replay.py": "b16fd2c437a90d528a13b26e9360c5599c2f6fe47f6fa80a1fca591b1d855e67"
+      },
+      "frozen": true,
+      "changes": [
+        "Accept schema/key-valid empty external caches only when the existing selected-release, disk-marker, or directory-replay fetch guard forbids regeneration.",
+        "Invalidate unsealed stale-empty caches before attempted recovery; a failed fetch leaves no cache that a later seal could mistake for complete data. Malformed/missing cache guards remain strict; no new empty-cache writes.",
+        "Add required player_id to target-diagnostic fixtures only, preserving canonical-conversion and corruption controls.",
+        "Explicitly mark known complete-empty fixture reads as cache-only replay; add9 replay modes/source cases and3 failed-recovery/sealing controls."
+      ],
+      "validation": {
+        "log": "/tmp/audit-runtime-data-integration-after.log",
+        "result": "91 passed in4.25s",
+        "workers": 2,
+        "new_replay_regressions_before": "9 failed (/tmp/audit-release-empty-before.log)",
+        "new_stale_recovery_regressions_before": "3 failed (/tmp/audit-release-empty-stale-before.log)",
+        "checks": "Ruff, format --check and git diff --check passed",
+        "no_training": true,
+        "original_model_source_edited": false
+      },
+      "remaining": "Root propagation/commit/full unit gate; resume fresh composed source pass after propagation."
+    },
+    "launcher_binding": {
+      "worktree": "/private/tmp/final-project-runtime-followup.eOYNNq",
+      "files": [
+        {
+          "path": "tests/tuning/test_launch_ablate_scheduler.py",
+          "sha256": "ccb7f5ceaa234ef62688e91cac59ee1e1fbbc37a6901f6faf9a1c1b5ceea1f04"
+        },
+        {
+          "path": "tests/tuning/test_retune_workflow.py",
+          "sha256": "37d46a6938de6b7680968148f1f61532652968085964ee7756822b3810a7184a"
+        }
+      ],
+      "source_changes": false,
+      "reason": "Merged data/image binding now requires concrete remote fixtures; tests previously supplied object()/empty MagicMock clients. Reused real binding/resolution with FakeBatch+FakeS3 compatible immutable release fixture.",
+      "passed": 42,
+      "log": "/tmp/audit-launch-binding-fixtures.ir6T1E",
+      "frozen": true
+    },
+    "feature_cache": {
+      "tests_passed": 29,
+      "log_sha256": "23f51b48b2e666bc017755992fc0aee2d3c036d4efc02fe1520c5be3214699b7",
+      "change": "Current schema marker and explicit no-live-fetch control in fixture"
+    }
+  }
 }

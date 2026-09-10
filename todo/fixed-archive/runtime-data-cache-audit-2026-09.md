@@ -31,6 +31,11 @@ overrides and recheck precise match thresholds. Keep fetch and normalization
 inside the same recovery boundary, reject failed K history acquisition, and
 stage each model archive before replacing its destination. The Batch downloader
 reuses that replacement path, including rejected-archive preservation.
+Integration with main's sealed data releases preserves schema-valid empty
+sources when the existing release/replay gate forbids fetching. An unsealed
+empty cache is invalidated before recovery, so a failed refetch cannot later
+be mistaken for a verified empty source during sealing. Missing or malformed
+caches still fail the pinned-release guard.
 
 **Validation**: Regression tests cover cold/warm and memory/disk paths,
 equal-endpoint/equal-count sparse requests, source recovery, changed inputs
@@ -42,8 +47,13 @@ rosters, partial extraction, and valid fallback controls. Tests live in
 `tests/analysis/test_fftoday_loader.py`. The Batch regression loads and predicts
 with real old-PCA/new-no-PCA Ridge artifacts, preserves an existing model on
 rejection, and verifies a rejected stable archive cannot contaminate fallback.
+After main's coherent-release changes, 91 source/replay checks passed, including
+selected, marked, and cache-only empty-source controls and failed-recovery
+controls. Cache mutation tests now use the current team-stats schema marker and
+reject live fetches; 29 feature-cache tests pass. Launcher fixtures exercise the
+real compatible image/release binding and incompatible-release rejection.
 
-The final CPU/eager production pipelines for QB/RB/WR/TE/K used frozen identical
+The initial CPU/eager production pipelines for QB/RB/WR/TE/K used frozen identical
 raw/split inputs and seed 42. Prepared feature/target arrays and both neural
 state dictionaries were bit-identical to `2054fe86`; loaded Ridge/LightGBM
 point predictions had zero maximum difference. The paired benchmark histories

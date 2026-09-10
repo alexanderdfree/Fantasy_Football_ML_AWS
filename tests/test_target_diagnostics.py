@@ -19,6 +19,7 @@ def test_conversion_rows_use_canonical_scoring(position, conversion, corruption,
     raw = pd.DataFrame(
         [
             {
+                "player_id": "00-0000001",
                 "position": position.upper(),
                 "season_type": "REG",
                 "snap_pct": 1.0,
