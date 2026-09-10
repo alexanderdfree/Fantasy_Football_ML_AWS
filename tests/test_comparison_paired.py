@@ -74,6 +74,21 @@ def test_postseason_cannot_change_season_leader_membership():
     assert subsets["top12"]["WR"]["ridge"]["mae"] == 7
 
 
+def test_available_reference_cannot_hide_an_empty_comparison():
+    data = records()
+    ref = data[["player_id", "position", "season", "week"]].copy()
+    ref["reference_rank"] = np.arange(1, 31)
+    ref["reference_version"] = REFERENCE_VERSION
+    # This source exists in the position, but not for any of the reference top 24.
+    data.loc[:23, "nflcom_pred_ppr"] = np.nan
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=ref)
+    cell = coverage["weekly_reference_top24"]["WR"]
+    assert cell["n"] == 0
+    assert cell["reference_status"] == "available"
+    assert cell["status"] == "unavailable"
+    assert all(value is None for value in subsets["weekly_reference_top24"]["WR"].values())
+
+
 def test_route_ignores_poisoned_static_expert_metrics(app_module, monkeypatch):
     monkeypatch.setattr(
         comparison,

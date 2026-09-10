@@ -57,6 +57,9 @@ hydration already delivers this parquet to Batch and serving. No requests or
 training occur in the metric helper; the artifact is never a model feature.
 Reference publication failure retains the old archive and does not discard a
 valid serving prediction cache.
+Refreshes are restricted to the exact requested, provider-supported seasons;
+replacements that lose archived player-week coverage are rejected before writing.
+Other seasons and recipe versions remain intact.
 
 ## Serialization and validation
 

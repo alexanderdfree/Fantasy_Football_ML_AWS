@@ -26,14 +26,22 @@ def build_reference(seasons, *, nflcom_loader=None, rotowire_loader=None) -> pd.
     """Build the fixed NFL.com/RotoWire mean; K uses NFL.com and DST RotoWire."""
     from src.analysis.analysis_expert_comparison import _build_experts
 
+    seasons = sorted({int(season) for season in seasons})
     sources = [
         source
         for source in _build_experts(nflcom_loader, rotowire_loader)
         if source.name in {"nflcom", "sleeper"}
     ]
-    raw = {s.name: s.load(list(seasons)) for s in sources}
+    raw = {}
+    for source in sources:
+        minimum = 2018 if source.name == "sleeper" else 2013
+        supported = [season for season in seasons if season >= minimum]
+        raw[source.name] = source.load(supported) if supported else None
     parts = []
     for pos in ("QB", "RB", "WR", "TE", "K", "DST"):
+        required = [source for source in sources if pos not in source.skipped]
+        if any(raw[source.name] is None for source in required):
+            continue
         projected = []
         for source in sources:
             if pos in source.skipped:
@@ -43,7 +51,9 @@ def build_reference(seasons, *, nflcom_loader=None, rotowire_loader=None) -> pd.
             # RotoWire's usable archive begins in 2018. Never silently substitute
             # another reference recipe when one required source is unavailable.
             first_season = 2018 if source.name == "sleeper" else 2024 if pos != "K" else 2013
-            frame = frame[frame["season"].ge(first_season)].dropna(subset=["expert_pred_total"])
+            frame = frame[frame["season"].isin(seasons) & frame["season"].ge(first_season)].dropna(
+                subset=["expert_pred_total"]
+            )
             frame["player_id"] = frame["player_id"].astype(str)
             if frame.duplicated(KEYS).any():
                 raise ValueError(f"Duplicate {source.name} forecast player-weeks for {pos}")
@@ -64,7 +74,13 @@ def build_reference(seasons, *, nflcom_loader=None, rotowire_loader=None) -> pd.
         parts.append(
             combined[[*KEYS, "position", "reference_pred", "reference_rank", "reference_source"]]
         )
-    result = pd.concat(parts, ignore_index=True)
+    result = (
+        pd.concat(parts, ignore_index=True)
+        if parts
+        else pd.DataFrame(
+            columns=[*KEYS, "position", "reference_pred", "reference_rank", "reference_source"]
+        )
+    )
     result["reference_version"] = REFERENCE_VERSION
     result["generated_at"] = datetime.now(UTC).isoformat()
     return result
@@ -82,7 +98,15 @@ def write_reference(seasons, *, upload=False, nflcom_loader=None, rotowire_loade
     path = reference_path()
     if path.exists():
         old = pd.read_parquet(path)
-        old = old[~old["season"].isin(seasons) & old["reference_version"].eq(REFERENCE_VERSION)]
+        replaced = old["season"].isin(seasons) & old["reference_version"].eq(REFERENCE_VERSION)
+        slate_keys = ["position", *KEYS]
+        archived = pd.MultiIndex.from_frame(old.loc[replaced, slate_keys])
+        refreshed = pd.MultiIndex.from_frame(frame[slate_keys])
+        if len(archived.difference(refreshed)):
+            raise ValueError(
+                "Reference refresh loses archived forecast coverage; existing artifact retained"
+            )
+        old = old[~replaced]
         frame = pd.concat([old, frame], ignore_index=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_parquet(frame, str(path))

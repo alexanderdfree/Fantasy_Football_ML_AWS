@@ -126,7 +126,9 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                 },
             }
             if name == "weekly_reference_top24":
-                coverage[name][pos].update(ref_meta)
+                coverage[name][pos].update({k: v for k, v in ref_meta.items() if k != "status"})
+                coverage[name][pos]["reference_status"] = ref_meta["status"]
+                coverage[name][pos]["status"] = ref_meta["status"] if len(common) else "unavailable"
     return subsets, coverage, quartiles, rankings
 
 
