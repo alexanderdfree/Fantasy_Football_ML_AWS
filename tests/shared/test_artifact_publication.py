@@ -276,16 +276,53 @@ def test_first_poller_observation_compares_actual_boot_manifest(boundary, monkey
 @pytest.mark.parametrize("split", [False, True])
 def test_launcher_registers_actual_source_before_submitting_all_positions(monkeypatch, split):
     from src.batch import launch
+    from src.data import release
+    from src.scripts import wait_data_release
 
-    calls = []
+    calls, resolved = [], []
     registered = False
+    recipe = {"src/config.py": "1" * 64}
+    s3 = S3()
+    names = ["raw/weekly.parquet", *(f"splits/{name}" for name in release.SPLIT_NAMES)]
+    document = {
+        "schema_version": 1,
+        "producer": recipe,
+        "files": {name: {"sha256": "0" * 64, "bytes": 0} for name in names},
+    }
+    body = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+    data_release = hashlib.sha256(body).hexdigest()
+    s3.objects[f"data/releases/{data_release}/manifest.json"] = body
+    s3.objects[f"data/by-producer/{release.producer_fingerprint(recipe)}/manifest.json"] = (
+        json.dumps({"schema_version": 1, "release_id": data_release}).encode()
+    )
+
+    def source_recipe(sha):
+        assert sha == NEW
+        return recipe
 
     def register(_s3, bucket, prefix, sha):
         nonlocal registered
+        assert set(resolved) == {"gpu-def:100", "cpu-def:101"}
         assert sha == NEW
         registered = True
 
     class Batch:
+        def describe_job_definitions(self, *, jobDefinitions):
+            (reference,) = jobDefinitions
+            assert reference in {"gpu-def:100", "cpu-def:101"}
+            name, revision = reference.rsplit(":", 1)
+            resolved.append(reference)
+            return {
+                "jobDefinitions": [
+                    {
+                        "jobDefinitionName": name,
+                        "revision": int(revision),
+                        "status": "ACTIVE",
+                        "containerProperties": {"image": f"registry/training:{NEW}"},
+                    }
+                ]
+            }
+
         def submit_job(self, **kwargs):
             assert registered
             env = {
@@ -293,18 +330,25 @@ def test_launcher_registers_actual_source_before_submitting_all_positions(monkey
                 for entry in kwargs["containerOverrides"]["environment"]
             }
             assert env["FF_TRAIN_GIT_SHA"] == NEW
+            assert env["FF_DATA_RELEASE"] == data_release
+            assert kwargs["jobDefinition"] in {"gpu-def:100", "cpu-def:101"}
             calls.append(kwargs)
             return {"jobId": str(len(calls))}
 
     monkeypatch.setattr(publication, "register_source", register)
-    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", NEW)
+    monkeypatch.setattr(wait_data_release, "producer_hashes_at_revision", source_recipe)
+    # Derive the true source from the selected revisions, not a local/global SHA.
+    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", None)
     monkeypatch.setattr(launch, "JOB_IDS_FILE", None)
+    monkeypatch.setattr(launch, "JOB_DEFINITION", "gpu-def")
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu-def")
     monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "100")
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", "101")
     monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-queue")
+    monkeypatch.setenv("FF_DATA_RELEASE", "")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
     monkeypatch.setattr(
-        launch.boto3, "client", lambda service, **_: Batch() if service == "batch" else S3()
+        launch.boto3, "client", lambda service, **_: Batch() if service == "batch" else s3
     )
     args = ["launch", "--positions", *ALL_POSITIONS, "--skip-upload", "--wait", "false"]
     if split:
@@ -312,6 +356,7 @@ def test_launcher_registers_actual_source_before_submitting_all_positions(monkey
     monkeypatch.setattr("sys.argv", args)
     launch.main()
     assert len(calls) == len(ALL_POSITIONS) * (3 if split else 1)
+    assert {call["containerOverrides"]["command"][1] for call in calls} == set(ALL_POSITIONS)
 
 
 def test_training_workflows_supply_immutable_source_identity():
@@ -327,10 +372,18 @@ def test_training_workflows_supply_immutable_source_identity():
     steps = ec2["jobs"]["train"]["steps"]
     step = next(s for s in steps if s.get("name") == "Run training for all positions (sequential)")
     assert step["run"].index("register_training_source") < step["run"].index("REMOTE_CMD=")
-    assert "workflow_run.head_sha" in step["env"]["FF_TRAIN_GIT_SHA"]
+    resolver = next(s for s in steps if s.get("id") == "image")
+    assert "workflow_run.head_sha" in resolver["env"]["HEAD_SHA"]
+    assert "github.event.inputs.image_sha" in resolver["env"]["HEAD_SHA"]
+    assert "^[0-9a-f]{40}$" in resolver["run"]
+    assert 'resolve_training_image ec2 --sha "$HEAD_SHA"' in resolver["run"]
+    assert steps.index(resolver) < steps.index(step)
+    assert step["env"]["FF_TRAIN_GIT_SHA"] == "${{ steps.image.outputs.image_sha }}"
+    assert step["env"]["FF_TRAIN_IMAGE"] == "${{ steps.image.outputs.image_uri }}"
     runner = (root / "infra/ec2/user-data.sh").read_text()
-    assert 'IMAGE="\\${IMAGE%:*}:\\$FF_TRAIN_GIT_SHA"' in runner
-    assert 'imageTag="\\${FF_TRAIN_GIT_SHA:-latest}"' in runner
+    assert 'IMAGE="\\${FF_TRAIN_IMAGE:?' in runner
+    assert "@sha256:[0-9a-f]{64}" in runner
+    assert "IMAGE%:*" not in runner
 
 
 def test_same_source_cas_retry_preserves_other_publisher_in_history(boundary, monkeypatch):
