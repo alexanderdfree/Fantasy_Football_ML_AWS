@@ -27,6 +27,11 @@ The API cache regression covers both newer and older timestamps arriving late.
 The original reproduction returned run B's MAE for three positions in run A's row;
 the repaired collector retrieves A's immutable six-position summary.
 
+Integration with PR #1560 preserves its image/source guards and records own-run
+metrics before a superseded-publication exit. The six-position regression lets
+newer B promote before older A finishes: B stays active and both History rows
+retain their own metrics.
+
 **Lesson:** A serving pointer identifies the artifact served now, not the result
 of a particular training run. Result publication must survive the coordinator's
 lifetime. Existing jobs using older images do not gain completion-side publication

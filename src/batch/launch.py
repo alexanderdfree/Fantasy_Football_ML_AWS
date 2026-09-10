@@ -282,7 +282,6 @@ def submit_job(
     split_run_id: str | None = None,
     depends_on: list[dict] | None = None,
     history_run_id: str | None = None,
-    train_git_sha: str | None = None,
 ):
     """Submit a single Batch job. Returns (position-or-branch-key, job_id)."""
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
@@ -299,10 +298,10 @@ def submit_job(
     ]
     if history_run_id:
         environment.append({"name": "FF_BENCHMARK_RUN_ID", "value": history_run_id})
-    if train_git_sha or TRAIN_GIT_SHA:
+    if TRAIN_GIT_SHA:
         # Stamped into benchmark_metrics.json by train.py; benchmark.py uses
         # it to surface per-position SHA divergence across a single run.
-        environment.append({"name": "FF_TRAIN_GIT_SHA", "value": train_git_sha or TRAIN_GIT_SHA})
+        environment.append({"name": "FF_TRAIN_GIT_SHA", "value": TRAIN_GIT_SHA})
     if FF_CUDA_GRAPH:
         # Override only — graphs autodetect ON for sm_80+ in the container, so a
         # value is needed only to force the eager path (forward "0"). K's nested

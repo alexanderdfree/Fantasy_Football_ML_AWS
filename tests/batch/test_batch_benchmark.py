@@ -258,6 +258,7 @@ def test_find_git_sha_divergence_skips_positions_without_sha():
 @pytest.fixture(autouse=True)
 def source_registration(monkeypatch):
     monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
+    monkeypatch.setattr("src.batch.run_history.create_run", lambda *a, **k: "unit-run")
     monkeypatch.setattr("src.batch.benchmark.boto3.client", lambda *a, **k: object())
     monkeypatch.setattr("src.batch.benchmark.validate_submission_source", lambda *a, **k: None)
 

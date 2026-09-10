@@ -416,17 +416,8 @@ def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
             source=source,
             initialize_only=initialize_only,
         )
-        if new_manifest is None:
-            if not initialize_only:
-                raise PublicationSuperseded(
-                    f"{position}: artifact retained without promotion because a newer source "
-                    "or explicit rollback won. Do not retry this source; skipping benchmark "
-                    "aggregation prevents relabeling the active model's metrics."
-                )
-            print("Artifact retained without promotion: existing seed/training publication won.")
-            return None
-        print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
-
+        # History records this run's immutable artifact even when a newer model
+        # already owns the serving pointer. Record before the superseded exit.
         history_run_id = os.environ.get("FF_BENCHMARK_RUN_ID")
         if history_run_id:
             from src.batch.run_history import publish_position
@@ -441,6 +432,17 @@ def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
             )
             if entry:
                 print(f"Published complete training history: {entry['run_id']}")
+
+        if new_manifest is None:
+            if not initialize_only:
+                raise PublicationSuperseded(
+                    f"{position}: artifact retained without promotion because a newer source "
+                    "or explicit rollback won. Own-run history was recorded when configured; "
+                    "do not retry this source or collect from the active model's metrics."
+                )
+            print("Artifact retained without promotion: existing seed/training publication won.")
+            return None
+        print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
 
         try:
             deleted = _gc_prune(s3, s3_bucket, s3_prefix, position, new_manifest)

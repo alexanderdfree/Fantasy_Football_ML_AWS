@@ -450,8 +450,8 @@ def main():
     os.chdir(project_root)
 
     if not args.download_only:
-        from src.shared.artifact_publication import register_source
         from src.batch.run_history import create_run
+        from src.shared.artifact_publication import register_source
 
         register_source(
             boto3.client("s3", region_name=AWS_REGION),
@@ -484,7 +484,6 @@ def main():
                     pos,
                     args.seed,
                     history_run_id=args.run_id,
-                    train_git_sha=args.git_hash or TRAIN_GIT_SHA,
                 ): pos
                 for pos in args.positions
             }

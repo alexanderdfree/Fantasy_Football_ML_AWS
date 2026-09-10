@@ -1,7 +1,9 @@
 """Completion-side history publication, independent of serving state or a live waiter."""
 
+import hashlib
 import io
 import json
+import os
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +12,8 @@ import pytest
 from botocore.exceptions import ClientError
 
 from src.batch import benchmark, launch, run_history, train
+from src.shared import artifact_publication as publication
+from src.shared.model_sync import manifest_key
 from src.shared.registry import ALL_POSITIONS
 
 pytestmark = pytest.mark.unit
@@ -26,11 +30,18 @@ class MemoryS3:
         with self.lock:
             if Key not in self.objects:
                 raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-            return {"Body": io.BytesIO(self.objects[Key])}
+            return {
+                "Body": io.BytesIO(self.objects[Key]),
+                "ETag": hashlib.sha256(self.objects[Key]).hexdigest(),
+            }
 
-    def put_object(self, *, Bucket, Key, Body, ContentType=None, IfNoneMatch=None):
+    def put_object(self, *, Bucket, Key, Body, ContentType=None, IfNoneMatch=None, IfMatch=None):
         with self.lock:
             if IfNoneMatch == "*" and Key in self.objects:
+                raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+            if IfMatch is not None and (
+                Key not in self.objects or hashlib.sha256(self.objects[Key]).hexdigest() != IfMatch
+            ):
                 raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
             self.objects[Key] = Body
 
@@ -268,6 +279,10 @@ def test_artifact_upload_publishes_its_own_metrics_even_when_stable_is_pinned(
     tmp_path,
 ):
     create(s3, ["QB"])
+    source = {"source_sha": "a" * 40, "source_order": 1, "lineage": ["a" * 40]}
+    s3.objects[publication.source_key("test-history", "a" * 40)] = json.dumps(source).encode()
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
+    monkeypatch.setattr(publication, "image_source_sha", lambda: "a" * 40)
     monkeypatch.setenv("FF_BENCHMARK_RUN_ID", "run-a")
     monkeypatch.setattr(train.boto3, "client", lambda *a, **kw: s3)
     monkeypatch.setattr(train, "_validate_remote_tarball", lambda *a: None)
@@ -278,9 +293,44 @@ def test_artifact_upload_publishes_its_own_metrics_even_when_stable_is_pinned(
     (model_dir / "benchmark_metrics.json").write_text(json.dumps(metrics()))
     train.upload_artifacts("bucket", "QB", str(model_dir))
     assert s3.history()[0]["results"][0]["ridge_mae"] == 1.0
-    manifest = json.loads(s3.objects["test-history/QB/manifest.json"])
+    manifest = json.loads(s3.objects[manifest_key("test-history", "QB")])
     assert manifest["stable"] is None
     assert s3.history()[0]["artifacts"]["QB"] == manifest["current"]["key"]
+
+
+def test_superseded_older_completion_keeps_new_models_and_both_history_rows(
+    s3, monkeypatch, tmp_path
+):
+    old, new = "a" * 40, "b" * 40
+    for sha, lineage in ((old, [old]), (new, [new, old])):
+        source = {"source_sha": sha, "source_order": len(lineage), "lineage": lineage}
+        s3.objects[publication.source_key("test-history", sha)] = json.dumps(source).encode()
+    create(s3, run_id="older", sha=old)
+    create(s3, run_id="newer", sha=new)
+    monkeypatch.setattr(train.boto3, "client", lambda *a, **kw: s3)
+    monkeypatch.setattr(publication, "image_source_sha", lambda: os.environ["FF_TRAIN_GIT_SHA"])
+    monkeypatch.setattr(train, "_validate_remote_tarball", lambda *a: None)
+    monkeypatch.setattr(train, "_try_smoke_test", lambda *a: True)
+    monkeypatch.setattr(train, "_gc_prune", lambda *a: [])
+    active = {}
+    for run_id, sha, value in (("newer", new, 9.0), ("older", old, 1.0)):
+        monkeypatch.setenv("FF_BENCHMARK_RUN_ID", run_id)
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", sha)
+        for pos in ALL_POSITIONS:
+            directory = tmp_path / f"{run_id}-{pos}"
+            directory.mkdir()
+            (directory / "benchmark_metrics.json").write_text(json.dumps(metrics(sha, value)))
+            if run_id == "newer":
+                active[pos] = train.upload_artifacts("bucket", pos, str(directory))
+            else:
+                with pytest.raises(publication.PublicationSuperseded):
+                    train.upload_artifacts("bucket", pos, str(directory))
+                assert json.loads(s3.objects[manifest_key("test-history", pos)]) == active[pos]
+    rows = {row["training_run_id"]: row for row in s3.history()}
+    assert set(rows) == {"older", "newer"}
+    for run_id, value in (("older", 1.0), ("newer", 9.0)):
+        assert [r["ridge_mae"] for r in rows[run_id]["results"]] == [value] * 6
+        assert rows[run_id]["positions"] == list(ALL_POSITIONS)
 
 
 @pytest.mark.parametrize("split", [False, True])
@@ -302,6 +352,9 @@ def test_launcher_registers_before_submit_and_only_full_or_merge_jobs_publish(
         launch.boto3, "client", lambda service, **kw: s3 if service == "s3" else Batch()
     )
     monkeypatch.setattr(launch, "TRAIN_GIT_SHA", "a" * 40)
+    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "1")
+    monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", "1")
+    monkeypatch.setattr(publication, "register_source", lambda *a, **kw: None)
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu-def")
     monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-queue")
     monkeypatch.setattr(launch, "JOB_IDS_FILE", None)
