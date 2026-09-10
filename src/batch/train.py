@@ -225,7 +225,16 @@ def _assert_gpu(position: str, *, force: bool = False):
 
 
 def download_data(s3_bucket, s3_prefix, local_dir):
-    """Download training parquet files from S3 to the container."""
+    """Hydrate one raw+split release (legacy requires FF_DATA_RELEASE=legacy)."""
+    if os.environ.get("FF_DATA_RELEASE") != "legacy":
+        from src.config import CACHE_DIR
+        from src.data.release import download_release
+
+        result = download_release(
+            boto3.client("s3"), s3_bucket, prefix=s3_prefix, raw_dir=CACHE_DIR, splits_dir=local_dir
+        )
+        os.environ["FF_DATA_RELEASE"] = result["release_id"]
+        return result
     from concurrent.futures import ThreadPoolExecutor
 
     s3 = boto3.client("s3")
@@ -244,14 +253,17 @@ def download_data(s3_bucket, s3_prefix, local_dir):
 
 
 def sync_raw_data(s3_bucket):
-    """Sync s3://{bucket}/data/raw/*.parquet into the container's data/raw/.
+    """Hydrate complete training inputs, selecting the release once per process.
 
-    Needed by src/shared/weather_features._load_schedules() (all positions during
-    feature engineering) and by K/DST's self-contained loaders (src.k.data,
-    src.dst.data). CACHE_DIR="data/raw" in src/config.py resolves relative to
-    the container WORKDIR=/opt/ml/code. .dockerignore excludes data/ so these
-    parquets aren't baked into the image.
+    The legacy-only branch syncs unversioned raw parquets for older operator
+    workflows; default consumers verify raw inputs and splits together.
     """
+    if os.environ.get("FF_DATA_RELEASE") != "legacy":
+        return download_data(
+            s3_bucket,
+            os.environ.get("S3_DATA_PREFIX", "data"),
+            os.environ.get("TRAINING_DATA_DIR", "data/splits"),
+        )
     s3 = boto3.client("s3")
     os.makedirs("data/raw", exist_ok=True)
     paginator = s3.get_paginator("list_objects_v2")
@@ -474,6 +486,8 @@ def _extract_metrics(position, result):
     from src.shared.evaluation_cohorts import build_cohorts
 
     metrics: dict = {"position": position}
+    if os.environ.get("FF_DATA_RELEASE"):
+        metrics["data_release"] = os.environ["FF_DATA_RELEASE"]
     metrics["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
 
     # Stamp the image's commit SHA into the per-position artifact. launch.py
@@ -712,6 +726,7 @@ def _write_split_branch_metadata(
         "split_run_id": split_run_id,
         "seed": seed,
         "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
+        "data_release": os.environ.get("FF_DATA_RELEASE", ""),
         "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
     }
     with open(os.path.join(model_dir, "split_branch.json"), "w") as f:
@@ -749,6 +764,7 @@ def _upload_split_branch_artifacts(
             "branch": branch,
             "seed": seed,
             "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
+            "data_release": os.environ.get("FF_DATA_RELEASE", ""),
             "key": tar_key,
             "sha256": digest,
             "sha7": sha7,
@@ -804,6 +820,13 @@ def _download_split_branch_artifacts(
             f"{position} {branch} split artifact SHA mismatch: "
             f"manifest={git_sha!r}, expected={expected_git_sha!r}"
         )
+    expected_release = os.environ.get("FF_DATA_RELEASE", "")
+    if (
+        expected_release
+        and expected_release != "legacy"
+        and manifest.get("data_release") != expected_release
+    ):
+        raise RuntimeError(f"{position} {branch} split data release mismatch")
     key = manifest.get("key")
     if not key:
         raise RuntimeError(f"{position} {branch} split manifest has no artifact key")
@@ -916,7 +939,7 @@ def _merged_split_metrics(
     # how cuda_graph_full_active (the 2026-06-15 full-step rebaseline marker,
     # ADR-0017) was lost from production History rows until 2026-06-19. We use
     # only its .keys(); the merge job's own platform is irrelevant here.
-    for key in ("git_sha", *_hardware_metadata()):
+    for key in ("git_sha", "data_release", *_hardware_metadata()):
         if key in nn_metrics:
             metrics[key] = nn_metrics[key]
     return metrics
@@ -949,6 +972,8 @@ def _merge_split_artifacts(
                 f"{position} split artifact SHA mismatch between branches: "
                 f"nn={nn_manifest['git_sha']}, cpu={cpu_manifest['git_sha']}"
             )
+        if nn_manifest.get("data_release") != cpu_manifest.get("data_release"):
+            raise RuntimeError(f"{position} split branches were trained on different data releases")
         _replace_model_dir_contents(nn_dir, model_dir)
         # Drop branch-only metadata copied by the first replace before adding CPU files.
         for name in ("benchmark_metrics.json", "split_branch.json"):

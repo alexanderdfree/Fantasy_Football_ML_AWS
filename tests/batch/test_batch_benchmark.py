@@ -19,6 +19,12 @@ from unittest import mock
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _legacy_data_for_benchmark_stubs(monkeypatch):
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+
+
 # --------------------------------------------------------------------------
 # download_metrics — boto3 + tarfile mocked
 # --------------------------------------------------------------------------

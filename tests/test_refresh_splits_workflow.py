@@ -113,33 +113,20 @@ def test_splits_rebuild_markers_written_pending_then_ready():
 
 
 def test_ecs_kick_step_exists_after_s3_upload():
-    """The workflow MUST kick the ECS service AFTER uploading splits to S3
-    so running serving tasks roll fresh and re-sync the new splits at boot.
-    Without this, the in-flight model refresh poller swaps in models
-    trained on the new splits while running tasks still have stale local
-    splits — yielding state_dict shape mismatches (2026-05-21 RB outage)."""
-    names = _step_names()
-    upload_idx = names.index("Upload to S3 with force")
-    # The ECS kick step's name need not be exact — match on any step that
-    # both follows the upload AND runs ``aws ecs update-service
-    # --force-new-deployment`` in its ``run:`` body.
-    found_idx = None
-    for idx, step in enumerate(_refresh_job_steps()):
-        if idx <= upload_idx:
-            continue
-        run_body = step.get("run", "") or ""
-        if "aws ecs update-service" in run_body and "--force-new-deployment" in run_body:
-            found_idx = idx
-            break
-    assert found_idx is not None, (
-        "no step after 'Upload to S3 with force' calls "
-        "`aws ecs update-service --force-new-deployment`. "
-        "Serving containers won't re-sync the freshly uploaded splits."
+    """The compatible data-pin rollout waits for successful publication/build."""
+    document = _load_workflow()
+    rollout = document["jobs"]["rollout"]
+    assert rollout["needs"] == "refresh"
+    assert (
+        "steps.publish.outputs.release_id" in document["jobs"]["refresh"]["outputs"]["release_id"]
     )
-    assert found_idx > upload_idx, (
-        f"ECS kick step at index {found_idx} must come AFTER 'Upload to S3 with "
-        f"force' (index {upload_idx}). Otherwise tasks could roll on STALE S3."
-    )
+    step = next(step for step in rollout["steps"] if "advance_data_release" in step.get("run", ""))
+    assert "needs.refresh.outputs.release_id" in step["env"]["DATA_RELEASE"]
+    assert "--release-id" in step["run"]
+    deploy = yaml.safe_load((WORKFLOW_PATH.parent / "deploy.yml").read_text())
+    assert rollout["concurrency"]["group"] == deploy["concurrency"]["group"]
+    assert "github.ref" not in rollout["concurrency"]["group"]
+    assert document["concurrency"]["group"] != rollout["concurrency"]["group"]
 
 
 def test_ecs_kick_targets_correct_cluster_and_service():

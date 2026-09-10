@@ -40,10 +40,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # One ECS rollout at a time per ref — concurrent pushes to main would
-  # otherwise race on ``update-service``/``wait services-stable``. Let the
-  # in-flight deploy drain rather than cancelling it mid-rollout.
-  group: deploy-${{ github.ref }}
+  # Serialize this production service across refs and refresh-only data-pin
+  # updates. The data producer runs outside this lock, so a deployment can
+  # wait for publication without blocking the matching refresh workflow.
+  group: ecs-fantasy-cluster-fantasy-service
   cancel-in-progress: false
 
 env:
@@ -133,6 +133,13 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
+      - name: Wait for compatible published training data
+        id: data-release
+        timeout-minutes: 62
+        run: |
+          python3 -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
+            --revision "$GITHUB_SHA" --timeout-seconds 3600
+
       # A new cache protocol/schema must be available before fresh tasks boot.
       # Build on CI when needed; a valid existing generation skips inference.
       # This is a required gate: a cache miss must not move expensive six-position
@@ -154,6 +161,7 @@ jobs:
         env:
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
+          FF_DATA_RELEASE: ${{ steps.data-release.outputs.release_id }}
           FF_DEVICE: cpu
         run: python -m src.scripts.build_serving_cache --reuse-valid
 
@@ -167,6 +175,9 @@ jobs:
         # and OOM'd the 4 GB task (2026-06-15 incident; see ADR-0018). Only the
         # two scalar capacity fields are read from the file (the rest of it is a
         # placeholder setup template), so this never reintroduces __PLACEHOLDER__s.
+        env:
+          DATA_RELEASE: ${{ steps.data-release.outputs.release_id }}
+          DATA_PRODUCER: ${{ steps.data-release.outputs.producer_sha256 }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY \
             --query 'taskDefinition' --output json \
@@ -177,6 +188,15 @@ jobs:
           jq --arg cpu "$cpu" --arg mem "$mem" '.cpu = $cpu | .memory = $mem' \
             task-definition.json > task-definition.pinned.json
           mv task-definition.pinned.json task-definition.json
+          # Pin the exact checked snapshot: boot must not resolve a newer,
+          # incompatible global current pointer after this gate completes.
+          jq --arg release "$DATA_RELEASE" --arg producer "$DATA_PRODUCER" '
+            .containerDefinitions |= map(if .name == "fantasy-predictor" then
+              .environment = ((.environment // [] | map(select(.name != "FF_DATA_RELEASE" and .name != "FF_DATA_PRODUCER_SHA256"))) +
+                [{name:"FF_DATA_RELEASE",value:$release},{name:"FF_DATA_PRODUCER_SHA256",value:$producer}])
+              else . end)
+          ' task-definition.json > task-definition.data.json
+          mv task-definition.data.json task-definition.json
           echo "Pinned serving capacity from infra/aws/task-definition.json: cpu=$cpu memory=$mem"
 
       - name: Update image in task definition

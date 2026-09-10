@@ -45,6 +45,13 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
 
 ## Changelog
 
+- **2026-09-10** — Reconcile D/ST defensive/special-teams touchdowns and punt
+  blocks from complete regular-season PBP; distinguish offensive own-fumble
+  touchdowns and tries, require completed-game coverage, and retain the
+  existing head shapes, coefficients, points-allowed contract and yardage
+  tiers. The audited 6,814-game population had 441 corrected totals (+292 TDs,
+  -1 spurious TD, +162 punt blocks). (PR pending)
+
 - **2026-09-10** — Correct D/ST net-yard labels and normalize blocked K attempts into misses across the PBP/weekly source boundary. (PR pending)
 
 - **2026-06-01** — Corrected references after the config consolidation: target builders are named per file, K target signs live on `POSITION_CONFIG`, and the stale `KickerConfig`/`compute_{pos}_targets` wording is gone. Documentation-only.

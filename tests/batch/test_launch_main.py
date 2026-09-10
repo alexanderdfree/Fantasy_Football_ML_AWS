@@ -20,6 +20,13 @@ def registered_source(monkeypatch):
     monkeypatch.setattr("src.batch.launch.validate_submission_source", lambda *a, **k: None)
 
 
+@pytest.fixture(autouse=True)
+def _legacy_data_for_launcher_stubs(monkeypatch):
+    # These orchestration-only fakes do not provide S3 manifests. Real release
+    # pinning and split-job propagation are covered by test_data_release.py.
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+
+
 @pytest.mark.unit
 def test_print_plan_emits_expected_lines(capsys):
     """``_print_plan`` should list every region/bucket/queue/def line + the

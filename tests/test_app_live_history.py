@@ -141,8 +141,6 @@ def test_current_season_missing_completed_team_fails(monkeypatch, tmp_path):
 
 
 def test_rollover_publishes_intervening_history_to_fixed_consumers(monkeypatch, tmp_path):
-    from src.data.loader import load_team_week_stats
-
     history = pd.DataFrame(
         {"player_id": ["A"], "season": [2026], "week": [1], "recent_team": ["SEA"]}
     )
@@ -159,23 +157,33 @@ def test_rollover_publishes_intervening_history_to_fixed_consumers(monkeypatch, 
             "wind": [18.0],
         }
     )
-    archived_schedule.to_parquet(tmp_path / "schedules_2012_2026.parquet")
+    archived_schedule.iloc[:0].to_parquet(tmp_path / "schedules_2012_2025.parquet")
     teams = pd.DataFrame({"season": [2026], "week": [1], "team": ["SEA"], "passing_yards": [310]})
     monkeypatch.setattr(live, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(live.weather_features, "CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(live.weather_features, "_schedule_cache", pd.DataFrame())
     monkeypatch.setattr(live, "_history_cache", None)
     monkeypatch.setattr(live, "_history_seasons", None)
-    monkeypatch.setattr(live, "load_raw_data", lambda seasons: history)
-    monkeypatch.setattr(live, "load_team_week_stats", lambda seasons: teams)
+
+    def load(seasons, cache_dir=None):
+        if seasons == live.SEASONS:
+            return history.iloc[:0]
+        assert seasons == [2026]
+        archived_schedule.to_parquet(f"{cache_dir}/schedules_2026_2026.parquet")
+        return history
+
+    monkeypatch.setattr(live, "load_raw_data", load)
+    monkeypatch.setattr(live, "load_team_week_stats", lambda *a, **kw: teams)
     monkeypatch.setattr(live, "preprocess", lambda frame: frame)
     opener = archived_schedule.assign(season=2027, home_score=float("nan"), away_score=float("nan"))
     pd.testing.assert_frame_equal(live._load_history(2027, 1, opener), history)
     # Read through the same fixed-range paths used by schedule features and
     # attention team tokens, even though there are no live-year games yet.
-    pd.testing.assert_frame_equal(live.weather_features._load_schedules(), archived_schedule)
     pd.testing.assert_frame_equal(
-        load_team_week_stats(live.SEASONS, cache_dir=str(tmp_path)), teams
+        pd.read_parquet(tmp_path / "schedules_2012_2025.parquet"), archived_schedule
+    )
+    pd.testing.assert_frame_equal(
+        pd.read_parquet(tmp_path / "team_stats_2012_2025.parquet").reset_index(drop=True), teams
     )
 
 

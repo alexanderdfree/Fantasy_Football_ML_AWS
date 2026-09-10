@@ -44,7 +44,7 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 90  # up to 60 min for compatible data plus the existing build budget
     # Don't rebuild on a FAILED train run (models didn't change); cron/manual
     # always run.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
@@ -73,6 +73,12 @@ jobs:
         # the full pipeline (load_raw_data + build_features) and NN inference, so
         # torch is required (matches refresh-splits.yml).
         run: uv pip install --system -r requirements-dev.txt
+
+      - name: Pin compatible data for the offline artifact builder
+        timeout-minutes: 62
+        run: |
+          python -m src.scripts.wait_data_release --bucket "$FF_MODEL_S3_BUCKET" \
+            --revision "$GITHUB_SHA" --timeout-seconds 3600 --pin-training
 
       - name: Build + upload upcoming-week artifact
         # Pull the same models + data the serving container uses (data/raw,

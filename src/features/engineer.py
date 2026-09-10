@@ -13,6 +13,7 @@ from src.config import (
     TREND_STATS,
 )
 from src.data.external_sources import EXTERNAL_PRIOR_STATS
+from src.features.roster_availability import weekly_roster_status
 
 # ``_load_schedules`` is deliberately NOT from-imported: the tests/conftest.py
 # autouse schedules stub (and per-test patches) rebind the *module attribute*,
@@ -44,17 +45,19 @@ def build_features(
     ``injuries_df`` is the raw nflverse injuries frame (``src.data.nfl_source.injuries``)
     used by the QB/RB/WR/TE role-inheritance features — the OUT teammates whose role gets
     inherited are absent from the weekly frame, so the out-set must come from the injury
-    report. Passed by the splits-building callers (refresh-splits); ``None`` (e.g. a
-    diagnostic rebuild) degrades ``inherited_opportunity`` to 0 but still emits the columns.
+    report. Passed by the splits-building callers (refresh-splits); ``None`` omits
+    injury-report vacancies while weekly roster statuses remain usable.
 
     ``rosters_df`` is the raw nflverse WEEKLY rosters frame
     (``src.data.nfl_source.rosters_weekly`` — NOT the seasonal ``rosters``, which shares the
     column schema but has ~1 row per player-season and yields an empty out-set).
-    Players on injured reserve or the game-day inactives list (``status`` in {"RES", "INA"}) are
+    Players with reserve/inactive status (``status`` in {"RES", "INA"}) are
     absent from BOTH the weekly frame and the injury report, so without it a starter lost to IR or
     scratched is invisible to the vacancy signal (#1106; serving already sees the injury subset
     because ESPN maps IR/out to ``Out``). Passed alongside ``injuries_df`` by the splits callers;
-    ``None`` just means those vacancies aren't counted.
+    ``ACT`` rows define the candidate population, including active players with no
+    stat line. Missing roster groups emit neutral zeros for both inheritance features;
+    observed game participants must never stand in for a pregame roster.
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
@@ -409,13 +412,13 @@ _INHERITANCE_ROLE_COL = {
     "TE": "targets",
 }
 
-# Out-set team-key normalization (#1269): the shared schedule-side map covers
+# Weekly-roster/injury team-key normalization (#1269): the shared schedule-side map covers
 # relocations (OAK→LV, SD→LAC, STL→LA), but nfl_source.rosters_weekly labels
 # 2012–2015 with GAMEBOOK abbreviations the schedule universe never sees —
 # ARZ/BLT/CLV/HST, and the Rams as "SL" (not "STL", so even the shared map's
-# STL entry misses it). Extend locally for the out-set keys only; other
+# STL entry misses it). Extend locally for the roster/injury keys; other
 # TEAM_CODE_NORMALIZATION consumers join schedule/injury universes where
-# gamebook codes never appear. Applied to BOTH out-set sides (injuries data
+# gamebook codes never appear. Applied to roster populations and out-sets (injuries data
 # is currently modern+STL-style, but the union map is identity on unmatched
 # codes and robust to source drift).
 _OUT_SET_TEAM_NORMALIZATION = {
@@ -439,17 +442,19 @@ def _build_inheritance_features(
     * role(player, W) = prior-to-W expanding mean of the position's opportunity proxy, falling
       back to the player's prior-season mean role when there is no current-season game yet
       (Week 1 / cold-start) so the vacancy signal is not silently zeroed (#1106 finding B).
-    * ``is_top_available`` = top prior-role among *present* same-position teammates that week.
+    * ``is_top_available`` = top prior-role among active same-position roster teammates
+      that week, excluding Out/Doubtful and reserve/inactive players. Active nonparticipants
+      contribute to this ranking without becoming stat lines or history observations.
     * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
       teammates ranked above, only for the top-available one. The out-set is the injury
       report (Out/Doubtful) plus, when ``rosters_df`` is given, players on reserve or the
-      game-day inactives list (``status`` in {"RES", "INA"}) — absent from BOTH the weekly
+      inactive list (``status`` in {"RES", "INA"}) — absent from BOTH the weekly
       frame and the report, so a starter lost to IR or scratched is otherwise invisible (#1106).
 
     Runs on the full pre-split frame; ``role_before`` indexes only weeks < W, so it stays
-    leakage-safe despite future weeks being present. Mirrors the validated injector in
-    src/tuning/ab_history_token.py. ``injuries_df`` None → ``inherited_opportunity`` stays 0
-    (``is_top_available`` is still computed from present-teammate ranks).
+    leakage-safe despite future weeks being present. Missing weekly roster groups have
+    neutral-zero features, with a warning; ranking observed participants would leak the
+    game's participation and disagree with the live active-roster skeleton.
     """
     df = df.reset_index(drop=True)
     is_top = np.zeros(len(df))
@@ -464,13 +469,16 @@ def _build_inheritance_features(
 
     # out-set per (position, season, team, week) from the injury report
     outmap: dict = {}
+    available_map: dict = {}
+    roster_groups: set = set()
+    unknown_groups: set = set()
     if injuries_df is not None and len(injuries_df):
         cols = ("report_status", "position", "season", "team", "week", "gsis_id")
         if all(c in injuries_df.columns for c in cols):
             out = injuries_df[
                 injuries_df["report_status"].isin(["Out", "Doubtful"])
                 & injuries_df["position"].isin(_INHERITANCE_POSITIONS)
-            ]
+            ].dropna(subset=["gsis_id", "season", "team", "week"])
             # Normalize legacy relocation codes (OAK/SD/STL) to modern ones: the
             # raw injuries frame carries pre-relocation codes for those seasons
             # while the weekly frame's recent_team (the lookup key below) is
@@ -488,14 +496,12 @@ def _build_inheritance_features(
             ):
                 outmap.setdefault((pos, s, t, w), set()).add(g)
 
-    # Reserve / inactive players (rosters ``status`` in {"RES" (IR), "INA" (game-day inactive)})
+    # Reserve / inactive players (normalized roster status in {"RES", "INA"})
     # are absent from BOTH the weekly frame and the injury report, so a starter lost to IR or
     # scratched on game day is otherwise invisible to the vacancy signal (#1106). Fold them into
-    # the same out-set. ``INA`` is the official ~90-min-pre-kickoff inactives list (leakage-audited
-    # — it is NOT a box-score backfill: 22.5% of ACT players logged no stats yet are not INA), so
-    # it is leakage-safe here, though it cuts both ways (sizes a vacancy whether or not the backup
-    # produces). The out player's role_before resolves from their current-season games before the
-    # absence (or the prior-season fallback).
+    # the same out-set. nflverse defines ACT as active roster and INA as inactive under
+    # contract; neither status is inferred from a box score. ACT includes nonparticipants.
+    # https://nflreadr.nflverse.com/articles/dictionary_roster_status.html
     if rosters_df is not None and len(rosters_df):
         rcols = ("status", "position", "season", "team", "week", "player_id")
         missing = [c for c in rcols if c not in rosters_df.columns]
@@ -520,23 +526,35 @@ def _build_inheritance_features(
                     "reserve/inactive out-set is effectively empty",
                     max_weeks,
                 )
-            sidelined = rosters_df[
-                rosters_df["status"].isin(["RES", "INA"])
-                & rosters_df["position"].isin(_INHERITANCE_POSITIONS)
-            ]
+            weekly_roster = rosters_df[rosters_df["position"].isin(_INHERITANCE_POSITIONS)].dropna(
+                subset=["player_id", "season", "team", "week"]
+            )
+            if "game_type" in weekly_roster:
+                # Postseason week numbering can overlap regular-season weeks.
+                weekly_roster = weekly_roster[
+                    weekly_roster["game_type"].isna() | weekly_roster["game_type"].eq("REG")
+                ]
             # Same normalization as the injuries out-set above (#1269): rosters
             # carry OAK/SD pre-relocation codes AND 2012-2015 gamebook codes
             # (ARZ/BLT/CLV/HST/SL — see _OUT_SET_TEAM_NORMALIZATION); recent_team
             # is modern.
-            for pos, s, t, w, g in zip(
-                sidelined["position"],
-                sidelined["season"].astype(int),
-                sidelined["team"].replace(_OUT_SET_TEAM_NORMALIZATION),
-                sidelined["week"].astype(int),
-                sidelined["player_id"].astype(str),
+            for pos, s, t, w, g, status in zip(
+                weekly_roster["position"],
+                weekly_roster["season"].astype(int),
+                weekly_roster["team"].replace(_OUT_SET_TEAM_NORMALIZATION),
+                weekly_roster["week"].astype(int),
+                weekly_roster["player_id"].astype(str),
+                weekly_roster_status(weekly_roster),
                 strict=True,
             ):
-                outmap.setdefault((pos, s, t, w), set()).add(g)
+                key = (pos, s, t, w)
+                roster_groups.add(key)
+                if status == "ACT":
+                    available_map.setdefault(key, set()).add(g)
+                elif status in {"RES", "INA"}:
+                    outmap.setdefault(key, set()).add(g)
+                elif status == "UNKNOWN":
+                    unknown_groups.add(key)
 
     # per-position prior-to-W expanding-mean role table: (player, season) -> (weeks, cum-mean),
     # plus a prior-SEASON mean-role fallback: (player, season) -> the mean role the player posted
@@ -552,7 +570,10 @@ def _build_inheritance_features(
         if col not in df.columns:
             continue
         table: dict = {}
-        sub_pos = df[df["position"] == pos][["player_id", "season", "week", col]].copy()
+        observed = df["position"].eq(pos) & df["player_id"].notna()
+        if "_is_upcoming" in df:
+            observed &= ~df["_is_upcoming"].eq(True)
+        sub_pos = df.loc[observed, ["player_id", "season", "week", col]].copy()
         sub_pos["player_id"] = sub_pos["player_id"].astype(str)
         sub_pos[col] = np.nan_to_num(sub_pos[col].to_numpy(float), nan=0.0)
         for (p, s), sub in sub_pos.sort_values("week").groupby(["player_id", "season"]):
@@ -574,23 +595,38 @@ def _build_inheritance_features(
         # No current-season history yet (Week 1 / cold-start) -> prior-season mean role.
         return prior_role.get(pos, {}).get((p, s), 0.0)
 
+    missing_groups = 0
     for pos in _INHERITANCE_POSITIONS:
         if pos not in pref:
             continue
         grp = df[df["position"] == pos]
         for (s, tm, w), idx in grp.groupby(["season", "recent_team", "week"]).groups.items():
             si, wi = int(s), int(w)
+            key = (pos, si, tm, wi)
+            if key not in roster_groups or key in unknown_groups:
+                missing_groups += 1
+                continue
             rows = idx.to_numpy()  # df is reset_index'd → labels ARE row positions
             pids = pid[rows]
             roles = np.array([role_before(pos, p, si, wi) for p in pids])
-            out_set = outmap.get((pos, si, tm, wi), set())
+            out_set = outmap.get(key, set())
+            available = available_map.get(key, set()) - out_set
+            if not available:
+                continue
+            top_role = max(role_before(pos, p, si, wi) for p in available)
             out_roles = np.array([role_before(pos, g, si, wi) for g in out_set])
             for j, rp in enumerate(roles):
-                top = 1.0 if (roles > rp).sum() == 0 else 0.0
+                top = float(pids[j] in available and rp >= top_role)
                 oa = float(out_roles[out_roles > rp].sum()) if out_roles.size else 0.0
                 is_top[rows[j]] = top
                 inh[rows[j]] = top * oa
 
+    if missing_groups:
+        logger.warning(
+            "inheritance: weekly roster population missing or unknown for %d position/team/weeks; "
+            "availability features are neutral zero (no participant fallback)",
+            missing_groups,
+        )
     df["is_top_available"] = is_top
     df["inherited_opportunity"] = inh
     return df

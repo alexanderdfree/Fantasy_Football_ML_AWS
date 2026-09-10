@@ -854,6 +854,7 @@ def test_data_sync_noop_when_bucket_unset(monkeypatch, capsys):
 
 @pytest.mark.unit
 def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
@@ -883,6 +884,7 @@ def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 def test_data_sync_isolates_per_file_failures(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     """M17: a missing split (or any individual download failure) no longer
     kills the whole sync. The container boots, the failed key is listed in
     the returned summary's ``failed`` field, and any feature build that

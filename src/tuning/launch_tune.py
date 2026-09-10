@@ -55,6 +55,8 @@ from src.batch.launch import (  # noqa: E402
     RETRY_STRATEGY,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
+    data_release_environment,
+    pin_data_release,
     wait_for_jobs,
 )
 from src.tuning.ab_ensemble_seeds import (  # noqa: E402
@@ -233,6 +235,7 @@ def submit_tune_job(
             "environment": [
                 {"name": "S3_BUCKET", "value": S3_BUCKET},
                 {"name": "S3_DATA_PREFIX", "value": "data"},
+                *data_release_environment(),
                 {"name": "FF_DEVICE", "value": "cuda"},
                 # tune_nn re-resolves its namespace in-container from
                 # cuda_graph_enabled(); on the sm_80+ tune CEs (g6/L4, g5/A10G)
@@ -505,6 +508,7 @@ def main():
         )
         return
 
+    pin_data_release()
     batch_client = boto3.client("batch", region_name=AWS_REGION)
 
     print(f"Submitting {len(positions)} tune jobs: {positions}")

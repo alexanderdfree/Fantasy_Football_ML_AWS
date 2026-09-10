@@ -122,7 +122,7 @@ def _load_dst_splits():
     D/ST operates at team level (not player level), built from schedule
     scores and opponent offensive stats.
     """
-    dst_df = dst_data.build_data()
+    dst_df = dst_data.build_data(allow_scoring_fetch=False)
     dst_df = POSITION_REGISTRY["DST"]["compute_targets_fn"](dst_df)
     dst_features.compute_features(dst_df)
     train = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()

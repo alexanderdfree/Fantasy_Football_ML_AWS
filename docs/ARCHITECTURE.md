@@ -24,7 +24,7 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 **Constraints.**
 - Personal project, single maintainer, modest scope.
 - Small-sample ML regime: after position filtering and the per-position games-per-season minimum (global default ≥6, with position overrides), roughly 200–600 player-seasons per position — orders of magnitude smaller than datasets most modern NN architectures assume.
-- Public data only — `nflreadpy` ([nflverse](https://github.com/nflverse)) weekly stats, rosters, schedules, snap counts. Snap count coverage starts 2012, which bounds the training window.
+- Public data only — `nflreadpy` ([nflverse](https://github.com/nflverse)) weekly stats, rosters, schedules, snap counts. The configured archive includes 2012 context; the 2026-09-10 source audit found that year's snap feed empty. Data-release coverage distinguishes missing history from observed zero participation (D26).
 - Documenting design decisions with technical trade-offs is what this ADR satisfies.
 
 **Scope.**
@@ -108,6 +108,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D23 | [React frontend built with esbuild into a committed bundle](adr/0023-react-frontend-esbuild-committed-bundle.md) | Accepted |
 | D24 | [Shared comparison truth and pregame evaluation cohorts](adr/0024-fair-comparison-and-evaluation-cohorts.md) | Accepted |
 | D25 | [Scoped agent guidance and incident retrieval](adr/0025-scoped-agent-guidance-and-incident-retrieval.md) | Accepted |
+| D26 | [Coherent training-data releases and isolated live overlays](adr/0026-coherent-training-data-releases.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 

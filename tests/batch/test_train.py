@@ -328,6 +328,7 @@ class TestResolveNnLogEvery:
 
 
 class TestDownloadData:
+    @mock.patch.dict(os.environ, {"FF_DATA_RELEASE": "legacy"})
     @mock.patch("src.batch.train.boto3.client")
     def test_downloads_three_parquet_files(self, mock_boto_client):
         from src.batch.train import download_data
@@ -345,6 +346,7 @@ class TestDownloadData:
         assert downloaded_keys == {"data/train.parquet", "data/val.parquet", "data/test.parquet"}
 
     @mock.patch("src.batch.train.boto3.client")
+    @mock.patch.dict(os.environ, {"FF_DATA_RELEASE": "legacy"})
     def test_creates_local_dir(self, mock_boto_client):
         from src.batch.train import download_data
 

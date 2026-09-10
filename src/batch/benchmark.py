@@ -33,6 +33,7 @@ from src.batch.launch import (
     S3_BUCKET,
     TRAIN_GIT_SHA,
     WAIT_TIMEOUT_SECONDS,
+    pin_data_release,
     submit_job,
     upload_data,
     validate_submission_source,
@@ -417,6 +418,7 @@ def main():
         # Upload data
         print("Uploading data splits to S3...")
         upload_data(S3_BUCKET)
+        pin_data_release()
 
         # Submit all jobs in parallel (mirrors src/batch/launch.py:main)
         total_t0 = time.time()

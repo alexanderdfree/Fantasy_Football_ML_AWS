@@ -41,6 +41,8 @@ from src.batch.launch import (  # noqa: E402
     RETRY_STRATEGY,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
+    data_release_environment,
+    pin_data_release,
     wait_for_jobs,
 )
 
@@ -83,6 +85,7 @@ def submit_ablate_job(
             "environment": [
                 {"name": "S3_BUCKET", "value": S3_BUCKET},
                 {"name": "S3_DATA_PREFIX", "value": "data"},
+                *data_release_environment(),
                 {"name": "FF_DEVICE", "value": "cuda"},
                 # Force eager: CUDA graphs (autodetect-ON for sm_80+) are NOT
                 # numerically inert, so a bit-comparable scheduler A/B needs them off.
@@ -157,6 +160,7 @@ def main():
         _print_plan(positions, args.seeds, args.attempt_timeout)
         return
 
+    pin_data_release()
     batch_client = boto3.client("batch", region_name=AWS_REGION)
     print(f"Submitting {len(positions)} scheduler-type ablation jobs: {positions}")
     job_ids: dict[str, str] = {}

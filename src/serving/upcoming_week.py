@@ -23,6 +23,7 @@ import contextlib
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import threading
 from datetime import UTC, datetime
@@ -39,7 +40,9 @@ from src.data.external_sources import FF_OPP_FEATURE_COLUMNS
 from src.data.loader import load_raw_data, load_team_week_stats
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.data.preprocessing import preprocess
-from src.features.engineer import build_features
+from src.data.release import live_source_cache
+from src.features.engineer import _OUT_SET_TEAM_NORMALIZATION, build_features
+from src.features.roster_availability import weekly_roster_status
 from src.serving import (
     core,
     espn_live,
@@ -51,6 +54,12 @@ from src.serving import (
     upcoming_status,
 )
 from src.serving.expert_sources import load_sleeper_with_gsis_id
+from src.serving.live_build import (
+    HISTORICAL_CACHE_ENV,
+    historical_cache_dir,
+    require_mutable_live_cache,
+    run_in_live_overlay,
+)
 from src.serving.serialization import (
     _MODEL_PRED_PREFIXES,
     _bool_or_none,
@@ -137,30 +146,35 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
     stats because serving reconstructs attention tokens from both sources.
     """
     global _history_cache, _history_seasons
+    require_mutable_live_cache(CACHE_DIR)
+    historical_root = historical_cache_dir(CACHE_DIR)
     archived = tuple(range(SEASONS[0], season))
     with _history_lock:
         if _history_cache is None or _history_seasons != archived:
-            archived_history = preprocess(load_raw_data(list(archived)))
-            if archived[-1] > SEASONS[-1]:
-                # The loader names dynamic archives by their year range, but
-                # feature consumers keep reading the fixed evaluation paths.
-                # Carry every intervening season into those paths, even at a
-                # season opener with no current-season observations yet.
-                archived_schedules = pd.read_parquet(
-                    os.path.join(CACHE_DIR, f"schedules_{archived[0]}_{archived[-1]}.parquet")
-                )
-                archived_teams = load_team_week_stats(list(archived))
-                needed = set(range(SEASONS[-1] + 1, season))
-                if archived_teams.empty or needed - set(archived_teams["season"]):
-                    raise RuntimeError(
-                        "Archived team stats are not available for every history season"
+            # Releases are sealed under the full configured range. Reading a
+            # subset filename would miss that cache and silently refetch it.
+            snapshot = preprocess(load_raw_data(list(SEASONS), cache_dir=historical_root))
+            archived_history = snapshot[snapshot["season"].isin(archived)].copy()
+            extra = list(range(SEASONS[-1] + 1, season))
+            if extra:
+                with (
+                    tempfile.TemporaryDirectory(prefix="ff-live-archive-") as extra_cache,
+                    live_source_cache(extra_cache),
+                ):
+                    intervening = preprocess(load_raw_data(extra, cache_dir=extra_cache))
+                    extra_teams = load_team_week_stats(extra, cache_dir=extra_cache)
+                    if set(extra) - set(intervening["season"]) or set(extra) - set(
+                        extra_teams["season"]
+                    ):
+                        raise RuntimeError(
+                            "Archived stats are not available for every history season"
+                        )
+                    extra_schedules = pd.read_parquet(
+                        os.path.join(extra_cache, f"schedules_{extra[0]}_{extra[-1]}.parquet")
                     )
-                atomic_write_parquet(archived_schedules, _schedules_path())
-                atomic_write_parquet(
-                    archived_teams,
-                    os.path.join(CACHE_DIR, f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet"),
-                )
-                weather_features._schedule_cache = None
+                    _augment_schedules_cache(extra_schedules)
+                    _merge_live_team_stats(extra_teams)
+                archived_history = pd.concat([archived_history, intervening], ignore_index=True)
             _history_cache = archived_history
             _history_seasons = archived
         history = _history_cache
@@ -197,18 +211,33 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         # unknown snaps, which the existing loader/preprocessor already handle.
         # Never persist that empty response in the archive or substitute last
         # season's snaps. The next CI build retries the real source.
-        try:
-            snaps = nfl_source.snap_counts([season])
-        except Exception as exc:  # observed upstream 404 at the season opener
-            print(f"[upcoming_week] live snap counts unavailable: {exc!r}")
-            snaps = pd.DataFrame(columns=["pfr_player_id", "season", "week", "offense_pct"])
-        atomic_write_parquet(
-            snaps, os.path.join(fresh_cache, f"snap_counts_{season}_{season}.parquet")
-        )
-        current = preprocess(load_raw_data([season], cache_dir=fresh_cache))
+        if season in SEASONS:
+            # Historical replay uses the same sealed full-range inputs, filtered
+            # to completed matchups below. It must not query today's sources.
+            current = preprocess(load_raw_data(list(SEASONS), cache_dir=historical_root))
+            team_stats = load_team_week_stats(list(SEASONS), cache_dir=historical_root)
+            opportunity_path = os.path.join(
+                historical_root, f"ff_opportunity_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+            )
+            qbr_recovery = {}
+        else:
+            with live_source_cache(fresh_cache):
+                try:
+                    snaps = nfl_source.snap_counts([season])
+                except Exception as exc:  # observed upstream 404 at the season opener
+                    print(f"[upcoming_week] live snap counts unavailable: {exc!r}")
+                    snaps = pd.DataFrame(columns=["pfr_player_id", "season", "week", "offense_pct"])
+                atomic_write_parquet(
+                    snaps, os.path.join(fresh_cache, f"snap_counts_{season}_{season}.parquet")
+                )
+                current = preprocess(load_raw_data([season], cache_dir=fresh_cache))
+                team_stats = load_team_week_stats([season], cache_dir=fresh_cache)
+            opportunity_path = os.path.join(
+                fresh_cache, f"ff_opportunity_{season}_{season}.parquet"
+            )
         current = current.merge(keys, on=["season", "week", "recent_team"], how="inner")
-        current, qbr_recovery = live_qbr.recover_qbr(current, schedules, season)
-        opportunity_path = os.path.join(fresh_cache, f"ff_opportunity_{season}_{season}.parquet")
+        if season not in SEASONS:
+            current, qbr_recovery = live_qbr.recover_qbr(current, schedules, season)
         opportunity_rows = 0
         opportunity = pd.DataFrame()
         if os.path.isfile(opportunity_path):
@@ -223,7 +252,6 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
             raise RuntimeError(
                 f"Completed-game player stats are not available yet: {list(missing)}"
             )
-        team_stats = load_team_week_stats([season], cache_dir=fresh_cache)
         team_keys = keys.rename(columns={"recent_team": "team"})
         team_stats = team_stats.merge(team_keys, on=["season", "week", "team"], how="inner")
         missing_team = pd.MultiIndex.from_frame(team_keys).difference(
@@ -233,13 +261,7 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
             raise RuntimeError(
                 f"Completed-game team stats are not available yet: {list(missing_team)}"
             )
-        existing = load_team_week_stats(list(SEASONS))
-        combined = pd.concat([existing, team_stats], ignore_index=True).drop_duplicates(
-            ["season", "week", "team"], keep="last"
-        )
-        atomic_write_parquet(
-            combined, os.path.join(CACHE_DIR, f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet")
-        )
+        _merge_live_team_stats(team_stats)
     source_coverage = _history_source_coverage(current, opportunity)
     result = pd.concat([history, current], ignore_index=True)
     result.attrs["live_history_sources"] = {
@@ -256,6 +278,17 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         "qbr_recovery": qbr_recovery,
     }
     return result
+
+
+def _merge_live_team_stats(team_stats: pd.DataFrame) -> None:
+    require_mutable_live_cache(CACHE_DIR)
+    existing = load_team_week_stats(list(SEASONS), cache_dir=CACHE_DIR)
+    combined = pd.concat([existing, team_stats], ignore_index=True).drop_duplicates(
+        ["season", "week", "team"], keep="last"
+    )
+    atomic_write_parquet(
+        combined, os.path.join(CACHE_DIR, f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+    )
 
 
 def _history_source_coverage(current: pd.DataFrame, opportunity: pd.DataFrame) -> dict:
@@ -312,6 +345,7 @@ def _augment_schedules_cache(sched_rows: pd.DataFrame) -> None:
     path = _schedules_path()
     if sched_rows is None or sched_rows.empty or not os.path.exists(path):
         return
+    require_mutable_live_cache(CACHE_DIR)
     existing = pd.read_parquet(path)
     # ESPN and nflverse IDs differ for the same game. The matchup key prevents
     # duplicate schedule joins after adding the live season's completed games.
@@ -357,6 +391,41 @@ def _build_skeleton(
     return skel
 
 
+def _availability_rosters(
+    season: int,
+    week: int,
+    roster: pd.DataFrame,
+    rosters_df: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Use the live active population for the slate and weekly statuses for absences.
+
+    ESPN's verified active roster includes players who may never take a snap. Its
+    current-week ACT population replaces the archived feed's possibly stale ACT rows;
+    known RES/INA statuses still exclude players in the shared feature builder.
+    These context rows never enter the statistics/history frame.
+    """
+    columns = ["player_id", "position", "team", "season", "week", "status"]
+    live = roster.rename(columns={"recent_team": "team"})[["player_id", "position", "team"]].copy()
+    live["season"], live["week"], live["status"] = season, week, "ACT"
+    live["status_description_abbr"] = "A01"
+    live["game_type"] = "REG"
+    if rosters_df is None or rosters_df.empty:
+        return live
+    if not set(columns) <= set(rosters_df):
+        print("[upcoming_week] weekly roster schema unavailable; using live active population")
+        return live
+    weekly = rosters_df.copy()
+    weekly["status"] = weekly_roster_status(weekly)
+    weekly["team"] = weekly["team"].replace(_OUT_SET_TEAM_NORMALIZATION)
+    replaced = (
+        weekly["season"].eq(season)
+        & weekly["week"].eq(week)
+        & weekly["team"].isin(live["team"])
+        & weekly["status"].eq("ACT")
+    )
+    return pd.concat([weekly.loc[~replaced], live], ignore_index=True)
+
+
 def build_upcoming_week_frame(
     season: int,
     week: int,
@@ -382,11 +451,11 @@ def build_upcoming_week_frame(
     cold start (#1411). The artifact still serializes only the week-W rows
     (``run_upcoming_inference`` slices predictions, not inputs).
     ``injuries_df`` (ESPN Out/Doubtful) and ``rosters_df``
-    (weekly RES/INA reserve/inactive, ``nfl_source.rosters_weekly``) together
-    size the role-inheritance vacancy out-set exactly as the training splits do
-    (refresh-splits passes both) — omitting ``rosters_df`` shrinks the out-set
-    and drifts ``inherited_opportunity`` / ``is_top_available`` (#1277).
-    Both ``None`` → the feature degrades to 0. ``depth_chart_ranks`` / ``game_status_map`` /
+    (``nfl_source.rosters_weekly``) together size the role-inheritance vacancy
+    out-set as training does. The supplied live active ``roster`` defines this
+    week's available population, including nonparticipants. Without weekly
+    rosters the live population remains usable, but RES/INA vacancies are unknown.
+    ``depth_chart_ranks`` / ``game_status_map`` /
     ``practice_status_map`` / ``contract_features`` are the live role/health/
     contract signals applied in ``_fill_current_week_context`` (``None`` →
     carry-forward / defaults only).
@@ -407,7 +476,8 @@ def build_upcoming_week_frame(
     if pd.MultiIndex.from_frame(history[keys]).isin(pd.MultiIndex.from_frame(skel[keys])).any():
         raise RuntimeError("The upcoming slate overlaps completed player games")
     combined = pd.concat([history, skel], ignore_index=True)
-    featurized = build_features(combined, injuries_df=injuries_df, rosters_df=rosters_df)
+    availability_rosters = _availability_rosters(season, week, roster, rosters_df)
+    featurized = build_features(combined, injuries_df=injuries_df, rosters_df=availability_rosters)
     if not featurized.index.is_unique:
         # _apply_position_models writes predictions by index; a duplicated index
         # would land week-W predictions on context rows (and vice versa).
@@ -903,6 +973,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     and ``_publish_artifact`` raises when a configured S3 upload fails (the
     fresh artifact is on disk but S3 — what serving reads — is still stale).
     """
+    require_mutable_live_cache(CACHE_DIR)
     now = datetime.now(UTC)
     nfl_season = now.year - (now.month < 3)
     detected = espn_live.next_unplayed_week(max(SEASONS[-1], nfl_season))
@@ -1199,5 +1270,16 @@ def main() -> None:
         )
 
 
+def cli() -> None:
+    """Bootstrap the isolated cache before the child imports feature consumers."""
+    if os.environ.get(HISTORICAL_CACHE_ENV):
+        require_mutable_live_cache(CACHE_DIR)
+        main()
+    else:
+        raise SystemExit(
+            run_in_live_overlay(CACHE_DIR, [sys.executable, "-m", "src.serving.upcoming_week"])
+        )
+
+
 if __name__ == "__main__":
-    main()
+    cli()

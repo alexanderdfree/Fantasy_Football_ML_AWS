@@ -172,20 +172,50 @@ jobs:
             rm -f "$tmp"
             echo "ff-train patched with FF_TRAIN_GIT_SHA passthrough"
           fi
-          # Existing warm hosts must select the requested immutable image tag.
-          if ! grep -q 'IMAGE%:\*' /usr/local/bin/ff-train; then
+          if grep -q 'FF_DATA_RELEASE' /usr/local/bin/ff-train; then
+            echo "ff-train already passes FF_DATA_RELEASE"
+          else
             tmp=$(mktemp)
             awk '
               { print }
-              /^IMAGE=/ {
-                print "if [ -n \"${FF_TRAIN_GIT_SHA:-}\" ]; then"
-                print "  IMAGE=\"${IMAGE%:*}:$FF_TRAIN_GIT_SHA\""
-                print "fi"
+              /-e FF_FORCE_REFRESH=/ && ! inserted {
+                print "  -e FF_DATA_RELEASE=\"${FF_DATA_RELEASE:-}\" \\"
+                inserted=1
               }
             ' /usr/local/bin/ff-train > "$tmp"
-            sed -i 's/imageTag=latest/imageTag="${FF_TRAIN_GIT_SHA:-latest}"/' "$tmp"
             install -m 755 "$tmp" /usr/local/bin/ff-train
             rm -f "$tmp"
+            echo "ff-train patched with FF_DATA_RELEASE passthrough"
+          fi
+          # Upgrade old warm-host scripts too: their literal IMAGE=:latest
+          # must never override the digest resolved before the data gate.
+          if ! grep -q '^IMAGE="${FF_TRAIN_IMAGE:?' /usr/local/bin/ff-train || \
+             grep -Fq 'IMAGE%:*' /usr/local/bin/ff-train; then
+            tmp=$(mktemp)
+            awk '
+              # Remove the known older source-tag override: applying it to a
+              # digest URI would turn the selected image into an invalid URI.
+              $0 == "if [ -n \"${FF_TRAIN_GIT_SHA:-}\" ]; then" { retag=1; next }
+              retag { if ($0 == "fi") retag=0; next }
+              /^IMAGE=/ {
+                print "IMAGE=\"${FF_TRAIN_IMAGE:?FF_TRAIN_IMAGE digest pin is required}\""
+                print "if [[ ! \"$IMAGE\" =~ @sha256:[0-9a-f]{64}$ ]] || [[ ! \"${FF_TRAIN_GIT_SHA:-}\" =~ ^[0-9a-f]{40}$ ]]; then"
+                print "  echo \"ff-train requires a digest-pinned image and its full verified source SHA\" >&2"
+                print "  exit 1"
+                print "fi"
+                next
+              }
+              { print }
+              END { if (retag) exit 1 }
+            ' /usr/local/bin/ff-train > "$tmp"
+            bash -n "$tmp"
+            install -m 755 "$tmp" /usr/local/bin/ff-train
+            rm -f "$tmp"
+          fi
+          if ! grep -q '^IMAGE="${FF_TRAIN_IMAGE:?' /usr/local/bin/ff-train || \
+             grep -Fq 'IMAGE%:*' /usr/local/bin/ff-train; then
+            echo "ff-train cannot honor the image pin; refusing training" >&2
+            exit 1
           fi
           BASH
           PARAMS=$(jq -n --arg s "$SCRIPT" '{commands: [$s]}')
@@ -204,60 +234,33 @@ jobs:
             --region "$AWS_REGION" \
             --query StandardOutputContent --output text
 
-      - name: Wait for fresh data splits (refresh-splits race gate)
-        # Identical race + fix as train-batch.yml (PR #516), extended here to the
-        # BATCH_ACTIVE=false rollback path: train-ec2 shares the same
-        # batch-image.yml → workflow_run trigger and downloads data/splits/ from
-        # S3 inside ff-train, so a data-affecting merge races refresh-splits.yml's
-        # ~14 min rebuild the same way (latent while Batch is the active path, but
-        # exactly the path a rollback leans on). Wait for refresh-splits' per-SHA
-        # "ready" marker before training.
-        #
-        # All paths PROCEED — fail-safe, never blocks the pipeline:
-        #   ready present       -> splits fresh, proceed.
-        #   no pending marker   -> refresh-splits didn't fire for this SHA (no
-        #                          splits-affecting change), proceed immediately.
-        #   pending, not ready  -> rebuild in flight; poll ~20 min for ready,
-        #                          then proceed (::warning::) on timeout.
-        # Skipped on workflow_dispatch (operators dispatch deliberately, after
-        # refresh-splits has finished). Keyed by workflow_run.head_sha, matching
-        # the job-def-revisions/${SHA}.txt and splits-rebuild-markers conventions.
-        # Placed after the instance-start/bootstrap steps (which give the ~14 min
-        # producer a head start) and right before the SSM train command.
-        if: github.event_name == 'workflow_run'
+      - name: Resolve immutable EC2 training image
+        id: image
         env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
-          set -u
-          base="splits-rebuild-markers"
-          have() {
-            aws s3api head-object --bucket "$S3_BUCKET" --key "$1" \
-              --region "$AWS_REGION" >/dev/null 2>&1
-          }
-          if have "${base}/ready/${HEAD_SHA}.txt"; then
-            echo "splits-ready marker present for ${HEAD_SHA} — splits are fresh."
-            exit 0
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: supply image_sha as the full SHA of an already-built image." >&2
+            exit 1
           fi
-          if ! have "${base}/pending/${HEAD_SHA}.txt"; then
-            echo "No refresh-splits marker for ${HEAD_SHA} (no splits-affecting change) — proceeding."
-            exit 0
-          fi
-          echo "refresh-splits is rebuilding splits for ${HEAD_SHA}; waiting for the ready marker..."
-          for i in $(seq 1 40); do
-            sleep 30
-            if have "${base}/ready/${HEAD_SHA}.txt"; then
-              echo "splits-ready marker appeared after ~$((i * 30))s — proceeding with fresh splits."
-              exit 0
-            fi
-          done
-          echo "::warning::splits-ready marker for ${HEAD_SHA} not seen within ~20 min; proceeding with current S3 splits (fail-safe)."
+          python -m src.scripts.resolve_training_image ec2 --sha "$HEAD_SHA"
+
+      - name: Wait for compatible published training data
+        id: data-release
+        timeout-minutes: 62
+        env:
+          HEAD_SHA: ${{ steps.image.outputs.image_sha }}
+        run: |
+          python -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
+            --revision "$HEAD_SHA" --timeout-seconds 3600 --pin-training
 
       - name: Run training for all positions (sequential)
         id: train
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
           SEED: ${{ github.event.inputs.seed || '42' }}
-          FF_TRAIN_GIT_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+          FF_TRAIN_GIT_SHA: ${{ steps.image.outputs.image_sha }}
+          FF_TRAIN_IMAGE: ${{ steps.image.outputs.image_uri }}
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
@@ -268,12 +271,15 @@ jobs:
               exit 1
               ;;
           esac
+          # Reuse the release already verified before submitting remote work.
+          DATA_RELEASE="$FF_DATA_RELEASE"
+          echo "data_release=$DATA_RELEASE" >> "$GITHUB_OUTPUT"
           # Sequential loop inside a single SSM command so we get one command
           # ID to poll. Sequential by design on the single host — the g6/L4 has
           # memory headroom but the rollback stays sequential for predictable polling.
           # Positions are emitted by the detect helper as position symbols.
           # JSON-encode via jq so command quoting can't bite us.
-          REMOTE_CMD="set -eu; for POS in $POSITIONS; do FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA' /usr/local/bin/ff-train \"\$POS\" '$SEED'; done"
+          REMOTE_CMD="set -eu; for POS in $POSITIONS; do FF_DATA_RELEASE='$DATA_RELEASE' FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA' FF_TRAIN_IMAGE='$FF_TRAIN_IMAGE' /usr/local/bin/ff-train \"\$POS\" '$SEED'; done"
           # AWS-RunShellScript defaults executionTimeout to 3600s (1h); the
           # sequential six-position loop runs ~120 min, so raise the SSM-side
           # cap to match the wait-loop deadline below (mirrors retune-lgbm.yml).
@@ -416,7 +422,7 @@ jobs:
           # path filters look safe; routing through env vars makes the value
           # a normal shell variable that downstream commands can quote.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+          HEAD_SHA: ${{ steps.image.outputs.image_sha }}
         run: |
           # Resolve the PR number from the merge commit so the serving UI's
           # History tab can deep-link rows to GitHub. Direct pushes to main
@@ -450,7 +456,7 @@ jobs:
           # from the image-build SHA on rapid back-to-back merges. ``$HEAD_SHA``
           # is the stable image-build SHA that FF_TRAIN_GIT_SHA stamps into the
           # metrics, so the recorded git_hash matches benchmark.py's coherency
-          # check. Manual dispatch requires image_sha as well. Mirrors train-batch.yml; see
+          # check for both automatic and manual image resolutions. See
           # the TODO.md "Benchmark git_hash" archive entry for the failure mode.
           NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
           NOTE_SHA="${NOTE_SHA::7}"
@@ -477,7 +483,7 @@ jobs:
         env:
           # Same env-indirection rationale as the previous step.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+          HEAD_SHA: ${{ steps.image.outputs.image_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

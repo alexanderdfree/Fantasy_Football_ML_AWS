@@ -321,6 +321,19 @@ def test_snap_pct_history_uses_raw_not_prelagged():
     assert "snap_pct" not in GAME_HISTORY_STATS
 
 
+def _active_roster_fixture(df, unavailable=None):
+    """Explicit active roster for the synthetic participants in these older fixtures."""
+    active = (
+        df[["player_id", "position", "recent_team", "season", "week"]]
+        .rename(columns={"recent_team": "team"})
+        .assign(status="ACT")
+    )
+    roster = active if unavailable is None else pd.concat([active, unavailable], ignore_index=True)
+    # NFL Data Exchange's preserved weekly code supplies pre-2016 eligibility.
+    roster["status_description_abbr"] = roster["status"].map({"ACT": "A01", "RES": "I01"})
+    return roster
+
+
 @pytest.mark.unit
 def test_inheritance_features_next_man_up():
     """``_build_inheritance_features`` (the production mirror of the validated A/B
@@ -415,7 +428,9 @@ def test_inheritance_features_next_man_up():
         ]
     )
 
-    g = _build_inheritance_features(df, inj).set_index(["player_id", "week"])
+    g = _build_inheritance_features(df, inj, _active_roster_fixture(df)).set_index(
+        ["player_id", "week"]
+    )
 
     # Week 2 (roles differentiated by week-1, nobody Out): the lead is top, no inheritance.
     assert g.loc[("A", 2), "is_top_available"] == 1.0
@@ -483,7 +498,9 @@ def test_inheritance_ir_roster_status_out_set():
     )
 
     # No injury report -> the only out-set source is rosters RES.
-    g = _build_inheritance_features(df, None, rosters_df=rosters).set_index(["player_id", "week"])
+    g = _build_inheritance_features(
+        df, None, rosters_df=_active_roster_fixture(df, rosters)
+    ).set_index(["player_id", "week"])
     assert g.loc[("B", 3), "is_top_available"] == 1.0
     assert g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
 
@@ -493,12 +510,16 @@ def test_inheritance_ir_roster_status_out_set():
 
     # Game-day INA is also folded in (leakage-audited pre-kickoff inactives list).
     ina = rosters.assign(status="INA")
-    g1 = _build_inheritance_features(df, None, rosters_df=ina).set_index(["player_id", "week"])
+    g1 = _build_inheritance_features(
+        df, None, rosters_df=_active_roster_fixture(df, ina)
+    ).set_index(["player_id", "week"])
     assert g1.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
 
     # A truly-active status is still excluded.
     act = rosters.assign(status="ACT")
-    g2 = _build_inheritance_features(df, None, rosters_df=act).set_index(["player_id", "week"])
+    g2 = _build_inheritance_features(
+        df, None, rosters_df=_active_roster_fixture(df, act)
+    ).set_index(["player_id", "week"])
     assert g2.loc[("B", 3), "inherited_opportunity"] == 0.0
 
 
@@ -545,7 +566,9 @@ def test_inheritance_out_set_normalizes_legacy_team_codes():
     inj = pd.DataFrame(
         [dict(gsis_id="A", position="RB", team="OAK", season=2019, week=3, report_status="Out")]
     )
-    g = _build_inheritance_features(df, inj).set_index(["player_id", "week"])
+    g = _build_inheritance_features(df, inj, _active_roster_fixture(df)).set_index(
+        ["player_id", "week"]
+    )
     assert g.loc[("B", 3), "is_top_available"] == 1.0
     assert g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
 
@@ -554,7 +577,9 @@ def test_inheritance_out_set_normalizes_legacy_team_codes():
     rosters = pd.DataFrame(
         [dict(player_id="A", position="RB", team="SD", season=2016, week=3, status="RES")]
     )
-    g2 = _build_inheritance_features(df2, None, rosters_df=rosters).set_index(["player_id", "week"])
+    g2 = _build_inheritance_features(
+        df2, None, rosters_df=_active_roster_fixture(df2, rosters)
+    ).set_index(["player_id", "week"])
     assert g2.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
 
     # 2012-2015 rosters use GAMEBOOK codes the shared relocation map never sees:
@@ -575,9 +600,9 @@ def test_inheritance_out_set_normalizes_legacy_team_codes():
                 )
             ]
         )
-        g_g = _build_inheritance_features(df_g, None, rosters_df=rosters_g).set_index(
-            ["player_id", "week"]
-        )
+        g_g = _build_inheritance_features(
+            df_g, None, rosters_df=_active_roster_fixture(df_g, rosters_g)
+        ).set_index(["player_id", "week"])
         assert g_g.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8), roster_code
 
     # Modern codes pass through the normalization unchanged (identity on non-legacy).
@@ -585,7 +610,9 @@ def test_inheritance_out_set_normalizes_legacy_team_codes():
     inj3 = pd.DataFrame(
         [dict(gsis_id="A", position="RB", team="KC", season=2023, week=3, report_status="Out")]
     )
-    g3 = _build_inheritance_features(df3, inj3).set_index(["player_id", "week"])
+    g3 = _build_inheritance_features(df3, inj3, _active_roster_fixture(df3)).set_index(
+        ["player_id", "week"]
+    )
     assert g3.loc[("B", 3), "inherited_opportunity"] == pytest.approx(0.8)
 
 
@@ -628,7 +655,9 @@ def test_inheritance_prior_season_fallback_week1():
         [dict(gsis_id="A", position="RB", team="KC", season=2023, week=1, report_status="Out")]
     )
 
-    g = _build_inheritance_features(df, inj).set_index(["player_id", "season", "week"])
+    g = _build_inheritance_features(df, inj, _active_roster_fixture(df)).set_index(
+        ["player_id", "season", "week"]
+    )
     # B is the only present back -> top-available; A (prior-season role .8) is Out and ranked above
     # B (prior-season role .4), so B inherits A's prior-season role on the opener.
     assert g.loc[("B", 2023, 1), "is_top_available"] == 1.0
@@ -636,7 +665,9 @@ def test_inheritance_prior_season_fallback_week1():
 
     # Without a prior season the fallback is absent -> Week-1 inheritance stays 0 (old behavior).
     df_no_prior = df[df["season"] == 2023].copy()
-    g2 = _build_inheritance_features(df_no_prior, inj).set_index(["player_id", "season", "week"])
+    g2 = _build_inheritance_features(
+        df_no_prior, inj, _active_roster_fixture(df_no_prior)
+    ).set_index(["player_id", "season", "week"])
     assert g2.loc[("B", 2023, 1), "inherited_opportunity"] == 0.0
 
 

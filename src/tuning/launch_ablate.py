@@ -66,6 +66,8 @@ from src.batch.launch import (  # noqa: E402
     RETRY_STRATEGY,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
+    data_release_environment,
+    pin_data_release,
     wait_for_jobs,
 )
 from src.tuning.ablate_batch import (  # noqa: E402
@@ -149,6 +151,7 @@ def submit_ablate_job(
         {"name": "FF_AMP_DTYPE", "value": "auto"},
         {"name": "FF_COMPILE", "value": "0"},
     ]
+    environment.extend(data_release_environment())
     if only:
         environment.append({"name": ENV_VARIANTS, "value": ",".join(only)})
     if cuda_graph != "auto":
@@ -415,6 +418,7 @@ def main() -> None:
             )
 
     job_definition = resolve_job_definition(image_sha, batch)
+    pin_data_release(s3)
 
     print(f"Submitting {len(positions)} eager-ablation jobs (run_id={run_id}): {positions}")
     job_ids: dict[str, str] = {}

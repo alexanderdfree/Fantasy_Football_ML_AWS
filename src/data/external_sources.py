@@ -43,6 +43,7 @@ import pyarrow.parquet as pq
 from src.config import CACHE_DIR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
+from src.data.release import assert_source_fetch_allowed
 
 # --- ff_opportunity (ffverse expected points) ------------------------------
 # Union of the expected-stat columns the skill positions wire into their
@@ -154,8 +155,9 @@ def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.Da
     # left-joins this frame on (player_id, season, week), so a cache missing or
     # renaming a merge key must bust — a value-blind column gate can't see a value
     # change, but a changed key SET must invalidate. (#1435)
-    if os.path.exists(path) and _cached_parquet_has_columns(path, tuple(keep)):
-        return _coerce_merge_keys(pd.read_parquet(path))
+    if os.path.exists(path) and _cached_parquet_has_columns(path, (*keep, "_ff_opportunity_v2")):
+        return _coerce_merge_keys(pd.read_parquet(path)[keep])
+    assert_source_fetch_allowed(path)
     try:
         df = nfl_source.ff_opportunity(list(seasons))
     except Exception as e:
@@ -166,7 +168,9 @@ def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.Da
     # downstream left-merge can't fan out).
     out = df[cols].drop_duplicates(subset=["player_id", "season", "week"], keep="first")
     out = _coerce_merge_keys(out)
-    atomic_write_parquet(out, path)
+    to_cache = out.copy()
+    to_cache["_ff_opportunity_v2"] = True
+    atomic_write_parquet(to_cache, path)
     return out
 
 
@@ -242,6 +246,8 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     caches the bridged result. Returns ``[player_id, season, week]`` +
     ``QBR_FEATURE_COLUMNS`` (empty if the source is unavailable).
     """
+    from src.data.identity import load_player_id_bridge
+
     # v2 invalidates the old source's schema-valid but 2023-capped cache.
     path = f"{cache_dir}/qbr_weekly_v2_{_seasons_cache_signature(seasons)}.parquet"
     keep = ["player_id", "season", "week", *QBR_FEATURE_COLUMNS]
@@ -250,9 +256,10 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     # busts rather than KeyError-ing the loader join. (#1435)
     if os.path.exists(path) and _cached_parquet_has_columns(path, tuple(keep)):
         return _coerce_merge_keys(pd.read_parquet(path))
+    assert_source_fetch_allowed(path)
     try:
         raw = _fetch_qbr_weekly_raw(seasons)
-        ids = nfl_source.player_ids()
+        ids = load_player_id_bridge(cache_dir)
     except Exception as e:
         # Supplementary QB-only signal: a fetch failure degrades to "no QBR"
         # (loader leaves the columns NaN) rather than crashing the shared
@@ -376,6 +383,7 @@ def load_contracts(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFra
         # merge-ready frame the loader consumes keeps the stable (keys + features)
         # schema regardless of the cache generation.
         return _coerce_merge_keys(pd.read_parquet(path))[keep]
+    assert_source_fetch_allowed(path)
     try:
         raw = nfl_source.contracts()
     except Exception as e:

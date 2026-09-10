@@ -232,6 +232,7 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
     # Pre-merge weekly cache: drop the columns the loader *adds* during its
     # own merge steps so we don't collide on re-merge.
     weekly_pre = fixture.drop(columns=[c for c in _LOADER_MERGE_ADDED if c in fixture.columns])
+    weekly_pre["_weekly_modern_schema_v2"] = True
     weekly_pre.to_parquet(cache_dir / f"weekly_{suffix}.parquet")
 
     # Each supporting cache is empty — we only need the loader's merge
@@ -240,6 +241,11 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
     # dtype mismatch against the id-bridge frame.
     cache_shapes: dict[str, dict[str, str]] = {
         f"rosters_{suffix}": {"player_id": "object", "season": "int32", "position": "object"},
+        f"rosters_weekly_{suffix}": {
+            "player_id": "object",
+            "season": "int32",
+            "position": "object",
+        },
         f"schedules_{suffix}": {
             "season": "int32",
             "week": "int32",
@@ -259,7 +265,7 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
             "practice_status": "object",
             "report_status": "object",
         },
-        f"depth_charts_v2_{suffix}": {  # _v2 cache-version sentinel (#616)
+        f"depth_charts_v3_{suffix}": {  # _v2 cache-version sentinel (#616)
             "gsis_id": "object",
             "season": "int32",
             "week": "int32",
@@ -269,7 +275,7 @@ def test_load_raw_data_uses_cache_and_returns_fixture_schema(
         # Red-zone PBP cache (schema-gated by src.data.redzone_pbp). An empty
         # frame with the full required schema short-circuits the loader so
         # nfl.import_pbp_data isn't hit during the contract test.
-        f"redzone_pbp_{suffix}": {
+        f"redzone_pbp_v2_{suffix}": {
             "player_id": "object",
             "season": "int32",
             "week": "int32",

@@ -1,6 +1,7 @@
 import pandas as pd
 
 from src.config import POSITIONS
+from src.data.identity import valid_player_ids
 from src.data.loader import compute_all_scoring_formats
 
 
@@ -61,6 +62,7 @@ def impute_snap_pct(df: pd.DataFrame, *, fit_on: pd.DataFrame | None = None) -> 
 def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
     """Filter and clean raw NFL data for modeling."""
     df = raw_df.copy()
+    df = df.loc[valid_player_ids(df["player_id"])].copy()
 
     # Filter to regular season. ``season_type`` is part of the nflverse
     # weekly schema (via the ``src.data.nfl_source`` shim), so its absence

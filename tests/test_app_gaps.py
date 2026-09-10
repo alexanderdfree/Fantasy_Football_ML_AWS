@@ -625,8 +625,13 @@ def test_load_dst_splits_filters_by_season(monkeypatch):
             "week": [1, 1, 1, 1],
         }
     )
+
     # DST data + features live on module aliases after PR2's collision cleanup.
-    monkeypatch.setattr(core.dst_data, "build_data", lambda: dst_df)
+    def cached_dst_data(*, allow_scoring_fetch):
+        assert allow_scoring_fetch is False
+        return dst_df
+
+    monkeypatch.setattr(core.dst_data, "build_data", cached_dst_data)
     monkeypatch.setattr(core.dst_features, "compute_features", lambda df: None)
 
     class _StubReg:

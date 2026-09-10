@@ -13,6 +13,7 @@ from src.shared.position_config import (
 
 # === K Seasons (post-PAT rule change: 2015+) ===
 _SEASONS = list(range(2015, 2026))  # 2015-2025
+_MIN_GAMES = 4
 
 # 4 non-negative raw-value heads. Total fantasy points = sum with signs
 # [+1, +1, -1, -1] applied at inference (target_signs below).
@@ -238,11 +239,9 @@ POSITION_CONFIG = PositionConfig(
     lgbm_min_split_gain=0.0,
     lgbm_objective="regression",
     seasons=_SEASONS,
-    # Cross-season split, matching other positions. NOTE: this value is dead at
-    # training time — the shared pipeline filters on ``MIN_GAMES_PER_SEASON`` (=6,
-    # src/config.py) via ``cfg.get("min_games_per_season")`` in src/shared/pipeline.py,
-    # not on this ``min_games`` field, so the effective floor is 6, not 4.
-    min_games=4,
+    # Both the K-specific split and shared preparation use the same threshold.
+    min_games=_MIN_GAMES,
+    min_games_per_season=_MIN_GAMES,
     # K's serving aggregator (app.py) uses ``target_signs`` to combine the
     # four raw-count heads into fantasy points: positive for scoring heads,
     # negative for miss penalties. Other positions go through the shared
