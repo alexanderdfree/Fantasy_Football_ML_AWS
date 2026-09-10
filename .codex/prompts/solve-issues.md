@@ -20,7 +20,7 @@ Codex runtime values:
 - `WORKFLOW_PRE_PR_GATE=/prompts:pre-pr-gate`
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=/prompts:pre-pr-judge`
 - `WORKFLOW_REVIEW_TOOL=scripts/codex-review-quiet.sh --base origin/main`
-- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus AGENTS.md for durable cross-agent lessons`
+- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus the relevant agent-guides topic or ADR for durable shared lessons`
 
 Execution:
 

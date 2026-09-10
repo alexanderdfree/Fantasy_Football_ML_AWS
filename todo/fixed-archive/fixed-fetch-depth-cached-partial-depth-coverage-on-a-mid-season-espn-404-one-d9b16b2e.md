@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] `_fetch_depth` cached partial depth coverage on a mid-season ESPN 404 — one transient miss poisoned the cache forever
+- **File(s):** [../src/data/loader.py](../../src/data/loader.py) (`_fetch_depth`), audit issue #1215, 2026-07-01 solve-issues tier-C-high PR.
+- **What:** The #830 per-season try/except skipped a 404'd ESPN season but still unconditionally wrote the partial concatenated frame to the `depth_charts_v2_{sig}` cache, whose key encodes only the requested season range — so every subsequent call served the partial frame forever, even after the source recovered, and every player-week in the missing season rode the `-1` sentinel into training (the class behind the QB attn-NN 6.5→8.0 regression). Its own comment claimed it "mirrors the team_week_stats skip above", but the sibling's `skipped`-guard (#807: return partial WITHOUT caching) was never copied.
+- **Fix:** Track `skipped` seasons; on partial coverage return the frame without `atomic_write_parquet` (next call retries); all-fetches-failed returns an empty frame WITH canonical columns so downstream still rides the `-1` sentinel instead of KeyError-ing. Byte-identical on healthy fetches.
+- **Lesson:** A comment asserting "mirrors X" is a claim, not a property — when copying a guard pattern, copy the guard, and pin it with a test that monkeypatches the failure (the new test asserts the cache file does NOT exist and the missing season's rows carry `-1`).

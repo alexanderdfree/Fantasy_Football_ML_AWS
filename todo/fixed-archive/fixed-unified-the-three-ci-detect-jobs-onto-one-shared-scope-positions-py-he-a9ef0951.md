@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] Unified the three CI `detect` jobs onto one shared `scope_positions.py` helper
+- **File(s):** [.github/workflows/tests.yml](../../.github/workflows/tests.yml) (`detect` job now calls `python3 -m src.scripts.scope_positions --mode test`), [src/scripts/scope_positions.py](../../src/scripts/scope_positions.py) (`--mode {train,test}` flag + `compute_test_shards`), contract-tested by [tests/scripts/test_scope_positions.py](../../tests/scripts/test_scope_positions.py).
+- **What:** `train-batch.yml` / `train-ec2.yml` already shared `scope_positions.py`, but `tests.yml`'s detect job computed its shard scoping in ~95 lines of inline bash with divergent semantics (docs-strip, a `shared` shard, an all-shards fallback) — so the "three detect jobs aren't unified" item stayed open.
+- **Fix:** A `--mode test` flag (`compute_test_shards`) was added to `scope_positions.py` so all three detect jobs now read one tested source of truth; the `shared` shard + fallback logic moved into the helper. Recorded in docs/ARCHITECTURE.md Update history (2026-05-20).
+- **Lesson:** Divergent-but-related CI scoping logic is better parameterized behind one tested helper than duplicated in inline bash — the "config-driven mapping" the open item worried about turned out to be a small `--mode` parameter.

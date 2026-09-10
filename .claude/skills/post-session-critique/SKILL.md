@@ -1,6 +1,6 @@
 ---
 name: post-session-critique
-description: Reflect on the current Claude Code session and propose AGENTS.md, CLAUDE.md, or memory updates that would have prevented a wrong turn or sped up the right call. Use after a session where the user had to correct you, a non-obvious project convention bit you, or something went unusually well because of a specific rule.
+description: Reflect on a non-routine Claude Code session and propose a targeted update to existing project guidance, provider references, or memory. Check duplicates and context budgets before adding a rule. Use after a user correction, a non-obvious convention, or a useful rule worth preserving.
 ---
 
 # Post-session critique wrapper

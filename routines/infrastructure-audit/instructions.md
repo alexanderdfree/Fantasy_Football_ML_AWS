@@ -50,7 +50,7 @@ not breadth.
 
 The orchestrator verifies every cited line, dedupes against open and closed
 audit issues from all labels in `DEDUPE_AUDIT_LABELS`, drops anything already
-covered by AGENTS.md stop rules or the `todo/fixed-archive.md` fixed archive,
+covered by agent-guides/stop-rules.md or the `todo/fixed-archive.md` fixed archive,
 consolidates partial/full duplicates within this run, and files one GitHub issue
 per surviving finding under `AUDIT_LABEL`. It also files one closed checkpoint
 issue under `AUDIT_LABEL` recording the audited SHA.
@@ -192,16 +192,17 @@ gh label create regress-risk-high --color D93F0B --description "Audit fix: model
 
 ## Step 1: Prep
 
-1. Read AGENTS.md stop rules verbatim, plus the "Platform & hardware targets"
+1. Read the relevant rules in `agent-guides/stop-rules.md`, plus `agent-guides/platform.md` for the "Platform & hardware targets"
    stop-rules (FP32+TF32 default / FP16+BF16 opt-in / CUDA-graph autodetect-ON
-   sm_80+ / MPS opt-in / Windows OPENBLAS), the "CI & training" section (`BATCH_ACTIVE` /
+   sm_80+ / MPS opt-in / Windows OPENBLAS), the "CI & training" section in `agent-guides/operations.md` (`BATCH_ACTIVE` /
    `BATCH_SPLIT_ACTIVE`, `train-batch.yml` vs `train-ec2.yml`, the shared
    `detect` job + `scope_positions`, the `[docs-only]` opt-in contract,
    `deploy.yml` being paths-gated), and the infra-relevant Stop rules
    (shared-venv CI, `--preload` pre-warm, in-container artifact build). Hold them
-   for worker prompts and final verification.
-2. Run `grep "^### \[FIXED\]" todo/fixed-archive.md` and capture every title
-   line. Hold the list. Also skim `docs/batch_design.md`, `docs/ec2_design.md`,
+   as scoped references for workers and final verification.
+2. Run `rg "^### " todo/fixed-archive.md` to inventory all incident titles,
+   including rejected/investigated entries. Keep this compact inventory for
+   orchestrator dedupe; open matching records when evaluating a candidate. Also skim `docs/batch_design.md`, `docs/ec2_design.md`,
    and the infra-relevant ADRs (job-def pinning ADR-0020, split training
    ADR-0019, upcoming-week ADR-0018) so a documented-and-intended design is not
    re-flagged as a defect.
@@ -374,7 +375,7 @@ NOT FINDINGS:
   Spot CEs) that are not an actual correctness or safety defect.
 - "train-ec2.yml is slower than train-batch.yml" -> the EC2 path is the
   intentional warm rollback; speed is by design.
-- Anything in AGENTS.md Stop rules / todo/fixed-archive (shared-venv CI
+- Anything in agent-guides/stop-rules.md / todo/fixed-archive (shared-venv CI
   optimization, gunicorn `--preload` module pre-warm, building the upcoming-week
   artifact inside the serving container) -> already tried and reverted.
 - A doc/comment with only a stale `file:lineN` citation while the cited target is
@@ -392,7 +393,11 @@ not defined.
 When in doubt, drop the finding.
 
 STOP RULES:
-<inline AGENTS.md stop rules + every todo/fixed-archive.md FIXED title from Step 1>
+<include only scope-relevant stop-rule excerpts and their guide/ADR paths.
+Search todo/fixed-archive.md by the candidate symbols/issue keywords and open
+matching incident records before reporting. Do not inline the full archive or
+every title into each worker prompt; the orchestrator retains the full dedupe
+inventory and performs the final cross-check.>
 
 SELF-VERIFY every candidate before emitting it:
 1. Re-open the cited file at the cited line. Confirm evidence_quote is
@@ -448,8 +453,9 @@ For each new worker finding, the orchestrator re-verifies as a backstop:
 
 1. Read file at cited line. Confirm `evidence_quote` matches,
    whitespace-normalized. Drop on mismatch.
-2. Grep AGENTS.md and `todo/fixed-archive.md` for 2-3 distinctive title
-   keywords. Drop if matched. Also confirm the finding is not a
+2. Search `agent-guides/stop-rules.md` and `todo/fixed-archive.md` for 2-3
+   distinctive title keywords, then open matching incident records. Drop if the
+   documented rule or resolved issue matches the candidate. Also confirm the finding is not a
    documented-and-intended design in `docs/batch_design.md`, `docs/ec2_design.md`,
    or the infra ADRs.
 3. Dedupe against `/tmp/known_issues.tsv` and `/tmp/known_files.tsv`: duplicate
@@ -589,7 +595,7 @@ write failed, print the unsent bodies to stdout.
 - Dedup spans open and closed severity-labeled `claude-audit` and `codex-audit`
   issues, so findings already filed by the general audit, a prior
   infrastructure-audit, or the tests-audit are not re-filed.
-- Never re-flag anything in AGENTS.md stop rules or `todo/fixed-archive.md`.
+- Never re-flag anything in agent-guides/stop-rules.md or `todo/fixed-archive.md`.
 - Never propose an intentional per-arch / cost / instance-choice change as a
   defect; those are tuning/judgment.
 - Never file design, tuning, or accuracy-judgment changes unless they are clear,

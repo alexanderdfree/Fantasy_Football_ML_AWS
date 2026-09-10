@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] Small-N attention batch audit superseded by paired batch/LR run
+- **File(s):** [TODO.md](../../TODO.md) (removed the stale Open item), `todo/batch_size_audit_priority.md` (historical audit, since removed), and [../benchmark_history/ablations/2026-06-01T08-13-53_a3913c4_batch_lr_attention.json](../../benchmark_history/ablations/2026-06-01T08-13-53_a3913c4_batch_lr_attention.json) (superseding evidence).
+- **What:** The earlier read-only audit warned that QB and K might be update-starved at `attn_batch_size=256` and proposed a QB-only A/B lowering batch size. That was based on steps-per-epoch heuristics and model-standing context, not a paired batch/LR production-metric run.
+- **Fix:** The completed eight-seed batch/LR sweep directly tested larger attention batches with LR policies. QB's best conservative variant was `b2_lrlin` (`+47.3%` speed, `-0.0027` FP MAE), and K's was also `b2_lrlin` (`+55.3%` speed, `-0.0159` FP MAE, still with the served-model caveat). The heuristic "small N means lower batch" note is therefore no longer an actionable Open item.
+- **Lesson:** Steps-per-epoch audits are useful triage, but they cannot decide optimizer settings by themselves. Pair batch size with LR in the actual attention training path and judge on held-out FP MAE across seeds.

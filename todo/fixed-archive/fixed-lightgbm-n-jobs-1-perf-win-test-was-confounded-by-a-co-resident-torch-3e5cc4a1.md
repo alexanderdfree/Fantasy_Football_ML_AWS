@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] LightGBM `n_jobs=-1` "perf win" test was confounded by a co-resident `torch.compile` regression
+- **Files:** `src/batch/Dockerfile.train` (`LGBM_N_JOBS=-1` env removed in PR #196), `src/shared/models.py` (`_lgbm_n_jobs()` reads the `LGBM_N_JOBS` env var, defaults to `1`).
+- **What:** PR #188 (`cb3c960`) baked `LGBM_N_JOBS=-1` into the training image to try multi-core LightGBM on the EC2 g4dn. The benchmark didn't move, and the next commit (PR #189, `3167b56`) traced an unrelated +32% wall-time regression to `torch.compile` being enabled on T4. With both changes live in the same image, the LightGBM threading question was never genuinely measured — the compile regression masked any signal LightGBM might have shown.
+- **Fix:** PR #196 (`35f0a57`) reverted the `LGBM_N_JOBS=-1` bake, returning the image to env-var-only opt-in (default `1`). The torch.compile short-circuit lands separately under D12. LGBM threading is left as an open perf question to measure cleanly later.
+- **Lesson:** Don't ship two perf experiments in the same image. Every "perf win" must be isolated from co-resident regressions, or its signal is impossible to read. The auto-memory entry on "Check git log for SHA perf regressions" formalizes this — before crediting a perf result, search `git log` for nearby PRs that touched the same path.

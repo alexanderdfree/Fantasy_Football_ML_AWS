@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] Literal RB ascension model undershoot measured on the 2025 test cohort
+- **File(s):** [src/analysis/cohort_analysis.py](../../src/analysis/cohort_analysis.py) (`ascension --with-model-error` now requires at least two prior in-season games when keys are available), [src/analysis/rb_ascension_findings.md](../../src/analysis/rb_ascension_findings.md) (measured table).
+- **What:** The original ascension diagnostic quantified the input-information bound, but the trained-model undershoot had not been run locally. The first model-error run also exposed an old label mismatch: season openers with empty rolling history were counted as `prior3_opp=0` ascensions, inflating the test cohort from the expected ~14 to 35 rows.
+- **Fix:** Align the model-error label with the data diagnostic's `MIN_PRIOR_GAMES=2` rule when `player_id/season/week` keys are present, then rerun the production RB pipeline. Result on the true 14-event 2025 ascension cohort: every model is systematically low by roughly 12 FP; production-best LightGBM MAE/bias = 12.462 / −12.462 vs established MAE 3.895.
+- **Lesson:** Empty history is not backup history. Any role-change subgroup keyed off shifted rolling means must distinguish "no prior games" from "low prior usage", or season openers contaminate the cohort and make the model-error read too optimistic.

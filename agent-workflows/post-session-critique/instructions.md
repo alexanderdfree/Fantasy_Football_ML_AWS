@@ -18,7 +18,7 @@ The wrapper must define these values before executing the workflow:
 
 Provider wrappers own their local memory mechanics. Do not let provider mechanics
 change the skip rule, the under-200-word output shape, or the rule that durable
-cross-agent lessons belong in `AGENTS.md`.
+cross-agent lessons belong in the relevant `agent-guides/` topic or ADR, reached through `AGENTS.md`.
 
 ## Provider entrypoints
 
@@ -52,7 +52,7 @@ over-documentation is.
 
 Check for duplicates first:
 
-- read `AGENTS.md` for durable cross-agent guidance;
+- read `AGENTS.md` as the router, then search the relevant topic guide/ADR for existing guidance;
 - read `WORKFLOW_AGENT_DOC` for provider-specific machinery;
 - check the provider memory summary or memory index when available.
 
@@ -68,19 +68,20 @@ Produce a reflection under 200 words with these sections:
 
 **Proposed change**: one concrete proposal:
 
-- a markdown snippet for `AGENTS.md` when the lesson is durable and cross-agent;
+- a targeted amendment to the existing topic guide or ADR for a durable shared lesson; change `AGENTS.md` only when a critical invariant or route is missing, within its 8 KiB budget;
 - a markdown snippet for `WORKFLOW_AGENT_DOC` when the lesson is provider-specific;
 - a provider memory note when the lesson is local recall rather than repo source of truth.
 
-Durable cross-agent lessons belong in `AGENTS.md`. Provider-only execution,
-hook, prompt, or harness details belong in `WORKFLOW_AGENT_DOC` or provider
-memory.
+Durable shared lessons belong in their topic guide or ADR. Provider mechanics
+belong in the reference linked from `WORKFLOW_AGENT_DOC`; keep provider roots
+under 4 KiB. Follow `agent-guides/context-maintenance.md`: preserve evidence and
+constraints, check duplicates, and keep memory as scoped recall.
 
 ## Memory write policy
 
 - Claude wrapper: memory-worthy notes may be written under the provider's Claude project memory and indexed there when the skill has already filtered for a worthwhile lesson.
 - Codex wrapper: write memory only when `WORKFLOW_WRITE_MEMORY=1`. Otherwise propose the memory text without writing it. Codex memory notes go under `$CODEX_HOME/memories/extensions/ad_hoc/notes/`, falling back to `~/.codex/memories/extensions/ad_hoc/notes/` when `CODEX_HOME` is unset, and must follow the active Codex memory rules.
-- Gemini/Antigravity wrapper: memory is plain Markdown under `~/.gemini/` (project memory under `~/.gemini/tmp/<project>/memory/`); it is not authoritative. Propose the note and reserve durable cross-agent lessons for `AGENTS.md`.
+- Gemini/Antigravity wrapper: memory is plain Markdown under `~/.gemini/` (project memory under `~/.gemini/tmp/<project>/memory/`); it is not authoritative. Propose the note and reserve durable shared lessons for the relevant topic guide or ADR.
 
 ## What to skip
 
@@ -96,5 +97,5 @@ memory.
 
 **What was missing**: The reverted optimization was memory-only and did not load for this CI task.
 
-**Proposed change**: Add this durable cross-agent rule to AGENTS.md `Stop rules`: `Shared-venv CI optimization was reverted in #110/#111; artifact download was slower than warm uv install, so wall-clock wins over compute.`
+**Proposed change**: Update the existing shared-venv entry in `agent-guides/stop-rules.md` rather than adding another copy: `Shared-venv CI optimization was reverted in #110/#111; artifact download was slower than warm uv install, so wall-clock wins over compute.`
 ```

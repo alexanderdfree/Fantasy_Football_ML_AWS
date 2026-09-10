@@ -1,214 +1,100 @@
 # AGENTS.md
 
-Orientation file for AI coding agents (Claude Code, OpenAI Codex, Google Gemini CLI). Human-facing docs live elsewhere — this file surfaces the conventions, gotchas, and "before you touch X, read Y" rules not obvious from a first pass. It is the **single source of truth** for cross-agent project knowledge; the per-provider files `CLAUDE.md`, `CODEX.md`, and `GEMINI.md` each import it (`@AGENTS.md`) and add only their provider-specific machinery.
+Shared instructions for Claude Code, Codex and Gemini. Keep this entrypoint under
+8 KiB; detailed guidance belongs in the topic files below. Read the relevant
+sections before changing that subsystem. Do not load every linked document.
 
-## Orient yourself first
-- **[README.md](README.md)** — overview, architecture diagram, eval results.
-- **[SETUP.md](SETUP.md)** — install, first-time data pull, how to run everything locally. If you need a command, it's probably here.
-- **[TODO.md](TODO.md)** — open issues; the **Fixed archive** (root-cause + lesson for every non-trivial bug squashed) is split to **[todo/fixed-archive.md](todo/fixed-archive.md)**. **Read the archive before proposing changes near anything it mentions** — most "obvious" fixes have been tried and it says why they were wrong. **Update as you ship**: move a resolved Open item into [todo/fixed-archive.md](todo/fixed-archive.md) using the `### [FIXED] Title` + **File(s)/What/Fix/Lesson** format.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the project's ADR: an **index** (Context, System Overview, decision table, cross-cutting consequences, references) linking to **per-decision files in [docs/adr/](docs/adr/)** (`00NN-<slug>.md`, one decision each, with rejected alternatives). Terse changelog: [docs/adr/CHANGELOG.md](docs/adr/CHANGELOG.md); frozen pre-split history: [docs/architecture-history.md](docs/architecture-history.md). **Living docs** — update whenever a non-trivial change touches or adds an architectural decision.
+## Start with the task
 
-## Project shape (six-position symmetry)
-Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
+- Verify the active worktree and `git status` before editing. Use paths inside
+  this checkout; never silently edit the parent checkout. Fetch `origin/main`
+  and inspect recent commits before planning and again before a PR. Check open
+  PRs for overlap in shared files. Current remote state takes precedence over
+  an old worktree or recalled result.
+- Follow the user's current scope and prior authorization. A tentative mechanism
+  is a hypothesis: validate its fit before building a new subsystem. If scope
+  proves infeasible or a gate blocks the intended work, explain the evidence and
+  options; do not silently drop scope or bypass the gate.
+- Use current code/configuration for implemented behavior, the relevant ADR for
+  intended decisions, and live artifacts for shipped behavior. Reconcile any
+  disagreement. Memories and dated incident reports are retrieval aids; they
+  cannot establish current versions, quotas, flags, settings or deployment state.
 
-```
-src/{pos}/
-  config.py        # hyperparams (Ridge alpha grids, NN dims, loss weights, Huber deltas, LightGBM params)
-  data.py          # loading + temporal split specifics
-  features.py      # position-specific feature engineering
-  targets.py       # raw-stat target definitions
-  run_pipeline.py  # exposes run() and run_cv()
-```
+## Read only what applies
 
-Tests for each position live under `tests/{pos}/`.
+| Task | Guidance to read |
+|---|---|
+| Locate a subsystem or add a position | [Project layout](agent-guides/project.md) |
+| Features, targets, losses or NN wiring | [Model contracts](agent-guides/modeling.md), relevant [stop rules](agent-guides/stop-rules.md) |
+| Investigate accuracy, data effects or a claimed invariant | [Validation](agent-guides/validation.md), [investigation](agent-guides/investigation.md) |
+| Run tests, trains, tunes, benchmarks or A/Bs | [Entry points](agent-guides/experiments.md), relevant [environment](agent-guides/environment.md) section; commands in [SETUP.md](SETUP.md) |
+| Device, dtype, performance or GPU changes | [Platform policy](agent-guides/platform.md), relevant [stop rules](agent-guides/stop-rules.md) |
+| CI, AWS, serving or artifact lifecycle | [Operations](agent-guides/operations.md); decision index in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Edit, review, open or merge a PR | [Delivery](agent-guides/delivery.md); provider workflow in [CODEX.md](CODEX.md), [CLAUDE.md](CLAUDE.md) or [GEMINI.md](GEMINI.md) |
+| Existing plans or a previously fixed bug | Search [TODO.md](TODO.md) or [fixed-issue index](todo/fixed-archive.md), then open only matching entries |
+| Maintain instructions or memory | [Context maintenance](agent-guides/context-maintenance.md) |
 
-Shared plumbing is in [src/shared/](src/shared/): `pipeline.py` (train/eval loop), `models.py` (single-target `RidgeModel`/`ElasticNetModel`/`SeasonAverageBaseline`, multi-target wrappers `RidgeMultiTarget`/`ElasticNetMultiTarget`/`LightGBMMultiTarget`/`TabPFNMultiTarget` (the last is an **opt-in, default-off** 5th comparison variant — TabPFN-3 pretrained tabular transformer, pinned to the `tabpfn` 8.x default; non-commercial license so benchmark-only / never served; not enabled for any position, `tabpfn` not in requirements, see [docs/adr/0003-three-way-model-comparison-no-ensemble.md](docs/adr/0003-three-way-model-comparison-no-ensemble.md)), plus `TwoStageRidge` and gated-ordinal classifiers), `neural_net.py` (attention + gated NN heads), `aggregate_targets.py` (raw-stat → fantasy-point scoring), `training.py`, `evaluation.py`, `backtest.py`. The root-level `models/` dir is a separate placeholder for trained artifacts that load from S3 — different beast.
+Human overview: [README.md](README.md). Read the overview or setup sections when
+needed; they are not a mandatory startup reading bundle.
 
-The rest of `src/` groups by purpose:
-- `src/data/` — cross-position data loading + temporal split (per-position `data.py` files wrap these): `loader.py`, `nflcom_loader.py`, `preprocessing.py`, `redzone_pbp.py`, `split.py`.
-- `src/features/engineer.py` — cross-position feature engineering coordinator.
-- `src/shared/evaluation.py` — position-aware visualization/aggregation layer plus the `compute_metrics(y_true, y_pred)` helper used by backtest and pipeline.
-- `src/serving/` — Flask app + assets. The dashboard UI is React: **sources in `src/serving/frontend/` (edit these), committed esbuild bundle at `src/serving/static/js/app.js` (never edit; `cd src/serving/frontend && npm run build` regenerates — CI's `frontend-bundle` job fails a PR whose bundle is stale)**. See SETUP.md § "Frontend build" + ADR-0023.
-- `src/batch/` — training orchestration (AWS Batch path). New tuner/ablation files go in `src/tuning/`, **never** here — files under `src/batch/` trigger a full 6-position retrain via [src/scripts/scope_positions.py](src/scripts/scope_positions.py), except names containing `tune`/`ablate` and the exact basenames `launch.py` / `benchmark.py` (job submission / read-only aggregation). PR #280 burned ~4 GPU-jobs from a tuner-only change placed here.
-- `src/benchmarking/`, `src/tuning/` — Optuna + ablations.
-- `src/analysis/` — post-hoc analyses.
-- `src/scripts/` — operator CLIs.
-- `src/config.py` — global constants (`SEASONS`, `POSITIONS`, scoring dicts, `TOP_K_RANKING`). Distinct from per-position `src/{pos}/config.py`, which holds model hyperparams.
+## Invariants to preserve
 
-All six positions train an attention NN (DST landed via `cc0c627`, K via `801b61a`). There is no "skill-positions-only" carve-out anymore — if you're adding an NN-related knob, wire it through every position.
+- All six positions (`qb/rb/wr/te/k/dst`) predict raw NFL stats. Compute fantasy
+  points afterwards with `predictions_to_fantasy_points`; never train on totals.
+  Shared changes must account for all six positions and every relevant caller.
+- Production configuration is `POSITION_CONFIG`; `CONFIG_TINY` is a test fixture.
+  Feature whitelists are explicit. Updating a feature requires its configuration
+  allowlist and fixtures. Attention has a separate static/history allowlist:
+  static features are non-temporal; history tokens are raw per-game signals.
+  Do not add rolling/ewma/windowed aggregates to either as redundant history.
+- **Evaluation cohorts (ADR-0024):** compare sources on full regular-season fantasy actuals and identical player-weeks. `weekly_reference_top24` uses the versioned archived pregame reference; `elite_top24` retains prior-season importance. Actual weekly leaders are for ranking, and actual seasonal leaders are retrospective. Never use a model's own top-N pool for cross-source MAE comparison, restore the static expert summary as live accuracy, or silently omit missing cohort data from serialized Batch/local results.
+- Preserve training/inference feature parity, per-head non-negativity and coupled
+  loss scales/weights. Keep NN forward/loss/aggregation operations in `torch` so
+  gradients survive. See the model contracts before changing any of these.
+- Validate with the production loader, NaN handling, configuration and actual
+  pipeline. Identical Ridge MAE is a diagnostic clue, not proof of identical
+  data; verify inputs/configuration directly. Check activation preconditions and
+  positive controls before claiming an effect. GPU-only paths need GPU evidence.
+- Use existing parallelized harnesses before any compute-bearing run; start with
+  a targeted unit subset or one real smoke cell. A/Bs must isolate outputs and
+  compare the same regime. Production training stays eager; stacked tuning is
+  not seed-by-seed comparable with eager training. Read platform rules first.
+- Platform behavior autodetects through existing primitives and supports explicit
+  overrides. CUDA defaults to FP32+TF32 where supported; FP16/BF16 and Mac MPS are
+  opt-in. Native Windows requires `OPENBLAS_NUM_THREADS=1`. Do not infer a dtype
+  default or speedup from hardware support alone.
+- Heavy feature building/inference belongs in CI-built artifacts, not the serving
+  container. Edit dashboard sources in `src/serving/frontend/`, then rebuild the
+  committed bundle with `npm run build`; never edit `static/js/app.js` directly.
+- Do not commit datasets, model weights or large media. Tuning/ablation code goes
+  in `src/tuning/`; diagnostics in `src/analysis/`. Shared/training paths can
+  trigger six-position retraining: check `src/scripts/scope_positions.py`.
 
-**Adding a new position**: copy an existing `src/` folder, rename files/constants, add it to the `Position` StrEnum in [src/shared/position.py](src/shared/position.py) — the canonical list [src/shared/registry.py](src/shared/registry.py) exposes via `Position.values()` and `src/batch/train.py` dispatches off (no per-position dict in `train.py` anymore) — and the position list in `.github/workflows/_detect-positions.yml` (shared by `train-batch.yml` (active) and `train-ec2.yml` (rollback)). Also update [src/scripts/scope_positions.py](src/scripts/scope_positions.py) — the canonical path → positions mapping (contract-tested by [tests/scripts/test_scope_positions.py](tests/scripts/test_scope_positions.py)) used by both workflows' `detect` job. Add tests under `tests/{pos}/`.
+## Delivery and evidence
 
-## Platform & hardware targets (autodetect, then optimize per-arch)
+- Follow the full delivery workflow: feature branch → appropriate local checks →
+  pre-PR scope judge → PR → current green CI/review → merge when authorized.
+  Preserve explicit approval gates, including `solve-issues` owner sign-off.
+  Never use `--no-verify`, `--admin`, or a silent gate bypass. The documented
+  silent-stop CI exception requires local validation; see delivery guidance.
+- NN/feature/loss/target changes require an actual affected-position pipeline
+  comparison before merging. Unit tests and green CI do not establish metric
+  neutrality. Use relevant subgroup metrics and multi-seed evidence.
+- Run a gate separately from dependent mutations. Verify checkout before rebase,
+  resolve all conflict markers, and verify MERGED state and latest squash content
+  before remote branch deletion. In worktrees use `gh pr merge --squash` without
+  `--delete-branch`; the parent may hold `main`.
+- Keep durable decisions in the relevant ADR and its changelog; record non-trivial
+  fixes once in the fixed-issue archive. Update existing guidance where the lesson
+  belongs, linking to evidence. Trivial edits need neither a new ADR nor incident.
+  A docs-only CI opt-out is permitted only for wholly non-behavioral changes;
+  rendered response strings and changes to the opt-out machinery do not qualify.
+- Keep output bounded: enumerate/size before reading, save large logs/payloads to
+  temporary files, preserve the command's exit status, and return selected fields.
+  Never dump session JSONL, minified bundles or full endpoint payloads into chat.
+  Re-read truncated/garbled results in a smaller query before relying on them.
 
-Trained / tuned / benchmarked / tested across six environments. **Any platform-specific optimization must autodetect and branch with awareness of all of them — never hardcode for the box you're on.** Reuse the primitives below instead of ad-hoc `platform.system()` / `torch.cuda.is_available()` sniffing, and keep the "autodetect by default, env-var override" shape (`FF_DEVICE` / `LGBM_N_JOBS`) so CI/reproducibility runs can pin behaviour.
-
-| Platform | OS | Device | GPU arch / sm | AMP dtype | torch wheel | CPU | Key gotcha |
-|---|---|---|---|---|---|---|---|
-| Apple Silicon MacBook | macOS (arm64) | CPU default · **MPS opt-in** | — | FP32 (no AMP) | `cpu` | M-series | MPS unproven for this small model; `FF_DEVICE=mps` to benchmark; CPU = CI-identical |
-| PC (RTX 5080) | Windows 11 | CUDA | Blackwell **sm_120** | FP32+TF32 def · FP16/BF16 opt-in | **cu130** | 9950X3D 16C/32T | `OPENBLAS_NUM_THREADS=1` **REQUIRED** (crash, not perf); `LGBM_N_JOBS=16` |
-| PC (RTX 5080) | WSL2 (Linux) | CUDA | Blackwell **sm_120** | FP32+TF32 def · FP16/BF16 opt-in | **cu130** | 9950X3D | no OPENBLAS crash; still cap BLAS for throughput; `scripts/wsl-env.sh` |
-| AWS g4dn.xlarge | Linux | CUDA | Turing **sm_75** (T4) | FP32 (FP16 opt-in; no TF32/BF16 on sm_75) | cu130 | 4 vCPU | **Retired** EC2 rollback (→ g6/L4, 2026-06-22); sm_75 code gates kept defensive (cu130 still ships sm_75 kernels) |
-| AWS g6.xlarge | Linux | CUDA | Ada **sm_89** (L4) | FP32+TF32 def · FP16/BF16 opt-in | cu130 | 4 vCPU | Batch primary Spot CE **and** the EC2 rollback host (g4dn/T4 retired 2026-06-22); BF16 measured-worse (#640) |
-| AWS g5.xlarge | Linux | CUDA | Ampere **sm_86** (A10G) | FP32+TF32 def · FP16/BF16 opt-in | cu130 | 4 vCPU | Second instance type in the **diversified** Batch GPU Spot CE (pooled with g6 via `SPOT_PRICE_CAPACITY_OPTIMIZED`); same job/container shape as g6 |
-
-**Reuse these primitives — don't reinvent detection:**
-- **`detect_platform()`** ([src/shared/platform_detect.py](src/shared/platform_detect.py)) — canonical capability report (`backend` cuda/mps/cpu, `gpu_name`, `compute_capability`, `sm`, `supports_bf16`, `os`, `is_wsl`, `cpu_count`, `recommended_cuda_wheel`). Reporting-only; branch new per-arch logic off this.
-- **`requested_device()` / `cuda_enabled()` / `mps_enabled()`** ([src/shared/utils.py](src/shared/utils.py)) — device resolver: `FF_DEVICE` (`auto`/`cpu`/`cuda`/`mps`, set by `run_pipeline --device`) over detection, consumed by `_nn_device()` ([src/shared/pipeline.py](src/shared/pipeline.py)). `auto` is CUDA-or-CPU and **never** MPS, so the default path stays byte-identical to CI.
-- **`_gpu_resident_device()` + `_autocast()`** ([src/shared/training.py](src/shared/training.py)) — GPU-resident batcher and AMP are **CUDA-only by design**; off-CUDA (MPS/CPU) falls through to DataLoader + FP32.
-- **`amp_dtype()` / `requested_amp_dtype()`** (`FF_AMP_DTYPE`, [src/shared/utils.py](src/shared/utils.py)) — FP32+TF32 (AMP off) default on every CUDA GPU; `None` off-CUDA. `FF_AMP_DTYPE=fp16` opts into FP16+GradScaler; `bf16` opts into BF16 **sm_80+ only** (degrades to FP16 on the T4); `fp32` is the explicit AMP-off (== the new default) (#640, flipped 2026-06-22).
-- **`_maybe_compile()` (`FF_COMPILE`) + TF32** ([src/shared/pipeline.py](src/shared/pipeline.py)) — `torch.compile` is opt-in, sm_80+-gated (off by default after the T4 +32% regression, D12); TF32 for FP32 matmuls auto-enables on sm_80+. Both speed-only per-arch knobs (#641).
-- **`cuda_graph_enabled()` (`FF_CUDA_GRAPH`) + `_maybe_graph_model()`** ([src/shared/utils.py](src/shared/utils.py), [src/shared/training.py](src/shared/training.py)) — **autodetect-ON CUDA-graph capture of the NN's fwd+bwd for sm_80+** (g6/L4, g5/A10G, 5080) via `make_graphed_callables`; `FF_CUDA_GRAPH` is now a **force-off override** (`=0`/`false`/`off`), *not* the trigger (reversed from opt-in 2026-06-05, PR #874 follow-up). **~1.5-1.8× on the launch-bound GPU branch; per-step bitwise-exact and numerically inert on the FP32+TF32 default** (no GradScaler → graph-on/off differ only by the dropout-RNG warmup, seed-noise, Δ=0 with dropout zeroed — no rebaseline needed). It is NOT inert **only on the opt-in FP16 path** (`FF_AMP_DTYPE=fp16`), where FP16+GradScaler amplifies the multi-step trajectory ~0.5% worst-target — the owner-approved per-arch metric-path divergence that rebaselines graphed-vs-graphed (CPU/MPS and the T4 stay eager; K's nested trainer no-ops capture). `FF_CUDA_GRAPH=0` for a bit-comparable eager A/B. Root-cause + the LN/FP32/det-stop dead-ends in [todo/gpu_launch_bound_levers.md](todo/gpu_launch_bound_levers.md) (Lever A); kept investigation knobs `FF_NN_NORM` (BN→LN, overlaps `src/tuning/ablate_backbone_norm.py`), `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`.
-- **CPU/thread knobs:** `_lgbm_n_jobs()` (`LGBM_N_JOBS`, [src/shared/models.py](src/shared/models.py)), `_default_n_jobs()` ([src/tuning/tune_lgbm.py](src/tuning/tune_lgbm.py)). Per-platform CPU/BLAS setup is in [SETUP.md](SETUP.md) + [scripts/wsl-env.sh](scripts/wsl-env.sh) — cross-reference, don't duplicate.
-- **Install:** per-platform torch wheels exist — [requirements-dev.txt](requirements-dev.txt) (cpu), [requirements-gpu.txt](requirements-gpu.txt) (cu130 / Blackwell sm_120), [src/batch/Dockerfile.train](src/batch/Dockerfile.train) (cu130 / L4·A10G — covers sm_75→sm_120). Extend these; no ad-hoc pins.
-
-**Platform stop-rules (decided — don't relitigate without new evidence):**
-- **The training metric path is deliberately NOT per-arch.** `amp_dtype()` is **AMP-off FP32+TF32 on *every* CUDA GPU** and pure FP32 off-CUDA — the FP32 family everywhere (CPU/CI and the T4 run pure FP32; sm_80+ adds numerically-neutral TF32 matmul acceleration), so CPU/CI and cross-GPU benchmarks stay comparable. This is the 2026-06-22 flip from the old FP16-autocast default: a measured-neutral A/B (QB/RB/WR/K/DST, n=8, graphs-off) showed FP32+TF32 matches FP16 on accuracy while FP16 autocast's per-op cast kernels cost more wall-time than TF32 saves on this launch-bound model. **FP16 is now opt-in** (`FF_AMP_DTYPE=fp16`, the prior default). BF16 is **also opt-in only** (`FF_AMP_DTYPE=bf16`, sm_80+) for two measured reasons: it hung the T4 (sm_75 has no BF16 Tensor Cores, #293 → #301) **and** a deterministic 5080 A/B showed it *regresses* high-magnitude heads (QB `passing_yards` +2.2–3.1%, #640). The **T4/g4dn is retired** as the EC2 rollback (→ g6/L4, 2026-06-22); its sm_75 gates remain defensive (FP16-only, no BF16/TF32, eager) and cu130 still ships sm_75 kernels. "Optimize per-arch" applies to speed knobs that don't change numerics — threads, DataLoader, GPU-resident batcher, wheels, TF32, opt-in `torch.compile` (#641) — **not** silently to the metric path. The **one deliberate metric-path exception is `FF_CUDA_GRAPH` on the opt-in FP16 path** (`FF_AMP_DTYPE=fp16`): autodetect-ON sm_80+, it rebaselines graphed-vs-graphed under FP16, but under the FP32+TF32 default it is per-step bit-exact / effectively inert (graph-on/off = dropout-RNG seed-noise only), so the default path stays comparable (ADR-0017). Re-proposing a per-arch *training-dtype default* needs a benchmark-comparability argument, not "the GPU supports it."
-- **MPS is opt-in, never the Mac default.** `detect_platform()` reports it and `FF_DEVICE=mps` runs it, but `auto` stays CUDA-or-CPU: no proven speedup for this small model, breaks CPU/CI byte-identity, risks silent op-fallback. Flip only after a Mac A/B (default vs `FF_DEVICE=mps`) justifies it.
-- **Windows `OPENBLAS_NUM_THREADS=1` is correctness, not perf** — without it the Ridge-PCA alpha CV segfaults (`0xC0000005`). Never drop it on **native** Windows; WSL2 / Linux / macOS need it only for throughput (`detect_platform().is_wsl` distinguishes them).
-- **Editing `src/shared/` fires a 6-position retrain** (path-based `detect` job). A numerically-inert refactor still triggers it — confirm the no-op via the Ridge-identity tell (identical deterministic Ridge MAE ⟺ identical data/code path), or mark the commit training-skipped.
-
-## Conventions that bite if ignored
-
-### Raw-stat targets, never fantasy-point targets
-Every position predicts raw NFL stats (yards, TDs, receptions, etc.). Fantasy points are computed *after* prediction via `src.shared.aggregate_targets.predictions_to_fantasy_points(pos, preds)`. Training directly on `fantasy_points` breaks scoring-format flexibility and regresses the ~1.9 pt/game double-count fix in [todo/fixed-archive.md](todo/fixed-archive.md).
-
-### Feature whitelist is explicit, not inferred
-`POSITION_CONFIG.include_features` in QB/RB/WR/TE (a kwarg on `PositionConfig`, backed by a module-level `_INCLUDE_FEATURES` dict) is an opt-in list. K/DST use the same explicit-whitelist rule via `_SPECIFIC_FEATURES`/`_CONTEXTUAL_FEATURES`/`_ALL_FEATURES`. New columns must be added explicitly — training code won't pick them up (prevents silent leakage). When you add a feature, update the feature-engineering file *and* the relevant config whitelist, then the test fixture (`tests/conftest.py` or `tests/{pos}/conftest.py`).
-
-### `CONFIG_TINY` is the test fixture, not production
-Each `src/{pos}/config.py` exports **two** config shapes that look identical at a glance and have opposite values for the same toggle:
-
-- `CONFIG_TINY = {...}` — a small dict literal near the module top with shrunken `nn_epochs`, no LightGBM, attention often disabled. Used by `tests/{pos}/` for fast unit runs. Dict-literal syntax (`"train_lightgbm": False`).
-- `POSITION_CONFIG = PositionConfig(...)` — the production config object consumed by AWS Batch via `build_pipeline_config(pos, POSITION_CONFIG)` in `run_pipeline.py`. Kwarg syntax (`train_lightgbm=True`).
-
-`grep "train_lightgbm" src/k/config.py` returns **both** entries with opposite booleans. When checking what production actually runs, always read `POSITION_CONFIG` (kwarg form, lower in the file) — never the dict-literal form.
-
-### Attention static-feature whitelist is separate per position
-The attention NN's static branch reads a *second*, smaller allowlist: `POSITION_CONFIG.attn_static_features` (commit `2500ecc`), a kwarg on `PositionConfig`, defined per position (QB/RB/WR/TE derive it from an `ATTN_STATIC_CATEGORIES` subset of `_INCLUDE_FEATURES`; DST/K enumerate it directly). The static branch is **deliberately non-temporal**.
-
-**Never add rolling / ewma / trend / L3 / L5 / L8 (or any windowed) features to `ATTN_STATIC_FEATURES`.** Temporal signal already feeds the NN through `ATTN_HISTORY_STATS` via the per-game attention sequence; mixing windowed features into the static branch re-creates the double-counting this design prevents. If the attention NN loses to ridge/LightGBM on a target, don't "promote the rolling stats LGBM uses" — the architectures differ, not the input availability (LGBM splits rolling stats as flat columns; the NN consumes the *same signal* as a 17-game sequence). Eligible reaches for that gap:
-
-1. Add **non-temporal** features to `ATTN_STATIC_FEATURES` — prior-season aggregates, matchup, contextual, weather/Vegas, role/depth, season-to-date rates, interactions.
-2. Add new **per-game** stats to `ATTN_HISTORY_STATS` — red-zone splits, share-style measures, game-script not already in the sequence. The mirror of the static-branch rule applies here: the token must be a **raw per-game signal genuinely absent from the sequence**, *not* a windowed/expanding-mean-derived aggregate. Routing a role/inheritance signal (an expanding-mean of `snap_pct_raw`) through `ATTN_HISTORY_STATS` is doubly wrong — it averages an already-averaged quantity, *and* the event it encodes (a spot-start) is already in the existing per-game usage tokens (`snap_pct_raw`, `game_carry_share`, carries, production), so the branch gains nothing and the redundant token slightly hurts (tested-rejected, RB 3-seed, [src/tuning/ab_history_token.py](src/tuning/ab_history_token.py): −0.32 FP / ~3σ on the ascension cohort vs the static-only arm). The *current-week* value of such a signal is a legitimate **static** feature (reach #1) — it describes the upcoming game's vacancy, which is in no past-game sequence.
-3. Retune the loss head — the per-head δ error scale + matching `LOSS_WEIGHTS = 1 / δ` (next section).
-4. Change a head's parametric form — gated/two-stage for sparse counts (but `hurdle_poisson` was tried and reverted for RB sparse counts, PR #219).
-5. NN architecture — `d_model`, `n_heads`, dropout. Larger regressed on 15K-sample positions; verify against benchmark first.
-
-Adding a feature to `INCLUDE_FEATURES` does **not** feed it into attention — also add it to `ATTN_STATIC_FEATURES` (non-temporal) or `ATTN_HISTORY_STATS` (per-game).
-
-### Loss weights are tuned inverse-to-Huber-delta
-`LOSS_WEIGHTS` ≈ `1 / HUBER_DELTAS[target]` for every MSE yards head (rationale in QB's config comment, [src/qb/config.py](src/qb/config.py)): PR #870 switched every position's yards heads from Huber to MSE (to stop discounting the elite upper tail) and re-derived each weight to 1/δ — gradient-matched at the characteristic error e≈δ to the old 2.0/δ Huber rebalance, which mattered (without it FP MAE regressed 6.33 → 6.63 and fumbles_lost R² went negative). `huber_deltas` is retained only as the characteristic error scale the weights derive from; MSE heads ignore it at loss time. Count heads (TDs/INTs/fumbles) use Poisson NLL with weight 1.0, so they use no delta. Retuning a delta means re-deriving its loss weight — don't change one without the other.
-
-### `non_negative_targets` is per-head, not global
-The NN clamps outputs to ≥ 0 per head. **All six positions set `nn_non_negative_targets=set(_TARGETS)` explicitly** in their `POSITION_CONFIG`; the `PositionConfig` field default is `field(default_factory=set)` (empty, no clamp), so a position that forgets it would silently disable non-negativity. The `MultiHeadNet`-level default of `None` (clamps every head) is the *fallback*; production never hits it. If a position adds a signed head, pass a set that *excludes* it rather than flipping behaviour globally. If you construct `MultiHeadNet(...)` outside the `build_multihead_net*` factories in `src/shared/neural_net.py`, mirror the `non_negative_targets=cfg.get("nn_non_negative_targets")` kwarg — the CV path was missed once (see [todo/fixed-archive.md](todo/fixed-archive.md)).
-
-### Always diff training vs inference paths
-
-**Evaluation cohorts (ADR-0024):** compare sources on full regular-season fantasy actuals and identical player-weeks. `weekly_reference_top24` uses the versioned archived pregame reference; `elite_top24` retains prior-season importance. Actual weekly leaders are for ranking, and actual seasonal leaders are retrospective. Never use a model's own top-N pool for cross-source MAE comparison, restore the static expert summary as live accuracy, or silently omit missing cohort data from serialized Batch/local results.
-The training pipeline in `src/shared/pipeline.py` and the serving code in `src/serving/app.py` both build features. They have drifted silently in the past (weather/Vegas merge in training but not serving; scaler clip in one path but not the other). If you touch feature building in either, check the other.
-
-### Merge-key-correct ≠ source-semantics-correct
-A feature merged on the current `(player_id, season, week)` with no `.shift()` can still be stale: the upstream *source* may label a snapshot by the wrong week. Grepping `.shift()`/`.diff()` proves the *code* doesn't lag — it says nothing about the source. The legacy (≤2024) nflverse depth chart labeled "week W" actually reflected week W-1's lineup; `_fetch_depth` applies `week -= 1` (REG-only) to realign it (#595). For any "known-before-kickoff" feature (depth chart, weather, lines, injuries), audit alignment against an independent ground truth (does the chart's rank-1 QB match who *actually* started week W?), restricted to transition rows where stale-by-1 separates from current — don't trust the merge key. Reusable diagnostic: [src/analysis/audit_depth_alignment.py](src/analysis/audit_depth_alignment.py).
-
-### Use `torch` ops inside NN training paths, not `numpy`
-Anything that runs inside the forward pass, loss, or an `aggregate_fn` callback must stay in `torch` to preserve gradients. `np.digitize`/`np.clip`/`np.where` on tensors silently breaks autograd — call `torch.bucketize`/`torch.clamp`/`torch.where` instead. Note that `torch.bucketize(..., right=False)` and `np.digitize(..., right=False)` use opposite edge-inclusion conventions; verify boundaries when porting.
-
-### Don't commit data or large binaries
-Datasets (`*.parquet`, `*.csv`), model weights, and demo media (`.mov`/`.mp4`) never live in git. Training data loads via `nflreadpy` (through the `src/data/nfl_source.py` shim) at workflow runtime. For new CI data dependencies, fetch in the workflow step — do not stash a file in the repo to "make CI green."
-
-### Stop rules — things that have been tried and reverted
-These have all been attempted, shipped, and reverted. Re-proposing them costs a round-trip; don't.
-
-- **Shared-venv CI optimization** — reverted in #110 / #111 (2026-04-23). Artifact download (~25s/shard) is slower than the warm `uv` install (~10s). Wall-clock is the metric, not compute.
-- **Module-level pre-warm under gunicorn `--preload`** — reverted in #148 / #149 (2026-04-27). The bind happens *after* preload import; a slow pre-warm causes ALB TCP-refused → unhealthy. Use a `post_fork` hook or a background thread instead.
-- **Building the upcoming-week artifact inside the serving container** — shipped in #1069, reverted to a CI build in #1076 (2026-06-08). A 2-worker serving task OOMs (worker SIGKILL) running `load_raw_data` + `build_features` + inference and attempts a runtime PBP download (which SSL-failed in-container); raising the task to 4 vCPU/8 GB did **not** fix it — it's an architectural mismatch, not sizing. Build the artifact in a scheduled CI job ([.github/workflows/refresh-upcoming-week.yml](.github/workflows/refresh-upcoming-week.yml)) and have serving only **download** it from S3 (`sync_artifact_from_s3`). General rule: heavy `load_raw_data`/`build_features`/inference work doesn't belong in the serving container — build artifacts in CI, serve them. See [docs/adr/0018-live-upcoming-week-predictions-espn.md](docs/adr/0018-live-upcoming-week-predictions-espn.md).
-- **Training models directly on `fantasy_points`** — see "Raw-stat targets" above; regresses the ~1.9 pt/game double-count fix in [todo/fixed-archive.md](todo/fixed-archive.md).
-- **Promoting rolling / L3 / L5 / L8 / ewma / trend features into `ATTN_STATIC_FEATURES`** — see "Attention static-feature whitelist" above; the static branch is deliberately non-temporal. Not a way to "close the gap to LightGBM" — the gap is architecture, not input availability.
-- **Enabling the default-OFF attention-architecture extensions (#109–121)** — benchmarked 2026-06-19/20 (RB stacked N=24 `ab_attn_arch-…b5b46ea` + `condq-screen-stacked-80494dd`; eager RB/QB/K/DST via [src/tuning/launch_ablate.py](src/tuning/launch_ablate.py)). **Six stay default-OFF — don't re-propose without a tracked subgroup metric:** `attn_learn_temperature` / `attn_history_dropout` / `attn_use_swiglu_encoder` / `attn_entropy_coeff` / `attn_use_alibi_bias`(+`alibi_only`) / `attn_self_layers` (`selfattn`, which actively regresses + destabilizes — RB Δ +0.116, QB +0.076, 14/16 worse, an RB seed +19%, the "larger regressed on 15K-sample positions" stop-rule). **The ONE exception is `attn_condition_queries_on_static` (`condq`), now ENABLED for RB + WR + TE** (PR #1198): MAE-flat but it trims the boom/bust tail (RB RMSE −0.051±0.028, 24/24; TE tail gain at a small median cost). It is **per-position, not a blanket win** — RB/TE earned it on the screen; **WR is an owner forward-bet** (WR regresses on the screen, but that's a *matchup-feature data gap* — WR boom/bust is CB-level/coverage, absent from our features — not a broken mechanism; re-screen when those features land, [#1210](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/issues/1210)). **Eager caveat (retrain `ac3686f`):** the production retrain did NOT reproduce the screen wins — RB/TE flat, WR +0.046 RMSE regress on the real FP16 path; condq is kept as an owner forward-bet for #1210, **not a measured production win** (stacked-FP32 screen ≠ eager-FP16 prod; the eager `benchmark_history` is authoritative). Note that prod is FP32 since the 2026-06-22 flip, so the `ac3686f` eager-FP16 reading no longer matches the production dtype — a re-screen would land in the FP32 regime. **QB/K/DST stay OFF** (QB overfit + destabilize; K/DST noise) — don't enable them without a tracked metric. **Two condq gotchas:** (a) judge it on **RMSE, not MAE** (it's a tail effect — MAE-only screening called it dead); (b) condq adds a `cond_proj` layer, so forward it on BOTH the cfg path AND the `registry._{flat,nested}_attn_kwargs_static` served-kwargs path (contract-tested) or serving NaN's on the shape mismatch. The attn-NN↔LightGBM gap is architecture, not these knobs. Tables: [todo/fixed-archive.md](todo/fixed-archive.md) / ADR-0004.
-- **Routing a role / inheritance / "spot-start" signal through `ATTN_HISTORY_STATS`** — tested-rejected (RB 3-seed, [src/tuning/ab_history_token.py](src/tuning/ab_history_token.py), 2026-06-07). The history branch already encodes a past spot-start via the existing per-game usage tokens (`snap_pct_raw`, `game_carry_share`, carries, production); a derived inheritance token (an expanding-mean of `snap_pct_raw`) is *averaging an average* and re-encodes signal already there → −0.32 FP / ~3σ worse on the ascension cohort than the static-only arm, MAE flat. The *current-week* value belongs in the **static** path (`INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES`), where it's genuinely new (the upcoming game's vacancy is in no past sequence). See "Attention static-feature whitelist" reach #2.
-- **Adding loss-config knobs (`HUBER_DELTAS`, `LOSS_WEIGHTS`, `head_losses`, `gated_targets`) to [src/tuning/tune_nn.py](src/tuning/tune_nn.py)'s search space** — see "Loss weights" above. `LOSS_WEIGHTS ≈ 1/HUBER_DELTAS` (2.0/δ in the pre-#870 Huber era) is a coupling, not two independent axes; sampling them independently produces inconsistent pairs and blows up dimensionality past what ~30 trials resolve. Hand-tune via the [src/tuning/ablate_rb_gate.py](src/tuning/ablate_rb_gate.py) pattern (hardcoded variants, decision table).
-- **Rookie draft-capital / NFL-combine features** — investigated, implemented, reverted 2026-05-29 (see [todo/fixed-archive.md](todo/fixed-archive.md) `[TESTED, REJECTED] Draft-capital / combine rookie cold-start features`). Combine testing carries no marginal signal beyond draft position; draft capital (`log(pick)`) *does* have real rookie signal but is **benchmark-flat** — the gain concentrates in LightGBM (best model only for RB) and rookies are ~14% of rows, so it's invisible in overall MAE. Don't re-propose without a tracked rookie-subgroup metric, or scope to RB / LightGBM-only.
-- **Per-arch training-dtype default (BF16, etc.)** — see "Platform & hardware targets" above; FP32+TF32 default on all CUDA, FP16/BF16 opt-in (BF16 hung the T4 #293→#301 + regressed high-magnitude heads #640; FP16 was the default until the 2026-06-22 flip). "The GPU supports it" isn't sufficient — bring a benchmark-comparability argument.
-- **Stacked-vs-eager same-seed comparability (vmap seed-ensembles)** — settled in two owner decisions, 2026-06-11. A stacked run of seed s is NOT bit-comparable to an eager run of seed s and never will be (sub-ULP vmapped-vs-eager kernel diffs × Adam's sign-like step-1 `g/√v̂` deterministically fork trajectories — all 8 members 0.3–0.8 FP RMS by 30 GPU epochs; forks follow the seed, not the slot, and the machinery itself is proven bitwise-correct). First rejected outright on that determinism ground, then **reversed for the comparative pipelines** after the throughput numbers (4.4–4.6×/host-thread on L4), and finally (2026-06-15) **made the GPU default at N=24** for NN tuning and the `ab_harness` A/B path (which every `ab_*.py` spec — and any `ab_harness`-based ablation — inherits on **local** CUDA runs; the Batch fleet path via `launch_ab` defaults eager — pass `--stacked-seeds` explicitly) — the measured per-seed optimum (~1.0 s/seed; above the eager-FP16+full-graph crossover at N≈9, so default-24 beats eager per seed). The **legacy `ablate_*` scripts on `ablation_runner` stay eager**, except the two stackable NN ones, now **ported to `ab_harness` specs** that inherit this default (owner call, 2026-06-15): `attn_arch` → [src/tuning/ab_attn_arch.py](src/tuning/ab_attn_arch.py) (drops the `entropy` arm — `attn_entropy_coeff` is a vmap side-channel reject) and `scheduler_type` → [src/tuning/ab_scheduler_type.py](src/tuning/ab_scheduler_type.py) (drops `plateau` — `train_stacked` rejects `ReduceLROnPlateau`). `rb_gate` (its per-target head-MAE + gate-AUC decision rule isn't reachable through the stacked harness, which only surfaces `pred_attn_nn_total`; D/E are the reverted `hurdle_poisson`) and `batch_lr` (a throughput ablation the FP32/vmap/fixed-epochs regime structurally can't measure) were **evaluated and deliberately left eager**; `backbone_norm` (forces LN), `ridge_pca` (not an NN ablation), and `min_games`/`injury_features` (data ablations) stay eager too — so don't "finish" ablation stacking without re-confirming. The default is **GPU-gated and width-coupled**: `cuda_enabled()` → stack at `DEFAULT_STACKED_SEEDS`=24 ([src/tuning/ab_ensemble_seeds.py](src/tuning/ab_ensemble_seeds.py) `resolve_default_stacked_seeds`); CPU/MPS → eager at the lean 3-seed default (the FP32 stack is *slower* there, so a default-on stack would regress local/CI). K/DST always fall back to eager (can't vmap). Override: `--stacked-seeds 0` / `--no-stacked-seeds` / `FF_TUNE_STACKED_SEEDS=0`. Stacked results live in flag-/namespace-separated artifacts (`_ens{N}x{E}` studies) that **coexist** with eager-regime history — never seed-by-seed-comparable to it. **Production training stays eager** — never propose stacking there, never compare a stacked arm against an eager arm seed-by-seed (rebaseline instead), and don't narrow the default below ~9 (eager wins there). History + measurements: [todo/gpu_launch_bound_levers.md](todo/gpu_launch_bound_levers.md) Lever C.
-- **In-process base-NN ∥ attention-NN overlap (Lever B′, `FF_NN_OVERLAP`)** — measured-rejected 2026-06-22 (RB/5080, draft PR #1332). Overlapping the two GPU-branch trainers on two CUDA streams **inside one process** is mutually exclusive with the shipped CUDA-graph path: concurrent capture crashes (`cudaErrorStreamCaptureUnsupported`). Even graphs-OFF where it runs (1.58× on the GPU branch — the mechanism is real, not GIL-bound), it's strictly dominated — graphs-ON *sequential* (7.5s) beats graphs-OFF *overlap* (50.4s) ~6.7× because graphs and overlap reclaim the **same** host-dispatch idle and graphs win — plus the in-process threads share the global RNG (non-deterministic). Don't re-propose the in-process flag. The **process-based** B′ (separate CUDA contexts dodge the capture conflict; per-child RNG dodges non-determinism) + its **AWS-MPS** cousin are a different, still-untested track gated on MPS (unavailable on WSL2/Windows) — see [todo/gpu_launch_bound_levers.md](todo/gpu_launch_bound_levers.md) Lever B′.
-- **Epoch-boundary host-work levers (val-tail padding / host-sync batching / per-epoch `randperm`)** — gate-evaluated → **CLOSED 2026-06-22** (no code). The gate was "only pursue if profiled material"; it isn't. `attn_nn_train` is **1.5–5.7 s/position** (L4/A10G, run `1e67be7`) and **off the orchestration-bound critical path**, and epoch-boundary host work is **~<3–5 %** of it (A2/A3/D2 + the GPU-resident batcher #309 already collapsed the per-step launch storm — confirmed by Lever B's 1.03×), so even 100 % removal saves <0.3 s/position. The only non-trivial levers — padding the ragged val tail (`_GraphedValPass.tail_batches`, `training.py:672`) and batching/deferring the val-MAE H2D (`training.py:1711-1712`) — feed `val_mae_weighted` → early-stopping/model-selection (`training.py:1746-1754`), so changing them **shifts which epoch is selected as best** (a metric change, not a free speedup); the safe lever (per-epoch `randperm` H2D, 160 KB) is negligible. K/DST graphing stays structurally blocked (`make_graphed_callables` positional/all-tensor contract vs the nested trainer's kwarg `x_game_history=`+`None`-leaf, `training.py:2079-2124`). Don't re-propose without a profile showing epoch-boundary overhead is materially large — see [todo/gpu_launch_bound_levers.md](todo/gpu_launch_bound_levers.md) "Epoch-boundary host work".
-
-## Running code
-
-**Parallel-first rule: before ANY compute-bearing run — tests, trains, tunes, benchmarks, A/Bs, seed sweeps, smokes — search the repo for the existing most-parallelized/optimized entrypoint; never hand-roll a sequential loop or bespoke one-off script.** The paths below all autodetect platform parallelism (`detect_platform()` / `resolve_jobs` / xdist): the benchmark's multi-position fan-out, `ab_harness`/`ablation_runner`'s position×variant×seed grid, `tune_nn`'s stacked-seed N=24 CUDA default, `tune_lgbm`'s all-physical-cores default, the Batch Spot fleet (`launch_ab` / `launch_tune` / `ab-batch.yml`) for GPU-fleet fan-outs, and sharded xdist `pytest` (`scripts/pytest-fair.sh` for fair-share CPU alongside other workloads). Grep for an existing harness before writing a new runner (the `ab_harness`↔`ablation_runner` duplication → #1048 unification is the cautionary tale); a sequential one-off that pegs one core with the GPU idle is the documented failure mode (2026-06-08 role-inheritance A/B). Same rule for smokes: prefer `CONFIG_TINY`/unit-marker subsets and a 1-seed/1-position cell before any fan-out.
-
-Commands live in [SETUP.md](SETUP.md). Shortcuts:
-- `python -m src.benchmarking.benchmark [POS ...]` — benchmark & refresh artifacts (writes a `{run_id}.json` file under `benchmark_history/`); **autodetects parallel multi-position fan-out on a many-core CUDA box** (delegates to `parallel_train`), sequential elsewhere — `-j N` / `--sequential` override.
-- `python -m src.{pos}.run_pipeline` — single position, full local run.
-- **A/Bs / ablations:** the shared parallel harness ([src/tuning/ab_harness.py](src/tuning/ab_harness.py); copy the [src/tuning/ab_example.py](src/tuning/ab_example.py) template; design [todo/ab_harness_priority.md](todo/ab_harness_priority.md)) — parallel position×variant×seed grid gated on `detect_platform()`, artifact-isolated, mean±std. See the "A/Bs & ablations" operating lesson below. Don't hand-roll sequential one-off scripts. **GPU-fleet A/Bs** (no local GPU, or metric-path changes that want the production graphed FP32+TF32 path): `python -m src.tuning.launch_ab --spec <spec>` or the `ab-batch.yml` dispatch workflow — for an unmerged branch, dispatch `batch-image.yml` on that branch first (ADR-0020).
-- **NN hyperparameter tuning (Optuna):** `python -m src.tuning.tune_nn <POS ...>` tunes the attention NN (sizing + static backbone + scheduler); **stacked-seed by default on CUDA** (N=24, the "single-seed MAE is noise" fix). **`--scope history`** instead tunes the attention **game-history branch in isolation (v2)**: it searches ONLY `attn_max_seq_len` (sequence length) + a per-game token-bundle *subset* of `attn_history_stats` (bundle map + windowed-column stop-rule guard in [src/tuning/attn_history_space.py](src/tuning/attn_history_space.py)) and **freezes the entire production recipe** (attention sizing, lr, batch, scheduler, AND the static backbone) at `POSITION_CONFIG`. Why isolate: v1 co-tuned lr+sizing, lr dominated the objective and swamped the small (~2-3%) history effects (the LR confound, GH #1239) — holding the large nuisances constant is the only way to measure the small ones. Lands in the separate `history_v2` study namespace (v1 studies preserved in S3), QB/RB/WR/TE only. Batch fleet: `python -m src.tuning.launch_tune --scope history <POS ...>` — scope rides `FF_TUNE_SCOPE` through the fixed `--mode=tune` ENTRYPOINT (same channel as `FF_TUNE_STACKED_SEEDS`). Winner must be eager-rebaselined before shipping (stacked ≠ eager seed-by-seed).
-- `pytest -m unit` — fast subset, runs in seconds. `pytest` for the full suite (requires `data/splits/*.parquet`).
-- `ruff check . && ruff format --check .` — lint/format gate used by CI.
-
-## CI & training
-
-- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/serving/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding both the per-position dirs and the serving suite (`tests/test_app*.py`), which has its own `serving` shard). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](codecov.yml)). Diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`, `src/wr/benchmark_ridge_variants.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
-- `batch-image.yml` → `train-batch.yml` OR `train-ec2.yml` — image build triggers training; the `BATCH_ACTIVE` repo var (currently `true`, default since 2026-05-20) picks which fires. `true` → parallel Spot fan-out via `train-batch.yml` (six single-GPU Spot hosts from ONE diversified CE `ff-gpu-spot` listing `g6.xlarge`+`g5.xlarge` under `SPOT_PRICE_CAPACITY_OPTIMIZED`; a separate g5 fallback CE ordered behind g6 was reverted 2026-06-22 because a job-queue CE order only falls back on a misconfiguration, **never** on Spot capacity starvation — ADR-0013; one position per host; since 2026-06-11 `BATCH_SPLIT_ACTIVE=true` additionally splits each position into nn/cpu/merge jobs — NNs on the GPU queue, Ridge+LightGBM on the `ff-cpu-training-queue` c8a fleet, merge-only manifest promotion, validated Δ=0.0000 vs monolithic (ADR-0019); **measured 2026-05-21 ~10 min**, dominated by "Submit Batch jobs and wait", vs. the original ~25–30 min design estimate — the post-train "Refresh ECS service" rollover (the `ecs_rollout` job) runs as a **separate job off that critical path**: removed in PR #330 on the in-flight-poller theory, then **re-added** after the 2026-06-15 attn-NN staleness incident, since the poller hot-swaps a weight-only retrain but an **architecture-changing** retrain needs a clean boot-time reload or serving `load_state_dict`'s the old shape and silently NaN's that position for days (TODO.md fixed-archive); see [docs/batch_design.md](docs/batch_design.md), D13). `false` (rollback) → warm-EC2 via `train-ec2.yml` (~120 min sequential; [docs/ec2_design.md](docs/ec2_design.md), D7/D9). `workflow_dispatch` bypasses the gate (break-glass). Both paths share the `detect` job (diff the merge commit, retrain only changed positions); the path → positions mapping is centralized in [src/scripts/scope_positions.py](src/scripts/scope_positions.py), contract-tested by [tests/scripts/test_scope_positions.py](tests/scripts/test_scope_positions.py) — touch both when changing the global-trigger list. AWS quotas (raised 2026-06-11): G+VT OD = 24 vCPU (was 4; EC2 rollback path needs only one g6); Spot G+VT = 64 vCPU (was 24; one six-position fan-out uses 24, so two concurrent fan-outs or a tune fleet now fit — CEs raised to `maxvCpus=64` to match).
-- `deploy.yml` — ECS Flask deploy.
-
-AWS-side operational facts (GPU quota, training path, CI anomaly, etc.) are in **Operating lessons** below.
-
-## Worktree workflow
-
-This repo is regularly worked from agent worktrees (`.claude/worktrees/<name>` or `~/.codex/worktrees/<id>/<repo-basename>` — the Codex launcher derives the basename from the main checkout's, here `Fantasy_Football_ML_AWS`) where the parent holds `main`. Quirks for any agent:
-
-- **Codex startup should go through `scripts/codex-fresh-worktree.sh`.** A Codex `SessionStart` hook can warn but can't move the active cwd. The launcher reuses a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/<repo-basename>` (basename derived from the main checkout's), else creates a fresh `codex/session-<id>` worktree from `origin/main`, links ignored `data/raw`+`data/splits` from the main checkout, and starts Codex with `--cd` there.
-- **Edit files in the worktree, not the parent checkout.** Plan files and search tools often report repo-relative or *parent*-absolute paths (`/…/Fantasy_Football_ML_AWS/src/foo.py`); writing those verbatim silently edits the parent (`main`'s checkout), not this branch — `git status` stays clean and a benchmark re-run uses the *unchanged* code (MAE Δ=0.0000 is the late smell). Re-prefix to the active worktree path (Claude: `/…/.claude/worktrees/<name>/…`; Codex: `~/.codex/worktrees/<id>/<repo-basename>/…`), then `grep` the new symbol in the worktree file to confirm. Both agents have deterministic guard hooks for this (`CLAUDE.md`, `CODEX.md`).
-- **`gh pr merge --delete-branch` fails** in a worktree (it tries to `git checkout main`, which is held by the parent). Use `gh pr merge <N> --squash` then `git push origin --delete <branch>` separately. Local feature branch can stay.
-- **"Is X on `main`?" / dead-link checks** must read `origin/main:<path>` via `git fetch origin main --quiet && git show origin/main:<path>` — never `cat <path>` in the worktree, which lags `main`.
-- **The parent's local `main` is auto-fast-forwarded after each merge** by the `post-pr-merge.sh` hook (Claude) / [`.codex/hooks/post-pr-merge.sh`](.codex/hooks/post-pr-merge.sh) (Codex), but **only** when the parent is on `main` and clean — it still lags if you've left the parent on a feature branch or dirty (the hook skips rather than clobber WIP). So the "read `origin/main`" rule above still holds: `origin/main` is the source of truth, not the parent's working tree.
-
-## When making changes
-- **Open a PR, wait for green CI, then merge.** Push to a feature branch, `gh pr create`, then `gh pr checks <N> --watch` until green before `gh pr merge <N> --squash`. Don't merge with red/pending checks; fix the issue rather than `--admin`-bypass. Exception: the `Run Tests` silent-stop bug (CI section) — run `pytest` locally and merge.
-- **`[docs-only]` commit-subject opt-in for comment/docstring/import-reorder PRs.** When every change is non-behavioural (comment fix, docstring, `is*` typo, ruff I001 reorder) and you're 100% sure there's no metric/runtime impact, put `[docs-only]` in at least one commit **subject line** (the squash subject becomes the PR title, and squash bodies preserve constituent subjects as `* `-bullets — both count; commit *body* prose does not, consumers use a subject-line awk filter). Respected by: `tests.yml`'s `detect` (empty matrix; `tests-pass` green via `skipped`), `batch-image.yml`'s `check-docs-only` (skips `build-and-push`), `_detect-positions.yml` (empty `positions` → training skip), and the Claude/Codex pre-PR hooks (early-exit the gates). `lint` + `detect` still run. [deploy.yml](.github/workflows/deploy.yml) is **not** tag-gated (its `paths:` filter on `docs/**`+`README.md`+wiki is the gate — docs render in the in-app wiki, so they need redeploy). Trust contract — CI can't verify it; the author owns correctness. Two traps: keep the literal tag out of your OWN subject/title when the PR *touches* docs-only machinery (else it skips its own matrix, #293), and serving display strings (dict values rendered into responses, e.g. `POSITION_INFO` "formula" fields) are behavioral — **not** docs-only even if no test asserts them.
-- Respect the **[Fixed archive](todo/fixed-archive.md)** — it encodes the project's accumulated "already tried" knowledge.
-- **Update the ADR + decision log alongside non-trivial changes.**
-  - **ADR (per-decision files in [docs/adr/](docs/adr/)):** touching an existing decision? edit its `docs/adr/00NN-<slug>.md` (`Decision`/`Context`/`Chosen`/`Rejected`/`References`/`Consequence`) and append a dated line to its `## Changelog` (create if absent). New decision of similar weight? add `docs/adr/00NN-<slug>.md` (next free number) + a row in the index table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (auto-registers in the wiki via the `docs/adr/*.md` glob). **Either way, add one terse line to [docs/adr/CHANGELOG.md](docs/adr/CHANGELOG.md)** (`YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`). Superseding? flip the old file's `**Status:**` to superseded and add a new file — don't rewrite the original or re-monolith.
-  - **Decision log ([TODO.md](TODO.md) Open list; Fixed archive at [todo/fixed-archive.md](todo/fixed-archive.md)):** for non-trivial bug fixes, move the `Open` entry into [todo/fixed-archive.md](todo/fixed-archive.md) using the `### [FIXED] Title` + **File(s)** (paths + commit SHA) / **What** / **Fix** / **Lesson** format. If untracked, add a fresh entry anyway.
-  - **Skip both** for truly trivial changes (typos, formatting, lockfile bumps, comment-only tweaks). When in doubt, write the entry — a thin archive is the failure mode, not over-documentation.
-- Update tests and fixtures when you change feature lists or targets (archive has multiple entries where this was missed).
-- Don't add error handling, fallbacks, or validation for cases that can't happen. One exception: network/data-source boundaries are real and should be defensive.
-- **For NN/feature/loss/target changes, run the actual pipeline before merging.** `pytest -m unit` and CI don't catch metric regressions — run `python -m src.{pos}.run_pipeline` on the affected position and diff `benchmark_history/` vs the prior run. The K refactor regression and QB metrics-label bug both shipped on green tests without a pipeline run. **Applies to *investigating* a feature, not just merging** — see "Validation proxy must match production". For subgroup analysis, per-row preds are on `result["test_df"]` (`pred_{model}_total`) — slice those, don't reimplement.
-- **Large (>10-item) parallel cleanups: file-disjoint bundles, draft commits per bundle, one PR per risk tier** (safest → highest; the 113-finding remediation → 3 PRs #312/#314/#315 is canonical). **File-disjointness is for parallelism, not correctness** — it does NOT protect against an API-signature change in shared code a per-position bundle still calls (the 2026-05-21 Tier A `_train_nn` conflict); when a bundle changes a shared signature, grep every caller first. Operator-only CLIs (`diagnose_outliers.py`, `analyze_errors.py`, `audit_features.py`) need an import-smoke test so signature drift fails the unit shard, not PR review.
-
-## Operating lessons (any agent)
-
-**Before investigating or changing an area, read its operating lessons below.** The full rules and evidence are preserved in [agent-workflows/operating-lessons.md](agent-workflows/operating-lessons.md); the core conventions and stop rules above still apply.
-
-### ML modeling & investigation method
-
-Read [the ml modeling & investigation method lessons](agent-workflows/operating-lessons.md#ml-modeling--investigation-method) before work in this area.
-
-### Project facts & infrastructure
-
-Read [the project facts & infrastructure lessons](agent-workflows/operating-lessons.md#project-facts--infrastructure) before work in this area.
-
-### Git / PR / CI workflow
-
-Read [the git / pr / ci workflow lessons](agent-workflows/operating-lessons.md#git--pr--ci-workflow) before work in this area.
-
-### Verification, audit & communication
-
-Read [the verification, audit & communication lessons](agent-workflows/operating-lessons.md#verification-audit--communication) before work in this area.
-
-### Environment (macOS / worktree / venv / pytest)
-
-Read [the environment (macos / worktree / venv / pytest) lessons](agent-workflows/operating-lessons.md#environment-macos--worktree--venv--pytest) before work in this area.
-
-## Tool capabilities differ between agents
-
-No agent should assume another's tools. **Claude Code** has claude.ai account connectors (Canva, AWS, Gmail, GitHub, …), browser-preview tools, and sub-agent / Workflow orchestration. **Codex** has the OpenAI plugin set (github, browser, data-viz, codex-security, …) and a `node_repl` MCP server. **Gemini** runs two ways: locally via **Antigravity CLI (`agy`)** — the Gemini-lineage terminal agent that reads `.agents/skills/`, root `AGENTS.md`, and `.gemini/settings.json` hooks, and exposes the project skills through its `activate_skill` tool — and in CI as the `run-gemini-cli` GitHub App (`@gemini-cli` PR review / issue triage, gated behind the `GEMINI_ENABLED` repo var; see [`GEMINI.md`](GEMINI.md)). No local MCP-server config is shared. Name a capability concretely so the other agents know whether it applies. **One such Claude capability is *not* repo-configurable:** the `claude-code-remote` cloud server (`send_later` scheduled self-check-ins, `list_repos`/`add_repo`) is platform-injected per cloud session — it can't be enabled via `.mcp.json`, the web *environment* config (network policy / env vars / setup scripts only), or a routine's `mcp_connections` (claude.ai *account connectors* only, not built-in session servers). Availability is Anthropic-controlled (client/notification surface + plan/rollout); don't re-chase a repo-side enable — raise it via `/feedback`.
-
-## Codex specifics
-
-Read [CODEX.md](CODEX.md) for Codex hooks, worktree startup, skills, PR checks, and memory synchronization. Provider-neutral workflow instructions live in [agent-workflows/](agent-workflows/). Keep Claude, Codex, and Gemini wrappers aligned when a shared discipline changes.
-
-## Gemini specifics
-
-Read [GEMINI.md](GEMINI.md) for Antigravity/Gemini skills, hooks, CI integration, and audit wrappers. Cross-provider hook, skill, and routine parity is covered by [tests/scripts/test_cross_model_parity.py](tests/scripts/test_cross_model_parity.py).
+Maintain the entrypoint and its topic routes according to
+[the context policy](agent-guides/context-maintenance.md). Preserve evidence and
+applicable constraints when consolidating; do not grow startup text with incident
+narratives or copies of settings that code can answer.

@@ -1,0 +1,8 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] K/DST missing from the live upcoming-week prediction path
+
+- **File(s):** `src/serving/upcoming_special_teams.py`, `forecast_weather.py`, `upcoming_week.py`, `espn_live.py`, `core.py`; optional frame injection in `src/k/data.py` and `src/dst/data.py`; NextWeek frontend and source/replay tests. PR pending.
+- **What:** The artifact builder and roster parser only admitted QB/RB/WR/TE. Simply adding K/DST to the position list would have left K without fresh per-kick history and DST without current-season opposing-offense history. The existing schedule adapter omitted rest/venue details and joined different providers' game IDs. Week 1 2026 had no schedule temperature/wind and incorrectly labeled the Melbourne neutral-site game a dome.
+- **Fix:** Dedicated upcoming K/DST frames reuse the training builders with cutoff-filtered live-season data, explicit history inputs, and coverage checks. Normalize active ESPN PK entries to K, build DST team rows, preserve matchup/rest context, join schedule rows by matchup, and obtain kickoff forecasts for the actual venue. Missing forecasts and uncertain roofs remain imputed and disclosed; incomplete required history or missing K/DST model output prevents publishing a false-success artifact. Training years, targets and model recipes stay fixed.
+- **Lesson:** A complete feature whitelist does not prove live readiness. Trace every attention history and cache dependency through actual inference, verify provider IDs and venue semantics, and distinguish an unavailable source from a zero observation.

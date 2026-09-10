@@ -22,7 +22,7 @@ Claude runtime values:
 - `WORKFLOW_PRE_PR_GATE=.claude/hooks/pre-pr.sh`
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=pre-pr-judge`
 - `WORKFLOW_REVIEW_TOOL=/review`
-- `WORKFLOW_MEMORY_DESTINATION=Claude project auto-memory, plus AGENTS.md for durable cross-agent lessons`
+- `WORKFLOW_MEMORY_DESTINATION=Claude project auto-memory, plus the relevant agent-guides topic or ADR for durable shared lessons`
 
 Execution:
 
