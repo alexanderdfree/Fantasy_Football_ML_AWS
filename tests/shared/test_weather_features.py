@@ -3,11 +3,13 @@
 from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.shared.weather_features import (
     WEATHER_FEATURES_ALL,
     _build_team_schedule_lookup,
+    build_implied_team_total_lookup,
     merge_schedule_features,
 )
 
@@ -27,25 +29,19 @@ def _clear_schedule_cache():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.unit
-def test_build_team_schedule_lookup_negates_away_spread_line():
-    """nflverse ``spread_line`` is home-perspective; the team-level lookup must
-    negate it on away rows so the merged-back feature consistently means "this
-    team is favored by N" (audit #414 / #598 / #849). DST is the sole consumer
-    of the bare ``spread_line`` feature, and ``merge_schedule_features``
-    re-merges it from this lookup — previously re-introducing the raw
-    home-perspective sign on away rows and undoing ``src/dst/data.py``'s flip.
-    """
-    import pandas as pd
-
-    sched = pd.DataFrame(
+@pytest.fixture
+def nflverse_opener_schedule():
+    """Actual nflverse line for BAL at KC, 2024 Week 1: KC favored by 3."""
+    return pd.DataFrame(
         {
-            "season": [2025],
+            "season": [2024],
             "week": [1],
             "home_team": ["KC"],
-            "away_team": ["BUF"],
-            "spread_line": [-3.0],  # home (KC) favored by 3
-            "total_line": [47.0],
+            "away_team": ["BAL"],
+            "home_score": [27],
+            "away_score": [20],
+            "spread_line": [3.0],
+            "total_line": [46.0],
             "roof": ["outdoors"],
             "surface": ["grass"],
             "temp": [60.0],
@@ -55,15 +51,73 @@ def test_build_team_schedule_lookup_negates_away_spread_line():
             "div_game": [0],
         }
     )
-    lookup = _build_team_schedule_lookup(sched)
+
+
+@pytest.mark.unit
+def test_build_team_schedule_lookup_negates_away_spread_line(nflverse_opener_schedule):
+    """nflverse ``spread_line`` is home-perspective; the team-level lookup must
+    negate it on away rows so the merged-back feature consistently means "this
+    team is favored by N" (audit #414 / #598 / #849). DST is the sole consumer
+    of the bare ``spread_line`` feature, and ``merge_schedule_features``
+    re-merges it from this lookup — previously re-introducing the raw
+    home-perspective sign on away rows and undoing ``src/dst/data.py``'s flip.
+    """
+    lookup = _build_team_schedule_lookup(nflverse_opener_schedule)
     kc = lookup[lookup["recent_team"] == "KC"].iloc[0]
-    buf = lookup[lookup["recent_team"] == "BUF"].iloc[0]
+    bal = lookup[lookup["recent_team"] == "BAL"].iloc[0]
     # Home keeps the raw home-perspective sign; away is negated to own-team.
-    assert kc["spread_line"] == -3.0
-    assert buf["spread_line"] == 3.0
-    # implied_team_total stays sign-aware (unchanged by this fix).
-    assert kc["implied_team_total"] == pytest.approx(25.0)  # (47 - (-3)) / 2
-    assert buf["implied_team_total"] == pytest.approx(22.0)  # (47 + (-3)) / 2
+    assert kc["spread_line"] == 3.0
+    assert bal["spread_line"] == -3.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("builder", [build_implied_team_total_lookup, _build_team_schedule_lookup])
+@pytest.mark.parametrize(
+    "spread,total,expected",
+    [
+        pytest.param(3.0, 46.0, [24.5, 21.5], id="kc-bal-2024-week1"),
+        pytest.param(-3.0, 46.0, [21.5, 24.5], id="away-favored"),
+        pytest.param(0.0, 46.0, [23.0, 23.0], id="pickem"),
+        pytest.param(np.nan, 46.0, [np.nan, np.nan], id="missing-spread"),
+        pytest.param(3.0, np.nan, [np.nan, np.nan], id="missing-total"),
+    ],
+)
+def test_nflverse_implied_totals(nflverse_opener_schedule, builder, spread, total, expected):
+    """Positive nflverse spreads give the home team the higher implied score."""
+    sched = nflverse_opener_schedule.assign(spread_line=spread, total_line=total)
+    lookup = builder(sched).set_index("recent_team")
+    np.testing.assert_allclose(
+        lookup.loc[["KC", "BAL"], "implied_team_total"], expected, equal_nan=True
+    )
+
+
+@pytest.mark.unit
+def test_engineer_and_weather_merge_agree_on_nflverse_totals(monkeypatch, nflverse_opener_schedule):
+    """The direct feature-build path and production weather merge use the same line."""
+    from src.features.engineer import _build_defense_matchup_features
+
+    monkeypatch.setattr(
+        "src.shared.weather_features._load_schedules", lambda: nflverse_opener_schedule
+    )
+    players = pd.DataFrame(
+        {
+            "player_id": ["KC_QB", "BAL_QB"],
+            "season": [2024, 2024],
+            "week": [1, 1],
+            "recent_team": ["KC", "BAL"],
+            "opponent_team": ["BAL", "KC"],
+            "sacks": [0, 0],
+            "passing_yards": [0, 0],
+            "passing_tds": [0, 0],
+            "interceptions": [0, 0],
+            "rushing_yards": [0, 0],
+        }
+    )
+    engineered = _build_defense_matchup_features(players).set_index("recent_team")
+    merged = merge_schedule_features(players.copy()).set_index("recent_team")
+    for result in (engineered, merged):
+        np.testing.assert_allclose(result.loc[["KC", "BAL"], "implied_team_total"], [24.5, 21.5])
+    np.testing.assert_allclose(merged.loc[["KC", "BAL"], "implied_opp_total"], [21.5, 24.5])
 
 
 @pytest.mark.unit
@@ -97,10 +151,10 @@ class TestMergeScheduleFeatures:
     @patch("src.shared.weather_features._load_schedules")
     def test_implied_totals_math(self, mock_load, fake_schedules, player_df_factory):
         mock_load.return_value = fake_schedules
-        # KC is home team with spread_line=-3.0, total_line=47.0
+        # KC is home team with spread_line=+3.0, total_line=47.0.
         df = player_df_factory("KC", n_weeks=1)
         result = merge_schedule_features(df)
-        # implied_team_total = (47 - (-3)) / 2 = 25.0
+        # The favored team's implied total is 25.0; its opponent's is 22.0.
         assert pytest.approx(result["implied_team_total"].iloc[0], abs=0.1) == 25.0
         # implied_opp_total = 47 - 25 = 22.0
         assert pytest.approx(result["implied_opp_total"].iloc[0], abs=0.1) == 22.0

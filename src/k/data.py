@@ -418,11 +418,12 @@ def load_data(
 
     home = schedules_reg[base_cols + ["home_team"]].rename(columns={"home_team": "recent_team"})
     home["is_home"] = 1
-    home["implied_team_total"] = (home["total_line"] - home["spread_line"]) / 2
+    # nflverse spread_line is positive when the home team is favored.
+    home["implied_team_total"] = (home["total_line"] + home["spread_line"]) / 2
 
     away = schedules_reg[base_cols + ["away_team"]].rename(columns={"away_team": "recent_team"})
     away["is_home"] = 0
-    away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
+    away["implied_team_total"] = (away["total_line"] - away["spread_line"]) / 2
 
     schedule_info = pd.concat([home, away], ignore_index=True).drop(columns=["spread_line"])
     # Apply team-code normalization shared with weather_features so pre-relocation

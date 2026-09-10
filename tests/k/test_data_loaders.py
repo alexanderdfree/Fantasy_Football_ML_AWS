@@ -772,7 +772,7 @@ def _cached_pbp(tmp_path, monkeypatch):
                     "week": wk,
                     "home_team": "KC",
                     "away_team": "BUF",
-                    "spread_line": -3.0,
+                    "spread_line": 3.0,
                     "total_line": 47.0,
                     "game_type": "REG",
                 }
@@ -795,6 +795,49 @@ def test_load_kicker_data_uses_pbp_cache(_cached_pbp):
     # Every row must have total_line + implied_team_total post fillna.
     assert df["total_line"].notna().all()
     assert df["implied_team_total"].notna().all()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "spread,expected",
+    [
+        pytest.param(3.0, [24.5, 21.5], id="kc-bal-2024-week1"),
+        pytest.param(-3.0, [21.5, 24.5], id="away-favored"),
+        pytest.param(0.0, [23.0, 23.0], id="pickem"),
+    ],
+)
+def test_load_kicker_data_uses_nflverse_implied_totals(_cached_pbp, spread, expected):
+    """K's separate schedule merge must assign the favorite the higher total."""
+    import src.k.data as k_data
+
+    pd.DataFrame(
+        [
+            _kicker_pbp_cache_row("KC_K", 2024, 1, "KC"),
+            _kicker_pbp_cache_row("BAL_K", 2024, 1, "BAL"),
+        ]
+    ).to_parquet(_cached_pbp / "kicker_pbp_2022_2024.parquet")
+    # The +3 / 46 line is the actual nflverse BAL-at-KC 2024 opener.
+    pd.DataFrame(
+        [
+            {
+                "season": 2024,
+                "week": 1,
+                "home_team": "KC",
+                "away_team": "BAL",
+                "spread_line": spread,
+                "total_line": 46.0,
+                "game_type": "REG",
+            }
+        ]
+    ).to_parquet(
+        _cached_pbp / f"schedules_{k_data.GLOBAL_SEASONS[0]}_{k_data.GLOBAL_SEASONS[-1]}.parquet"
+    )
+
+    result = k_data.load_data().set_index("recent_team")
+    np.testing.assert_allclose(result.loc[["KC", "BAL"], "implied_team_total"], expected)
+    assert result.loc[["KC", "BAL"], "is_home"].tolist() == [1, 0]
+    # This sentinel skips the later shared weather merge; it cannot repair K.
+    assert result["_schedule_merged"].all()
 
 
 @pytest.mark.unit
