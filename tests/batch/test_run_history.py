@@ -2,6 +2,7 @@
 
 import io
 import json
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -176,6 +177,7 @@ def test_collected_run_retains_only_sha_verified_local_fingerprints(
     monkeypatch,
     tmp_path,
     matching_checkout,
+    capsys,
 ):
     create(s3, ["QB"])
     original = publish(s3, "run-a", "QB")
@@ -203,7 +205,61 @@ def test_collected_run_retains_only_sha_verified_local_fingerprints(
 
         monkeypatch.setattr(pre_pr_bench_check, "HISTORY_DIR", str(tmp_path / "history"))
         monkeypatch.setattr(pre_pr_bench_check, "position_fingerprint", lambda *a, **kw: "f" * 64)
+        capsys.readouterr()
         assert pre_pr_bench_check.cmd_evaluate(["src/qb/config.py"]) == 0
+        assert capsys.readouterr().out.startswith("PASS\n")
+
+
+@pytest.mark.parametrize("trained_checkout", ["module", "caller"])
+def test_provenance_and_fingerprints_use_the_same_worktree(
+    s3, monkeypatch, tmp_path, trained_checkout, capsys
+):
+    module_root = tmp_path / "module"
+    caller_root = tmp_path / "caller"
+    module_root.mkdir()
+
+    def git(root, *args):
+        return subprocess.check_output(
+            ["git", "-C", str(root), *args], stderr=subprocess.DEVNULL, text=True
+        ).strip()
+
+    git(module_root, "init", "-q")
+    git(module_root, "config", "user.name", "History Test")
+    git(module_root, "config", "user.email", "history@example.invalid")
+    source = module_root / "src/qb/config.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1\n")
+    git(module_root, "add", ".")
+    git(module_root, "commit", "-qm", "module version")
+    git(module_root, "worktree", "add", "-qb", "trained", str(caller_root))
+    (caller_root / "src/qb/config.py").write_text("VALUE = 2\n")
+    git(caller_root, "commit", "-qam", "caller version")
+    trained_root = module_root if trained_checkout == "module" else caller_root
+    sha = git(trained_root, "rev-parse", "HEAD")
+    create(s3, ["QB"], sha=sha)
+    publish(s3, "run-a", "QB", sha=sha)
+    monkeypatch.setattr(benchmark.boto3, "client", lambda *a, **kw: s3)
+    monkeypatch.setattr(benchmark, "_REPO_ROOT", str(module_root))
+    monkeypatch.setattr(benchmark, "HISTORY_DIR", str(tmp_path / "history"))
+    monkeypatch.setattr(benchmark, "RESULTS_FILE", str(tmp_path / "results.json"))
+    monkeypatch.chdir(caller_root)
+    path = benchmark.record_benchmark_run(["QB"], run_id="run-a")
+    with open(path) as file:
+        entry = json.load(file)
+    assert bool(entry.get("code_fingerprints")) is (trained_checkout == "module")
+
+    # Exercise the real gate in the module checkout, with old fingerprinted
+    # history disabling the legacy mtime fallback. Caller code is not evidence.
+    from src.scripts import pre_pr_bench_check
+
+    prior = {**entry, "code_fingerprints": {"QB": "0" * 64}}
+    (tmp_path / "history/prior.json").write_text(json.dumps(prior))
+    monkeypatch.setattr(pre_pr_bench_check, "HISTORY_DIR", str(tmp_path / "history"))
+    monkeypatch.chdir(module_root)
+    capsys.readouterr()
+    assert pre_pr_bench_check.cmd_evaluate(["src/qb/config.py"]) == 0
+    verdict = capsys.readouterr().out.splitlines()[0]
+    assert verdict == ("PASS" if trained_checkout == "module" else "FAIL")
 
 
 def test_artifact_upload_publishes_its_own_metrics_even_when_stable_is_pinned(

@@ -17,6 +17,7 @@ FF_JOB_DEFINITION_REVISION to its registered numeric revision. The
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -41,7 +42,6 @@ from src.batch.launch import (
 from src.scripts.bench_fingerprint import collect_code_fingerprints
 from src.shared.benchmark_utils import (
     append_to_history,
-    get_git_hash,
     print_comparison_table,
     summarize_pipeline_result,
     utc_now_iso,
@@ -55,6 +55,21 @@ HISTORY_DIR = "benchmark_history"
 # independent of cwd. main() chdirs here, but src/batch/launch.py's auto-append
 # calls record_benchmark_run() without chdir-ing.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def get_git_hash():
+    """Identify the same checkout used for fingerprints, regardless of caller cwd."""
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "-C", _REPO_ROOT, "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return "unknown"
 
 
 # GPU name -> AWS instance family, for the History-tab hardware label derived
