@@ -191,7 +191,16 @@ def _exclusive_sync(path: Path):
             except OSError:
                 yield False
                 return
-            yield True  # Closing the handle releases the OS lock.
+            try:
+                yield True
+            finally:
+                # Gunicorn can fork while its master poller holds this fd.
+                # close() alone leaves flock held by an inherited worker fd.
+                if os.name == "nt":
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
     finally:
         _sync_lock.release()
 
@@ -200,7 +209,14 @@ def _download(s3, **request):
     def read():
         response = s3.get_object(**request)
         with contextlib.closing(response["Body"]) as stream:
-            body = stream.read(_MAX_BYTES + 1)
+            data = bytearray()
+            # StreamingBody checks Content-Length at EOF, not after a single
+            # nonempty bounded read. Reach EOF so short responses are retried.
+            while chunk := stream.read(min(64 * 1024, _MAX_BYTES + 1 - len(data))):
+                data.extend(chunk)
+                if len(data) > _MAX_BYTES:
+                    raise ValueError("Projection artifact exceeds download size limit")
+            body = bytes(data)
         decode_artifact(body)
         return body, response.get("ETag")
 

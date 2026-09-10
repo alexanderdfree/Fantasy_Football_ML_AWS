@@ -2,12 +2,17 @@
 
 import io
 import json
+import os
+import threading
 from copy import deepcopy
 from datetime import UTC, datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import Mock
 
 import boto3
 import pytest
+from botocore import UNSIGNED
+from botocore.config import Config
 from botocore.exceptions import ClientError, IncompleteReadError
 from botocore.response import StreamingBody
 from botocore.stub import Stubber
@@ -282,6 +287,78 @@ def test_overlapping_poll_is_skipped_and_lock_is_released(s3, tmp_path, good):
         assert not transfer.sync(str(path), BUCKET, KEY)
     s3.add_response("get_object", object_response(encoded(good)), {"Bucket": BUCKET, "Key": KEY})
     assert transfer.sync(str(path), BUCKET, KEY)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="Gunicorn uses POSIX forks")
+def test_master_releases_lock_while_forked_worker_retains_descriptor(tmp_path):
+    path = tmp_path / "upcoming_week.json"
+    locked = threading.Event()
+    release = threading.Event()
+
+    def poll():
+        with transfer._exclusive_sync(path) as acquired:
+            assert acquired
+            locked.set()
+            release.wait(10)
+
+    reader, writer = os.pipe()
+    thread = threading.Thread(target=poll)
+    thread.start()
+    assert locked.wait(5)
+    pid = os.fork()
+    if pid == 0:
+        os.close(writer)
+        os.read(reader, 1)
+        os._exit(0)
+    os.close(reader)
+    try:
+        release.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        with transfer._exclusive_sync(path) as acquired:
+            assert acquired, "Forked worker retained the master poller's lock"
+    finally:
+        release.set()
+        os.write(writer, b"x")
+        os.close(writer)
+        os.waitpid(pid, 0)
+
+
+def test_real_http_short_response_is_retried_through_eof(monkeypatch, good):
+    body = encoded(good)
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body[:-10] if len(requests) == 1 else body)
+            self.close_connection = True
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01))
+    thread.start()
+    client = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        endpoint_url=f"http://127.0.0.1:{server.server_port}",
+        config=Config(signature_version=UNSIGNED, retries={"total_max_attempts": 1}),
+    )
+    monkeypatch.setattr(transfer.time, "sleep", Mock())
+    try:
+        downloaded, _ = transfer._download(client, Bucket=BUCKET, Key=KEY)
+        assert downloaded == body
+        assert len(requests) == 2
+        transfer.time.sleep.assert_called_once_with(2)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
 
 
 @pytest.mark.parametrize(
