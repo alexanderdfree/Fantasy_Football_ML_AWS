@@ -1,6 +1,6 @@
-/* Comparison — our four model architectures (live) vs expert projection sources
- * (NFL.com, RotoWire, ESPN), by position, on three player subsets (all + top-30 +
- * top-12/position). One /api/comparison fetch (module-level cache, mirroring the
+/* Comparison — models and archived expert forecasts on shared player-weeks.
+ * Expected starters use a fixed pregame reference; seasonal leaders and weekly
+ * leader capture are separate diagnostics. One /api/comparison fetch (mirroring the
  * vanilla comparisonLoaded flag); the MAE/RMSE/R² toggle re-renders from the
  * cached payload. Lower is better for MAE/RMSE, higher for R²; best cell per row
  * is highlighted. */
@@ -9,7 +9,7 @@ import { fetchJSON } from "../api.js";
 import { PillGroup, ApproachBanner } from "../components/common.jsx";
 
 const COMPARISON_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
-// Our four model architectures, then the static expert sources. Keys match the
+// Our four model architectures, then the archived expert sources. Keys match the
 // per-model blocks in the /api/comparison payload (model prefixes) and the expert
 // cell keys. Shared (via COMPARISON_SOURCES) by the accuracy tables and the
 // quartile-bias table.
@@ -48,6 +48,7 @@ function comparisonCellValue(cell, metric) {
 }
 
 function formatComparisonValue(v, metric) {
+    if (metric === "hit_rate") return `${(v * 100).toFixed(1)}%`;
     return metric === "r2" ? v.toFixed(3) : v.toFixed(2);
 }
 
@@ -68,8 +69,8 @@ function ComparisonTableHead({ firstLabel }) {
 
 /* Port of renderComparisonRows: one row per position, best value per row
  * highlighted (max for R², min otherwise); missing cells render an em dash. */
-function ComparisonRows({ posMap, metric }) {
-    const higherBetter = metric === "r2";
+function ComparisonRows({ posMap, metric, coverage }) {
+    const higherBetter = metric === "r2" || metric === "hit_rate";
     return COMPARISON_POSITIONS.map((pos) => {
         const cells = posMap[pos] || {};
         const values = COMPARISON_SOURCES.map((s) => comparisonCellValue(cells[s.key], metric)).filter(
@@ -78,7 +79,16 @@ function ComparisonRows({ posMap, metric }) {
         const best = values.length ? (higherBetter ? Math.max(...values) : Math.min(...values)) : null;
         return (
             <tr key={pos}>
-                <td className="comparison-pos">{pos}</td>
+                <td className="comparison-pos">
+                    {pos}
+                    {coverage?.[pos] && (
+                        <div style={{ fontSize: "0.72rem", fontWeight: 400 }}>
+                            {coverage[pos].status === "unavailable"
+                                ? "Unavailable"
+                                : `${coverage[pos].n} player-weeks${coverage[pos].status === "partial" ? " · partial reference" : ""}`}
+                        </div>
+                    )}
+                </td>
                 {COMPARISON_SOURCES.map((s) => {
                     const v = comparisonCellValue(cells[s.key], metric);
                     if (v === null) {
@@ -86,7 +96,8 @@ function ComparisonRows({ posMap, metric }) {
                     }
                     const isBest = best !== null && Math.abs(v - best) < 1e-9;
                     return (
-                        <td key={s.key} className={"comparison-num" + (isBest ? " comparison-best" : "")}>
+                        <td key={s.key} className={"comparison-num" + (isBest ? " comparison-best" : "")}
+                            title={cells[s.key]?.n_weeks != null ? `${cells[s.key].n_weeks} comparable weeks` : undefined}>
                             {formatComparisonValue(v, metric)}
                         </td>
                     );
@@ -97,7 +108,7 @@ function ComparisonRows({ posMap, metric }) {
 }
 
 /* One of the three accuracy tables (all / top-30 / top-12). */
-function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error }) {
+function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage }) {
     return (
         <div className="comparison-table-block">
             <div className="section-header">{header}</div>
@@ -108,7 +119,7 @@ function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error }) {
                         {error ? (
                             <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-error">Failed to load: {error}</td></tr>
                         ) : posMap ? (
-                            <ComparisonRows posMap={posMap} metric={metric} />
+                            <ComparisonRows posMap={posMap} metric={metric} coverage={coverage} />
                         ) : (
                             <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-loading">Loading comparison…</td></tr>
                         )}
@@ -185,8 +196,8 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
     const rwNote = (meta.rotowire && meta.rotowire.note) || "";
     const espnNote = (meta.espn && meta.espn.note) || "";
     const modelLine = unavailable
-        ? "Currently unavailable (models not loaded). "
-        : "Each of our four architectures is computed live from the deployed models, one column per architecture, so they track the latest retrain. ";
+        ? "Evaluation is currently unavailable. "
+        : "Each architecture uses its deployed forecasts, and all sources are graded on identical player-weeks. ";
 
     const onWikiLink = (ev) => {
         ev.preventDefault();
@@ -200,7 +211,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
     return (
         <section id="view-comparison" className="view active">
             <ApproachBanner icon="chart" title="Our Models vs Expert Projections">
-                Weekly fantasy-point accuracy on the 2025 test season, by position. Lower MAE / RMSE is better; higher R² is better. Each of our four model architectures has its own column, updated live from the deployed models; the expert columns are scored offline against the same actuals. The best cell in each row is highlighted.
+                Weekly fantasy-point accuracy on the 2025 regular season. Every source is graded against full PPR actuals on identical player-weeks. Expected starters are selected before kickoff using a shared expert reference. Lower MAE / RMSE is better; higher R² is better.
             </ApproachBanner>
 
             <div className="comparison-controls">
@@ -218,24 +229,44 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
             </div>
 
             <ComparisonSubsetBlock
-                header="All rostered players (2025)"
+                header="Expected starters · weekly top 24"
+                bodyId="comparison-weekly-top24"
+                posMap={data?.subsets?.weekly_reference_top24}
+                coverage={data?.coverage?.weekly_reference_top24}
+                metric={metric}
+                error={error}
+            />
+
+            <ComparisonSubsetBlock
+                header="All comparable player-weeks (2025)"
+                coverage={data?.coverage?.all}
                 bodyId="comparison-all-body"
                 posMap={data ? (subsets.all || {}) : null}
                 metric={metric}
                 error={error}
             />
             <ComparisonSubsetBlock
-                header="Top 30 per position (2025)"
+                header="Season leaders · top 30 (2025)"
+                coverage={data?.coverage?.top30}
                 bodyId="comparison-top30-body"
                 posMap={data ? (subsets.top30 || {}) : null}
                 metric={metric}
                 error={error}
             />
             <ComparisonSubsetBlock
-                header="Top 12 per position (2025)"
+                header="Season leaders · top 12 (2025)"
+                coverage={data?.coverage?.top12}
                 bodyId="comparison-top12-body"
                 posMap={data ? (subsets.top12 || {}) : null}
                 metric={metric}
+                error={error}
+            />
+
+            <ComparisonSubsetBlock
+                header="Weekly top-24 leader capture · higher is better"
+                bodyId="comparison-weekly-capture"
+                posMap={data?.weekly_ranking}
+                metric="hit_rate"
                 error={error}
             />
 
@@ -248,9 +279,9 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                         source's <strong>signed bias</strong>, mean(prediction − actual), in that quartile:{" "}
                         <span style={{ color: "#dc2626", fontWeight: 600 }}>red over-predicts (+)</span>,{" "}
                         <span style={{ color: "#2563eb", fontWeight: 600 }}>blue under-predicts (−)</span>. This exposes
-                        systematic miss patterns the overall MAE hides — most notably regression-to-the-mean
-                        under-prediction of the Q4 boom tier. Computed live on the 2025 test season; hover a cell
-                        for its MAE and sample size.
+                        patterns hidden by the overall MAE. Selecting high-scoring weeks after the fact naturally
+                        produces negative bias, even for sensible forecasts; it is not a target for raising every
+                        projection. Hover a cell for its MAE and sample size.
                     </div>
                     <div className="intervals-examples-controls">
                         <span className="comparison-metric-label">Position</span>
@@ -292,15 +323,16 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                         <div className="section-header">About this comparison</div>
                         <ul className="comparison-note-list">
                             <li><strong>Seasons.</strong> Our model trains on 2013–2023 (2012 is loaded for prior-season context only), validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
-                            <li><strong>Scoring.</strong> Full PPR (1 pt / reception). Projections and actuals run through the same scoring formula, so it's apples-to-apples. RMSE is shown alongside MAE because expert projections implicitly target squared error.</li>
+                            <li><strong>Scoring.</strong> Every source is graded against full regular-season PPR actuals, including rushing points for receivers and receiving points for quarterbacks.</li>
                             <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly fantasy-point totals; the best cell in each row is highlighted.</li>
                             <li><strong>NFL.com.</strong> {nflNote}</li>
                             <li><strong>RotoWire.</strong> {rwNote}</li>
                             <li><strong>ESPN.</strong> {espnNote}</li>
-                            <li><strong>Top 30.</strong> The second table restricts to the top 30 players per position by actual 2025 fantasy points — the fantasy-relevant starters.</li>
-                            <li><strong>Top 12.</strong> The third table tightens further to the top 12 per position by actual 2025 fantasy points — roughly a standard league's starters at each spot.</li>
+                            <li><strong>Expected starters.</strong> The weekly top 24 uses a fixed average of archived NFL.com and RotoWire forecasts, with NFL.com alone for K and RotoWire alone for DST. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>
+                            <li><strong>Season leaders.</strong> Top 30 and top 12 use total actual regular-season points, excluding playoffs. These are retrospective diagnostics, not pregame starter lists.</li>
+                            <li><strong>Weekly leader capture.</strong> The fraction of actual weekly top-24 scorers selected by each source's own forecasts. Only weeks with at least 24 comparable players count; hover for the number of weeks.</li>
                             <li>
-                                <strong>Caveat.</strong> Each source is scored on the players it actually projects, so this is an approximate scoreboard rather than a strictly paired test. For the rigorous paired, significance-tested head-to-heads, see the{" "}
+                                <strong>Coverage.</strong> Every displayed source in a position is scored on the same player-weeks. Missing forecasts are excluded, never treated as zero. Sample sizes appear beside each position. Historical investigations and uncertainty estimates are available in the{" "}
                                 <a
                                     href="#wiki:expert-comparison"
                                     className="comparison-link"
@@ -311,7 +343,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                                 </a>{" "}
                                 wiki page.
                             </li>
-                            {date && <li className="comparison-note-meta">Expert data generated {date}.</li>}
+                            {date && <li className="comparison-note-meta">Evaluation calculated {date}.</li>}
                         </ul>
                     </>
                 )}

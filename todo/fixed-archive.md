@@ -15,6 +15,17 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **What:** Serving still requested Torch 2.12.0 while local development and Batch requested 2.12.1. Its uv command also listed PyPI as the extra index, giving it priority over the intended CPU index under uv's first-index strategy.
 - **Fix:** Align all four environments on Torch 2.14.0 and give the CPU index priority in the serving install. Resolve CPU and CUDA dependency sets for Python 3.12 before shipping; keep the existing CUDA 13.0 variant.
 - **Lesson:** Dependency parity includes Dockerfile install commands and index order, not just requirements files. A matching public Torch version does not prove that serving installs the CPU wheel.
+### [FIXED] Expert comparison mixed scoring labels, coverage, and postseason-selected leaders
+- **File(s):** `src/serving/comparison.py`, `src/serving/routes.py`, `src/serving/frontend/src/views/Comparison.jsx`, `src/analysis/analysis_nflcom_baseline.py`; ADR-0024.
+- **What:** Models were graded against full fantasy actuals while committed expert metrics used only modeled targets. WR rushing and QB receiving counted against only one side. Static top-12/top-30 IDs were ranked with postseason totals, and per-source coverage differed.
+- **Fix:** Compute all columns from cached predictions on full regular-season actuals and a shared player-week intersection. Rebuild seasonal membership from that truth, select a new primary weekly top-24 cohort from a separate archived pregame reference, and distinguish actual-week leader capture from accuracy/bias. Retire the static accuracy snapshot as the live authority and label historical research tables accordingly.
+- **Lesson:** Same player IDs do not establish comparable evaluation: truth, season type, row coverage, and cohort-selection time must all agree. Actual-week winners' negative bias is not a training target.
+
+### [FIXED] Batch and alternate benchmark paths silently omitted elite cohort metrics (#1537)
+- **File(s):** `src/shared/evaluation_cohorts.py`, `src/shared/pipeline.py`, `src/shared/benchmark_utils.py`, `src/batch/train.py`, `src/benchmarking/benchmark.py`, `src/scripts/build_evaluation_reference.py`; ADR-0024.
+- **What:** The local benchmark appended cohort metrics after the common summary step. Batch serialization and split merges lost them, and rolling-origin output omitted them, so the elite-bias follow-up gate (#1354) lacked production evidence.
+- **Fix:** Calculate cohorts while held-out rows exist and preserve them in every benchmark summary and each rolling origin. Split merges require matching cohort/truth/reference identities. Preserve `elite_top24` as prior-season importance, add `weekly_reference_top24` as pregame importance, and report unavailable data explicitly rather than silently dropping the field or using zero metrics. The reference artifact contains forecasts/ranks only and is hydrated by existing raw-data sync.
+- **Lesson:** Assert the final serialized artifact, not just the helper. Retrospective leader cohorts, pregame expectation cohorts, and ranking metrics answer different questions and need distinct names.
 
 ### [FIXED] ESPN absent from historical expert comparisons
 - **File(s):** `src/serving/espn_projections.py`, `core.py`, `serialization.py`, `routes.py`, `frontend/src/views/Comparison.jsx`; `src/analysis/analysis_expert_comparison.py`, `build_comparison_summary.py`; committed `comparison_experts.json`.

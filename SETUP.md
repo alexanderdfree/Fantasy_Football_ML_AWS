@@ -281,6 +281,19 @@ Rules of the road:
 
 ## Run benchmarks
 
+Every benchmark-producing pipeline now includes cohort reports in its serialized
+output, including Batch split/merge and each rolling origin. `elite_top24` retains
+the prior-season definition; `weekly_reference_top24` uses a shared archived
+pregame reference. Missing reference/prior data is reported explicitly.
+To build the local reference (add `--upload` with `FF_MODEL_S3_BUCKET` to publish):
+
+```bash
+python -m src.scripts.build_evaluation_reference --seasons 2025
+```
+
+Normal S3 raw-data hydration supplies the artifact to Batch/serving; the
+off-container serving-cache build refreshes it. See [ADR-0024](docs/adr/0024-fair-comparison-and-evaluation-cohorts.md).
+
 ```bash
 python -m src.benchmarking.benchmark              # all positions, full comparison
 python -m src.benchmarking.benchmark RB           # one position

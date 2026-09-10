@@ -48,6 +48,7 @@ from src.shared.evaluation import (
     plot_pred_vs_actual,
     print_comparison_table,
 )
+from src.shared.evaluation_cohorts import build_cohorts
 from src.shared.feature_build import build_position_features, scale_and_clip
 from src.shared.models import (
     ElasticNetModel,
@@ -1917,8 +1918,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         # test configs) skips ranking and ``summarize_pipeline_result`` then
         # surfaces top12 as null, not 0.
         agg_fn = cfg.get("aggregate_fn")
+        ranked_test = pos_test.copy()
         if agg_fn is not None:
-            ranked_test = pos_test.copy()
             for ranking_key, pred_col, preds, label in (
                 ("ridge_ranking", "pred_ridge_total", ridge_test_preds, "Ridge"),
                 ("nn_ranking", "pred_nn_total", nn_test_preds, "NN"),
@@ -1933,6 +1934,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 ranking = compute_ranking_metrics(ranked_test, pred_col=pred_col)
                 result[ranking_key] = ranking
                 print(f"{label} Top-12 Hit Rate: {ranking['season_avg_hit_rate']:.3f}")
+        result["cohorts"] = build_cohorts(pos, ranked_test, prior_frames=(pos_train, pos_val))
         return result
 
     # --- Comparison ---
@@ -2153,6 +2155,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if tabpfn_metrics is not None:
         result["tabpfn_metrics"] = tabpfn_metrics
         result["tabpfn_ranking"] = tabpfn_ranking
+    result["cohorts"] = build_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
     return result
 
 
@@ -2674,4 +2677,5 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     if attn_nn_metrics is not None:
         result["attn_nn_metrics"] = attn_nn_metrics
         result["attn_nn_ranking"] = attn_nn_ranking
+    result["cohorts"] = build_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
     return result
