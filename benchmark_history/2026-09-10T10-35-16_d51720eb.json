@@ -1,8 +1,8 @@
 {
-  "run_id": "2026-09-10T10:16:04_ffdd242c",
-  "timestamp": "2026-09-10T10:16:04",
-  "git_hash": "ffdd242c",
-  "note": "K empty-game fix; macOS CPU, LGBM_N_JOBS=1, seed 42; current evaluation-cohort contract; 543-game holdout",
+  "run_id": "2026-09-10T10:35:16_d51720eb",
+  "timestamp": "2026-09-10T10:35:16",
+  "git_hash": "d51720eb",
+  "note": "K empty-game fix after review; offline roster identity resolution; consistent missing kick means; macOS CPU, LGBM_N_JOBS=1, seed 42",
   "positions": [
     "K"
   ],
@@ -54,24 +54,24 @@
       "position": "K",
       "ridge_mae": 4.068,
       "ridge_r2": 0.022,
-      "nn_mae": 4.151,
+      "nn_mae": 4.161,
       "nn_r2": -0.057,
       "nn_wins_mae": false,
       "nn_per_target": {
         "fg_yard_points": {
-          "mae": 4.01,
-          "r2": -0.033,
-          "rmse": 5.202
+          "mae": 4.018,
+          "r2": -0.034,
+          "rmse": 5.204
         },
         "pat_points": {
-          "mae": 1.123,
-          "r2": 0.023,
+          "mae": 1.12,
+          "r2": 0.022,
           "rmse": 1.422
         },
         "fg_misses": {
-          "mae": 0.392,
-          "r2": 0.001,
-          "rmse": 0.483
+          "mae": 0.391,
+          "r2": 0.004,
+          "rmse": 0.482
         },
         "xp_misses": {
           "mae": 0.141,
@@ -81,30 +81,30 @@
       },
       "ridge_per_target": {
         "fg_yard_points": {
-          "mae": 4.034,
+          "mae": 4.033,
           "r2": 0.002,
           "rmse": 5.114
         },
         "pat_points": {
           "mae": 1.072,
-          "r2": 0.145,
-          "rmse": 1.33
+          "r2": 0.147,
+          "rmse": 1.329
         },
         "fg_misses": {
-          "mae": 0.408,
-          "r2": -0.012,
+          "mae": 0.407,
+          "r2": -0.011,
           "rmse": 0.486
         },
         "xp_misses": {
-          "mae": 0.176,
-          "r2": -0.028,
+          "mae": 0.175,
+          "r2": -0.027,
           "rmse": 0.285
         }
       },
       "ridge_top12": 0.449,
-      "nn_top12": 0.486,
+      "nn_top12": 0.491,
       "ridge_rmse": 5.134,
-      "nn_rmse": 5.336,
+      "nn_rmse": 5.338,
       "attn_nn_mae": 4.236,
       "attn_nn_r2": -0.069,
       "attn_nn_rmse": 5.368,
@@ -131,40 +131,40 @@
         }
       },
       "attn_nn_top12": 0.468,
-      "lgbm_mae": 4.084,
-      "lgbm_r2": 0.02,
-      "lgbm_rmse": 5.138,
+      "lgbm_mae": 4.074,
+      "lgbm_r2": 0.024,
+      "lgbm_rmse": 5.127,
       "lgbm_per_target": {
         "fg_yard_points": {
-          "mae": 4.025,
-          "r2": 0.008,
-          "rmse": 5.097
+          "mae": 4.009,
+          "r2": 0.012,
+          "rmse": 5.087
         },
         "pat_points": {
-          "mae": 1.076,
-          "r2": 0.132,
-          "rmse": 1.34
+          "mae": 1.078,
+          "r2": 0.13,
+          "rmse": 1.342
         },
         "fg_misses": {
-          "mae": 0.408,
-          "r2": -0.027,
-          "rmse": 0.49
+          "mae": 0.406,
+          "r2": -0.02,
+          "rmse": 0.488
         },
         "xp_misses": {
-          "mae": 0.184,
+          "mae": 0.183,
           "r2": -0.031,
           "rmse": 0.286
         }
       },
-      "lgbm_top12": 0.44,
+      "lgbm_top12": 0.449,
       "phase_seconds": {
-        "prepare_data": 0.0,
-        "ridge_tune": 0.7,
+        "prepare_data": 0.1,
+        "ridge_tune": 0.5,
         "ridge_fit": 0.0,
         "lgbm_train": 0.5,
-        "nn_train": 15.8,
-        "attn_nn_train": 17.7,
-        "train_models_total": 33.4,
+        "nn_train": 10.2,
+        "attn_nn_train": 14.3,
+        "train_models_total": 24.5,
         "backtest": 0.2,
         "save_artifacts": 0.0,
         "figures": 1.2
@@ -175,15 +175,15 @@
           "models": {
             "Ridge": {
               "n": 32,
-              "mae": 3.4998,
-              "rmse": 4.3893,
-              "bias": -1.1297
+              "mae": 3.5006,
+              "rmse": 4.3912,
+              "bias": -1.1292
             },
             "NN": {
               "n": 32,
-              "mae": 3.7439,
-              "rmse": 4.744,
-              "bias": -1.833
+              "mae": 3.8059,
+              "rmse": 4.802,
+              "bias": -1.9159
             },
             "Attention NN": {
               "n": 32,
@@ -193,9 +193,9 @@
             },
             "LightGBM": {
               "n": 32,
-              "mae": 3.5176,
+              "mae": 3.5004,
               "rmse": 4.4021,
-              "bias": -0.9106
+              "bias": -0.9427
             }
           }
         },
@@ -204,15 +204,15 @@
           "models": {
             "Ridge": {
               "n": 398,
-              "mae": 4.084,
-              "rmse": 5.2073,
-              "bias": -1.0523
+              "mae": 4.0838,
+              "rmse": 5.2066,
+              "bias": -1.0463
             },
             "NN": {
               "n": 398,
-              "mae": 4.2279,
-              "rmse": 5.4764,
-              "bias": -1.9246
+              "mae": 4.2337,
+              "rmse": 5.476,
+              "bias": -1.9353
             },
             "Attention NN": {
               "n": 398,
@@ -222,9 +222,9 @@
             },
             "LightGBM": {
               "n": 398,
-              "mae": 4.0844,
-              "rmse": 5.2082,
-              "bias": -0.9249
+              "mae": 4.0742,
+              "rmse": 5.196,
+              "bias": -0.9902
             }
           },
           "status": "available",
@@ -236,15 +236,15 @@
           "models": {
             "Ridge": {
               "n": 343,
-              "mae": 4.1761,
-              "rmse": 5.3273,
-              "bias": -0.7656
+              "mae": 4.1766,
+              "rmse": 5.3272,
+              "bias": -0.7598
             },
             "NN": {
               "n": 343,
-              "mae": 4.2583,
-              "rmse": 5.5202,
-              "bias": -1.62
+              "mae": 4.2632,
+              "rmse": 5.5205,
+              "bias": -1.6369
             },
             "Attention NN": {
               "n": 343,
@@ -254,9 +254,9 @@
             },
             "LightGBM": {
               "n": 343,
-              "mae": 4.2152,
-              "rmse": 5.3499,
-              "bias": -0.6337
+              "mae": 4.2073,
+              "rmse": 5.3427,
+              "bias": -0.7028
             }
           },
           "status": "available",
@@ -280,14 +280,14 @@
             "Ridge": {
               "n_weeks": 18,
               "hit_rate": 0.831,
-              "points_captured": 215.9667,
-              "lineup_regret": 29.2278
+              "points_captured": 215.6889,
+              "lineup_regret": 29.5056
             },
             "NN": {
               "n_weeks": 18,
-              "hit_rate": 0.8171,
-              "points_captured": 215.4167,
-              "lineup_regret": 29.7778
+              "hit_rate": 0.8241,
+              "points_captured": 215.9722,
+              "lineup_regret": 29.2222
             },
             "Attention NN": {
               "n_weeks": 18,
@@ -297,17 +297,17 @@
             },
             "LightGBM": {
               "n_weeks": 18,
-              "hit_rate": 0.8287,
-              "points_captured": 213.9556,
-              "lineup_regret": 31.2389
+              "hit_rate": 0.831,
+              "points_captured": 217.4333,
+              "lineup_regret": 27.7611
             }
           }
         }
       },
-      "elapsed_sec": 47.2
+      "elapsed_sec": 32.8
     }
   ],
   "code_fingerprints": {
-    "K": "4580f9e2eceb4e7bbe067511af86b9b243e9e148fca901b786f0b8ecdc8754f5"
+    "K": "1968b6031fa75595a341306c7e5415238fc59966b21a5826e96f42e5873b81f9"
   }
 }
