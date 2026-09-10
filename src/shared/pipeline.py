@@ -1947,6 +1947,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         result = {
             "ridge_metrics": ridge_metrics,
             "nn_metrics": nn_metrics,
+            "history": history,
             "phase_seconds": phase_seconds,
         }
         if attn_nn_metrics is not None:

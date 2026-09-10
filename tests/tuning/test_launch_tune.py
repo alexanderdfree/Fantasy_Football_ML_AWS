@@ -16,6 +16,47 @@ from src.tuning import launch_tune
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("graph", ["true", "false"])
+def test_workflow_collects_the_same_namespaces_as_submitted_jobs(monkeypatch, graph):
+    from pathlib import Path
+
+    import yaml
+
+    from src.tuning import aggregate_results
+
+    workflow = yaml.safe_load(Path(".github/workflows/retune-nn-batch.yml").read_text())
+    step = next(
+        s
+        for s in workflow["jobs"]["aggregate"]["steps"]
+        if s.get("name") == "Aggregate per-position results from S3"
+    )
+    code = step["run"].split("python - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    collected = {}
+    monkeypatch.setattr(
+        aggregate_results,
+        "_download_from_s3",
+        lambda bucket, positions, dest, version: collected.update({positions[0]: version}),
+    )
+    monkeypatch.setenv("POSITIONS", "RB K DST")
+    monkeypatch.setenv("CUDA_GRAPH", graph)
+    monkeypatch.setenv("S3_BUCKET", "test-bucket")
+    exec(compile(code, "retune-nn-batch.yml", "exec"), {})
+    for position in ("RB", "K", "DST"):
+        batch = MagicMock()
+        batch.submit_job.return_value = {"jobId": "test-job"}
+        launch_tune.submit_tune_job(
+            position,
+            batch_client=batch,
+            cuda_graph=graph == "true",
+            stacked_seeds=launch_tune.DEFAULT_STACKED_SEEDS,
+        )
+        env = {
+            e["name"]: e["value"]
+            for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+        }
+        assert collected[position] == env["TUNE_NN_STORAGE_VERSION"]
+
+
 def test_submit_tune_job_builds_expected_command():
     """The container command must dispatch into --mode=tune with the right
     forwarded args. This is the contract that src/batch/train.py's --mode=tune

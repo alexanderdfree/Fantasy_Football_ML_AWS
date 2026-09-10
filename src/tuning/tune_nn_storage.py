@@ -8,6 +8,7 @@ and pulling in Optuna.
 # Changing the objective changes the meaning/units of every Optuna score.
 # Separate both scope roots from all prior combined-loss studies and artifacts.
 OBJECTIVE_METRIC = "fantasy_rmse_ppr"
+STACKED_POSITIONS = ("QB", "RB", "WR", "TE")
 SEARCH_SPACE_VERSION = "scheduler_v2_fp_rmse_ppr_v1"
 
 # Root namespace for the attention game-history-branch tuner (``tune_nn
@@ -76,6 +77,32 @@ def resolve_search_space_version(
 
 def s3_prefix(version: str = SEARCH_SPACE_VERSION) -> str:
     return f"tune_nn/{version}"
+
+
+def batch_storage_version(
+    position: str,
+    *,
+    parallel_backend: str = "auto",
+    cuda_graph: bool = True,
+    full_graph: bool = True,
+    stacked_seeds: int = 24,
+    stacked_epochs: int = 30,
+    scope: str = "full",
+) -> str:
+    """Submission and workflow collection share the per-position Batch profile.
+
+    Defaults match launch_tune: flat positions stack; K/DST retain eager graphs.
+    """
+    width = stacked_seeds if position.upper() in STACKED_POSITIONS else 0
+    stacked = width >= 2
+    backend = "mps" if parallel_backend == "auto" else parallel_backend
+    root = resolve_search_space_version(
+        backend,
+        cuda_graph=cuda_graph and not stacked,
+        full_graph=full_graph and not stacked,
+        root=SCOPE_ROOTS[scope],
+    )
+    return root + (f"_ens{width}x{stacked_epochs}" if stacked else "")
 
 
 def study_name(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:

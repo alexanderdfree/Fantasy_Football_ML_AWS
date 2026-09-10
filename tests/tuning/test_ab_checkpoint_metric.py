@@ -49,3 +49,51 @@ def test_report_uses_shared_stat_truth_in_every_scoring_format():
     assert scores["rmse"] == 1.0
     assert scores["half_ppr_rmse"] == 0.5
     assert scores["standard_rmse"] == 0.0
+
+
+def test_cuda_auto_mode_keeps_checkpoint_spec_eager(monkeypatch, tmp_path):
+    from src.tuning import ab_harness
+
+    monkeypatch.setattr("src.shared.utils.cuda_enabled", lambda: True)
+    calls = []
+    monkeypatch.setattr(ab_harness, "run_sequential", lambda *args: calls.append("eager") or [])
+    monkeypatch.setattr(ab_harness, "run_sequential_stacked", lambda *args: pytest.fail("stacked"))
+    ab_harness.run_ab(
+        "src.tuning.ab_checkpoint_metric",
+        positions=["RB"],
+        seeds=[42],
+        data_dir=str(tmp_path),
+        jobs=1,
+    )
+    assert calls == ["eager"]
+    with pytest.raises(ValueError, match="does not support stacked"):
+        ab_harness.run_ab(
+            "src.tuning.ab_checkpoint_metric",
+            positions=["RB"],
+            seeds=[42],
+            data_dir=str(tmp_path),
+            jobs=1,
+            stacked_seeds=True,
+        )
+
+
+def test_batch_rejects_stacked_checkpoint_spec_before_submission(monkeypatch):
+    import sys
+
+    from src.tuning import launch_ab
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_ab",
+            "--spec",
+            "src.tuning.ab_checkpoint_metric",
+            "--positions",
+            "RB",
+            "--stacked-seeds",
+            "--dry-run",
+        ],
+    )
+    with pytest.raises(SystemExit, match="does not support stacked"):
+        launch_ab.main()

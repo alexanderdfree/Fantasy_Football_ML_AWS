@@ -75,7 +75,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 import torch
 
-ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
+from src.tuning.tune_nn_storage import STACKED_POSITIONS
+
+ENSEMBLE_POSITIONS = STACKED_POSITIONS
 _CLIP_MAX_NORM = 1.0  # mirrors the hardcoded clip_grad_norm_(1.0) in MultiHeadTrainer
 _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * epoch
 

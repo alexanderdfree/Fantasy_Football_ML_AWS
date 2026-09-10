@@ -254,6 +254,14 @@ def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
     assert set(result["per_target_preds"]) == {family}
     assert {name for name, model in result.models.items() if model is not None} == {family}
     assert f"pred_{family}_total" in result["test_df"]
+    if branch == "nn":
+        from src.batch.train import _extract_metrics
+
+        selection = result["history"]["checkpoint_selection"]
+        assert selection["metric"] == "fantasy_rmse_ppr"
+        assert selection["epoch"] >= 1
+        assert np.isfinite(selection["score"])
+        assert _extract_metrics("QB", result)["nn_selection"] == selection
 
     present, absent = (
         ("ridge_ranking", "nn_ranking") if branch == "cpu" else ("nn_ranking", "ridge_ranking")

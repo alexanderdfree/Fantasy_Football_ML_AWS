@@ -165,6 +165,7 @@ class Spec:
     metric_fn: Callable[[dict, str], dict]
     dotted: str | None = None  # importable module path; required for parallel mode
     name: str = "ab"
+    supports_stacked: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -263,7 +264,16 @@ def resolve_spec(
     ]
     metric_fn = getattr(spec, "metric_fn", default_metric_fn)
     name = getattr(spec, "AB_NAME", None) or (dotted or "ab").rsplit(".", 1)[-1]
-    return Spec(variants, baseline, pos, sds, metric_fn, dotted, name)
+    return Spec(
+        variants,
+        baseline,
+        pos,
+        sds,
+        metric_fn,
+        dotted,
+        name,
+        getattr(spec, "SUPPORTS_STACKED", True),
+    )
 
 
 def build_cells(spec: Spec) -> list[Cell]:
@@ -449,6 +459,8 @@ def build_stacked_units(spec: Spec) -> tuple[list[Group], list[Cell]]:
     """Stacked groups for flat-history positions; eager per-seed cells for the
     rest (K's nested trainer / DST's own-splits run() are excluded from the
     vmap harness)."""
+    if not spec.supports_stacked:
+        raise ValueError(f"{spec.name} does not support stacked execution")
     groups = [
         Group(p, v, tuple(spec.seeds))
         for p in spec.positions
@@ -1013,12 +1025,18 @@ def run_ab(
     from src.shared.utils import cuda_enabled
     from src.tuning.ab_ensemble_seeds import stacked_default_seed_list
 
+    requested_stacking = stacked_seeds
     if stacked_seeds is None:
         stacked_seeds = cuda_enabled()
     default_seeds = stacked_default_seed_list() if stacked_seeds else None
     resolved = resolve_spec(
         spec, positions=positions, seeds=seeds, only=only, default_seeds=default_seeds
     )
+    if stacked_seeds and not resolved.supports_stacked:
+        if requested_stacking:
+            raise ValueError(f"{resolved.name} does not support stacked execution")
+        stacked_seeds = False
+        resolved = resolve_spec(spec, positions=positions, seeds=seeds, only=only)
     data_dir = os.path.abspath(data_dir or "data")
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"data dir not found: {data_dir} (need data/splits/*.parquet)")
@@ -1139,6 +1157,13 @@ def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> i
             only=args.only,
             default_seeds=stacked_default_seed_list() if stacked else None,
         )
+        if stacked and not spec.supports_stacked:
+            if args.stacked_seeds:
+                raise ValueError(f"{spec.name} does not support stacked execution")
+            stacked = False
+            spec = resolve_spec(
+                spec_ref, positions=args.positions, seeds=args.seeds, only=args.only
+            )
         print(f"spec={spec.dotted or spec.name} baseline={spec.baseline}")
         print(f"variants={list(spec.variants)}")
         print(f"positions={spec.positions} seeds={spec.seeds}")

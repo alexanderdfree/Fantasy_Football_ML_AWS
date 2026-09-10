@@ -17,6 +17,7 @@ from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 SEEDS = [42, 123, 7]
+SUPPORTS_STACKED = False  # Fixed-epoch stacking bypasses checkpoint selection.
 
 
 def _select(cfg, metric):
