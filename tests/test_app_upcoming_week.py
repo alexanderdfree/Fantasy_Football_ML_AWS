@@ -648,6 +648,89 @@ def test_run_upcoming_inference_passes_season_context_and_slices_week(monkeypatc
 
 
 @pytest.mark.unit
+def test_special_teams_inference_receives_both_live_history_sources(monkeypatch):
+    from src.serving.upcoming_special_teams import SpecialTeamsFrames
+
+    def frame(pos, pid):
+        return pd.DataFrame(
+            {
+                "player_id": [pid, pid],
+                "position": [pos, pos],
+                "recent_team": ["SEA", "SEA"],
+                "season": [2026, 2026],
+                "week": [1, 2],
+                "opponent_team": ["NE", "SF"],
+                "player_display_name": [pid, pid],
+            }
+        )
+
+    k, dst = frame("K", "K1"), frame("DST", "SEA")
+    k["_schedule_merged"] = True
+    k["_team_box_score_merged"] = True
+    kicks = pd.DataFrame({"season": [2026], "week": [1], "kick_distance": [51]})
+    weekly = pd.DataFrame({"season": [2026], "week": [1], "passing_yards": [321]})
+    bundle = SpecialTeamsFrames(k, dst, kicks, weekly, pd.DataFrame(), {}, "changed")
+    monkeypatch.setattr(upcoming_week.core, "_ensure_base_data", lambda: None)
+    monkeypatch.setattr(
+        upcoming_week.app_pkg, "_cache", {"splits": {"K": (k, k, k), "DST": (dst, dst, dst)}}
+    )
+    calls = []
+
+    def apply(train, val, test, pos, results, **kwargs):
+        calls.append(pos)
+        assert set(test.position) == {pos}  # both special filters are identities
+        assert set(test.week) == {1, 2}
+        if pos == "DST":
+            assert "_schedule_merged" not in test
+            assert "_team_box_score_merged" not in test
+        assert kwargs["kick_history"] is kicks
+        assert kwargs["opponent_weekly"] is weekly
+        results.loc[test.index, _pred_col("ridge", "ppr")] = 8.25
+
+    monkeypatch.setattr(upcoming_week.core, "_apply_position_models", apply)
+    roster = pd.DataFrame({"player_id": ["K1"], "espn_name": ["Live K"], "espn_id": ["1"]})
+    slate = pd.DataFrame({"recent_team": ["SEA"], "spread_line": [3.5], "total_line": [45]})
+    result = upcoming_week.run_upcoming_inference(
+        k.iloc[:0], roster, slate, 2026, 2, special_teams=bundle
+    )
+    assert calls == ["K", "DST"]
+    assert len(result) == 2 and set(result.week) == {2}
+    assert result[_pred_col("ridge", "ppr")].eq(8.25).all()
+    assert result.player_display_name.tolist() == ["Live K", "SEA"]
+
+
+@pytest.mark.unit
+def test_schedule_augmentation_handles_release_id_dtype_drift(monkeypatch, tmp_path):
+    path = tmp_path / "schedules.parquet"
+    existing = pd.DataFrame(
+        {
+            "game_id": ["old"],
+            "old_game_id": [2025010100],
+            "season": [2025],
+            "week": [1],
+            "game_type": ["REG"],
+            "home_team": ["SEA"],
+            "away_team": ["NE"],
+        }
+    )
+    existing.to_parquet(path)
+    monkeypatch.setattr(upcoming_week, "_schedules_path", lambda: str(path))
+    new = existing.assign(game_id="new", old_game_id="2026010100", season=2026)
+    upcoming_week._augment_schedules_cache(new)
+    result = pd.read_parquet(path)
+    assert result.old_game_id.tolist() == [2025010100, 2026010100]
+
+
+@pytest.mark.unit
+def test_artifact_carries_source_freshness_and_weather_gaps(monkeypatch):
+    monkeypatch.setattr(upcoming_week.core, "_degraded_positions", lambda: [])
+    status = {"history_before_week": 2, "weather": [{"game_id": "g", "weather": "unknown_roof"}]}
+    artifact = upcoming_week._build_artifact(2026, 2, pd.DataFrame(), source_status=status)
+    assert set(artifact["positions"]) == {"QB", "RB", "WR", "TE", "K", "DST"}
+    assert artifact["source_status"] == status
+
+
+@pytest.mark.unit
 def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
     """The built frame = current-season completed REG weeks + context-filled week W."""
     history = pd.DataFrame(

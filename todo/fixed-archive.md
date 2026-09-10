@@ -4,11 +4,20 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 
 ---
 
+
 ### [FIXED] Lint CI drifted from the development Ruff pin
 - **File(s):** [../.github/workflows/tests.yml](../.github/workflows/tests.yml), [../tests/test_dependency_pins.py](../tests/test_dependency_pins.py) (audit #1509; PR pending).
 - **What:** The lint job independently pinned Ruff 0.15.16 while development requirements had advanced to 0.15.20, and then 0.16.6. Existing dependency parity tests did not inspect the lint install command.
 - **Fix:** Read the exact Ruff requirement from `requirements-dev.txt` in the lint install step. The contract test executes that step with a stub `uv` for both the current requirement and a future synthetic pin; development and GPU pins are checked together.
 - **Lesson:** A second hardcoded pin inevitably drifts. Test the consuming install command against the canonical requirement so future dependency bumps reach CI automatically.
+
+### [FIXED] K/DST missing from the live upcoming-week prediction path
+
+- **File(s):** `src/serving/upcoming_special_teams.py`, `forecast_weather.py`, `upcoming_week.py`, `espn_live.py`, `core.py`; optional frame injection in `src/k/data.py` and `src/dst/data.py`; NextWeek frontend and source/replay tests. PR pending.
+- **What:** The artifact builder and roster parser only admitted QB/RB/WR/TE. Simply adding K/DST to the position list would have left K without fresh per-kick history and DST without current-season opposing-offense history. The existing schedule adapter omitted rest/venue details and joined different providers' game IDs. Week 1 2026 had no schedule temperature/wind and incorrectly labeled the Melbourne neutral-site game a dome.
+- **Fix:** Dedicated upcoming K/DST frames reuse the training builders with cutoff-filtered live-season data, explicit history inputs, and coverage checks. Normalize active ESPN PK entries to K, build DST team rows, preserve matchup/rest context, join schedule rows by matchup, and obtain kickoff forecasts for the actual venue. Missing forecasts and uncertain roofs remain imputed and disclosed; incomplete required history or missing K/DST model output prevents publishing a false-success artifact. Training years, targets and model recipes stay fixed.
+- **Lesson:** A complete feature whitelist does not prove live readiness. Trace every attention history and cache dependency through actual inference, verify provider IDs and venue semantics, and distinguish an unavailable source from a zero observation.
+
 
 ### [FIXED] Serving Torch pin drifted from training and used the wrong index priority
 - **File(s):** [../Dockerfile](../Dockerfile), [../requirements-dev.txt](../requirements-dev.txt), [../requirements-gpu.txt](../requirements-gpu.txt), [../src/batch/requirements.txt](../src/batch/requirements.txt) (dependency refresh, PR pending).
