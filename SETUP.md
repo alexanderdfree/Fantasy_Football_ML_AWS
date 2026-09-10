@@ -28,7 +28,30 @@ pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements-dev.txt
 ```
 
-## Apple Silicon (macOS) — optional MPS
+## Apple Silicon (macOS) — OpenMP setup and optional MPS
+
+After installing or upgrading the Python dependencies, run this with the same
+interpreter you use for tests and training:
+
+```bash
+brew install libomp
+python scripts/fix_macos_openmp.py --apply
+```
+
+PyTorch and scikit-learn wheels can bundle different `libomp.dylib` copies while
+LightGBM loads Homebrew's copy. Loading these together can crash Python inside
+OpenMP thread initialization. The repair points the selected environment's
+bundled copies at Homebrew's stable library path, saves the originals under
+`<environment>/.openmp-backups/`, and verifies the loaded libraries in a fresh
+Python process. It rolls back if verification fails and does nothing on Linux
+or Windows. Restart any existing Python/test processes after the repair.
+
+Run `python scripts/fix_macos_openmp.py` for a check without changes. Use
+`--library /absolute/path/to/libomp.dylib` to select another installed runtime.
+Repeat `--apply` for each virtual environment used by project worktrees and
+after reinstalling packages; use the environment's absolute Python path rather
+than symlinking its `.venv` into another checkout. See
+[LightGBM's OpenMP guidance](https://lightgbm.readthedocs.io/en/latest/FAQ.html#lightgbm-crashes-randomly-or-operating-system-hangs-during-or-after-running-lightgbm).
 
 The install above uses the **CPU** wheel; on an Apple Silicon Mac the pipeline runs on the CPU
 and is byte-identical to CI. To try the Mac's GPU for the attention-NN phase, **opt in** with
