@@ -7,9 +7,35 @@ from urllib.parse import unquote, urlsplit
 
 import markdown
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(
+        [*ROOT.glob(".agents/skills/*/SKILL.md")]
+        + [*ROOT.glob(".claude/skills/*/SKILL.md")]
+        + [*ROOT.glob(".codex/prompts/*.md")]
+    ),
+    ids=lambda path: str(path.relative_to(ROOT)),
+)
+def test_skill_and_prompt_frontmatter_loads(path):
+    """Load the same YAML shapes expected by skill and prompt consumers."""
+    source = path.read_text(encoding="utf-8")
+    assert source.startswith("---\n"), path
+    parts = source.split("---", 2)
+    assert len(parts) == 3, path
+    metadata = yaml.safe_load(parts[1])
+    assert isinstance(metadata, dict), path
+    assert isinstance(metadata.get("description"), str), path
+    assert metadata["description"].strip(), path
+    if path.name == "SKILL.md":
+        assert metadata.get("name") == path.parent.name, path
+    if "argument-hint" in metadata:
+        assert isinstance(metadata["argument-hint"], str), path
 
 
 @pytest.mark.parametrize(

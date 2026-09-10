@@ -5,6 +5,9 @@ Historical evidence, retrieved one issue at a time. Search these titles, then op
 ### [FIXED] Shared projected components define both sides of expert comparison
 [Read the incident record](fixed-archive/shared-component-comparison-2026-09.md).
 
+### [FIXED] Skill metadata and workflow assumptions broke loading and safe delivery
+[Read the incident record](fixed-archive/skill-workflow-repairs-2026-09.md).
+
 Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIXED] Title` and **File(s) / What / Fix / Lesson**. Add its heading and link here. Keep entries focused; update an existing lesson rather than repeating the same incident across guidance files.
 
 The original headings remain here so existing fragment links still resolve.

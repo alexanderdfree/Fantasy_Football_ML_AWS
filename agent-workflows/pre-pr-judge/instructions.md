@@ -26,7 +26,7 @@ stop before `gh pr create` on WARN.
 ## Provider entrypoints
 
 - Claude wrapper: `.claude/skills/pre-pr-judge/SKILL.md`.
-- Codex wrapper: `.codex/prompts/pre-pr-judge.md`.
+- Codex wrapper: `.agents/skills/pre-pr-judge/SKILL.md`; `.codex/prompts/pre-pr-judge.md` is the legacy alias.
 - Gemini/Antigravity wrapper: `.agents/skills/pre-pr-judge/SKILL.md`.
 
 The wrappers stay discoverable at those paths. This file is the behavioral source
@@ -54,12 +54,15 @@ Skip entirely when:
 
 - the change is a one-line typo, formatting-only fix, lockfile bump, or comment/docstring-only edit;
 - the change is a mass mechanical sweep the user asked for, such as ruff autofixes across the tree or a docs cross-reference sweep;
-- the user explicitly broadened scope mid-task (`while you're at it, also fix X`); that addition is in scope by definition.
+
+An explicitly broadened task updates the scope being judged; it does not skip
+the judge. Include that addition alongside the original request and still check
+for unrelated changes and missing work.
 
 ## How to run
 
 1. Resolve `WORKFLOW_BASE` to the supplied value or `origin/main`.
-2. Rebase before judging: run `git fetch origin main --quiet` and then `git rebase WORKFLOW_BASE`. If the rebase conflicts, run `git rebase --abort`, report the conflict, and stop. Do not judge or open a PR from a stale or conflicted branch.
+2. Refresh `origin/main` and, when different, the remote ref behind the supplied base. Verify the active worktree and branch before rebasing onto the resolved `WORKFLOW_BASE`; do not switch or rewrite another task's checkout. Resolve routine conflicts within the authorized scope, checking conflict markers and affected behavior. If resolution needs a decision that cannot be inferred, report the concrete conflict and ask for that decision. Do not judge or open a PR from a conflicted branch. After a rebase changes the tested tree, rerun the affected deterministic checks before judging.
 3. Resolve the original task:
    - if `WORKFLOW_ORIGINAL_TASK` is supplied, treat it as authoritative;
    - otherwise infer it from the current thread, including only scope refinements the user explicitly approved.

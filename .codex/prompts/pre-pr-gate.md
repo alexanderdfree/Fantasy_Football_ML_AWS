@@ -1,6 +1,6 @@
 ---
 description: Run the repo's deterministic pre-PR checks before gh pr create
-argument-hint: [BASE=origin/main]
+argument-hint: '[BASE=origin/main]'
 ---
 
 Run the repo's deterministic pre-PR gate manually.

@@ -1,6 +1,6 @@
 ---
 description: Vet the current branch against the original task before opening a PR
-argument-hint: [ORIGINAL_TASK="<quoted task>"] [BASE=origin/main]
+argument-hint: '[ORIGINAL_TASK="<quoted task>"] [BASE=origin/main]'
 ---
 
 Run the repo's Codex pre-PR judge wrapper.
