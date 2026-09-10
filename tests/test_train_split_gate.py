@@ -37,6 +37,22 @@ def _job_steps(doc: dict, job: str) -> list[dict]:
     return list(doc.get("jobs", {}).get(job, {}).get("steps", []))
 
 
+def test_batch_history_collection_keeps_rebase_checkout_clean():
+    steps = _job_steps(_load("train-batch.yml"), "train")
+    submit = next(s["run"] for s in steps if s.get("id") == "train")
+    collect = next(
+        s["run"] for s in steps if s.get("name") == "Append Batch run to benchmark_history/"
+    )
+    assert '--history-run-id "$FF_BENCHMARK_RUN_ID"' in submit
+    assert "--collect-history false" in submit
+    assert collect.index("git pull --rebase") < collect.index("python -m src.batch.benchmark")
+    # A push collision retries rebase after collection, so the tracked
+    # convenience table must also be restored before the commit/push step.
+    assert collect.index("git restore --worktree benchmark_results.json") > collect.index(
+        "python -m src.batch.benchmark"
+    )
+
+
 def _find_split_gate(steps: list[dict]) -> dict | None:
     """The fresh-splits gate head-objects the splits-rebuild markers. Anchored
     on BOTH 'splits-rebuild-markers' and 'head-object' so it's not confused with

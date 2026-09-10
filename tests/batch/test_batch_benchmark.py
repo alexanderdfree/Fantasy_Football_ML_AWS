@@ -19,6 +19,14 @@ from unittest import mock
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _no_live_aws(monkeypatch):
+    # Every test supplies the AWS behavior it exercises; new orchestration paths
+    # must never silently use a developer's real credentials.
+    monkeypatch.setattr("boto3.client", lambda *a, **kw: mock.MagicMock())
+
+
 # --------------------------------------------------------------------------
 # download_metrics — boto3 + tarfile mocked
 # --------------------------------------------------------------------------
@@ -250,6 +258,7 @@ def test_find_git_sha_divergence_skips_positions_without_sha():
 @pytest.fixture(autouse=True)
 def source_registration(monkeypatch):
     monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
+    monkeypatch.setattr("src.batch.run_history.create_run", lambda *a, **k: "unit-run")
     monkeypatch.setattr("src.batch.benchmark.boto3.client", lambda *a, **k: object())
     monkeypatch.setattr("src.batch.benchmark.validate_submission_source", lambda *a, **k: None)
 
@@ -273,7 +282,7 @@ def _main_stubs(tmp_path, monkeypatch):
         lambda *_args: launched.append({"source_registration": True}),
     )
 
-    def _submit_job(pos, seed):
+    def _submit_job(pos, seed, **kwargs):
         launched.append({"pos": pos, "seed": seed})
         return pos, f"job-{pos}"
 
@@ -329,6 +338,26 @@ def _main_stubs(tmp_path, monkeypatch):
     # that. We patch RESULTS_FILE/HISTORY_DIR to point under tmp_path.
     monkeypatch.setattr(bb, "RESULTS_FILE", str(tmp_path / "results.json"))
     monkeypatch.setattr(bb, "HISTORY_DIR", str(tmp_path / "history"))
+
+    from src.batch import run_history
+
+    registered = {}
+
+    def _create_run(*args, **kwargs):
+        registered.update(kwargs)
+        return "unit-run"
+
+    def _complete_run(*args, **kwargs):
+        return {
+            "run_id": "unit-run",
+            "git_hash": "abc1234",
+            "note": registered["note"],
+            "positions": list(fake_metrics),
+            "results": [{"position": p, **m} for p, m in fake_metrics.items()],
+        }
+
+    monkeypatch.setattr(run_history, "create_run", _create_run)
+    monkeypatch.setattr(run_history, "complete_run", _complete_run)
 
     return launched, printed, appended
 
@@ -417,7 +446,9 @@ def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
     monkeypatch.setattr(bb, "print_comparison_table", lambda *a, **k: None)
     monkeypatch.setattr(bb, "summarize_pipeline_result", lambda *a, **k: {})
 
-    monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB"])
+    monkeypatch.setattr(
+        "sys.argv", ["src/batch/benchmark.py", "--download-only", "--positions", "QB"]
+    )
     bb.main()
     # Early-return branch: no history writes.
     assert appended == []
@@ -430,7 +461,7 @@ def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
-    monkeypatch.setattr(bb, "submit_job", lambda pos, seed: (pos, f"j-{pos}"))
+    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kw: (pos, f"j-{pos}"))
 
     def _wait(job_ids):
         out = {p: ("SUCCEEDED", 0) for p in job_ids}
@@ -456,7 +487,7 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
 
-    def _bad_submit(pos, seed):
+    def _bad_submit(pos, seed, **kwargs):
         raise RuntimeError(f"{pos} submit boom")
 
     waited_for: list[dict] = []
@@ -582,11 +613,8 @@ def test_record_benchmark_run_returns_none_when_no_metrics(monkeypatch):
 
 
 @pytest.mark.unit
-def test_record_benchmark_run_fingerprints_only_sha_matched_positions(_main_stubs, monkeypatch):
-    """code_fingerprints are stamped ONLY for positions whose downloaded
-    artifact trained at this checkout's HEAD (per-position manifest git_sha) —
-    --download-only / stale-manifest fallbacks must not manufacture pre-PR B2
-    evidence for code that never trained."""
+def test_record_rejects_cross_run_metrics_before_writing_fingerprints(_main_stubs, monkeypatch):
+    """Mixed serving artifacts must not become a mislabeled row or gate evidence."""
     import src.batch.benchmark as bb
 
     _, _, appended = _main_stubs
@@ -603,9 +631,9 @@ def test_record_benchmark_run_fingerprints_only_sha_matched_positions(_main_stub
         "collect_code_fingerprints",
         lambda positions, repo_root=".", **kw: {p: "f" * 64 for p in positions},
     )
-    bb.record_benchmark_run(["QB", "RB"])
-    row = appended[0]
-    assert row["code_fingerprints"] == {"QB": "f" * 64}  # RB conservatively omitted
+    with pytest.raises(ValueError, match="Refusing mismatched training history"):
+        bb.record_benchmark_run(["QB", "RB"])
+    assert appended == []
 
 
 @pytest.mark.unit
