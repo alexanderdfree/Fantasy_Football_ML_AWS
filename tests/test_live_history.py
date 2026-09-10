@@ -9,6 +9,14 @@ from src.serving import upcoming_week as live
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def missing_live_snaps(monkeypatch):
+    def unavailable(seasons):
+        raise ConnectionError("snap_counts_2026.parquet: 404")
+
+    monkeypatch.setattr(live.nfl_source, "snap_counts", unavailable)
+
+
 def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path):
     old = pd.DataFrame(
         {"player_id": ["old"], "season": [2025], "week": [1], "recent_team": ["SEA"]}
@@ -55,6 +63,10 @@ def test_current_season_is_fresh_and_team_tokens_advance(monkeypatch, tmp_path):
     assert calls[0][0][-1] == 2025
     assert calls[1][0] == calls[2][0] == [2026]
     assert calls[1][1] != calls[2][1]  # no stale current-season file reuse
+    assert one.attrs["live_history_sources"]["snap_counts"] == "unavailable"
+    assert one.attrs["live_history_sources"]["player_rows"] == 2
+    assert one.attrs["live_history_sources"]["ff_opportunity"] == "unavailable"
+    assert one.attrs["live_history_sources"]["qbr_observed_rows"] == 0
     team_cache = pd.read_parquet(tmp_path / "team_stats_2012_2025.parquet")
     assert set(team_cache.loc[team_cache.season.eq(2026), "team"]) == {"SEA", "NE"}
     assert team_cache.week.max() == 1

@@ -52,7 +52,7 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **File(s):** `src/serving/upcoming_week.py`, `src/serving/espn_live.py`, `tests/test_live_history.py`, `tests/test_app_upcoming_week.py` (PR pending).
 - **What:** The live loader stopped at 2025, and inference supplied only train/validation plus 2026 rows. Eight returning QBs received rookie_early=1; 86 RBs omitted 2025 carries (Jeanty 0 instead of 266). Later 2026 weeks would also have empty current-season attention histories.
 - **Fix:** Load completed live-season player and team data afresh without changing evaluation seasons; retain the held-out year for inference and exclude already-fitted years. Mark synthetic rows and serialize only scheduled games, avoiding duplicate observed/synthetic rows after an early-week game finishes.
-- **Lesson:** Preserving current-season rows is insufficient for features rebuilt across years; trace the complete train/validation/inference input union.
+- **Lesson:** Preserving current-season rows is insufficient for features rebuilt across years; trace the complete train/validation/inference input union. Real season-opener validation also found PFR snaps and ff_opportunity not yet published for 2026. Late snaps use an explicitly empty disposable cache (retried next build); existing missing-data encodings remain, and the artifact reports unavailable supplementary sources. Completed player/team stats remain required.
 
 ### [FIXED] QBR's schema-valid source was frozen at 2023
 - **File(s):** `src/data/nfl_source.py`, `src/data/external_sources.py`, `tests/test_qbr_source_freshness.py` (PR pending).

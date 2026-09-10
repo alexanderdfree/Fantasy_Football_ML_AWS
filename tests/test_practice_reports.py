@@ -64,7 +64,7 @@ def test_wrong_week_is_rejected():
 def test_missing_tables_is_not_a_healthy_report():
     with pytest.raises(ValueError, match="no published"):
         pr.parse_practice_report(
-            '<option selected value="/injuries/league/2026/reg1">1</option>', 2026, 1
+            '<option selected value="/injuries/league/2026/reg1">WEEK 1</option>', 2026, 1
         )
 
 
@@ -141,3 +141,11 @@ def test_historical_team_directory_aliases_are_canonicalized(roster, monkeypatch
     report = pr.fetch_practice_report(2026, 1, roster)
     assert report.values["a"] == 1.0
     assert "LV" in report.metadata["covered_teams"]
+
+
+def test_year_selector_cannot_validate_a_different_week():
+    html = '<select><option selected value="/injuries/league/2026/reg1">2026</option></select>'
+    html += report_html().replace("reg1", "reg2").replace("WEEK 1", "WEEK 2")
+    with pytest.raises(ValueError, match="different season/week"):
+        pr.parse_practice_report(html, 2026, 1)
+    assert pr.parse_practice_report(html, 2026, 2).covered == {"Ravens"}

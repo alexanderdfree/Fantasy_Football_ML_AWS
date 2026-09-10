@@ -37,6 +37,8 @@ class _PracticeParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.selected = set()
+        self.option_path = None
+        self.option_parts = []
         self.records = []
         self.covered = set()
         self.team = ""
@@ -50,7 +52,8 @@ class _PracticeParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "option" and "selected" in attrs:
-            self.selected.add(attrs.get("value", ""))
+            self.option_path = attrs.get("value", "")
+            self.option_parts = []
         if tag == "div":
             if self.title_depth:
                 self.title_depth += 1
@@ -66,12 +69,21 @@ class _PracticeParser(HTMLParser):
             self.cell = []
 
     def handle_data(self, data):
+        if self.option_path is not None:
+            self.option_parts.append(data)
         if self.title_depth:
             self.title_parts.append(data)
         if self.cell is not None:
             self.cell.append(data)
 
     def handle_endtag(self, tag):
+        if tag == "option" and self.option_path is not None:
+            # The year selector links to reg1 even on later-week pages. Only
+            # the selected WEEK option proves which report we actually read.
+            label = " ".join(" ".join(self.option_parts).split()).upper()
+            if label.startswith("WEEK "):
+                self.selected.add(self.option_path)
+            self.option_path = None
         if tag == "div" and self.title_depth:
             self.title_depth -= 1
             if not self.title_depth:

@@ -156,8 +156,32 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         ignore_index=True,
     )
     with tempfile.TemporaryDirectory(prefix="ff-live-history-") as fresh_cache:
+        # PFR can publish the new season later than player/PBP stats. Prepare
+        # this optional source in the disposable cache: an empty frame means
+        # unknown snaps, which the existing loader/preprocessor already handle.
+        # Never persist that empty response in the archive or substitute last
+        # season's snaps. The next CI build retries the real source.
+        snap_status = "available"
+        try:
+            snaps = nfl_source.snap_counts([season])
+        except Exception as exc:  # observed upstream 404 at the season opener
+            print(f"[upcoming_week] live snap counts unavailable: {exc!r}")
+            snaps = pd.DataFrame(columns=["pfr_player_id", "season", "week", "offense_pct"])
+            snap_status = "unavailable"
+        if snaps.empty:
+            snap_status = "unavailable"
+        atomic_write_parquet(
+            snaps, os.path.join(fresh_cache, f"snap_counts_{season}_{season}.parquet")
+        )
         current = preprocess(load_raw_data([season], cache_dir=fresh_cache))
         current = current.merge(keys, on=["season", "week", "recent_team"], how="inner")
+        opportunity_status = (
+            "available"
+            if os.path.isfile(
+                os.path.join(fresh_cache, f"ff_opportunity_{season}_{season}.parquet")
+            )
+            else "unavailable"
+        )
         actual = pd.MultiIndex.from_frame(current[["season", "week", "recent_team"]])
         missing = pd.MultiIndex.from_frame(keys).difference(actual)
         if len(missing):
@@ -181,7 +205,18 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         atomic_write_parquet(
             combined, os.path.join(CACHE_DIR, f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet")
         )
-    return pd.concat([history, current], ignore_index=True)
+    result = pd.concat([history, current], ignore_index=True)
+    result.attrs["live_history_sources"] = {
+        "season": season,
+        "completed_games": len(played),
+        "player_rows": len(current),
+        "snap_counts": snap_status,
+        "ff_opportunity": opportunity_status,
+        "qbr_observed_rows": int(current["qbr_total"].notna().sum())
+        if "qbr_total" in current
+        else 0,
+    }
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -318,7 +353,9 @@ def build_upcoming_week_frame(
         )
     # No ignore_index: _apply_position_models writes predictions by index, so
     # both slices must keep their original (disjoint) ``featurized`` indices.
-    return pd.concat([ctx, sl])
+    result = pd.concat([ctx, sl])
+    result.attrs["live_history_sources"] = history.attrs.get("live_history_sources", {})
+    return result
 
 
 def _fill_current_week_context(
@@ -890,7 +927,11 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # Expert columns for the homepage (best-effort; nulls when a feed is down).
     _apply_upcoming_experts(results, raw_nflcom, raw_rotowire, raw_espn)
     payload = _build_artifact(season, week, results, source_status=special.source_status)
-    payload["sources"] = {"practice": practice_report.metadata, "weather": weather_metadata}
+    payload["sources"] = {
+        "practice": practice_report.metadata,
+        "weather": weather_metadata,
+        "history": featurized.attrs.get("live_history_sources", {}),
+    }
     _publish_artifact(payload, sig)
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")
     return payload
