@@ -1,8 +1,12 @@
 # Repo-level Codex defaults. Keep hook trust hashes, auth state, and
 # machine-specific model catalog paths in user configuration, not this file.
 service_tier = "fast"
-# Model, reasoning and context/compaction defaults come from the user/runtime.
-# Do not pin a historical workstation profile in this shared project config.
+model = "gpt-6-astra"
+# Maximum context override advertised by Codex 0.153.4 for Astra.
+model_context_window = 872000
+model_reasoning_effort = "max"
+plan_mode_reasoning_effort = "max"
+# Leave model_auto_compact_token_limit unset to use the model default.
 
 [features]
 fast_mode = true
