@@ -214,19 +214,42 @@ def record_benchmark_run(
     note="",
     pr_number=None,
     git_hash=None,
+    run_id=None,
 ):
     """Aggregate already-trained artifacts into one benchmark_history row.
 
-    Downloads ``benchmark_metrics.json`` for ``positions`` (via each manifest),
-    prints the comparison table, writes ``benchmark_history/{run_id}.json``, and
-    mirrors it to S3. Returns the written path, or ``None`` if no metrics were
-    resolvable.
+    With ``run_id``, collect the immutable summary published by completing jobs.
+    Legacy calls without an id read serving artifacts and reject SHA divergence.
+    Prints the comparison table and writes the local history file; legacy rows
+    are also mirrored to S3. Returns the path, or None if no legacy metrics exist.
 
     Shared by ``main()`` (CLI / CI) and ``src/batch/launch.py``'s standalone
     auto-append so both go through exactly one code path. ``HISTORY_DIR`` /
     ``RESULTS_FILE`` are resolved against the repo root when relative, so the
     function is correct regardless of the caller's cwd.
     """
+    if run_id:
+        from src.batch.run_history import complete_run
+
+        entry = complete_run(
+            boto3.client("s3", region_name=AWS_REGION),
+            S3_BUCKET,
+            run_id,
+            positions=positions,
+            git_sha=git_hash,
+        )
+        if entry is None:
+            raise RuntimeError(f"History run {run_id} still has unfinished positions")
+        print_comparison_table(
+            entry["results"],
+            header="AWS Batch Benchmark Results (MAE / R2)",
+            show_time=False,
+        )
+        with open(os.path.join(_REPO_ROOT, RESULTS_FILE), "w") as file:
+            json.dump(entry["results"], file, indent=2)
+        history_dir = os.path.join(_REPO_ROOT, HISTORY_DIR)
+        return append_to_history(history_dir, entry)
+
     print("\nDownloading benchmark metrics...")
     all_metrics = download_metrics(positions)
 
@@ -247,14 +270,9 @@ def record_benchmark_run(
     expected_sha = ((git_hash or get_git_hash() or "")[:7]) or None
     diverged = find_git_sha_divergence(all_metrics, expected_sha)
     if diverged:
-        print(f"\nWARNING: git_sha divergence across positions (expected {expected_sha}):")
-        for pos, recorded in diverged:
-            print(f"  {pos}: trained image at {recorded}")
-        print(
-            "  Investigate whether two train-batch.yml runs overlapped on "
-            "this run's S3 writes. The model artifacts are still each "
-            "internally consistent (Layer A guarantees per-job image pinning), "
-            "but the run is heterogeneous and shouldn't be compared as a unit."
+        raise ValueError(
+            f"Refusing mismatched training history (expected {expected_sha}): {diverged}. "
+            "Collect the immutable run with --run-id instead."
         )
     elif expected_sha:
         with_sha = [p for p, m in all_metrics.items() if m.get("git_sha")]
@@ -358,8 +376,9 @@ def main():
     parser.add_argument(
         "--download-only",
         action="store_true",
-        help="Skip launching jobs; download metrics from latest artifacts",
+        help="Skip launching jobs; retrieve --run-id or validate the current artifacts' SHA",
     )
+    parser.add_argument("--run-id", default=os.environ.get("FF_BENCHMARK_RUN_ID"))
     parser.add_argument(
         "--backend",
         choices=["batch", "ec2"],
@@ -407,12 +426,23 @@ def main():
 
     if not args.download_only:
         from src.shared.artifact_publication import register_source
+        from src.batch.run_history import create_run
 
         register_source(
             boto3.client("s3", region_name=AWS_REGION),
             S3_BUCKET,
             _model_s3_prefix(),
             TRAIN_GIT_SHA or "",
+        )
+        args.run_id = create_run(
+            boto3.client("s3", region_name=AWS_REGION),
+            S3_BUCKET,
+            args.positions,
+            run_id=args.run_id,
+            git_sha=TRAIN_GIT_SHA,
+            pr_number=args.pr_number,
+            seed=args.seed,
+            note=args.note or "AWS Batch training run",
         )
         # Upload data
         print("Uploading data splits to S3...")
@@ -423,7 +453,16 @@ def main():
         print(f"Submitting {len(args.positions)} benchmark jobs: {args.positions}")
         job_ids = {}
         with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
-            futures = {pool.submit(submit_job, pos, args.seed): pos for pos in args.positions}
+            futures = {
+                pool.submit(
+                    submit_job,
+                    pos,
+                    args.seed,
+                    history_run_id=args.run_id,
+                    train_git_sha=args.git_hash or TRAIN_GIT_SHA,
+                ): pos
+                for pos in args.positions
+            }
             for future in as_completed(futures):
                 pos = futures[future]
                 try:
@@ -461,6 +500,7 @@ def main():
         note=args.note,
         pr_number=args.pr_number,
         git_hash=args.git_hash,
+        run_id=args.run_id,
     )
 
 

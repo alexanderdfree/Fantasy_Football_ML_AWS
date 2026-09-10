@@ -427,6 +427,21 @@ def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
             return None
         print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
 
+        history_run_id = os.environ.get("FF_BENCHMARK_RUN_ID")
+        if history_run_id:
+            from src.batch.run_history import publish_position
+
+            entry = publish_position(
+                s3,
+                s3_bucket,
+                history_run_id,
+                position,
+                _read_json_file(os.path.join(model_dir, "benchmark_metrics.json")),
+                new_key,
+            )
+            if entry:
+                print(f"Published complete training history: {entry['run_id']}")
+
         try:
             deleted = _gc_prune(s3, s3_bucket, s3_prefix, position, new_manifest)
             if deleted:

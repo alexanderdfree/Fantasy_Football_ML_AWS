@@ -50,6 +50,8 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
+  # Immutable identity across submit, completion-side publication, and collection.
+  FF_BENCHMARK_RUN_ID: train-${{ github.run_id }}-${{ github.run_attempt }}
   # Serving ECS service, rolled after a successful train (see the ecs_rollout
   # job). PR #330 removed the post-train rollover on the theory that the
   # in-flight manifest poller (FF_MODEL_REFRESH_INTERVAL_S) would hot-swap new
@@ -347,6 +349,7 @@ jobs:
         # steps.train.outcome / steps.recover.outputs.recovered explicitly.
         continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # 300 min (vs the launch.py default of 180): Spot queue time
           # dominates the ~1 min/position training, so spend the job's
@@ -405,17 +408,17 @@ jobs:
           # positions reach SUCCEEDED. --skip-upload because CI has no local
           # data/splits/*.parquet — the splits in s3://ff-predictor-training/data/
           # are refreshed out-of-band by a developer running launch.py from a
-          # workstation. --append-history false because the dedicated
-          # "Append Batch run to benchmark_history/" step below runs
-          # benchmark.py --download-only with the image SHA + PR number;
-          # letting launch.py also auto-append would write a duplicate,
-          # mislabeled row per run.
+          # workstation. Completing jobs publish the immutable history row;
+          # the later append step retrieves that same row for the git audit trail.
+          PR_NUMBER=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${FF_TRAIN_GIT_SHA}/pulls" \
+            --jq '.[0].number // empty' 2>/dev/null || true)
           LAUNCH_ARGS=(
             --positions $POSITIONS
             --seed "$SEED"
             --skip-upload
-            --append-history false
+            --history-run-id "$FF_BENCHMARK_RUN_ID"
           )
+          if [ -n "$PR_NUMBER" ]; then LAUNCH_ARGS+=(--pr-number "$PR_NUMBER"); fi
           split_active=$(echo "${BATCH_SPLIT_ACTIVE:-false}" | tr 'A-Z' 'a-z')
           if [ "$split_active" = "true" ]; then
             if [ -z "${FF_JOB_DEFINITION_CPU_REVISION:-}" ]; then
@@ -492,16 +495,16 @@ jobs:
             echo "::warning::launch.py wait expired but all Batch jobs reached SUCCEEDED — proceeding with benchmark append + marker (states: $states_summary)"
             exit 0
           fi
-          echo "::error::Batch training for ${HEAD_SHA::7} did not complete: $states_summary — benchmark_history row will be MISSING for this SHA until a retrain or backfill."
+          echo "::error::Batch training for ${HEAD_SHA::7} did not complete within the wait: $states_summary. Completing jobs can still publish history."
           gh issue create \
             --repo "$GITHUB_REPOSITORY" \
-            --title "train-batch: run for ${HEAD_SHA::7} did not complete — benchmark row missing" \
+            --title "train-batch: run for ${HEAD_SHA::7} exceeded the workflow wait" \
             --body "$(printf '%s\n' \
               "Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
               "Head SHA: ${HEAD_SHA}" \
               "Batch job states at last check: ${states_summary}" \
               "" \
-              "The wait + recovery grace poll expired before every Batch job reached SUCCEEDED, so the benchmark_history append, push, and train-success marker were skipped. If the jobs later SUCCEEDED on their own (Spot starvation outlasting the wait), backfill the row from models/{POS}/history/ metrics or re-dispatch train-batch.yml with image_sha=${HEAD_SHA}. No dedup marker was written, so the next workflow_run delivery for this SHA (if any) retrains from scratch.")" \
+              "The wait + recovery grace poll expired. Full/merge jobs publish their own immutable results for ${FF_BENCHMARK_RUN_ID}; once all positions finish, the last job publishes the History row to S3 even though this workflow has stopped waiting. The git history commit and train-success marker were skipped. To retry collection without retraining, run src.batch.benchmark --download-only --run-id ${FF_BENCHMARK_RUN_ID} with this run's positions. A failed position still requires investigation.")" \
             || echo "::warning::could not file tracking issue (continuing)"
           exit 0
 
@@ -673,6 +676,7 @@ jobs:
           esac
           python -m src.batch.benchmark \
             --download-only \
+            --run-id "$FF_BENCHMARK_RUN_ID" \
             --backend batch \
             --instance-type "$INSTANCE_TYPE" \
             --positions $POSITIONS \

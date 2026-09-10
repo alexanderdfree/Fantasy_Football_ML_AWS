@@ -149,6 +149,7 @@ def _benchmark_row(entry: dict) -> dict:
             total_elapsed += elapsed
     pr_number = entry.get("pr_number")
     return {
+        "run_id": entry.get("run_id"),
         "timestamp": entry.get("timestamp"),
         "git_hash": entry.get("git_hash"),
         "pr_number": int(pr_number) if isinstance(pr_number, int) else None,
