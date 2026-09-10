@@ -5,6 +5,8 @@
 - `AGENTS.md` is the provider-neutral startup router, with an 8 KiB UTF-8 budget.
   Keep each provider root (`CLAUDE.md`, `CODEX.md`, `GEMINI.md`) under 4 KiB.
   Preserve critical constraints in the entrypoint and link specialized rules.
+  Compatibility routers such as `agent-workflows/operating-lessons.md` also stay
+  under 4 KiB; they preserve old links without copying the full rules again.
   Raising the loader limit is not a substitute for deciding what belongs there.
 - Put a detailed operational rule in the matching `agent-guides/` topic. Read
   only that topic's relevant sections. Give a new topic a route in the index.

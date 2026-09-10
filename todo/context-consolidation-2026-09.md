@@ -1,6 +1,6 @@
 # Context consolidation — preservation ledger
 
-Guidance baseline: `41941966ba59a45b978b09533e684275d9673e80`. Archive baseline, including concurrently merged incidents: `5328b98761201da02c8bf1c652b936dcc918adf0`. This ledger distinguishes relocated constraints from deliberate corrections. Source line numbers refer to the guidance baseline, not the shortened files. The new evaluation-cohort constraint from PR #1541 is retained in both the entrypoint and validation guide.
+Guidance baseline: `41941966ba59a45b978b09533e684275d9673e80`. Archive baseline, including concurrently merged incidents: `7dd5e923dc7ac27888dfbd688d6a5a1f272fcb01`. This ledger distinguishes relocated constraints from deliberate corrections. Source line numbers refer to the guidance baseline, not the shortened files. The new evaluation-cohort constraint from PR #1541 is retained in both the entrypoint and validation guide.
 
 ## Guidance destinations
 
@@ -73,14 +73,13 @@ The old AGENTS introduction/orientation (lines 1–10) and section labels (178�
 - `routines/tests-audit/instructions.md`: Replace repeated worker prompt dumps with scoped rule references and matching-incident reads; retain complete orchestrator dedupe, audit coverage and final verification.
 - `routines/infrastructure-audit/instructions.md`: Replace repeated worker prompt dumps with scoped rule references and matching-incident reads; retain complete orchestrator dedupe, audit coverage and final verification.
 - `agent-guides/validation.md`: Preserve the new evaluation-cohort constraint from upstream PR #1541, including matched full-season actuals, the pregame reference, prior-season elite importance and serialization completeness.
+- `agent-guides/platform.md`: Respect upstream PR #1542 retiring the training-skipped marker; preserve the qualified docs-only contract without resurrecting deleted tooling.
+- `docs/adr/0017-platform-autodetection-per-arch-optimization-policy.md`: Respect upstream PR #1542 retiring the training-skipped marker; preserve the qualified docs-only contract without resurrecting deleted tooling.
 - `TODO.md`: replace the superseded CUDA-stream recommendation with the closed Lever B/B′ decisions and the dtype-specific graph caveat; retain the old fragment anchor and link to the full experiment record.
-
-- `.codex/prompts/post-pr-followup.md`: remove the contradictory admin-bypass option, retain the user-confirmed silent-stop exception, and require verified merge state before branch deletion.
-- Critique skill/prompt descriptions now route to scoped guidance rather than suggesting routine startup-file growth.
 
 ## Incident preservation
 
-All **136 pre-existing incident records** were compared to the baseline after normalizing relative links to repository-root destinations. Every heading, body, number, code fragment and exception matched. The old index retains the original headings, so incoming fragment links still resolve. The new consolidation incident is additional.
+All **142 pre-existing incident records** were compared to the baseline after normalizing relative links to repository-root destinations. Every heading, body, number, code fragment and exception matched. The old index retains the original headings, so incoming fragment links still resolve. The new consolidation incident is additional.
 
 All **14 relocated guidance blocks** also matched after reversing only the explicit corrections above. The duplicated provider parity synopsis was checked against the retained provider references separately.
 
@@ -97,3 +96,11 @@ All **14 relocated guidance blocks** also matched after reversing only the expli
 - Baseline-to-destination preservation comparison: passed as described above.
 - Context budgets, routes, historical-path exemptions and provider workflow parity: checked by the targeted test run recorded in the PR.
 - Full local gates and GitHub CI: results recorded in the PR rather than frozen here.
+
+## Review and upstream reconciliation
+
+- The post-PR prompt's contradictory admin-bypass option is removed, while its user-confirmed silent-stop exception remains. Merge state must be verified before branch deletion. Critique descriptions now route to scoped guidance.
+- The detailed review found locale-dependent Markdown reads on Windows and a cross-incident fragment whose label contains nested brackets. Reads now specify UTF-8, the fragment targets the retained index, and a rendered-link test covers archive routes.
+- A separate check caught a literal memory-index example. Its original `slug.md` text is restored. The strict preservation comparison leaves code spans verbatim and handles nested labels. Both bad cases failed the check before correction; all incident records and relocated guidance blocks now pass.
+- PR #1542 merged an overlapping operating-lessons extraction during this review. Its complete five-section body was compared with the original guidance after normalizing relative links and matched. Those rules already survive in the scoped guides (with the listed corrections), so `agent-workflows/operating-lessons.md` remains a compact router with its original five headings/anchors. Its path and all constraints remain available without a second copy.
+- PR #1542 also retired the `training-skipped:` marker tooling. Current guidance and ADR-0017 now respect that removal and retain only the qualified `[docs-only]` contract. Historical incident evidence is unchanged.
