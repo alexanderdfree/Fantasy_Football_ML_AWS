@@ -83,5 +83,151 @@
     "source_changed_during_run": false,
     "ruff": "passed",
     "format": "794files passed"
+  },
+  "captured_ensemble_training": {
+    "worktree": "/Users/alex/.codex/worktrees/4844/Final-Project",
+    "base_head": "614eac85da55334097d6df8554363054c2fd78bd",
+    "files": [
+      {
+        "path": "src/tuning/ab_ensemble_seeds.py",
+        "sha256": "b935a34012b7a4f75948c49c40a566e3f1a82ee7ada2254c8cbaabba193cff84"
+      },
+      {
+        "path": "tests/tuning/test_ensemble_empty_training.py",
+        "sha256": "0b7b2d9a6e4ea1c420f86271edfbd9c27f11446e8eff9f8a49d0e20c8c47d477"
+      }
+    ],
+    "frozen": true,
+    "before": {
+      "failed": 13,
+      "controls_passed": 4,
+      "log": "/tmp/audit-ensemble-empty-before.HsWbE8"
+    },
+    "after": {
+      "passed": 73,
+      "log": "/tmp/audit-ensemble-empty-after.NTGOWb"
+    },
+    "repro": "/tmp/audit-checkpoint-empty-stacked.json"
+  },
+  "independent_review": {
+    "reviewed_checkpoint": "4d1ffbd5f0b2989c9ba2d0af4326ef3d70bcd97f",
+    "baseline": "e3ed317f3dc0fafab4b8a7c5a611b85d91cd9550",
+    "composed_head": "614eac85da55334097d6df8554363054c2fd78bd",
+    "scope": "Independent adversarial checkpoint review of numerical likelihood/mean paths, zero-batch caller handling, device policy, and LightGBM bagging/study lifecycle. Full fresh operations pass remains separate.",
+    "files": [
+      {
+        "path": "src/shared/count_math.py",
+        "checkpoint_sha256": "22e957cc77856d7d09036fc4675a3ba7c96f119db90b284f1ac53943bccf3c03",
+        "current_sha256": "22e957cc77856d7d09036fc4675a3ba7c96f119db90b284f1ac53943bccf3c03"
+      },
+      {
+        "path": "src/shared/training.py",
+        "checkpoint_sha256": "eb1fa7e3679470f92174c4a98145b58d026bd5631c2f2d7fbbf11ef23c4c7c49",
+        "current_sha256": "eb1fa7e3679470f92174c4a98145b58d026bd5631c2f2d7fbbf11ef23c4c7c49"
+      },
+      {
+        "path": "src/shared/neural_net.py",
+        "checkpoint_sha256": "966af842e1c1aec4e4f9bdc0cbdbcd0b59f2aea4a245e1fe140e1445a9a40623",
+        "current_sha256": "966af842e1c1aec4e4f9bdc0cbdbcd0b59f2aea4a245e1fe140e1445a9a40623"
+      },
+      {
+        "path": "src/shared/models.py",
+        "checkpoint_sha256": "c3f735f9d02f7fdaac9d1420c55b9a9d07f67ed240fc424ca4a47ce3b19100b6",
+        "current_sha256": "c3f735f9d02f7fdaac9d1420c55b9a9d07f67ed240fc424ca4a47ce3b19100b6"
+      },
+      {
+        "path": "src/shared/utils.py",
+        "checkpoint_sha256": "b6e4409295a5bab019d702db781fafcc78f1cbb70691869128297f41dc4d7dc0",
+        "current_sha256": "b6e4409295a5bab019d702db781fafcc78f1cbb70691869128297f41dc4d7dc0"
+      },
+      {
+        "path": "src/tuning/ab_ensemble_seeds.py",
+        "checkpoint_sha256": "05e8c95f48e834e98d2c3360e70fb3a611784d9d43f84e5e395744aa1becf0b0",
+        "current_sha256": "b935a34012b7a4f75948c49c40a566e3f1a82ee7ada2254c8cbaabba193cff84"
+      },
+      {
+        "path": "src/tuning/ab_harness.py",
+        "checkpoint_sha256": "9b86e6cdc3efea59287afeef7fbcdd6fcb90bcfc05fdc405f26a667715e1a5b1",
+        "current_sha256": "9b86e6cdc3efea59287afeef7fbcdd6fcb90bcfc05fdc405f26a667715e1a5b1"
+      },
+      {
+        "path": "src/tuning/tune_nn.py",
+        "checkpoint_sha256": "1f5b76d6fbcca6ec5f9b043c956dde7854459dc40237d7eae3cefb64fd139a51",
+        "current_sha256": "16d860f16dcfbd9e7f7d666eda1dfca4b7b7a69715eae4074def890a321730f0"
+      },
+      {
+        "path": "src/tuning/tune_lgbm.py",
+        "checkpoint_sha256": "f2c3c94d1703f65a53ff990ab63824aef8cb531e9e6979d607a6b906c54b13f1",
+        "current_sha256": "72e4098d41540314aa99a58dcb82ede797ee853f4f2b236920609660f2e6f487"
+      },
+      {
+        "path": "src/analysis/verify_count_likelihoods.py",
+        "checkpoint_sha256": "f4a2b12328fd67aef103ea7e4a825fee5fbc452f1312de2504c8c49aae115791",
+        "current_sha256": "f4a2b12328fd67aef103ea7e4a825fee5fbc452f1312de2504c8c49aae115791"
+      },
+      {
+        "path": "src/analysis/verify_hurdle_expectations.py",
+        "checkpoint_sha256": "3e65fd0f3d06812d95e69a9339faf597046df3ed364b0f59dc7d424bf566a35c",
+        "current_sha256": "3e65fd0f3d06812d95e69a9339faf597046df3ed364b0f59dc7d424bf566a35c"
+      },
+      {
+        "path": "src/tuning/ab_verify_model_corrections.py",
+        "checkpoint_sha256": "53790f105604924174436511c8d32b8045b00bf2ae014d6f26c9d5810251d08d",
+        "current_sha256": "53790f105604924174436511c8d32b8045b00bf2ae014d6f26c9d5810251d08d"
+      }
+    ],
+    "verified_findings": [
+      {
+        "id": "OPS-MODEL-EMPTY-01",
+        "title": "Captured stacked/sequential training still accepts zero training batches",
+        "evidence": "/tmp/audit-checkpoint-empty-stacked.json",
+        "status": "fixed, frozen, 73 targeted checks passed",
+        "fix_evidence": "/tmp/audit-ensemble-empty-fix-evidence.json"
+      }
+    ],
+    "refutations": [
+      {
+        "hypothesis": "New hurdle NB likelihood/gradient or conditional-mean numerical regression",
+        "evidence": "/tmp/audit-checkpoint-count-oracle.json",
+        "result": "Independent90-digit mpmath loggamma plus highprecision numerical differentiation controls cover154count parameter cases and60mean parameter cases per dtype, including switch boundaries and log-dispersion up to95. Live hurdle paths stay finite and agree with FP32/FP64 tolerances."
+      },
+      {
+        "hypothesis": "New dtype promotion severs autograd or silently changes device",
+        "result": "_count_loss_inputs casts dtype only, preserves FP64, promotes AMP inputs toFP32; fixed tensor shapes remain vmap/capture-compatible. Existing targeted controls cover autograd and real MPS; no new GPU claim."
+      },
+      {
+        "hypothesis": "Device routing overrides explicit CPU/MPS or lacks MPS stacked failure",
+        "result": "All4 callers reuse actual captured trainer.device; central rejection occurs before stacked model setup. Normal eager seeding selects CPU generator plus only requested accelerator."
+      },
+      {
+        "hypothesis": "Enabling LightGBM bagging is discarded by save/load or new studies resume old inactive-bagging trials",
+        "result": "subsample_freq enters actual regressor params and persisted metadata; pickle load retains fitted parameters. Training and print-best share versioned study+database resolver. Workflows collect stable results JSON, not a hardcoded old study basename."
+      }
+    ],
+    "non_eligible_observations": [
+      {
+        "api": "negbin2_log_prob",
+        "observation": "Untruncated mu gradient loses small residuals when tiny mu and enormous alpha cause cancellation. No production callers found; live hurdle losses call stable _nb2_log_prob directly. This behavior predates checkpoint and explored mu<1e-8 is below live head1e-6floor. Not classified as current-scope regression.",
+        "before_after_control": [
+          {
+            "version": "e3",
+            "value": -38.45939254760742,
+            "dmu": -2.5456690977421204e-08,
+            "dlogalpha": -0.9999999403953552
+          },
+          {
+            "version": "4d",
+            "value": -38.45939254760742,
+            "dmu": 0.0,
+            "dlogalpha": -1.0
+          }
+        ]
+      },
+      {
+        "evidence": "/tmp/audit-checkpoint-count-oracle.XTN1PH",
+        "observation": "Discarded run overlapped root rebase and could import intermediate source. Fresh committed614 run source matches4d and is the accepted numerical evidence."
+      }
+    ],
+    "full_pass_without_new_finding": false
   }
 }

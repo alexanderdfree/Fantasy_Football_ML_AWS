@@ -35,7 +35,9 @@
   was representable. These are boundary reproductions, not claims that the
   default measured cohorts reached either state.
 - A training loader with fewer rows than a dropped-tail batch saved an untouched
-  model after reporting zero training loss.
+  model after reporting zero training loss. Captured stacked/sequential tuning
+  bypassed the ordinary trainer and could report a finite Optuna objective from
+  untouched weights; those entrypoints require the same guard.
 - All six LightGBM configurations and the tuner supplied row-sampling fractions,
   but sampling frequency remained zero. The supposedly tuned dimension never
   affected a fitted tree.
@@ -59,6 +61,8 @@ and parameter shapes. Fail zero-batch training clearly. Enable LightGBM sampling
 for fractions below one and isolate corrected trials in `seedavg_bagging_v2`.
 Existing fraction-one fits are a positive control; historical tuned fractions
 do not establish the corrected recipe's accuracy.
+Both ordinary and captured ensemble loops reject empty or exhausted training
+epochs before validating, reporting progress, or returning a trained model.
 
 **Validation**: Regression suites retain ordinary Poisson, likelihood-gradient,
 six-position reload, mixed precision, vmap, same-team, zero-event, empty-tail,

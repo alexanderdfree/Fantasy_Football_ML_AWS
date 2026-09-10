@@ -86,6 +86,10 @@ from src.tuning.tune_nn_storage import (
 
 _CLIP_MAX_NORM = 1.0  # mirrors the hardcoded clip_grad_norm_(1.0) in MultiHeadTrainer
 _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * epoch
+_EMPTY_TRAINING_ERROR = (
+    "Training loader produced no batches; provide more training rows or "
+    "use a smaller batch size when drop_last=True."
+)
 
 # Default stacked width for the comparative pipelines (tune / ablation / A/B).
 # 24 is the measured per-seed optimum on the L4 (2026-06-11, jobs b12a4b6a/
@@ -406,6 +410,16 @@ def stacked_val_losses(template, params, buffers, criterion, val_loader, device)
     return [float(v) for v in (totals / n_samples).cpu()]
 
 
+def _check_training_loader(train_loader):
+    """Reject sized empty captures before setup; unsized loaders are checked per epoch."""
+    try:
+        empty = len(train_loader) == 0
+    except TypeError:
+        return
+    if empty:
+        raise ValueError(_EMPTY_TRAINING_ERROR)
+
+
 def train_stacked(
     captures: list,
     cfg: dict,
@@ -439,6 +453,7 @@ def train_stacked(
     trainer0 = captures[0]["trainer"]
     criterion = trainer0.criterion
     train_loader = captures[0]["train_loader"]
+    _check_training_loader(train_loader)
     val_loader = captures[0]["val_loader"]
     models = [c["trainer"].model for c in captures]
     template, params, buffers = stack_models(models, device)
@@ -458,6 +473,7 @@ def train_stacked(
     for epoch in range(n_epochs):
         # Shared batch order: one permutation feeds every member (CRN design).
         torch.manual_seed(base_order_seed + _EPOCH_SEED_STRIDE * epoch)
+        n_train_batches = 0
         for batch in train_loader:
             feats, y = _batch_to_device(batch, device)
             opt.zero_grad(set_to_none=True)
@@ -465,8 +481,11 @@ def train_stacked(
             losses.sum().backward()
             clip_per_member_([p.grad for p in params.values() if p.grad is not None])
             opt.step()
+            n_train_batches += 1
             if per_batch:
                 scheduler.step()
+        if n_train_batches == 0:
+            raise ValueError(_EMPTY_TRAINING_ERROR)
         if not per_batch:
             scheduler.step()
         if epoch_callback is not None:
@@ -493,6 +512,7 @@ def train_sequential(
 
     criterion = captures[0]["trainer"].criterion
     train_loader = captures[0]["train_loader"]
+    _check_training_loader(train_loader)
     trained = []
     for c in captures:
         model = copy.deepcopy(c["trainer"].model).to(device)
@@ -503,6 +523,7 @@ def train_sequential(
         scheduler, per_batch = _build_scheduler(opt, cfg, train_loader, scheduler_prefix="attn_")
         for epoch in range(n_epochs):
             torch.manual_seed(base_order_seed + _EPOCH_SEED_STRIDE * epoch)
+            n_train_batches = 0
             for batch in train_loader:
                 feats, y = _batch_to_device(batch, device)
                 opt.zero_grad(set_to_none=True)
@@ -511,8 +532,11 @@ def train_sequential(
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), _CLIP_MAX_NORM)
                 opt.step()
+                n_train_batches += 1
                 if per_batch:
                     scheduler.step()
+            if n_train_batches == 0:
+                raise ValueError(_EMPTY_TRAINING_ERROR)
             if not per_batch:
                 scheduler.step()
         trained.append(model)

@@ -4,7 +4,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.dst.test_data_build import _make_schedules, _make_team_stats, _make_weekly
+from tests.dst.test_data_build import (
+    _make_schedules,
+    _make_scoring_events,
+    _make_team_stats,
+    _make_weekly,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -22,12 +27,17 @@ def native_sources(monkeypatch):
     weekly = extend(_make_weekly())
     schedules = extend(_make_schedules())
     team_stats = extend(_make_team_stats())
+    scoring_events = extend(_make_scoring_events())
     build_data = data.build_data
     current = {"schedules": schedules}
 
     def build(**kwargs):
         frame = build_data(
-            weekly=weekly, schedules=current["schedules"], team_stats=team_stats, **kwargs
+            weekly=weekly,
+            schedules=current["schedules"],
+            team_stats=team_stats,
+            scoring_events=scoring_events,
+            **kwargs,
         )
         # Native schedule/box context is already supplied. REG metadata is an
         # independent loader correction, tested in test_native_cv_metadata.
