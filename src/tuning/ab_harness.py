@@ -94,9 +94,9 @@ from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from src.tuning._execution import isolated_outputs, run_tasks
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+from src.tuning._execution import isolated_outputs, run_tasks
 
 ALL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 DEFAULT_SEEDS = (42, 123, 7)  # 3-seed default for FP-MAE A/Bs (AGENTS.md)

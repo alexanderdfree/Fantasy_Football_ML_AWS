@@ -39,8 +39,6 @@ from pathlib import Path
 
 import matplotlib
 
-from src.analysis._feature_stats import _pre_registered_table, _present_numeric
-
 matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
 
 import numpy as np  # noqa: E402
@@ -55,6 +53,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.analysis._feature_stats import (
     _clean_features,
     _high_corr_pairs,
+    _pre_registered_table,
+    _present_numeric,
     _print_top,
     _print_vif,
     _save_static_heatmap,

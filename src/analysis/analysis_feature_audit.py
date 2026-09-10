@@ -72,8 +72,6 @@ from pathlib import Path
 
 import matplotlib
 
-from src.analysis._feature_stats import _clean_features, _decide_drop, _present_numeric
-
 matplotlib.use("Agg")  # headless-safe; this script writes PNGs, no GUI needed
 
 import numpy as np  # noqa: E402
@@ -81,19 +79,22 @@ import pandas as pd  # noqa: E402
 from sklearn.decomposition import PCA  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from src.analysis._feature_stats import (
     _classify_condition_number,
+    _clean_features,
+    _decide_drop,
     _high_corr_pairs,
+    _present_numeric,
     _print_top,
     _print_vif,
     _save_static_heatmap,
     _spearman_matrix,
     _vif,
 )
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 OUT_DIR = PROJECT_ROOT / "analysis_output"
 

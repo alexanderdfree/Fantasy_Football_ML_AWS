@@ -93,42 +93,20 @@ def test_run_grid_writes_job_errors_to_logs(tmp_path):
 
 
 def test_run_grid_parallel_path_can_preserve_or_completion_order(monkeypatch):
-    submitted = []
-    pool_kwargs = []
+    options = []
 
-    class FakeFuture:
-        def __init__(self, result):
-            self._result = result
+    def shared_executor(tasks, execute, **kwargs):
+        options.append(kwargs)
+        selected = tasks if kwargs["preserve_order"] else list(reversed(tasks))
+        return [execute(task) for task in selected]
 
-        def result(self):
-            return self._result
-
-    class FakePool:
-        def __init__(self, max_workers, **kwargs):
-            self.max_workers = max_workers
-            pool_kwargs.append(kwargs)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def submit(self, fn, task):
-            submitted.append((self.max_workers, task[0].seed))
-            return FakeFuture(fn(task))
-
-    monkeypatch.setattr(_execution, "ProcessPoolExecutor", FakePool)
-    monkeypatch.setattr(_execution, "as_completed", lambda futures: list(reversed(list(futures))))
-
+    monkeypatch.setattr(ar, "run_tasks", shared_executor)
     jobs = [_job(1, "a"), _job(2, "b")]
     preserved = ar.run_grid(jobs, max_workers=2, preserve_order=True)
     completed = ar.run_grid(jobs, max_workers=2, preserve_order=False)
-
     assert [(r.seed, r.variant) for r in preserved] == [(1, "a"), (2, "b")]
     assert [(r.seed, r.variant) for r in completed] == [(2, "b"), (1, "a")]
-    assert submitted[:2] == [(2, 1), (2, 2)]
-    assert pool_kwargs[0]["mp_context"].get_start_method() == "spawn"
+    assert [o["max_workers"] for o in options] == [2, 2]
 
 
 def test_mean_std_and_paired_deltas():

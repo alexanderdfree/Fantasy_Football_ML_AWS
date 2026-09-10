@@ -38,6 +38,37 @@ def _sometimes_fails(value):
     return {"task": value, "ok": True}
 
 
+def _native_crash(value):
+    if value == 0:
+        os._exit(17)
+    return {"task": value, "ok": True}
+
+
+def test_native_crash_is_limited_to_its_cell_and_queued_work_continues():
+    rows = run_tasks([0, 1, 2, 3], _native_crash, max_workers=2, on_error=_failure)
+    assert "code 17" in rows[0]["error"]
+    assert rows[1:] == [{"task": value, "ok": True} for value in (1, 2, 3)]
+
+
+class _ContextError(Exception):
+    def __init__(self, message, *, context):
+        super().__init__(message)
+        self.context = context
+
+
+def _bad_exception(value):
+    if value == 0:
+        # Exception pickling succeeds but reconstruction lacks the keyword arg.
+        raise _ContextError("bad variant", context="required")
+    return {"task": value, "ok": True}
+
+
+def test_exception_decode_failure_does_not_stop_other_cells():
+    rows = run_tasks([0, 1, 2], _bad_exception, max_workers=2, on_error=_failure)
+    assert "context" in rows[0]["error"]
+    assert rows[1:] == [{"task": value, "ok": True} for value in (1, 2)]
+
+
 def test_parallel_ridge_matches_serial_and_each_cell_has_fresh_state():
     # More tasks than workers verifies worker replacement, not just initial spawn.
     seeds = [42, 7, 123, 9]
@@ -71,6 +102,34 @@ def test_worker_environment_precedes_entry_module_import_and_restores_parent(tmp
     root = str(Path(__file__).resolve().parents[2])
     environment["PYTHONPATH"] = os.pathsep.join(filter(None, [root, environment.get("PYTHONPATH")]))
     subprocess.run([sys.executable, str(script)], env=environment, check=True, timeout=30)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "src/tuning/ab_harness.py",
+        "src/tuning/ablate_batch.py",
+        "src/analysis/analysis_feature_audit.py",
+        "src/analysis/analysis_rb_feature_audit.py",
+        "src/analysis/analysis_k_feature_audit.py",
+    ],
+)
+def test_operator_files_bootstrap_without_pythonpath(relative, tmp_path):
+    path = Path(__file__).resolve().parents[2] / relative
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import runpy, sys; runpy.run_path(sys.argv[1], run_name='probe')",
+            str(path),
+        ],
+        cwd=tmp_path,
+        check=True,
+        timeout=30,
+        capture_output=True,
+        text=True,
+    )
 
 
 @pytest.mark.parametrize("workers", [1, 2])

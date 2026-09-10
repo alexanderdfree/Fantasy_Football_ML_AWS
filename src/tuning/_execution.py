@@ -7,8 +7,8 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable, Mapping
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
+from multiprocessing.connection import wait
 from pathlib import Path
 from typing import TypeVar
 
@@ -45,6 +45,90 @@ def isolated_outputs(data_dir: str, *, share_cache: bool = False):
     finally:
         os.chdir(original)
         shutil.rmtree(temporary, ignore_errors=True)
+
+
+def _execute_in_child(sender, execute, task, initializer, initargs):
+    try:
+        if initializer is not None:
+            initializer(*initargs)
+        sender.send((True, execute(task)))
+    except Exception as exc:
+        try:
+            sender.send((False, exc))
+        except Exception:  # an exception may itself contain unpicklable state
+            sender.send((False, RuntimeError(f"{type(exc).__name__}: {exc}")))
+    finally:
+        sender.close()
+
+
+def _run_parallel(tasks, execute, max_workers, initializer, initargs, on_error, record):
+    """Supervise independent children so a native crash affects only its cell."""
+    context = mp.get_context("spawn")
+    active = {}
+    next_index = 0
+    try:
+        while next_index < len(tasks) or active:
+            while next_index < len(tasks) and len(active) < max_workers:
+                index = next_index
+                next_index += 1
+                receiver, sender = context.Pipe(duplex=False)
+                process = context.Process(
+                    target=_execute_in_child,
+                    args=(sender, execute, tasks[index], initializer, initargs),
+                )
+                try:
+                    process.start()
+                except Exception as exc:
+                    receiver.close()
+                    sender.close()
+                    record(index, on_error(tasks[index], exc))
+                    continue
+                sender.close()
+                active[index] = (process, receiver)
+
+            if not active:
+                continue
+            ready = wait(
+                [
+                    handle
+                    for process, receiver in active.values()
+                    for handle in (receiver, process.sentinel)
+                ]
+            )
+            for index, (process, receiver) in list(active.items()):
+                if receiver not in ready and process.sentinel not in ready:
+                    continue
+                payload = None
+                decode_error = None
+                try:
+                    if receiver.poll():
+                        payload = receiver.recv()
+                except (EOFError, OSError):
+                    pass  # native crashes close the pipe without a result
+                except Exception as exc:  # result/exception reconstruction can fail
+                    decode_error = exc
+                finally:
+                    process.join()
+                    receiver.close()
+                    del active[index]
+                if decode_error is not None:
+                    result = on_error(tasks[index], decode_error)
+                elif payload is None:
+                    exc = RuntimeError(
+                        f"worker exited with code {process.exitcode} without a result"
+                    )
+                    result = on_error(tasks[index], exc)
+                elif payload[0]:
+                    result = payload[1]
+                else:
+                    result = on_error(tasks[index], payload[1])
+                record(index, result)
+    finally:
+        for process, receiver in active.values():
+            if process.is_alive():
+                process.terminate()
+            process.join()
+            receiver.close()
 
 
 def run_tasks(
@@ -84,23 +168,7 @@ def run_tasks(
                 result = on_error(task, exc)
             record(index, result)
     else:
-        with (
-            _worker_environment(environment or {}),
-            ProcessPoolExecutor(
-                max_workers=max_workers,
-                mp_context=mp.get_context("spawn"),
-                max_tasks_per_child=1,
-                initializer=initializer,
-                initargs=initargs,
-            ) as pool,
-        ):
-            futures = {pool.submit(execute, task): i for i, task in enumerate(tasks)}
-            for future in as_completed(futures):
-                index = futures[future]
-                try:
-                    result = future.result()
-                except Exception as exc:  # includes serialization/bootstrap failures
-                    result = on_error(tasks[index], exc)
-                record(index, result)
+        with _worker_environment(environment or {}):
+            _run_parallel(tasks, execute, max_workers, initializer, initargs, on_error, record)
     indices = range(len(tasks)) if preserve_order else results
     return [results[index] for index in indices]

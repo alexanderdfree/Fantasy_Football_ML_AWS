@@ -73,13 +73,12 @@ import sys
 import time
 from types import ModuleType
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
 from src.tuning.ab_batch import _list_done_cells as _list_done_cells
 from src.tuning.ab_batch import _provenance as _provenance
 from src.tuning.ab_batch import _split_env_csv as _split_env_csv
 from src.tuning.ab_batch import cell_result_key as cell_result_key
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from src.tuning.ablation_runner import (  # noqa: E402
     AblationJob,
     _run_job,
