@@ -52,6 +52,7 @@ from src.serving.espn_projections import load_espn_with_gsis_id, project_espn_to
 from src.serving.expert_sources import (
     load_sleeper_with_gsis_id,
     project_nflcom_to_fantasy,
+    score_offensive_projections,
 )
 from src.serving.metadata import _ALL_POSITIONS, _ALL_TARGETS, _APPENDED_POSITIONS
 from src.serving.serialization import (
@@ -174,7 +175,11 @@ def _project_rotowire_to_fantasy(
     if pos_df.empty:
         return _empty_expert_frame(value_col)
 
-    targets = list(DST_TARGETS) if pos == "DST" else list(POSITION_TARGET_MAP.get(pos, {}))
+    if pos in POSITION_TARGET_MAP:
+        out = pos_df[_EXPERT_KEY_COLS].copy()
+        out[value_col] = score_offensive_projections(pos_df, scoring_format)
+        return out
+    targets = list(DST_TARGETS) if pos == "DST" else []
     if not targets:
         return _empty_expert_frame(value_col)
     pred_dict = {}
@@ -1439,7 +1444,8 @@ _FINGERPRINT_JSON = "fingerprint.json"
 # schema bump invalidates it so the corrected expert join repopulates the column.
 # v8 adds ESPN historical projections to every per-row scoring format. Old
 # snapshots must recompute or ESPN would remain null despite the new column.
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 8
+# v9 restores cross-position offensive stats in expert forecasts.
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 9
 # Browser-ready snapshot the frontend hydrates its first paint from (see
 # /api/snapshot + static/js/app.js). Auxiliary to the cache triple above —
 # its absence is non-fatal (frontend falls back to /api/predictions), so it is

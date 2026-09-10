@@ -252,10 +252,10 @@ def test_load_projections_cache_key_varies_with_weeks(tmp_path):
     load_nflcom_projections(
         seasons=[2024], weeks=[1, 2], cache_dir=str(tmp_path), reader=_fixture_reader_qb_only
     )
-    files = sorted(p.name for p in tmp_path.glob("nflcom_projections_v1_*.parquet"))
+    files = sorted(p.name for p in tmp_path.glob(f"nflcom_projections_{_CACHE_VERSION}_*.parquet"))
     assert files == [
-        "nflcom_projections_v1_2024_2024_w1-1.parquet",
-        "nflcom_projections_v1_2024_2024_w1-2.parquet",
+        f"nflcom_projections_{_CACHE_VERSION}_2024_2024_w1-1.parquet",
+        f"nflcom_projections_{_CACHE_VERSION}_2024_2024_w1-2.parquet",
     ], files
 
 
@@ -283,7 +283,7 @@ def test_load_projections_cache_key_disambiguates_sparse_seasons(tmp_path):
     load_nflcom_projections(
         seasons=[2023, 2024, 2025], weeks=[1], cache_dir=str(tmp_path), reader=sparse_reader
     )
-    files = sorted(p.name for p in tmp_path.glob("nflcom_projections_v1_*.parquet"))
+    files = sorted(p.name for p in tmp_path.glob(f"nflcom_projections_{_CACHE_VERSION}_*.parquet"))
     # Two distinct files: the contiguous key is the legacy {min}_{max}; the
     # sparse key carries the disambiguating {len}_{hash} suffix.
     assert len(files) == 2, files
@@ -750,10 +750,12 @@ def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
         reader=_fixture_reader_qb_only,
         min_match_rate=0.99,
     )
-    files = sorted(p.name for p in tmp_path.glob("nflcom_projections_joined_v1_*.parquet"))
+    files = sorted(
+        p.name for p in tmp_path.glob(f"nflcom_projections_joined_{_CACHE_VERSION}_*.parquet")
+    )
     assert files == [
-        "nflcom_projections_joined_v1_2024_2024_mr80.parquet",
-        "nflcom_projections_joined_v1_2024_2024_mr99.parquet",
+        f"nflcom_projections_joined_{_CACHE_VERSION}_2024_2024_mr80.parquet",
+        f"nflcom_projections_joined_{_CACHE_VERSION}_2024_2024_mr99.parquet",
     ], files
 
 

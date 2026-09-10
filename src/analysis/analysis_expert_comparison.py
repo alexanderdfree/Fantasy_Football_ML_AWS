@@ -86,9 +86,9 @@ from src.serving.espn_projections import (
     load_espn_with_gsis_id,
     project_espn_to_fantasy,
 )
+from src.serving.expert_sources import score_offensive_projections
 from src.shared.aggregate_targets import (
     DST_TARGETS,
-    POSITION_TARGET_MAP,
     predictions_to_fantasy_points,
 )
 from src.shared.evaluation import compute_metrics, compute_ranking_metrics
@@ -165,17 +165,18 @@ def _project_sleeper_to_ppr(raw_df: pd.DataFrame, pos: str, scoring_format: str)
     """Aggregate Sleeper's raw-stat projections to PPR fantasy points.
 
     Mirrors ``_project_nflcom_to_ppr`` but reads the Sleeper frame and emits the
-    standard ``expert_pred_total`` column. Offense (QB/RB/WR/TE) uses
-    ``POSITION_TARGET_MAP``; DST uses ``DST_TARGETS`` and routes through the tier-based
-    DST aggregator. ``predictions_to_fantasy_points`` picks the right path by position.
+    standard ``expert_pred_total`` column. Offense preserves every scoring stat;
+    DST uses ``DST_TARGETS`` and the model's tier-based DST aggregator.
     """
     pos_df = raw_df[(raw_df["position"] == pos) & raw_df["player_id"].notna()].copy()
     if pos_df.empty:
         return _empty_expert_frame()
-    targets = list(DST_TARGETS) if pos == "DST" else list(POSITION_TARGET_MAP[pos].keys())
-    pred_dict = {t: pos_df[t].to_numpy() for t in targets}
     out = pos_df[_KEY_COLS].reset_index(drop=True).copy()
-    out[_EXPERT_PRED_COL] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    if pos == "DST":
+        pred_dict = {t: pos_df[t].to_numpy() for t in DST_TARGETS}
+        out[_EXPERT_PRED_COL] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    else:
+        out[_EXPERT_PRED_COL] = score_offensive_projections(pos_df, scoring_format)
     return out
 
 

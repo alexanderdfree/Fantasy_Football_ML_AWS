@@ -42,10 +42,10 @@ import pandas as pd
 from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD, TEST_SEASONS
 from src.data.loader import compute_fantasy_points
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.serving.expert_sources import score_offensive_projections
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     TARGET_UNITS,
-    predictions_to_fantasy_points,
 )
 from src.shared.evaluation import compute_metrics
 from src.shared.evaluation_cohorts import regular_season_rows
@@ -152,7 +152,7 @@ def _actuals_for_position(
 def _project_nflcom_to_ppr(
     nflcom_df: pd.DataFrame, pos: str, scoring_format: str = "ppr"
 ) -> pd.DataFrame:
-    """Apply ``predictions_to_fantasy_points`` to NFL.com's projected raw stats.
+    """Score all NFL.com offensive stats, retaining modeled-head diagnostics.
 
     Returns a frame keyed by (player_id, season, week) with columns:
       - nflcom_pred_total: the PPR-aggregated projection (their raw stats × our scoring)
@@ -176,8 +176,7 @@ def _project_nflcom_to_ppr(
         return out
 
     targets = list(POSITION_TARGET_MAP[pos].keys())
-    pred_dict = {t: pos_df[t].to_numpy() for t in targets}
-    out["nflcom_pred_total"] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    out["nflcom_pred_total"] = score_offensive_projections(pos_df, scoring_format)
     for t in targets:
         out[f"nflcom_pred_{t}"] = pos_df[t].to_numpy()
     return out
@@ -187,7 +186,7 @@ def _aggregate_actuals_to_ppr(actuals: pd.DataFrame, pos: str, scoring_format: s
     """Re-score actuals through our aggregator so they're apples-to-apples
     with the NFL.com projections.
 
-    QB/RB/WR/TE: ``predictions_to_fantasy_points`` with the position's target map.
+    QB/RB/WR/TE: full offensive scoring, independent of the model's target map.
     K: computed directly from raw FG/PAT stats per ``src.k.targets.compute_targets``
        (``fg_made_distance × 0.1 + pat_made − fg_missed − pat_missed``). The
        precomputed ``fantasy_points`` column on the parquet is offensive-only and

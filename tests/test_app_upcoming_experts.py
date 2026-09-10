@@ -134,7 +134,7 @@ class TestExpertDigest:
     def test_digest_marks_missing_feeds(self):
         assert uw._expert_digest(None, None, None) == "nfl:none|rw:none|espn:none"
 
-    def test_digest_feeds_input_signature(self):
+    def test_digest_feeds_input_signature(self, monkeypatch):
         # Same inputs, different expert digest -> different rebuild signature.
         slate = pd.DataFrame(
             {
@@ -149,3 +149,5 @@ class TestExpertDigest:
         s1 = uw._input_signature(2026, 12, slate, roster, expert_digest="a")
         s2 = uw._input_signature(2026, 12, slate, roster, expert_digest="b")
         assert s1 != s2
+        monkeypatch.setattr(uw, "EXPERT_SCORING_VERSION", uw.EXPERT_SCORING_VERSION - 1)
+        assert uw._input_signature(2026, 12, slate, roster, expert_digest="a") != s1

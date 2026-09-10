@@ -18,7 +18,8 @@ from src.config import CACHE_DIR
 from src.shared.evaluation import compute_metrics
 
 REFERENCE_FILENAME = "weekly_evaluation_reference_v1.parquet"
-REFERENCE_VERSION = "nflcom_rotowire_mean_v1"
+# v2 preserves every offensive scoring component before ranking the forecast pool.
+REFERENCE_VERSION = "nflcom_rotowire_mean_v2"
 KEYS = ["player_id", "season", "week"]
 MODEL_COLUMNS = {
     "Ridge": "pred_ridge_total",

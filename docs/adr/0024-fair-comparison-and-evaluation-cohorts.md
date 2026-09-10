@@ -21,6 +21,15 @@ The UI reports common sample sizes and missing data. Quartile bias uses the same
 common sample. Ranking metrics evaluate each source's own selections on that
 shared slate.
 
+Expert forecasts also retain every offensive component supported by the app's
+scoring rules, regardless of position or the trained model's target list. This
+includes WR/TE rushing, QB receiving, and trick-play passing. NFL.com ingestion
+preserves all available offensive fields; NFL.com, RotoWire, ESPN and FFToday
+use the same offensive scorer in serving and offline evaluation. Missing source
+stats remain zero, NFL.com's existing fumbles-lost approximation is unchanged,
+and K/DST keep their source-specific scoring paths. Model target lists do not
+define the scoring scope of an external forecast.
+
 Four cohort definitions remain separate:
 
 | Name | Selection | Purpose |
@@ -45,6 +54,11 @@ QB/RB/WR/TE, NFL.com for K, and RotoWire for DST. Both required offense sources
 must exist for a candidate; it never becomes a mean of whichever happens to be
 available. This is a two-provider reference, not a claim of industry consensus.
 
+`nflcom_rotowire_mean_v2` ranks full offensive forecasts. The earlier `v1`
+recipe truncated out-of-position stats and is no longer selected; it remains
+archived under its own version in the same schema-compatible parquet. Until a
+v2 reference is built, expected-starter metrics explicitly remain unavailable.
+
 Ranks are computed from the full published forecast pool, independently of
 actual outcomes and model forecasts. NFL.com offense before 2024 is excluded
 because the hvpkod archive backfilled actuals; RotoWire before 2018 is excluded.
@@ -60,6 +74,16 @@ valid serving prediction cache.
 Refreshes are restricted to the exact requested, provider-supported seasons;
 replacements that lose archived player-week coverage are rejected before writing.
 Other seasons and recipe versions remain intact.
+
+The scoring correction invalidates NFL.com normalized/joined caches (v2), ESPN
+raw caches (v2, also admitting rushing-only receivers and receiving-only QBs),
+the historical serving prediction cache (schema 9), and the upcoming artifact's
+input signature (expert scoring v2). The existing off-container
+`build_serving_cache` step rebuilds predictions and the reference; the scheduled
+upcoming-week builder regenerates its artifact. Old stored prediction totals
+cannot be repaired merely by changing a display formatter. Historical research
+JSON and benchmark results retain their original dates rather than being
+silently relabeled as corrected evaluations.
 
 ## Serialization and validation
 
@@ -102,5 +126,7 @@ to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
 
+- 2026-09-10 — Preserve all expert offensive scoring components in ingestion and
+  serving/offline totals; version caches and the pregame ranking recipe (PR pending).
 - 2026-09-10 — Establish matched full-score comparison and versioned pregame
   top-24 reporting across all benchmark paths (PR pending).

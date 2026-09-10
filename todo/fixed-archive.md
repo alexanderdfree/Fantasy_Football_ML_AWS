@@ -6,6 +6,9 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] Expert forecasts lost scoring components outside the model target list
+[Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
+
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).
 

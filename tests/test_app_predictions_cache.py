@@ -316,6 +316,23 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
     )
 
 
+def test_truncated_expert_scoring_schema_cannot_hydrate(cache_dir, fingerprint_files, monkeypatch):
+    import src.serving.app as app_mod
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    app_mod._cache["results"] = _fake_results()
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    core._persist_cache_to_disk()
+    path = cache_dir / "fingerprint.json"
+    stored = json.loads(path.read_text())
+    assert stored["schema_version"] > 8
+    assert core._try_hydrate_from_disk() is True
+    stored["schema_version"] = 8
+    path.write_text(json.dumps(stored))
+    app_mod._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+
+
 def test_espn_outage_cannot_publish_a_reusable_null_cache(
     cache_dir, fingerprint_files, monkeypatch
 ):

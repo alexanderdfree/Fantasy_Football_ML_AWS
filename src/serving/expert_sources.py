@@ -17,11 +17,26 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 
-from src.config import CACHE_DIR
+from src.config import CACHE_DIR, SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD
 from src.data import nfl_source
-from src.shared.aggregate_targets import POSITION_TARGET_MAP, predictions_to_fantasy_points
+from src.shared.aggregate_targets import POSITION_TARGET_MAP
 
 _EXPERT_KEY_COLS = ["player_id", "season", "week"]
+EXPERT_SCORING_VERSION = 2
+
+
+def score_offensive_projections(frame: pd.DataFrame, scoring_format: str) -> np.ndarray:
+    """Score every supplied offensive stat, independently of a model's heads.
+
+    Expert feeds use normalized raw stat names and total ``fumbles_lost``.
+    Missing/sparse stats are zero; reception weight follows the selected format.
+    """
+    scoring = {"ppr": SCORING_PPR, "half_ppr": SCORING_HALF_PPR, "standard": SCORING_STANDARD}[
+        scoring_format
+    ]
+    stats = frame.reindex(columns=list(scoring), fill_value=0.0)
+    stats = stats.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    return stats.mul(pd.Series(scoring)).sum(axis=1).to_numpy()
 
 
 def project_nflcom_to_fantasy(
@@ -43,19 +58,9 @@ def project_nflcom_to_fantasy(
         ).to_numpy()
         return out
 
-    targets = list(POSITION_TARGET_MAP.get(pos, {}))
-    if not targets:
+    if pos not in POSITION_TARGET_MAP:
         return pd.DataFrame(columns=[*_EXPERT_KEY_COLS, value_col])
-    pred_dict = {}
-    for target in targets:
-        if target in pos_df.columns:
-            pred_dict[target] = (
-                pd.to_numeric(pos_df[target], errors="coerce").fillna(0.0).to_numpy()
-            )
-        else:
-            pred_dict[target] = np.zeros(len(pos_df), dtype=float)
-
-    out[value_col] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    out[value_col] = score_offensive_projections(pos_df, scoring_format)
     return out
 
 

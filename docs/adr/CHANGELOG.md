@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Preserve expert offensive scoring components and invalidate truncated forecasts/reference ranks · (PR pending) · → ADR-0024
+
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017
 
 

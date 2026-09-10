@@ -47,7 +47,7 @@ from src.serving import (
     practice_reports,
     upcoming_special_teams,
 )
-from src.serving.expert_sources import load_sleeper_with_gsis_id
+from src.serving.expert_sources import EXPERT_SCORING_VERSION, load_sleeper_with_gsis_id
 from src.serving.serialization import (
     _MODEL_PRED_PREFIXES,
     _bool_or_none,
@@ -797,7 +797,7 @@ def _input_signature(
     blob = (
         f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|"
         f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}|{expert_digest}|"
-        f"{special_teams_digest}|{schedule_digest}"
+        f"{special_teams_digest}|{schedule_digest}|expert_scoring={EXPERT_SCORING_VERSION}"
     )
     return hashlib.sha256(blob.encode()).hexdigest()
 
