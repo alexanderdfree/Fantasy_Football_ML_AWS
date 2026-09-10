@@ -1,6 +1,6 @@
 # AWS serving infrastructure
 
-Stands up the ECS Fargate + ALB + ACM stack that serves `alexfree.me`.
+Stands up the ECS Fargate + ALB + ACM stack that serves `fantasy.alexfree.me`.
 
 Training infrastructure lives in `infra/batch/` and `infra/ec2/`; this
 directory manages serving resources.
@@ -38,15 +38,15 @@ bash infra/aws/bootstrap.sh
 ```
 
 `bootstrap.sh` writes resource IDs to `infra/aws/.env.out` and prints the ALB
-DNS name at the end. Use that for the final Namecheap ALIAS/CNAME records:
+DNS name at the end. Add the application CNAME in the `alexfree.me` DNS zone:
 
 ```
-ALIAS  @    -> <ALB DNS>
-CNAME  www  -> <ALB DNS>
+CNAME  fantasy  -> <ALB DNS>
 ```
 
-(Also delete the existing A record pointing at `192.64.119.87` — that's
-Namecheap parking.)
+The apex and `www` records belong to the portfolio site. The application
+certificate covers `fantasy.alexfree.me`; bootstrap also updates an existing
+HTTPS listener to use that certificate.
 
 Before changing AWS resources, bootstrap downloads each position through the
 actual serving manifest consumer and runs the CPU artifact smoke test. A

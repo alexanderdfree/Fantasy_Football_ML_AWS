@@ -149,7 +149,11 @@ def compute_target_metrics(
 
 
 def build_gate_info(preds: dict, gated_targets: list[str]) -> dict | None:
-    """Extract gate_logit + value_mu from a preds dict for gated targets.
+    """Extract gate logits and positive conditional means for gated targets.
+
+    Truncated count heads expose their conditional mean separately from the
+    underlying rate used by their NLL. Keep the existing ``value_mu`` result
+    key for the metrics consumer and accept legacy/direct-mean predictions.
 
     Returns ``None`` when no gated targets are supplied (lets callers pass the
     return straight to ``compute_target_metrics(..., gate_info=...)`` without
@@ -161,7 +165,7 @@ def build_gate_info(preds: dict, gated_targets: list[str]) -> dict | None:
     info = {}
     for t in gated_targets:
         gl = preds.get(f"{t}_gate_logit")
-        mu = preds.get(f"{t}_value_mu")
+        mu = preds.get(f"{t}_value_conditional_mean", preds.get(f"{t}_value_mu"))
         if gl is not None and mu is not None:
             info[t] = {"gate_logit": np.asarray(gl), "value_mu": np.asarray(mu)}
     return info or None
@@ -204,8 +208,9 @@ def compute_ranking_metrics(
     from scipy.stats import spearmanr
 
     weekly_results = []
-    for week in sorted(test_df["week"].unique()):
-        week_df = test_df[test_df["week"] == week]
+    week_keys = ["season", "week"] if "season" in test_df else ["week"]
+    for key, week_df in test_df.groupby(week_keys, sort=True):
+        identity = dict(zip(week_keys, key, strict=True))
         if len(week_df) < top_k:
             continue
 
@@ -219,13 +224,13 @@ def compute_ranking_metrics(
 
         if np.isnan(corr):
             print(
-                f"  WARNING: Spearman correlation is NaN for week {week} "
+                f"  WARNING: Spearman correlation is NaN for {identity} "
                 f"(pred_col={pred_col}, n={len(week_df)})"
             )
 
         weekly_results.append(
             {
-                "week": week,
+                **identity,
                 "top_k_hit_rate": hit_rate,
                 "spearman": corr,
             }

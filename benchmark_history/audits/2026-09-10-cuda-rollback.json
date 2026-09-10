@@ -1,0 +1,47 @@
+{
+  "run_id": "cuda-capture-0f0fec55dfcd-20260910-od",
+  "artifact": "s3://ff-predictor-training/ab_runs/cuda-capture-0f0fec55dfcd-20260910-od/cells/QB-verify-42.json",
+  "job_id": "e46b2633-0984-47e8-be3d-c1214fe94253",
+  "build_run_id": 34487191665,
+  "provenance": {
+    "git_sha": "0f0fec55dfcd935652e752a0a2c486e03b76d207",
+    "gpu_name": "NVIDIA A10G",
+    "sm": "sm_86",
+    "cuda_graph_active": true
+  },
+  "metrics": {
+    "cuda_capture": {
+      "cuda_available": 1.0,
+      "sm": 86.0,
+      "seed": 42.0,
+      "prime_model_reset_max_abs": 0.0,
+      "prime_optimizer_reset_max_abs": 0.0,
+      "prime_body_calls": 1.0,
+      "prime_lr_restored": 1.0,
+      "prime_fallback_max_abs": 0.0,
+      "warmup_model_reset_max_abs": 0.0,
+      "warmup_optimizer_reset_max_abs": 0.0,
+      "warmup_body_calls": 3.0,
+      "warmup_lr_restored": 1.0,
+      "warmup_fallback_max_abs": 0.0,
+      "capture_model_reset_max_abs": 0.0,
+      "capture_optimizer_reset_max_abs": 0.0,
+      "capture_body_calls": 5.0,
+      "capture_lr_restored": 1.0,
+      "capture_fallback_max_abs": 0.0,
+      "success_model_reset_max_abs": 0.0,
+      "success_optimizer_reset_max_abs": 0.0,
+      "success_body_calls": 5.0,
+      "success_replay_max_abs": 0.0,
+      "success_lr_refresh": 1.0,
+      "success_replay_steps": 2.0,
+      "success_parameter_delta": 0.014085829257965088,
+      "passed_cases": 4.0
+    },
+    "NN": {
+      "mae": 13.965283647492834,
+      "test_rows": 686.0
+    }
+  },
+  "ok": true
+}

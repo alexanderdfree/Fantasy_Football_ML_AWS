@@ -90,6 +90,9 @@ def _flat_attn_kwargs_static(pc: PositionConfig) -> dict:
         gated=pc.attn_gated,
         gate_hidden=pc.attn_gate_hidden,
         gated_targets=list(pc.gated_targets) if pc.gated_targets else None,
+        # Existing hurdle checkpoints contain the underlying NB/Poisson rate;
+        # reporting its expectation needs the same family as training's NLL.
+        head_losses=dict(pc.head_losses) if pc.head_losses else None,
         # Architecture knob (adds an nn.Parameter when on) — must be in the
         # served kwargs so app.py / smoke_test rebuild the matching state_dict.
         no_history_embedding=pc.attn_no_history_embedding,
@@ -118,7 +121,7 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
     ``game_dim`` flows from the length of ``attn_history_stats``: 0 = legacy
     nested-only path, >0 = per-game aggregates fed alongside the inner pool.
     """
-    return dict(
+    kwargs = dict(
         backbone_layers=list(pc.nn_backbone_layers),
         d_kick=pc.attn_kick_dim,
         d_model=pc.attn_d_model,
@@ -136,6 +139,9 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
         # served-kwargs requirement as the flat path (adds cond_proj when on).
         condition_queries_on_static=pc.attn_condition_queries_on_static,
     )
+    if pc.nn_head_hidden_overrides:
+        kwargs["head_hidden_overrides"] = dict(pc.nn_head_hidden_overrides)
+    return kwargs
 
 
 def _position_modules(pos: str):

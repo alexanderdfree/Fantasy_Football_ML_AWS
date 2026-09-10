@@ -68,6 +68,7 @@ import copy
 import json
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -75,15 +76,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 import torch
 
-ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
+from src.tuning.tune_nn_storage import (
+    DEFAULT_STACKED_SEEDS,
+    ENSEMBLE_POSITIONS,
+)
+from src.tuning.tune_nn_storage import (
+    stacked_default_seed_list as stacked_default_seed_list,
+)
+
 _CLIP_MAX_NORM = 1.0  # mirrors the hardcoded clip_grad_norm_(1.0) in MultiHeadTrainer
 _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * epoch
+_EMPTY_TRAINING_ERROR = (
+    "Training loader produced no batches; provide more training rows or "
+    "use a smaller batch size when drop_last=True."
+)
 
 # Default stacked width for the comparative pipelines (tune / ablation / A/B).
 # 24 is the measured per-seed optimum on the L4 (2026-06-11, jobs b12a4b6a/
 # 330a698a): ~1.0 s/seed, ~14x the eager per-seed cost, flat-region top before
 # the (24, 50] bandwidth knee. CPU/RAM are width-invariant; ~0.10 GiB VRAM/seed.
-DEFAULT_STACKED_SEEDS = 24
 
 
 def resolve_default_stacked_seeds(explicit: int | str | None = None) -> int:
@@ -104,11 +115,6 @@ def resolve_default_stacked_seeds(explicit: int | str | None = None) -> int:
     from src.shared.utils import cuda_enabled
 
     return DEFAULT_STACKED_SEEDS if cuda_enabled() else 0
-
-
-def stacked_default_seed_list(n: int = DEFAULT_STACKED_SEEDS) -> list[int]:
-    """The canonical ``n``-seed list (42..42+n) the default stacked grid uses."""
-    return list(range(42, 42 + n))
 
 
 _ENSEMBLE_ENV_KEYS = (
@@ -144,8 +150,8 @@ def ensemble_env(fixed_epochs: int):
     exact env-leak shape that bit the #1138 test suite.
     """
     previous = {k: os.environ.get(k) for k in _ENSEMBLE_ENV_KEYS}
-    apply_ensemble_env(fixed_epochs)
     try:
+        apply_ensemble_env(fixed_epochs)
         yield
     finally:
         for k, v in previous.items():
@@ -161,6 +167,11 @@ def ensemble_env(fixed_epochs: int):
 # ---------------------------------------------------------------------------
 
 
+_CAPTURE_LOCK = threading.RLock()
+_CAPTURE_LOCAL = threading.local()
+_CAPTURE_PATCH = None
+
+
 @contextlib.contextmanager
 def capture_attention_construction(captures: list, test_capture: dict):
     """Patch ``MultiHeadTrainer.train`` + ``MultiHeadNetWithHistory.predict_numpy``
@@ -168,58 +179,92 @@ def capture_attention_construction(captures: list, test_capture: dict):
     per-seed init, loaders, criterion, optimizer hyperparams) and trains
     NOTHING. ``captures`` receives one dict per run; ``test_capture`` receives
     the scaled test arrays from the first ``predict_numpy`` call.
+
+    Hooks dispatch to the calling thread's innermost capture. Other threads
+    keep ordinary training and prediction, including while a capture fails.
     """
     from src.shared import neural_net
     from src.shared.training import MultiHeadTrainer
 
-    orig_train = MultiHeadTrainer.train
-    orig_predict = neural_net.MultiHeadNetWithHistory.predict_numpy
-
-    def _train_stub(self, train_loader, val_loader, n_epochs):
-        captures.append(
-            {
-                "trainer": self,
-                "train_loader": train_loader,
-                "val_loader": val_loader,
-                "n_epochs": n_epochs,
+    global _CAPTURE_PATCH
+    with _CAPTURE_LOCK:
+        state = _CAPTURE_PATCH
+        if state is None:
+            state = {
+                "train": MultiHeadTrainer.train,
+                "predict": neural_net.MultiHeadNetWithHistory.predict_numpy,
+                "active": 0,
             }
-        )
-        return {}
 
-    def _predict_stub(
-        self,
-        X_static,
-        X_history,
-        history_mask,
-        device,
-        X_opp_history=None,
-        opp_history_mask=None,
-    ):
-        test_capture.setdefault(
-            "args", (X_static, X_history, history_mask, X_opp_history, opp_history_mask)
-        )
-        # Learn the exact output key set (incl. gated-head aux keys) from a
-        # 1-row real forward, then zero-fill full length so the surrounding
-        # compute_target_metrics completes harmlessly.
-        sample = orig_predict(
-            self,
-            X_static[:1],
-            X_history[:1],
-            history_mask[:1],
-            device,
-            None if X_opp_history is None else X_opp_history[:1],
-            None if opp_history_mask is None else opp_history_mask[:1],
-        )
-        n = X_static.shape[0]
-        return {k: np.zeros(n, dtype=np.float32) for k in sample}
+            def _train_stub(self, train_loader, val_loader, n_epochs):
+                stack = getattr(_CAPTURE_LOCAL, "stack", ())
+                if not stack:
+                    return state["train"](self, train_loader, val_loader, n_epochs)
+                own_captures, _ = stack[-1]
+                own_captures.append(
+                    {
+                        "trainer": self,
+                        "train_loader": train_loader,
+                        "val_loader": val_loader,
+                        "n_epochs": n_epochs,
+                    }
+                )
+                return {}
 
-    MultiHeadTrainer.train = _train_stub
-    neural_net.MultiHeadNetWithHistory.predict_numpy = _predict_stub
+            def _predict_stub(
+                self,
+                X_static,
+                X_history,
+                history_mask,
+                device,
+                X_opp_history=None,
+                opp_history_mask=None,
+            ):
+                stack = getattr(_CAPTURE_LOCAL, "stack", ())
+                if not stack:
+                    return state["predict"](
+                        self,
+                        X_static,
+                        X_history,
+                        history_mask,
+                        device,
+                        X_opp_history,
+                        opp_history_mask,
+                    )
+                _, own_test_capture = stack[-1]
+                own_test_capture.setdefault(
+                    "args", (X_static, X_history, history_mask, X_opp_history, opp_history_mask)
+                )
+                # One untrained row supplies the output keys; preserve each
+                # capture's full test inputs without predicting every row.
+                sample = state["predict"](
+                    self,
+                    X_static[:1],
+                    X_history[:1],
+                    history_mask[:1],
+                    device,
+                    None if X_opp_history is None else X_opp_history[:1],
+                    None if opp_history_mask is None else opp_history_mask[:1],
+                )
+                return {k: np.zeros(X_static.shape[0], dtype=np.float32) for k in sample}
+
+            MultiHeadTrainer.train = _train_stub
+            neural_net.MultiHeadNetWithHistory.predict_numpy = _predict_stub
+            _CAPTURE_PATCH = state
+        if not hasattr(_CAPTURE_LOCAL, "stack"):
+            _CAPTURE_LOCAL.stack = []
+        _CAPTURE_LOCAL.stack.append((captures, test_capture))
+        state["active"] += 1
     try:
         yield
     finally:
-        MultiHeadTrainer.train = orig_train
-        neural_net.MultiHeadNetWithHistory.predict_numpy = orig_predict
+        with _CAPTURE_LOCK:
+            _CAPTURE_LOCAL.stack.pop()
+            state["active"] -= 1
+            if state["active"] == 0:
+                MultiHeadTrainer.train = state["train"]
+                neural_net.MultiHeadNetWithHistory.predict_numpy = state["predict"]
+                _CAPTURE_PATCH = None
 
 
 def capture_seeds(
@@ -336,11 +381,11 @@ def _optimizer_hyperparams(trainer) -> dict:
 
 
 def stacked_val_losses(template, params, buffers, criterion, val_loader, device) -> list[float]:
-    """Per-member combined val loss (mean over val batches), eval mode.
+    """Per-member combined val loss (mean over observations), eval mode.
 
     Mirrors the trainer's val pass semantics (``model.eval()`` + no_grad +
-    the combined criterion averaged over batches) so a stacked tune trial
-    reports the same quantity per member that an eager trial reports.
+    the combined criterion weighted by each batch's sample count) so a stacked
+    tune trial reports the same quantity per member that an eager trial reports.
     """
 
     def member_loss_eval(p, b, feats, y):
@@ -350,17 +395,29 @@ def stacked_val_losses(template, params, buffers, criterion, val_loader, device)
     veval = torch.vmap(member_loss_eval, in_dims=(0, 0, None, None))
     template.eval()
     totals = None
-    n_batches = 0
+    n_samples = 0
     with torch.no_grad():
         for batch in val_loader:
             feats, y = _batch_to_device(batch, device)
             losses = veval(params, buffers, feats, y)
-            totals = losses if totals is None else totals + losses
-            n_batches += 1
+            n_batch_samples = feats[0].shape[0]
+            weighted_losses = losses * n_batch_samples
+            totals = weighted_losses if totals is None else totals + weighted_losses
+            n_samples += n_batch_samples
     template.train()
-    if totals is None or n_batches == 0:
+    if totals is None or n_samples == 0:
         raise RuntimeError("stacked val pass saw no batches — empty val loader?")
-    return [float(v) for v in (totals / n_batches).cpu()]
+    return [float(v) for v in (totals / n_samples).cpu()]
+
+
+def _check_training_loader(train_loader):
+    """Reject sized empty captures before setup; unsized loaders are checked per epoch."""
+    try:
+        empty = len(train_loader) == 0
+    except TypeError:
+        return
+    if empty:
+        raise ValueError(_EMPTY_TRAINING_ERROR)
 
 
 def train_stacked(
@@ -384,11 +441,19 @@ def train_stacked(
     combined val loss (the stacked tune objective's per-epoch report; an
     ``optuna.TrialPruned`` raised inside it propagates out).
     """
+    if device.type == "mps":
+        raise RuntimeError(
+            "MPS stacked training is not supported by the current PyTorch backend. "
+            "Use eager MPS (--no-stacked-seeds for A/B or --stacked-seeds 0 for tune_nn), "
+            "or select FF_DEVICE=cpu / FF_DEVICE=cuda for stacking."
+        )
+
     from src.shared.pipeline import _build_scheduler
 
     trainer0 = captures[0]["trainer"]
     criterion = trainer0.criterion
     train_loader = captures[0]["train_loader"]
+    _check_training_loader(train_loader)
     val_loader = captures[0]["val_loader"]
     models = [c["trainer"].model for c in captures]
     template, params, buffers = stack_models(models, device)
@@ -408,6 +473,7 @@ def train_stacked(
     for epoch in range(n_epochs):
         # Shared batch order: one permutation feeds every member (CRN design).
         torch.manual_seed(base_order_seed + _EPOCH_SEED_STRIDE * epoch)
+        n_train_batches = 0
         for batch in train_loader:
             feats, y = _batch_to_device(batch, device)
             opt.zero_grad(set_to_none=True)
@@ -415,8 +481,11 @@ def train_stacked(
             losses.sum().backward()
             clip_per_member_([p.grad for p in params.values() if p.grad is not None])
             opt.step()
+            n_train_batches += 1
             if per_batch:
                 scheduler.step()
+        if n_train_batches == 0:
+            raise ValueError(_EMPTY_TRAINING_ERROR)
         if not per_batch:
             scheduler.step()
         if epoch_callback is not None:
@@ -443,6 +512,7 @@ def train_sequential(
 
     criterion = captures[0]["trainer"].criterion
     train_loader = captures[0]["train_loader"]
+    _check_training_loader(train_loader)
     trained = []
     for c in captures:
         model = copy.deepcopy(c["trainer"].model).to(device)
@@ -453,6 +523,7 @@ def train_sequential(
         scheduler, per_batch = _build_scheduler(opt, cfg, train_loader, scheduler_prefix="attn_")
         for epoch in range(n_epochs):
             torch.manual_seed(base_order_seed + _EPOCH_SEED_STRIDE * epoch)
+            n_train_batches = 0
             for batch in train_loader:
                 feats, y = _batch_to_device(batch, device)
                 opt.zero_grad(set_to_none=True)
@@ -461,8 +532,11 @@ def train_sequential(
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), _CLIP_MAX_NORM)
                 opt.step()
+                n_train_batches += 1
                 if per_batch:
                     scheduler.step()
+            if n_train_batches == 0:
+                raise ValueError(_EMPTY_TRAINING_ERROR)
             if not per_batch:
                 scheduler.step()
         trained.append(model)
@@ -608,11 +682,11 @@ def run_ensemble_ab(position: str, n_seeds: int, fixed_epochs: int, parity_check
             "draws are not comparable across arms otherwise)"
         )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seeds = list(range(42, 42 + n_seeds))
     print(f"[ensemble] capturing {len(seeds)} seed constructions for {position}...", flush=True)
     t0 = time.perf_counter()
     captures, test_capture = capture_seeds(position, seeds, base_cfg=None)
+    device = captures[0]["trainer"].device
     from src.shared.platform_detect import detect_platform
     from src.shared.registry import get_config
 
@@ -779,7 +853,6 @@ def run_compare(position: str, n_seeds: int, fixed_epochs: int) -> dict:
     from src.shared.utils import amp_dtype, cuda_graph_full_enabled
     from src.tuning.resource_probe import ResourceProbe
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seeds = list(range(42, 42 + n_seeds))
     cfg = get_config(position)
     memo: dict = {}
@@ -788,6 +861,7 @@ def run_compare(position: str, n_seeds: int, fixed_epochs: int) -> dict:
     # regime-independent — no dtype/norm/graph dependence), outside both arms.
     with ensemble_env(fixed_epochs):
         warm, _ = capture_seeds(position, seeds[:1], base_cfg=None, memo=memo)
+    device = warm[0]["trainer"].device
     del warm
     if device.type == "cuda":
         torch.cuda.empty_cache()

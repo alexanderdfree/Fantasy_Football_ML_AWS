@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "watch": "node build.mjs --watch"
+    "watch": "node build.mjs --watch",
+    "test": "node --test tests/*.test.js"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

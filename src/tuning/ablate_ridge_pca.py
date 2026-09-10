@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import functools
 import os
 import sys
 from typing import Any
@@ -106,9 +107,9 @@ from src.shared.registry import get_config, get_runner
 from src.tuning.ablation_runner import (
     AblationJob,
     AblationResult,
-    fmt_mean_std,
     format_dry_run_table,
     mean_std,
+    paired_deltas,
     parse_seed_list,
     resolve_max_workers,
     run_grid,
@@ -170,16 +171,26 @@ def _execute_ridge_pca_job(job: AblationJob) -> dict[str, Any]:
     the consistent-improver rule without needing a second job.
     """
     pca_n: int | None = job.base_cfg.get("_job_pca_n")  # sentinel injected by _build_jobs
-    cfg = _make_cfg(job.base_cfg, pca_n)
+    if job.position in ("K", "DST"):
+        from src.analysis.position_data import prepare_native_ablation
+        from src.shared.pipeline import run_pipeline
 
-    train = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
-    val = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
-    test = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
-
-    run_fn = get_runner(job.position)
+        (train, val, test), native_cfg = prepare_native_ablation(job.position)
+        cfg = _make_cfg({**native_cfg, **job.base_cfg}, pca_n)
+        # Native public runners self-load and cannot accept evaluation frames.
+        # Their prepared frames/config feed the same shared pipeline directly.
+        run_fn = functools.partial(run_pipeline, job.position, cfg)
+    else:
+        cfg = _make_cfg(job.base_cfg, pca_n)
+        train = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
+        val = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
+        test = pd.read_parquet(f"{SPLITS_DIR}/test.parquet")
+        run_fn = functools.partial(get_runner(job.position), config=cfg)
 
     # Val-as-test: ridge fits on train, evaluates on val frame (2024 season).
-    result_val = run_fn(train_df=train, val_df=val, test_df=val, seed=job.seed, config=cfg)
+    # Ridge fits/tunes on train only. Supplying val twice would duplicate it
+    # inside QB/RB cross-split history features while scoring this same cohort.
+    result_val = run_fn(train_df=train, val_df=val.iloc[:0].copy(), test_df=val, seed=job.seed)
     rm_val = result_val.get("ridge_metrics")
     if not rm_val or "total" not in rm_val:
         raise RuntimeError(
@@ -189,7 +200,7 @@ def _execute_ridge_pca_job(job: AblationJob) -> dict[str, Any]:
     val_mae = float(rm_val["total"]["mae"])
 
     # Real test: ridge fits on train, evaluates on real 2025 test frame.
-    result_test = run_fn(train_df=train, val_df=val, test_df=test, seed=job.seed, config=cfg)
+    result_test = run_fn(train_df=train, val_df=val, test_df=test, seed=job.seed)
     rm_test = result_test.get("ridge_metrics")
     if not rm_test or "total" not in rm_test:
         raise RuntimeError(
@@ -270,21 +281,6 @@ def summarize_results(
     summary: dict[str, Any] = {}
 
     for position in positions:
-        # Collect per-variant mean val/test MAE across seeds.
-        baseline_rows = [
-            r
-            for r in experiment_results
-            if r.position == position and r.variant == BASELINE_VARIANT and r.error is None
-        ]
-        baseline_val_vals = [float(r.metrics["val_mae"]) for r in baseline_rows]
-        baseline_test_vals = [float(r.metrics["test_mae"]) for r in baseline_rows]
-        base_val_mean = (
-            float(sum(baseline_val_vals) / len(baseline_val_vals)) if baseline_val_vals else None
-        )
-        base_test_mean = (
-            float(sum(baseline_test_vals) / len(baseline_test_vals)) if baseline_test_vals else None
-        )
-
         pos_summary: dict[str, Any] = {
             "variants": {},
             "consistent_improvers": [],
@@ -304,33 +300,31 @@ def summarize_results(
             val_stat = mean_std(val_vals)
             test_stat = mean_std(test_vals)
 
-            val_delta_vals = (
-                [v - bv for v, bv in zip(val_vals, baseline_val_vals, strict=False)]
-                if baseline_val_vals and val_vals
-                else []
+            val_delta_vals = paired_deltas(
+                experiment_results,
+                variant=variant_key,
+                baseline_variant=BASELINE_VARIANT,
+                metric_key="val_mae",
+                position=position,
             )
-            test_delta_vals = (
-                [v - bv for v, bv in zip(test_vals, baseline_test_vals, strict=False)]
-                if baseline_test_vals and test_vals
-                else []
+            test_delta_vals = paired_deltas(
+                experiment_results,
+                variant=variant_key,
+                baseline_variant=BASELINE_VARIANT,
+                metric_key="test_mae",
+                position=position,
             )
-
             val_delta = mean_std(val_delta_vals)
             test_delta = mean_std(test_delta_vals)
 
             is_baseline = variant_key == BASELINE_VARIANT
-            val_mean = val_stat.get("mean")
-            test_mean = test_stat.get("mean")
             consistent = bool(
                 not is_baseline
-                and val_mean is not None
-                and test_mean is not None
-                and base_val_mean is not None
-                and base_test_mean is not None
-                and val_mean < base_val_mean
-                and test_mean < base_test_mean
+                and val_delta["mean"] is not None
+                and test_delta["mean"] is not None
+                and val_delta["mean"] < 0
+                and test_delta["mean"] < 0
             )
-
             pos_summary["variants"][variant_key] = {
                 "pca_n": pca_n,
                 "val_mae": val_stat,
@@ -385,12 +379,14 @@ def print_summary(summary: dict[str, Any], variants: list[str]) -> None:
                 continue
             pca_n = rec["pca_n"]
             label = "None" if pca_n is None else str(pca_n)
-            val_str = fmt_mean_std(
-                [rec["val_mae"]["mean"]] if rec["val_mae"].get("mean") is not None else []
-            )
-            test_str = fmt_mean_std(
-                [rec["test_mae"]["mean"]] if rec["test_mae"].get("mean") is not None else []
-            )
+
+            def format_stat(stat):
+                if stat.get("mean") is None:
+                    return "n/a"
+                return f"{stat['mean']:.4f}±{stat['std']:.4f}"
+
+            val_str = format_stat(rec["val_mae"])
+            test_str = format_stat(rec["test_mae"])
             vd_mean = rec["val_delta_vs_baseline"].get("mean")
             td_mean = rec["test_delta_vs_baseline"].get("mean")
             vd_str = f"{vd_mean:+.4f}" if vd_mean is not None else ""

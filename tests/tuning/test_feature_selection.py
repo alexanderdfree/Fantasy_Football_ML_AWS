@@ -236,6 +236,38 @@ def test_main_effects_recovers_single_planted_effect(metric_offset):
         assert eff[other]["mean_effect"] == pytest.approx(0.0, abs=1e-9)
 
 
+@pytest.mark.parametrize("n_groups", [1, 2, 13])
+def test_leave_one_out_effects_use_same_seed_baseline(n_groups):
+    names = [f"g{i}" for i in range(n_groups)]
+    rows = dict(fg.design_for_groups(names))
+    values = {"baseline": {42: 10.0, 43: 100.0}}
+    for index, group in enumerate(names):
+        values[f"drop_{group}"] = {42: 10.0 + index + 1, 43: 100.0 + index + 1}
+    effects = fg.main_effects(values, rows, names)
+    for index, group in enumerate(names):
+        assert effects[group]["mean_effect"] == pytest.approx(index + 1)
+        assert effects[group]["n_seeds"] == 2
+
+
+def test_leave_one_out_missing_baseline_cannot_borrow_another_seed():
+    effects = fg.main_effects(
+        {"baseline": {43: 100.0}, "drop_a": {42: 10.0}, "drop_b": {42: 20.0}},
+        {"drop_a": frozenset({"a"}), "drop_b": frozenset({"b"})},
+        ["a", "b"],
+    )
+    assert effects == {}
+
+
+def test_leave_one_out_honors_explicit_control_variant():
+    effects = fg.main_effects(
+        {"control": {42: 10.0}, "drop_a": {42: 12.0}, "drop_b": {42: 14.0}},
+        {"control": frozenset(), "drop_a": frozenset({"a"}), "drop_b": frozenset({"b"})},
+        ["a", "b"],
+    )
+    assert effects["a"]["mean_effect"] == 2.0
+    assert effects["b"]["mean_effect"] == 4.0
+
+
 def test_extract_variant_seed_metric_skips_bad_cells():
     results = [
         {

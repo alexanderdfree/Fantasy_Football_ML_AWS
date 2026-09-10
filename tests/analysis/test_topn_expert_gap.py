@@ -15,6 +15,65 @@ def _source(name: str = "model") -> mod.SourceMeta:
     return mod.SourceMeta(name=name, label=name.title(), kind="model", native_col="pred_total")
 
 
+def test_local_populated_defense_forecasts_retain_nonpositive_totals(tmp_path):
+    frame = pd.DataFrame(
+        {
+            "player_id": ["a", "b", "c", "empty", "unknown"],
+            "position": "DST",
+            "season": 2025,
+            "week": 1,
+            "projection": [0.0, -2.0, 4.0, 0.0, None],
+            "projected_def_tds": [0.2, 0.3, 0.4, 0.0, 0.5],
+        }
+    )
+    path = tmp_path / "defense.csv"
+    frame.to_csv(path, index=False)
+    source = mod.local_expert_source(mod.LocalExpertSpec("local_defense", path))
+    result = source.project(source.load([2025]), "DST", "ppr")
+    assert result.player_id.tolist() == ["a", "b", "c"]
+    assert result.expert_pred_total.tolist() == [0.0, -2.0, 4.0]
+    assert result.expert_pred_def_tds.tolist() == [0.2, 0.3, 0.4]
+
+
+def test_current_season_top24_is_labeled_retrospective():
+    frame = pd.DataFrame(
+        {
+            "player_id": [f"p{i:02}" for i in range(25)],
+            "position": "WR",
+            "season": 2025,
+            "week": 1,
+            "fantasy_points": list(range(1, 26)),
+            "pred_total": [*range(1, 25), 31],
+            "prior_season_mean_shared_component_points": list(range(25, 0, -1)),
+        }
+    )
+    rows = mod.cohort_error_rows("WR", _source(), frame, frame, top_ns=(30,))
+    assert not any(row["slice_family"] == "elite_top24" for row in rows)
+    retrospective = next(row for row in rows if row["slice_family"] == "seasonal_actual_top24")
+    assert retrospective["n_rows"] == 24
+    assert retrospective["mae"] == 0.25
+
+
+@pytest.mark.parametrize(
+    "predictions, expected", [([10.0, 0.0], 1.0), ([0.0, 10.0], 0.0), (None, None)]
+)
+def test_season_selection_distinguishes_zero_hits_from_no_forecasts(predictions, expected):
+    base = pd.DataFrame(
+        {
+            "player_id": ["A", "B"],
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "fantasy_points": [10.0, 0.0],
+        }
+    )
+    source = base.assign(pred_total=predictions or [0.0, 0.0])
+    if predictions is None:
+        source = source.iloc[:0]
+    metrics, _ = mod.season_selection_rows("WR", _source(), source, base, top_ns=(1,))
+    actual = metrics[0]["f1"]
+    assert pd.isna(actual) if expected is None else actual == expected
+
+
 def test_cohort_error_uses_actual_season_total_topn_players():
     df = pd.DataFrame(
         {

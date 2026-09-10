@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.shared.count_math import _count_loss_inputs, _log_exprel, _nb2_zero_mass_terms
+
 
 def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
     """Clamp ``val`` to ``>= 0`` when ``name`` is in ``non_negative``.
@@ -225,25 +227,32 @@ class GatedHead(nn.Module):
     """Two-stage hurdle head for zero-inflated count prediction.
 
     Stage 1 (gate): P(Y > 0) via sigmoid over ``gate_logit``.
-    Stage 2 (value): the rate ``mu = E[Y | Y > 0]`` via Softplus on one trunk
-    output, plus a per-sample ``log_alpha`` on the other. ``log_alpha`` is the
-    NegBin-2 dispersion (``var = mu + exp(log_alpha) * mu^2``); it's unused by
-    Poisson-hurdle losses but exposed on every GatedHead so the loss layer can
-    choose its family without widening the module API.
+    Stage 2 (value): a positive ``mu`` plus per-sample ``log_alpha``. For
+    zero-truncated NB/Poisson losses, ``mu`` parameterizes the underlying
+    untruncated law; its positive conditional mean is ``mu / P(Y > 0)``.
+    Other losses retain the direct conditional-mean interpretation. The
+    configured loss family selects the reporting transformation only.
 
     Forward returns ``(expected, gate_logit, mu, log_alpha)``:
-        expected    = sigmoid(gate_logit) * mu   — E[Y] for reporting/metrics
+        expected    = sigmoid(gate_logit) * conditional_mean — E[Y]
         gate_logit  = pre-sigmoid logit          — BCE target
-        mu          = E[Y | Y > 0], softplus + 1e-6 floor so log(mu) is finite
+        mu          = raw value-loss parameter, softplus + 1e-6 floor
         log_alpha   = per-sample NegBin-2 log-dispersion, real-valued
 
     Value and dispersion share a single trunk so the extra capacity for
-    dispersion is small (~49 params at value_hidden=48). At inference the 4-tuple
-    is stored in the prediction dict; Poisson-family losses ignore log_alpha.
+    dispersion is small (~49 params at value_hidden=48). Raw loss parameters
+    and state_dict names/shapes stay unchanged; Poisson losses ignore alpha.
     """
 
-    def __init__(self, in_dim: int, gate_hidden: int = 16, value_hidden: int = 48):
+    def __init__(
+        self,
+        in_dim: int,
+        gate_hidden: int = 16,
+        value_hidden: int = 48,
+        loss_family: str | None = None,
+    ):
         super().__init__()
+        self.loss_family = loss_family
         self.gate = nn.Sequential(
             nn.Linear(in_dim, gate_hidden),
             nn.ReLU(),
@@ -259,6 +268,25 @@ class GatedHead(nn.Module):
         )
         self.value_log_alpha = nn.Linear(value_hidden, 1)
 
+    def conditional_mean(self, mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.Tensor:
+        """Positive mean of the configured law, preserving the raw NLL rate.
+
+        log1p/expm1 avoid cancellation when a small rate makes P0 nearly one.
+        The NB dispersion floor matches the likelihood's parameterization.
+        Ordinary gated Poisson NLL is fitted to the marginal prediction and
+        must retain its existing direct-mean output.
+        """
+        if self.loss_family not in ("hurdle_negbin", "hurdle_poisson"):
+            return mu
+        mu, log_alpha = _count_loss_inputs(mu, log_alpha)
+        if self.loss_family == "hurdle_negbin":
+            _, _, r, z = _nb2_zero_mass_terms(mu, log_alpha)
+            # mu/(1-P0) = exprel(r)/exprel(-z), r=log1p(alpha*mu),
+            # z=r/alpha. The log ratio stays finite when exp(log_alpha)
+            # would overflow but the conditional mean is representable.
+            return torch.exp(_log_exprel(r) - _log_exprel(-z))
+        return torch.exp(-_log_exprel(-mu.clamp_min(1e-10)))
+
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -266,7 +294,7 @@ class GatedHead(nn.Module):
         trunk = self.value_trunk(x)
         mu = self.value_mu(trunk).squeeze(-1) + 1e-6
         log_alpha = self.value_log_alpha(trunk).squeeze(-1)
-        expected = torch.sigmoid(gate_logit) * mu
+        expected = torch.sigmoid(gate_logit) * self.conditional_mean(mu, log_alpha)
         return expected, gate_logit, mu, log_alpha
 
 
@@ -591,6 +619,7 @@ class MultiHeadNetWithHistory(nn.Module):
         condition_queries_on_static: bool = False,
         opp_game_dim: int | None = None,
         no_history_embedding: bool = False,
+        head_losses: dict[str, str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -742,6 +771,7 @@ class MultiHeadNetWithHistory(nn.Module):
                     in_dim=head_in_dim,
                     gate_hidden=gate_hidden,
                     value_hidden=h,
+                    loss_family=(head_losses or {}).get(name),
                 )
             else:
                 self.heads[name] = nn.Sequential(
@@ -867,6 +897,8 @@ class MultiHeadNetWithHistory(nn.Module):
                 preds[f"{name}_gate_logit"] = gate_logit
                 preds[f"{name}_value_mu"] = mu
                 preds[f"{name}_value_log_alpha"] = log_alpha
+                if head.loss_family in ("hurdle_negbin", "hurdle_poisson"):
+                    preds[f"{name}_value_conditional_mean"] = head.conditional_mean(mu, log_alpha)
             else:
                 val = head(head_input).squeeze(-1)
                 preds[name] = apply_non_negative(val, name, self.non_negative_targets)
@@ -1258,6 +1290,7 @@ def build_multihead_net_with_history(
         condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
         opp_game_dim=opp_game_dim,
         no_history_embedding=cfg.get("attn_no_history_embedding", False),
+        head_losses=cfg.get("head_losses"),
     )
 
 

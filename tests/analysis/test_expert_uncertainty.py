@@ -19,6 +19,38 @@ from src.analysis import expert_uncertainty as mod
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.mark.parametrize("scoring_format", ["ppr", "half_ppr", "standard"])
+def test_reliability_scores_actuals_in_the_requested_format(scoring_format):
+    actuals = pd.DataFrame(
+        {
+            "player_id": ["a", "b"],
+            "position": ["WR", "WR"],
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "receiving_yards": [100.0, 200.0],
+            "receptions": [10.0, 20.0],
+            "receiving_tds": [0.0, 0.0],
+            "fumbles_lost": [0.0, 0.0],
+        }
+    )
+    projections = actuals.assign(receiving_yards=[110.0, 220.0], nflcom_projected_pts=0.0)
+    result = mod.compute_expert_reliability(
+        [2025],
+        scoring_format=scoring_format,
+        actuals_loader=lambda seasons: actuals,
+        dst_actuals_loader=lambda seasons: pd.DataFrame(
+            columns=["player_id", "season", "week", "actual_pts"]
+        ),
+        nflcom_loader=lambda **kwargs: projections,
+        sleeper_loader=lambda seasons: projections,
+    )
+    for source in ("nflcom", "rotowire"):
+        block = result["positions"]["WR"][source]
+        assert block["mae"] == pytest.approx(1.5)
+        assert block["bias"] == pytest.approx(1.5)
+
+
 _QB_TARGETS = (
     "passing_yards",
     "rushing_yards",

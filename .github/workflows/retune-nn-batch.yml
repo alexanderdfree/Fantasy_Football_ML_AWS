@@ -195,10 +195,6 @@ jobs:
           CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
         run: |
           set -eu
-          STORAGE_VERSION="scheduler_v2_mps"
-          case "$(printf '%s' "$CUDA_GRAPH" | tr '[:upper:]' '[:lower:]')" in
-            1|true|yes|on) STORAGE_VERSION="scheduler_v2_mps_graph" ;;
-          esac
           mkdir -p tune_results
           # $POSITIONS is intentionally unquoted — argparse `nargs="+"` needs
           # the values as separate argv entries (e.g. "QB" "RB" "WR"), and
@@ -208,7 +204,7 @@ jobs:
           python -m src.tuning.aggregate_results \
             --positions $POSITIONS \
             --bucket "$S3_BUCKET" \
-            --search-space-version "$STORAGE_VERSION" \
+            --batch-cuda-graph "$CUDA_GRAPH" \
             --local-dir ./tune_results \
             --output tune_nn_results.json \
             --summary-output "$GITHUB_STEP_SUMMARY"

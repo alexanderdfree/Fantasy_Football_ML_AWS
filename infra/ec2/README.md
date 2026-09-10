@@ -41,7 +41,7 @@ gh variable set BATCH_ACTIVE --body "false"   # → use this trainer; leave at "
    nvidia-smi | head -3
    ```
 
-3. **Smoke test** (K is CPU-only and fast, ~30s):
+3. **Single-position training check** (K includes neural networks; this publishes model artifacts):
    ```
    # inside SSM session:
    /usr/local/bin/ff-train K 42

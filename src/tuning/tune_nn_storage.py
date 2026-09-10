@@ -5,18 +5,34 @@ share the same S3/local naming contract without importing ``src.tuning.tune_nn``
 and pulling in Optuna.
 """
 
-SEARCH_SPACE_VERSION = "scheduler_v2"
+# v3 preserves the sampled parameters but reports sample-weighted validation
+# loss. v2 averaged batch means, overweighting ragged tails; resuming those
+# trials would mix different objectives in TPE/pruning and best-trial selection.
+SEARCH_SPACE_VERSION = "scheduler_v3"
+
+# Shared metadata stays importable on orchestration runners without torch.
+ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
+DEFAULT_STACKED_SEEDS = 24
+DEFAULT_CUDA_GRAPH = True
+DEFAULT_CUDA_GRAPH_FULL = True
+DEFAULT_PARALLEL_BACKEND = "auto"
+
+
+def stacked_default_seed_list(n: int = DEFAULT_STACKED_SEEDS) -> list[int]:
+    """The canonical ensemble seeds, available without importing the trainer."""
+    return list(range(42, 42 + n))
+
 
 # Root namespace for the attention game-history-branch tuner (``tune_nn
-# --scope history``). v2 (isolation) searches ONLY attn_max_seq_len + the
+# --scope history``). The v2 isolation still searches ONLY attn_max_seq_len + the
 # per-game token bundles and freezes the entire production recipe (sizing, lr,
 # batch, scheduler, static backbone), so its trials must NOT mix with the
-# default ``scheduler_v2`` study OR the v1 history studies (Optuna rejects a
+# default full study OR the v1 history studies (Optuna rejects a
 # param-space mismatch in one study; v1 also co-sampled lr/sizing, which
 # confounded its objective — GH #1239). The graph/mps/full suffixing below
-# applies to this root too — a graphed history tune is still a different
-# trajectory from an eager one.
-HISTORY_SEARCH_SPACE_VERSION = "history_v2"
+# applies to this root too. v3 also separates sample-weighted objective values
+# from history_v2's batch-weighted trials; the isolated parameter space is unchanged.
+HISTORY_SEARCH_SPACE_VERSION = "history_v3"
 
 # Search-space roots selectable by ``--scope``. ``resolve_search_space_version``
 # applies the execution-profile (mps/graph/full) suffixes to whichever root.
@@ -35,17 +51,16 @@ def resolve_search_space_version(
 ) -> str:
     """Storage namespace for the execution profile.
 
-    ``root`` selects the sampled search space (``scheduler_v2`` for the default
-    full scope, ``history_v2`` for ``--scope history``); the mps/graph/full
-    suffixes below are applied to it. The sampled search space is otherwise
-    scheduler_v2, but CUDA-graph/MPS tuning follows a different training
-    trajectory from the eager local default. Keep those studies separate so
+    ``root`` selects the sampled search space and objective (``scheduler_v3``
+    for full scope, ``history_v3`` for ``--scope history``); the mps/graph/full
+    suffixes below are applied to it. CUDA-graph/MPS tuning follows a different
+    training trajectory from the eager local default. Keep those studies separate so
     Batch graph-enabled results never resume from an older eager study DB.
 
     The thread backend honors ``cuda_graph`` too: since the 2026-06-05
     autodetect-ON cutover, sm_80+ boxes run graphed by default, so a
     thread-backend tune on such a box must not resume (or pollute) the eager
-    ``scheduler_v2`` study — graphed runs compare to graphed runs (ADR-0017).
+    study — graphed runs compare to graphed runs (ADR-0017).
 
     ``cuda_graph`` must be the trainer's *actual* capture decision —
     ``src.shared.utils.cuda_graph_enabled()`` on the box that trains, or, for
@@ -73,6 +88,33 @@ def resolve_search_space_version(
 
 def s3_prefix(version: str = SEARCH_SPACE_VERSION) -> str:
     return f"tune_nn/{version}"
+
+
+def resolve_batch_storage_versions(
+    positions,
+    *,
+    parallel_backend: str = DEFAULT_PARALLEL_BACKEND,
+    cuda_graph: bool = DEFAULT_CUDA_GRAPH,
+    cuda_graph_full: bool = DEFAULT_CUDA_GRAPH_FULL,
+    stacked_seeds: int | None = None,
+    stacked_epochs: int = 30,
+    scope: str = "full",
+) -> dict[str, str]:
+    """Resolve launch_tune namespaces, including eager K/DST fallback jobs."""
+    width = DEFAULT_STACKED_SEEDS if stacked_seeds is None else stacked_seeds
+    backend = "mps" if parallel_backend == "auto" else parallel_backend
+    versions = {}
+    for pos in positions:
+        pos_width = width if pos.upper() in ENSEMBLE_POSITIONS else 0
+        stacked = pos_width >= 2
+        version = resolve_search_space_version(
+            backend,
+            cuda_graph=cuda_graph and not stacked,
+            full_graph=cuda_graph_full and not stacked,
+            root=SCOPE_ROOTS[scope],
+        )
+        versions[pos] = version + (f"_ens{pos_width}x{stacked_epochs}" if stacked else "")
+    return versions
 
 
 def study_name(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:

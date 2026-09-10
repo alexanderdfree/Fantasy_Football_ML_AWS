@@ -1,6 +1,7 @@
 """Generic training infrastructure: loss, dataset, dataloaders, and trainer."""
 
 import contextlib
+import math
 import os
 import time
 
@@ -11,6 +12,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from src.shared.count_math import (
+    _count_loss_inputs,
+    _log1p_div_minus_one,
+    _log_exprel,
+    _nb2_zero_mass_terms,
+)
 from src.shared.utils import (
     amp_dtype,
     cuda_graph_enabled,
@@ -77,18 +84,66 @@ def _optimizer_is_fused_capturable(optimizer) -> bool:
     return all(g.get("fused") and g.get("capturable") for g in groups)
 
 
-def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
-    """Log-pmf of the NB-2 parameterization: mean ``mu``, ``var = mu + alpha*mu^2``.
+def _stirling_correction(x: torch.Tensor) -> torch.Tensor:
+    """Six Bernoulli terms; callers shift gamma arguments to at least nine."""
+    inv = x.reciprocal()
+    sq = inv.square()
+    return inv * (
+        1 / 12
+        + sq * (-1 / 360 + sq * (1 / 1260 + sq * (-1 / 1680 + sq * (1 / 1188 - sq * 691 / 360360))))
+    )
 
-    Equivalent to ``NegBin(r=1/alpha, p=r/(r+mu))``. Supports ``y=0``.
+
+def _nb2_log_positive_ratio(
+    y: torch.Tensor, mu: torch.Tensor, log_alpha: torch.Tensor, r: torch.Tensor
+) -> torch.Tensor:
+    """Log(P_NB(y)/P_NB(1)) without subtracting nearly equal lgamma values.
+
+    Write the gamma ratio as Gamma(b+n)/Gamma(b), b=1+1/alpha,
+    n=y-1. Eight recurrence shifts put both arguments >= 9, where the
+    six-term Stirling remainder is below 4e-15. Expand their difference
+    with log1p before evaluation. The shift count is numerical precision,
+    not a bound on y; this has fixed tensor shapes for capture and vmap.
     """
-    alpha = torch.clamp(alpha, min=1e-6)
-    mu = torch.clamp(mu, min=1e-10)
-    r = 1.0 / alpha
-    log_coeff = torch.lgamma(y + r) - torch.lgamma(y + 1.0) - torch.lgamma(r)
-    log_r_ratio = torch.log(r) - torch.log(r + mu)
-    log_mu_ratio = torch.log(mu) - torch.log(r + mu)
-    return log_coeff + r * log_r_ratio + y * log_mu_ratio
+    beta = torch.exp(-log_alpha)
+    base = 1 + beta
+    shifted = base + 8
+    n = y - 1
+    q = n / shifted
+    remainder = n * _log1p_div_minus_one(q) + (n - 0.5) * torch.log1p(q)
+    remainder = remainder + _stirling_correction(shifted + n) - _stirling_correction(shifted)
+    offsets = torch.arange(8, device=mu.device, dtype=mu.dtype)
+    recurrence = torch.log1p(n.unsqueeze(-1) / (base.unsqueeze(-1) + offsets)).sum(-1)
+
+    log_mu = mu.log()
+    log_alpha_mu = log_alpha + log_mu
+    log_p = -torch.logaddexp(torch.zeros_like(log_alpha_mu), -log_alpha_mu)
+    # Combine log(9+1/alpha) + log(alpha*mu/(1+alpha*mu)) analytically
+    # near the Poisson limit, so log(alpha) cannot cancel its own gradient.
+    poisson_limit = (
+        log_mu - r + torch.logaddexp(torch.zeros_like(log_alpha), log_alpha + math.log(9))
+    )
+    combined = torch.where(beta >= 1, poisson_limit, shifted.log() + log_p)
+    return n * combined + remainder - recurrence - torch.lgamma(y + 1)
+
+
+def _nb2_log_prob(
+    y: torch.Tensor, mu: torch.Tensor, log_alpha: torch.Tensor, *, truncated: bool
+) -> torch.Tensor:
+    mu, log_alpha, r, z = _nb2_zero_mass_terms(mu, log_alpha)
+    safe_y = torch.where(y > 0, y, torch.ones_like(y))
+    # P1 | Y>0 = exprel(-r) / exprel(z). This avoids both
+    # subtraction of P0 from one and cancellation of 1/mu gradients.
+    log_p1 = _log_exprel(-r) - _log_exprel(z) if truncated else mu.log() - r - z
+    positive = log_p1 + _nb2_log_positive_ratio(safe_y, mu, log_alpha, r)
+    log_p0 = torch.full_like(positive, float("-inf")) if truncated else -z
+    return torch.where(y > 0, positive, log_p0)
+
+
+def negbin2_log_prob(y: torch.Tensor, mu: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+    """Log-pmf of NB-2: mean ``mu``, ``var = mu + alpha*mu^2``; supports y=0."""
+    y, mu, alpha = _count_loss_inputs(y, mu, alpha)
+    return _nb2_log_prob(y, mu, alpha.clamp_min(1e-6).log(), truncated=False)
 
 
 def ztnb2_log_prob(y: torch.Tensor, mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.Tensor:
@@ -96,12 +151,8 @@ def ztnb2_log_prob(y: torch.Tensor, mu: torch.Tensor, log_alpha: torch.Tensor) -
 
     ``log P(Y=k | Y>0, mu, alpha) = log P_NB(k) - log(1 - P_NB(0))``.
     """
-    alpha = torch.exp(log_alpha)
-    log_p = negbin2_log_prob(y, mu, alpha)
-    log_p_zero = negbin2_log_prob(torch.zeros_like(y), mu, alpha)
-    # log(1 - p_zero) via log1p for numerical stability when p_zero is small.
-    log_survival = torch.log1p(-torch.exp(log_p_zero).clamp(max=1.0 - 1e-7))
-    return log_p - log_survival
+    y, mu, log_alpha = _count_loss_inputs(y, mu, log_alpha)
+    return _nb2_log_prob(y, mu, log_alpha, truncated=True)
 
 
 def ztp_log_prob(y: torch.Tensor, mu: torch.Tensor) -> torch.Tensor:
@@ -111,10 +162,12 @@ def ztp_log_prob(y: torch.Tensor, mu: torch.Tensor) -> torch.Tensor:
     Mirrors ztnb2 but without the dispersion parameter — appropriate when
     empirical var/mean ≈ 1 (e.g. RB rushing_tds ≈ 1.16, fumbles_lost ≈ 1.01).
     """
-    mu = torch.clamp(mu, min=1e-10)
-    log_p = y * torch.log(mu) - mu - torch.lgamma(y + 1.0)
-    log_survival = torch.log1p(-torch.exp(-mu).clamp(max=1.0 - 1e-7))
-    return log_p - log_survival
+    y, mu = _count_loss_inputs(y, mu)
+    mu = mu.clamp_min(1e-10)
+    safe_y = torch.where(y > 0, y, torch.ones_like(y))
+    # P1 | Y>0 = 1/exprel(mu); higher counts differ by mu**(y-1)/y!.
+    log_p = -_log_exprel(mu) + (safe_y - 1) * mu.log() - torch.lgamma(safe_y + 1)
+    return torch.where(y > 0, log_p, torch.full_like(log_p, float("-inf")))
 
 
 def hurdle_negbin_value_loss(preds: dict, targets: dict, name: str) -> torch.Tensor:
@@ -767,67 +820,81 @@ class _GraphedFullStep:
         param_snapshot = [p.detach().clone() for p in self._params]
         bn_snapshot = _snapshot_batchnorm_state(self._model)
 
-        # LR LOAD-BEARING: force each param group's ``lr`` to a DEVICE TENSOR
-        # before capture. Fused+capturable AdamW happily reads a Python-float lr
-        # and the graph would then bake that VALUE constant (replays stuck on the
-        # build-time LR; the cosine schedule would silently no-op → ~1% trajectory
-        # fork vs A2-only). A device tensor is read on-device each replay, so
-        # refresh_lr_from_scheduler() can update the schedule in place. The value
-        # is unchanged (same float), so the captured steps stay bit-identical to
-        # the A2-only eager tail at the initial LR (verified 1-epoch Δ=0). FP32
-        # dtype matches AdamW's expectation for the capturable lr tensor.
-        self._baked_lr_tensors = []
-        for g in self.optimizer.param_groups:
-            lr = g["lr"]
-            lr_t = (
-                lr
-                if torch.is_tensor(lr)
-                else torch.tensor(float(lr), device=self._device, dtype=torch.float32)
-            )
-            g["lr"] = lr_t
-            self._baked_lr_tensors.append(lr_t)
+        original_lrs = [group["lr"] for group in self.optimizer.param_groups]
+        captured = False
+        try:
+            # LR LOAD-BEARING: force each param group's ``lr`` to a DEVICE TENSOR
+            # before capture. Fused+capturable AdamW happily reads a Python-float lr
+            # and the graph would then bake that VALUE constant (replays stuck on the
+            # build-time LR; the cosine schedule would silently no-op → ~1% trajectory
+            # fork vs A2-only). A device tensor is read on-device each replay, so
+            # refresh_lr_from_scheduler() can update the schedule in place. The value
+            # is unchanged (same float), so the captured steps stay bit-identical to
+            # the A2-only eager tail at the initial LR (verified 1-epoch Δ=0). FP32
+            # dtype matches AdamW's expectation for the capturable lr tensor.
+            self._baked_lr_tensors = []
+            for g in self.optimizer.param_groups:
+                lr = g["lr"]
+                lr_t = (
+                    lr
+                    if torch.is_tensor(lr)
+                    else torch.tensor(float(lr), device=self._device, dtype=torch.float32)
+                )
+                g["lr"] = lr_t
+                self._baked_lr_tensors.append(lr_t)
 
-        # Priming step — allocate capturable AdamW's state tensors (step,
-        # exp_avg, exp_avg_sq) BEFORE capture, on a valid arange batch (RNG-free,
-        # like A2's capture sample_idx).
-        self._idx_static.copy_(torch.arange(self._idx_static.numel(), device=self._device))
-        with self._autocast_factory():
-            self._run_body()
+            # Priming step — allocate capturable AdamW's state tensors (step,
+            # exp_avg, exp_avg_sq) BEFORE capture, on a valid arange batch (RNG-free,
+            # like A2's capture sample_idx).
+            self._idx_static.copy_(torch.arange(self._idx_static.numel(), device=self._device))
+            with self._autocast_factory():
+                self._run_body()
 
-        side = torch.cuda.Stream()
-        side.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(side):
-            for _ in range(3):
-                with self._autocast_factory():
-                    self._run_body()
-        torch.cuda.current_stream().wait_stream(side)
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                for _ in range(3):
+                    with self._autocast_factory():
+                        self._run_body()
+            torch.cuda.current_stream().wait_stream(side)
 
-        graph = torch.cuda.CUDAGraph()
-        with self._autocast_factory(), torch.cuda.graph(graph):
-            self._run_body()
-        self._graph = graph
+            graph = torch.cuda.CUDAGraph()
+            with self._autocast_factory(), torch.cuda.graph(graph):
+                self._run_body()
+            self._graph = graph
 
-        # Restore params + BN to the pre-build state and reset the optimizer
-        # moments to the pristine step-0 values (the state tensors keep their
-        # baked addresses; only their VALUES are reset).
-        for p, saved in zip(self._params, param_snapshot, strict=True):
-            p.detach().copy_(saved)
-        _restore_batchnorm_state(bn_snapshot)
-        for p in self._params:
-            st = self.optimizer.state.get(p)
-            if not st:
-                continue
-            for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
-                buf = st.get(key)
-                if torch.is_tensor(buf):
-                    buf.zero_()
-            step = st.get("step")
-            if torch.is_tensor(step):
-                step.zero_()
-            elif step is not None:
-                st["step"] = 0
-        # ``_baked_lr_tensors`` was populated at the top of build() (the lr
-        # tensors the graph captured); the train loop refreshes them in place.
+            captured = True
+        finally:
+            # Warmup executes real updates. A failed capture must not leak them
+            # into the A2 eager-tail fallback; retain the success reset unchanged.
+            if not captured and self._device.type == "cuda":
+                torch.cuda.synchronize(self._device)
+            # Restore params + BN to the pre-build state and reset the optimizer
+            # moments to the pristine step-0 values (the state tensors keep their
+            # baked addresses; only their VALUES are reset).
+            for p, saved in zip(self._params, param_snapshot, strict=True):
+                p.detach().copy_(saved)
+            _restore_batchnorm_state(bn_snapshot)
+            for p in self._params:
+                st = self.optimizer.state.get(p)
+                if not st:
+                    continue
+                for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+                    buf = st.get(key)
+                    if torch.is_tensor(buf):
+                        buf.zero_()
+                step = st.get("step")
+                if torch.is_tensor(step):
+                    step.zero_()
+                elif step is not None:
+                    st["step"] = 0
+            # ``_baked_lr_tensors`` was populated at the top of build() (the lr
+            # tensors the graph captured); the train loop refreshes them in place.
+            if not captured:
+                self._graph = None
+                self._baked_lr_tensors = []
+                for group, lr in zip(self.optimizer.param_groups, original_lrs, strict=True):
+                    group["lr"] = lr
 
     def refresh_lr_from_scheduler(self) -> None:
         """Write the scheduler's current LR into the baked device LR tensors.
@@ -1451,6 +1518,16 @@ class MultiHeadTrainer:
         self._graphed = True
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
+        empty_training_error = (
+            "Training loader produced no batches; provide more training rows or "
+            "use a smaller batch size when drop_last=True."
+        )
+        try:
+            train_batches = len(train_loader)
+        except TypeError:
+            train_batches = None  # Unsized iterators are checked before validation below.
+        if train_batches == 0:
+            raise ValueError(empty_training_error)
         # CUDA graph capture, widest applicable scope first: autodetect-ON
         # full-step (gather+fwd+loss; FF_CUDA_GRAPH_FULL=0 forces eager)
         # subsumes the autodetect-ON model-only capture (FF_CUDA_GRAPH=0 forces
@@ -1602,16 +1679,11 @@ class MultiHeadTrainer:
                 epoch_train_loss += loss.detach().float()
                 n_train_batches += 1
 
-            # Single end-of-epoch sync (forces accumulator off-GPU). Guard
-            # against ``n_train_batches == 0`` — possible on tiny datasets
-            # where ``len(train_loader) * batch_size < drop_last_threshold``
-            # produces an empty iterator (the GPU-resident batcher's
-            # ``drop_last=True`` floors to 0 when ``n < batch_size``). Without
-            # the guard, ``0 / 0`` produces NaN, which silently corrupts the
-            # history dict and the downstream early-stop comparison.
-            avg_train_loss = (
-                (epoch_train_loss / n_train_batches).item() if n_train_batches > 0 else 0.0
-            )
+            # Unsized or exhausted iterators must not validate/save an untrained model.
+            if n_train_batches == 0:
+                raise ValueError(empty_training_error)
+            # Single end-of-epoch sync (forces accumulator off-GPU).
+            avg_train_loss = (epoch_train_loss / n_train_batches).item()
             history["train_loss"].append(avg_train_loss)
 
             # --- Validation pass ---
@@ -1628,7 +1700,7 @@ class MultiHeadTrainer:
             # ``MultiTargetLoss._compute_loss_components`` (tensor-valued
             # components) instead of ``forward`` (float-valued).
             val_components_accum: dict[str, torch.Tensor] = {}
-            n_val_batches = 0
+            n_val_samples = 0
 
             with torch.no_grad():
                 if self._graphed_val is not None:
@@ -1639,14 +1711,16 @@ class MultiHeadTrainer:
                     # .item() syncs below).
                     gval = self._graphed_val
                     gval.replay()
-                    epoch_val_loss = epoch_val_loss + gval.loss_sum
+                    # The graph sums means of equally sized full batches.
+                    # Convert that prefix to a sample sum before adding its tail.
+                    epoch_val_loss = epoch_val_loss + gval.loss_sum * gval._bs
                     for k, acc in gval.comp_sums.items():
                         if k not in val_components_accum:
                             val_components_accum[k] = torch.zeros(
                                 (), device=self.device, dtype=torch.float32
                             )
-                        val_components_accum[k] = val_components_accum[k] + acc
-                    n_val_batches += gval.k
+                        val_components_accum[k] = val_components_accum[k] + acc * gval._bs
+                    n_val_samples += gval._n_fixed
                     for k in self.target_names:
                         all_preds[k].append(gval.pred_bufs[k])
                         all_targets[k].append(gval.target_prefix[k])
@@ -1658,14 +1732,17 @@ class MultiHeadTrainer:
                         preds, y_batch = self._forward_batch(batch)
                         loss, components = self.criterion._compute_loss_components(preds, y_batch)
 
-                    epoch_val_loss = epoch_val_loss + loss.detach().float()
+                    n_batch_samples = y_batch[self.target_names[0]].shape[0]
+                    epoch_val_loss = epoch_val_loss + loss.detach().float() * n_batch_samples
                     for k, v in components.items():
                         if k not in val_components_accum:
                             val_components_accum[k] = torch.zeros(
                                 (), device=self.device, dtype=torch.float32
                             )
-                        val_components_accum[k] = val_components_accum[k] + v.detach().float()
-                    n_val_batches += 1
+                        val_components_accum[k] = (
+                            val_components_accum[k] + v.detach().float() * n_batch_samples
+                        )
+                    n_val_samples += n_batch_samples
 
                     for k in self.target_names:
                         # Defer device→host transfer to one ``torch.cat(...)``
@@ -1676,9 +1753,9 @@ class MultiHeadTrainer:
                         all_targets[k].append(y_batch[k].detach())
 
             # Single end-of-epoch sync (forces accumulator off-GPU). Guard
-            # against ``n_val_batches == 0`` — same rationale as the train
-            # NaN guard above.
-            avg_val_loss = (epoch_val_loss / n_val_batches).item() if n_val_batches > 0 else 0.0
+            # against an empty loader. Weight each observation equally rather
+            # than giving a short final batch the weight of a full batch.
+            avg_val_loss = (epoch_val_loss / n_val_samples).item() if n_val_samples > 0 else 0.0
             history["val_loss"].append(avg_val_loss)
 
             if self.epoch_callback is not None:
@@ -1691,9 +1768,9 @@ class MultiHeadTrainer:
             # (was per-batch via ``.item()`` inside ``MultiTargetLoss.forward``).
             for t in self.target_names:
                 key = f"loss_{t}"
-                if key in val_components_accum and n_val_batches > 0:
+                if key in val_components_accum and n_val_samples > 0:
                     history[f"val_loss_{t}"].append(
-                        (val_components_accum[key] / n_val_batches).item()
+                        (val_components_accum[key] / n_val_samples).item()
                     )
                 else:
                     history[f"val_loss_{t}"].append(0.0)
@@ -1707,7 +1784,7 @@ class MultiHeadTrainer:
             # comparison as ``inf < float('inf')`` = False, silently disabling
             # the early-stop reset and the best-checkpoint save.
             for k in self.target_names:
-                if n_val_batches > 0:
+                if n_val_samples > 0:
                     y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
                     y_true_all = torch.cat(all_targets[k]).cpu().numpy()
                     history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))

@@ -21,6 +21,73 @@ from src.analysis.fftoday_loader import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("joined", [False, True])
+def test_transient_partial_fftoday_cache_recovers(tmp_path, monkeypatch, joined):
+    from urllib.error import HTTPError
+
+    from src.analysis import fftoday_loader as mod
+
+    failing = True
+
+    def reader(url):
+        if failing and "GameWeek=2&PosID=30" in url:
+            raise HTTPError(url, 503, "temporary outage", {}, None)
+        return _fake_reader(url)
+
+    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
+    monkeypatch.setattr(mod, "FFTODAY_DEFAULT_WEEKS", (1, 2))
+    monkeypatch.setattr(mod.nfl_source, "rosters", lambda _: _rosters())
+
+    def load():
+        if joined:
+            return mod.load_fftoday_with_gsis_id(
+                [2013], str(tmp_path), reader=reader, min_match_rate=0.4
+            )
+        return mod.load_fftoday_projections([2013], cache_dir=str(tmp_path), reader=reader)
+
+    partial = load()
+    assert not (partial.position.eq("WR") & partial.week.eq(2)).any()
+    assert partial.attrs[mod._FETCH_COMPLETE_ATTR] is False
+    assert not list(tmp_path.glob("*.parquet"))
+    failing = False
+    healed = load()
+    assert (healed.position.eq("WR") & healed.week.eq(2)).any()
+    assert healed.attrs[mod._FETCH_COMPLETE_ATTR] is True
+
+
+def test_legacy_partial_fftoday_cache_is_refetched(tmp_path):
+    full = load_fftoday_projections(
+        [2013], weeks=(1, 2), cache_dir=str(tmp_path), reader=_fake_reader
+    )
+    path = next(tmp_path.glob("*.parquet"))
+    legacy = full.loc[full.week.eq(1)].copy()
+    legacy.attrs.clear()
+    legacy.to_parquet(path)
+    healed = load_fftoday_projections(
+        [2013], weeks=(1, 2), cache_dir=str(tmp_path), reader=_fake_reader
+    )
+    assert set(healed.week) == {1, 2}
+
+
+def test_custom_rosters_do_not_replace_default_joined_cache(tmp_path, monkeypatch):
+    from src.analysis import fftoday_loader as mod
+
+    monkeypatch.setattr(mod, "FFTODAY_DEFAULT_WEEKS", (1,))
+    monkeypatch.setattr(mod.nfl_source, "rosters", lambda _: _rosters())
+    default = mod.load_fftoday_with_gsis_id([2013], str(tmp_path), reader=_fake_reader)
+    path = next(tmp_path.glob("*joined*.parquet"))
+    original = path.read_bytes()
+    custom = _rosters()
+    custom["player_id"] = "custom-" + custom["player_id"]
+    injected = mod.load_fftoday_with_gsis_id(
+        [2013], str(tmp_path), rosters=custom, reader=_fake_reader
+    )
+    assert injected.player_id.str.startswith("custom-").all()
+    assert path.read_bytes() == original
+    resumed = mod.load_fftoday_with_gsis_id([2013], str(tmp_path), reader=_fake_reader)
+    pd.testing.assert_frame_equal(default, resumed)
+
+
 # A FFToday WR row: [Chg, Player(anchor), Team, Opp, rAtt, rYd, rTD, Rec, recYd, recTD, FPts]
 _WR_PAGE = """
 <table><tr class='tableclmhdr'><td>Chg</td><td>Player</td><td>Team</td><td>Opp</td>
@@ -125,6 +192,45 @@ def test_cache_key_distinguishes_sampled_from_contiguous_seasons(tmp_path):
     )
     assert fetched, "contiguous request must not be served from the sampled-seasons cache"
     assert set(full["season"]) == {2013, 2014, 2015}
+
+
+@pytest.mark.parametrize("dimension", ["season", "week"])
+def test_sparse_cache_key_preserves_interior_values(tmp_path, dimension):
+    first = [2013, 2014, 2016] if dimension == "season" else [1, 2, 4]
+    second = [2013, 2015, 2016] if dimension == "season" else [1, 3, 4]
+
+    def load(values, reader=_fake_reader):
+        return load_fftoday_projections(
+            values if dimension == "season" else [2013],
+            weeks=[1] if dimension == "season" else values,
+            cache_dir=str(tmp_path),
+            reader=reader,
+        )
+
+    load(first)
+    actual = load(second)
+    assert set(actual[dimension]) == set(second)
+
+    def no_fetch(url):
+        raise AssertionError("permuted duplicate input should use the canonical cache")
+
+    cached = load([*reversed(second), second[0]], no_fetch)
+    pd.testing.assert_frame_equal(actual, cached)
+
+
+def test_joined_cache_preserves_sparse_season_membership(tmp_path, monkeypatch):
+    from src.analysis import fftoday_loader
+
+    monkeypatch.setattr(
+        fftoday_loader.nfl_source,
+        "rosters",
+        lambda seasons: pd.concat(
+            [_rosters().assign(season=s) for s in seasons], ignore_index=True
+        ),
+    )
+    for seasons in ([2013, 2014, 2016], [2013, 2015, 2016]):
+        actual = load_fftoday_with_gsis_id(seasons, cache_dir=str(tmp_path), reader=_fake_reader)
+        assert set(actual["season"]) == set(seasons)
 
 
 def test_min_season_guard():

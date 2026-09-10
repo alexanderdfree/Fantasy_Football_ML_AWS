@@ -1,0 +1,48 @@
+{
+  "run_id": "model-corrections-e3ed317f-20260910",
+  "artifact": "s3://ff-predictor-training/ab_runs/model-corrections-e3ed317f-20260910/cells/RB-verify-42.json",
+  "build_run_id": 34522216711,
+  "provenance": {
+    "git_sha": "e3ed317f3dc0fafab4b8a7c5a611b85d91cd9550",
+    "gpu_name": "NVIDIA L4",
+    "sm": "sm_89",
+    "cuda_graph_active": true
+  },
+  "metrics": {
+    "hurdle_expectations": {
+      "cuda_available": 1.0,
+      "sm": 89.0,
+      "passed_cases": 12.0,
+      "max_abs_error": 3.644158064197711e-08
+    },
+    "validation_reduction": {
+      "cuda_available": 1.0,
+      "sm": 89.0,
+      "seed": 42.0,
+      "batch2_loss": 103.0,
+      "batch2_loss_a": 25.75,
+      "batch2_loss_b": 103.0,
+      "batch2_prefix_rows": 4.0,
+      "batch2_tail_rows": 0.0,
+      "batch2_verified_epochs": 2.0,
+      "batch3_loss": 103.0,
+      "batch3_loss_a": 25.75,
+      "batch3_loss_b": 103.0,
+      "batch3_prefix_rows": 3.0,
+      "batch3_tail_rows": 1.0,
+      "batch3_verified_epochs": 2.0,
+      "batch4_loss": 103.0,
+      "batch4_loss_a": 25.75,
+      "batch4_loss_b": 103.0,
+      "batch4_prefix_rows": 4.0,
+      "batch4_tail_rows": 0.0,
+      "batch4_verified_epochs": 2.0,
+      "passed_cases": 3.0
+    },
+    "pipeline": {
+      "attention_mae": 5.568204645043655,
+      "test_rows": 1757.0
+    }
+  },
+  "ok": true
+}

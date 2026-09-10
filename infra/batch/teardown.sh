@@ -9,62 +9,65 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-COMPUTE_ENVS=("ff-gpu-spot-g5" "ff-gpu-spot")
-JOB_QUEUE="ff-training-queue"
-JOB_DEF="ff-training-job"
+COMPUTE_ENVS=("ff-gpu-spot-g5" "ff-gpu-spot" "ff-cpu-spot")
+JOB_QUEUES=("ff-training-queue" "ff-cpu-training-queue")
+JOB_DEFS=("ff-training-job" "ff-training-cpu-job")
 JOB_ROLE="BatchTrainingRole"
 INSTANCE_ROLE="ecsInstanceRole"
 INSTANCE_PROFILE="ecsInstanceRole"
-TASK_EXEC_ROLE="ecsTaskExecutionRole"
 SG_NAME="ff-batch-sg"
 LAUNCH_TEMPLATE_NAME="ff-batch-lt"
 
 log() { echo "[batch-teardown] $*"; }
 
 # --- 1. Deregister all active Job Definition revisions ------------------
-log "Deregistering active Job Definition revisions for $JOB_DEF..."
-REVISIONS=$(aws batch describe-job-definitions \
-  --job-definition-name "$JOB_DEF" \
-  --status ACTIVE \
-  --region "$REGION" \
-  --query 'jobDefinitions[].revision' \
-  --output text 2>/dev/null || echo "")
-for rev in $REVISIONS; do
-  log "  deregistering $JOB_DEF:$rev"
-  aws batch deregister-job-definition \
-    --job-definition "$JOB_DEF:$rev" \
-    --region "$REGION" || true
+for JOB_DEF in "${JOB_DEFS[@]}"; do
+  log "Deregistering active Job Definition revisions for $JOB_DEF..."
+  REVISIONS=$(aws batch describe-job-definitions \
+    --job-definition-name "$JOB_DEF" \
+    --status ACTIVE \
+    --region "$REGION" \
+    --query 'jobDefinitions[].revision' \
+    --output text 2>/dev/null || echo "")
+  for rev in $REVISIONS; do
+    log "  deregistering $JOB_DEF:$rev"
+    aws batch deregister-job-definition \
+      --job-definition "$JOB_DEF:$rev" \
+      --region "$REGION" || true
+  done
 done
 
 # --- 2. Disable + delete Job Queue --------------------------------------
-JQ_EXISTS=$(aws batch describe-job-queues \
-  --job-queues "$JOB_QUEUE" \
-  --region "$REGION" \
-  --query 'jobQueues[0].jobQueueName' \
-  --output text 2>/dev/null || echo "None")
-if [ "$JQ_EXISTS" != "None" ] && [ -n "$JQ_EXISTS" ] && [ "$JQ_EXISTS" != "null" ]; then
-  log "Disabling Job Queue $JOB_QUEUE..."
-  aws batch update-job-queue --job-queue "$JOB_QUEUE" --state DISABLED --region "$REGION" || true
-  log "Waiting for JQ to reach VALID (after disable)..."
-  for i in $(seq 1 30); do
-    STATUS=$(aws batch describe-job-queues \
-      --job-queues "$JOB_QUEUE" \
-      --region "$REGION" \
-      --query 'jobQueues[0].status' --output text)
-    [ "$STATUS" = "VALID" ] && break
-    sleep 5
-  done
-  log "Deleting Job Queue $JOB_QUEUE..."
-  aws batch delete-job-queue --job-queue "$JOB_QUEUE" --region "$REGION" || true
-  for i in $(seq 1 30); do
-    EXISTS=$(aws batch describe-job-queues \
-      --job-queues "$JOB_QUEUE" \
-      --region "$REGION" \
-      --query 'jobQueues[0].jobQueueName' --output text 2>/dev/null || echo "None")
-    [ "$EXISTS" = "None" ] || [ -z "$EXISTS" ] && break
-    sleep 5
-  done
-fi
+for JOB_QUEUE in "${JOB_QUEUES[@]}"; do
+  JQ_EXISTS=$(aws batch describe-job-queues \
+    --job-queues "$JOB_QUEUE" \
+    --region "$REGION" \
+    --query 'jobQueues[0].jobQueueName' \
+    --output text 2>/dev/null || echo "None")
+  if [ "$JQ_EXISTS" != "None" ] && [ -n "$JQ_EXISTS" ] && [ "$JQ_EXISTS" != "null" ]; then
+    log "Disabling Job Queue $JOB_QUEUE..."
+    aws batch update-job-queue --job-queue "$JOB_QUEUE" --state DISABLED --region "$REGION" || true
+    log "Waiting for JQ to reach VALID (after disable)..."
+    for i in $(seq 1 30); do
+      STATUS=$(aws batch describe-job-queues \
+        --job-queues "$JOB_QUEUE" \
+        --region "$REGION" \
+        --query 'jobQueues[0].status' --output text)
+      [ "$STATUS" = "VALID" ] && break
+      sleep 5
+    done
+    log "Deleting Job Queue $JOB_QUEUE..."
+    aws batch delete-job-queue --job-queue "$JOB_QUEUE" --region "$REGION" || true
+    for i in $(seq 1 30); do
+      EXISTS=$(aws batch describe-job-queues \
+        --job-queues "$JOB_QUEUE" \
+        --region "$REGION" \
+        --query 'jobQueues[0].jobQueueName' --output text 2>/dev/null || echo "None")
+      [ "$EXISTS" = "None" ] || [ -z "$EXISTS" ] && break
+      sleep 5
+    done
+  fi
+done
 
 # --- 3. Disable + delete Compute Environments ---------------------------
 for compute_env in "${COMPUTE_ENVS[@]}"; do
@@ -130,7 +133,8 @@ if aws iam get-instance-profile --instance-profile-name "$INSTANCE_PROFILE" >/de
   aws iam delete-instance-profile --instance-profile-name "$INSTANCE_PROFILE" || true
 fi
 
-for role in "$JOB_ROLE" "$INSTANCE_ROLE" "$TASK_EXEC_ROLE"; do
+# ecsTaskExecutionRole is also used by the serving ECS service.
+for role in "$JOB_ROLE" "$INSTANCE_ROLE"; do
   if aws iam get-role --role-name "$role" >/dev/null 2>&1; then
     log "Detaching managed policies from $role..."
     for arn in $(aws iam list-attached-role-policies --role-name "$role" \
@@ -152,6 +156,7 @@ cat <<EOF
 ────────────────────────────────────────────────────────────────
 Teardown complete.
 Resources preserved (delete manually if needed):
+  - Shared ecsTaskExecutionRole (serving uses it)
   - ECR repository ff-training (preserves built images)
   - ECR pull-through cache rule "dockerhub"
   - CloudWatch log group /aws/batch/job (preserves history)

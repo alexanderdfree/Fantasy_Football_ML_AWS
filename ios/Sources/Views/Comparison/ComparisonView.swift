@@ -29,14 +29,14 @@ struct ComparisonView: View {
     var body: some View {
         LoadStateView(state: store.state, retry: { Task { await store.load() } }) { comparison in
             List {
-                Section("All rostered players") {
+                Section("All matched player-weeks") {
                     ForEach(Position.displayOrder) { pos in
                         ComparisonPositionGroup(comparison: comparison, subset: "all", position: pos, metric: metric)
                     }
                 }
                 .listRowBackground(FFColor.bgSecondary)
 
-                Section("Top 30 per position") {
+                Section("Retrospective seasonal top 30") {
                     ForEach(Position.displayOrder) { pos in
                         ComparisonPositionGroup(comparison: comparison, subset: "top30", position: pos, metric: metric)
                     }
@@ -90,11 +90,11 @@ struct ComparisonView: View {
     @ViewBuilder
     private func aboutNotes(_ comparison: Comparison) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            note("Seasons", "Trained 2012–2023, validated 2024, tested 2025. Every number here is on the held-out 2025 season; experts are scored on 2025 too.")
-            note("Scoring", "Full PPR. Projections and actuals run through the same formula — apples-to-apples.")
+            note("Seasons", "The comparison uses held-out evaluation player-weeks; model training and validation use earlier seasons.")
+            note("Scoring", "Full PPR using the same projected scoring components in forecasts and actuals.")
             if let n = comparison.expertsMeta?["nflcom"]?.note { note("NFL.com", n) }
             if let n = comparison.expertsMeta?["rotowire"]?.note { note("RotoWire", n) }
-            note("Caveat", "Each source is scored on the players it actually projects, so this is an approximate scoreboard, not a strictly paired test.")
+            note("Cohorts", "Accuracy rows compare sources on matched player-weeks. Seasonal leader subsets use completed-season results and are retrospective.")
         }
         .padding(.vertical, 4)
     }

@@ -44,6 +44,8 @@ from src.analysis.cohort_analysis import (
     label_scoring_tier_rows,
     player_prior_season_fp,
 )
+from src.analysis.comparison_data import comparison_actuals
+from src.analysis.position_data import load_position_frames
 from src.config import TEST_SEASONS
 
 DEFAULT_POSITIONS = ["QB", "RB", "WR", "TE"]
@@ -74,6 +76,7 @@ def compare_position(
 
     labeled = _normalize_keys(test_df)
     labeled[TIER_BUCKET] = label_scoring_tier_rows(labeled, prior_fp, top_n=tier_topn)
+    labeled[ACTUAL] = comparison_actuals(test_df, pos)
 
     model_cols = list(models.values())
     base = labeled[[*_KEY_COLS, ACTUAL, TIER_BUCKET, *model_cols]]
@@ -87,6 +90,8 @@ def compare_position(
             continue
         expert = _normalize_keys(proj[[*_KEY_COLS, _EXPERT_PRED_COL]])
         joined = base.merge(expert, on=_KEY_COLS, how="inner")
+        compared = [ACTUAL, *model_cols, _EXPERT_PRED_COL]
+        joined = joined.loc[np.isfinite(joined[compared].to_numpy(dtype=float)).all(axis=1)]
         if joined.empty:
             print(f"\n  {pos} vs {src.label}: no matched player-weeks; skipping.")
             continue
@@ -151,6 +156,9 @@ def main(argv: list[str] | None = None) -> None:
             expert_raws[src.name] = None
 
     for pos in positions:
+        frames = (
+            load_position_frames(pos) if pos in ("K", "DST") else (train_df, val_df, test_df_all)
+        )
         if args.from_artifacts:
             print(f"\nScoring {pos} from saved artifacts ...", flush=True)
             from src.analysis.artifact_eval import build_test_df_from_artifacts
@@ -158,7 +166,7 @@ def main(argv: list[str] | None = None) -> None:
             # A position with no artifacts raises loudly; skip it and keep going so
             # one missing position doesn't abort the whole multi-position comparison.
             try:
-                test_df = build_test_df_from_artifacts(pos, train_df, val_df, test_df_all)
+                test_df = build_test_df_from_artifacts(pos, *frames)
             except FileNotFoundError as e:
                 print(f"  ! {pos}: {e} — skipping.")
                 continue
@@ -167,7 +175,10 @@ def main(argv: list[str] | None = None) -> None:
             result = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run()
             test_df = result["test_df"]
         test_df = test_df[test_df["season"].astype(int).isin(eval_set)]
-        compare_position(pos, test_df, prior_fp, experts, expert_raws, tier_topn=args.tier_topn)
+        position_prior = player_prior_season_fp(list(frames)) if pos in ("K", "DST") else prior_fp
+        compare_position(
+            pos, test_df, position_prior, experts, expert_raws, tier_topn=args.tier_topn
+        )
 
 
 if __name__ == "__main__":

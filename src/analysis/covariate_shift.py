@@ -217,9 +217,14 @@ def shift_report_for_position(
     allowlist = allowlist if allowlist is not None else DEFAULT_ALLOWLIST.get(position, set())
     cfg = get_config(position)
 
-    train_df = _load_split(splits_dir / "train.parquet")
-    val_df = _load_split(splits_dir / "val.parquet")
-    test_df = _load_split(splits_dir / "test.parquet")
+    if position in ("K", "DST"):
+        from src.analysis.position_data import load_position_frames
+
+        train_df, val_df, test_df = load_position_frames(position)
+    else:
+        train_df = _load_split(splits_dir / "train.parquet")
+        val_df = _load_split(splits_dir / "val.parquet")
+        test_df = _load_split(splits_dir / "test.parquet")
 
     pos_train = cfg["filter_fn"](train_df)
     pos_val = cfg["filter_fn"](val_df)

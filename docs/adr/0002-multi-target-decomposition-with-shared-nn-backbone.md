@@ -31,7 +31,26 @@ K's four heads (`fg_yard_points`, `pat_points`, `fg_misses`, `xp_misses`) are ou
 
 **Chosen: raw-stat heads with post-aggregation.** The backbone learns position-general features ("is this player healthy? on the field? getting opportunity?"). Heads specialize on individual countable events. The aggregator is the single source of truth for turning those events into fantasy points — swap `SCORING_PPR` for `SCORING_STANDARD` without retraining. Training supervises each raw-stat head independently (weighted Huber per target); no aux total-loss is applied, so the aggregator is only used at serving and reporting time.
 
-Zero-inflated targets get a `GatedHead` (BCE gate on `stat > 0` plus a value head for the conditional mean). RB has three gates (`receptions`, `rushing_tds`, `receiving_tds`); WR and TE each have two (`receptions`, `receiving_tds`) — the `receptions` gate was added in the Variant C ablation (PR #96) since TE/WR have non-trivial 0-reception game mass. QB has none — QBs score too often for the zero-inflation argument to hold.
+Zero-inflated targets get a `GatedHead` (BCE gate on `stat > 0` plus a positive value head). RB has three gates (`receptions`, `rushing_tds`, `receiving_tds`); WR and TE each have two (`receptions`, `receiving_tds`) — the `receptions` gate was added in the Variant C ablation (PR #96) since TE/WR have non-trivial 0-reception game mass. QB has none — QBs score too often for the zero-inflation argument to hold.
+
+For a zero-truncated NB/Poisson value loss, the head's raw `mu` parameter is the
+mean of the underlying untruncated distribution. Reporting converts it to
+`E[Y | Y > 0] = mu / (1 - P0)` and multiplies by the learned gate probability.
+The NLL continues to receive raw `mu`; conditional-MAE diagnostics receive the
+converted positive mean. Training factories and the inference registry pass the
+same loss-family metadata. Existing checkpoint tensor names and shapes remain
+compatible, including older weights fitted by the same truncated likelihood.
+Ordinary gated `poisson_nll` retains its existing marginal output. See
+[ADR-0005](0005-output-constraint-stack.md) for the distribution formulas.
+
+Count likelihoods and expectations use shared tensor arithmetic that preserves
+their probability law and gradients near zero rates and at large finite
+log-dispersion. The implementation avoids subtracting nearly equal log-gamma
+values or exponentiating dispersion before it is needed. Tests compare the
+result with an independent high-precision probability product; no probability
+clamp or arbitrary count bound changes the fitted distribution. A training
+loader that yields no batches fails before reporting or saving an untrained
+model as a valid checkpoint.
 
 **Backbone normalization.** The shared backbone uses `BatchNorm1d` ([`_build_backbone`](../../src/shared/neural_net.py)); the game-history path uses `LayerNorm` throughout (per-game encoder + per-target post-pool history norms). This split tracks tensor semantics, not happenstance: the backbone sees a flat `[batch, features]` vector of *heterogeneous* tabular columns (age, target share, yards, Vegas total…), where BatchNorm's per-feature-across-batch standardization is the natural fit and the production batch sizes (128–512) keep its running statistics well-estimated; the history path sees variable-length, mask-padded `[batch, seq, d_model]` sequences of *homogeneous* learned features, where padding corrupts BatchNorm's batch statistics and LayerNorm (batch-independent, identical train/eval — no running stats) is the standard choice. (The always-on history mechanism is learned-query **attention pooling** — `AttentionPool`, per-target queries cross-attending the game sequence — *not* a transformer encoder; the genuine Pre-LN `SelfAttentionBlock` exists but is gated behind `attn_self_layers`, default `0`, and enabled by no position config.) The BatchNorm choice was inherited from the first RB prototype (`113f780`, consolidated in [#93](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/93) `9ead4f9`) without an A/B. A 2026-05-30 ablation ([src/tuning/ablate_backbone_norm.py](../../src/tuning/ablate_backbone_norm.py)) settled it: swapping the backbone to LayerNorm under identical seed/data across 8 seeds on WR moved attention-NN FP MAE by Δ(LN−BN) = +0.007 ± 0.034 and the base NN by −0.001 ± 0.031 — statistically indistinguishable (~0.2% of the 4.2 baseline, well within seed noise; a 3-seed sub-sample had spuriously suggested a ~0.02 LN edge that 8 seeds dissolved). BatchNorm is kept; the hypothesized temporal-drift advantage of LayerNorm's running-stat-free eval did not materialize at these batch sizes. Re-evaluate only behind a tracked metric showing a real gap.
 
@@ -51,6 +70,8 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
   existing head shapes, coefficients, points-allowed contract and yardage
   tiers. The audited 6,814-game population had 441 corrected totals (+292 TDs,
   -1 spurious TD, +162 punt blocks). (PR pending)
+- **2026-09-10** — Correct truncated count probabilities/gradients at low rates and representable expectations at large log-dispersion; reject zero-batch training instead of validating an untouched model. (PR pending)
+- **2026-09-10** — Correct the reported expectation of zero-truncated count heads while preserving raw NLL parameters, ordinary Poisson behavior and checkpoint shapes; align training, serving and conditional diagnostics. (PR pending)
 
 - **2026-09-10** — Correct D/ST net-yard labels and normalize blocked K attempts into misses across the PBP/weekly source boundary. (PR pending)
 

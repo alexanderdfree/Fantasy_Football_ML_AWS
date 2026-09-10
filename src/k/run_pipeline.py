@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.k.config import POSITION_CONFIG
-from src.k.data import load_data, load_kicks, season_split
+from src.k.data import impute_context_from_train, load_data, load_kicks, season_split
 from src.k.features import build_nested_kick_history, compute_features
 from src.k.targets import compute_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
@@ -29,6 +29,20 @@ from src.shared.run_pipeline_factory import cli_main
 # K's CONFIG omits the runtime-injected attn_history_builder_fn; run() fills
 # it in after kicks_df is loaded.
 CONFIG = build_pipeline_config("K", POSITION_CONFIG)
+
+
+def _fill_fold_context(train_df, val_df, test_df, feature_cols, *, fill_nans_fn):
+    frames = [
+        impute_context_from_train(frame, fit_on=train_df) for frame in (train_df, val_df, test_df)
+    ]
+    return fill_nans_fn(*frames, feature_cols)
+
+
+def with_fold_imputation(config):
+    """Bind fold-local Vegas fills without changing the ordinary K pipeline."""
+    cfg = dict(config)
+    cfg["fill_nans_fn"] = functools.partial(_fill_fold_context, fill_nans_fn=cfg["fill_nans_fn"])
+    return cfg
 
 
 def run(seed=42, config=None):
@@ -104,12 +118,12 @@ def run_cv(seed=42, config=None):
     matching the QB/RB/WR CV path. Module-level def (not a factory closure) so
     the runpy-monkeypatch test pattern keeps working.
     """
-    k_df = load_data()
+    k_df = load_data(impute_context=False)
     k_df = compute_targets(k_df)
     compute_features(k_df)
     kicks_df = load_kicks(k_df)
 
-    cfg = dict(config if config is not None else CONFIG)
+    cfg = with_fold_imputation(config if config is not None else CONFIG)
     cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
 
     full_df = k_df[k_df["season"].isin(TRAIN_SEASONS + VAL_SEASONS)].copy()

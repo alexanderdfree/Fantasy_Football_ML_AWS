@@ -7,6 +7,7 @@ from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
+from src.data.external_sources import _seasons_cache_signature
 from src.data.release import DataReleaseError, assert_source_fetch_allowed
 from src.k.config import POSITION_CONFIG
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
@@ -117,7 +118,8 @@ def reconstruct_kicker_weekly_from_pbp(
         # Empty-seasons guard (mirrors reconstruct_kicker_kicks_from_pbp) so the
         # seasons[0]/[-1] cache-path build below can't IndexError. (#409)
         return pd.DataFrame()
-    cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    seasons = sorted(set(int(s) for s in seasons))
+    cache_path = f"{cache_dir}/kicker_pbp_{_seasons_cache_signature(seasons)}.parquet"
     if os.path.exists(cache_path) and _cached_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
     assert_source_fetch_allowed(cache_path)
@@ -449,13 +451,16 @@ def load_data(
     weekly: pd.DataFrame | None = None,
     schedules: pd.DataFrame | None = None,
     pbp: pd.DataFrame | None = None,
+    impute_context: bool = True,
 ) -> pd.DataFrame:
     """Load kicker data combining PBP reconstruction (≤ 2024) + weekly (≥ 2025).
 
     The lower bound on the PBP arm comes from ``SEASONS`` (which starts at
     2015 per the post-PAT-rule-change cutoff).
 
-    Merges schedule info for Vegas lines and home/away.
+    Merges schedule info for Vegas lines and home/away. Native CV defers
+    distribution-based Vegas fills with ``impute_context=False`` until its
+    actual training fold is known.
     """
     seasons = SEASONS if seasons is None else seasons
     pbp_seasons = [s for s in seasons if s <= 2024]
@@ -601,13 +606,14 @@ def load_data(
     # fine — dropping a few low-game train rows from the median fit doesn't
     # reintroduce leakage. Falls back to the full-frame median only when there
     # are no train rows (synthetic fixtures), preserving prior behaviour there.
-    train_mask = k_df["season"] <= _TRAIN_MAX_SEASON
-    for col in ["total_line", "implied_team_total"]:
-        train_vals = k_df.loc[train_mask, col]
-        median_val = train_vals.median()
-        if pd.isna(median_val):
-            median_val = k_df[col].median()
-        k_df[col] = k_df[col].fillna(median_val)
+    if impute_context:
+        train_mask = k_df["season"] <= _TRAIN_MAX_SEASON
+        for col in ["total_line", "implied_team_total"]:
+            train_vals = k_df.loc[train_mask, col]
+            median_val = train_vals.median()
+            if pd.isna(median_val):
+                median_val = k_df[col].median()
+            k_df[col] = k_df[col].fillna(median_val)
     if "is_home" not in k_df.columns or k_df["is_home"].isna().any():
         k_df["is_home"] = k_df["is_home"].fillna(0)
 
@@ -674,6 +680,17 @@ def load_data(
     )
 
     return k_df
+
+
+def impute_context_from_train(df: pd.DataFrame, *, fit_on: pd.DataFrame) -> pd.DataFrame:
+    """Fill a native CV split using only its actual training cohort's Vegas data."""
+    result = df.copy()
+    for column in ("total_line", "implied_team_total"):
+        median = fit_on[column].median()
+        # No training evidence means the shared neutral fill, never a statistic
+        # learned from validation/test. Ordinary load_data retains its defaults.
+        result[column] = result[column].fillna(0.0 if pd.isna(median) else median)
+    return result
 
 
 def _load_backfill_pbp(season: int) -> pd.DataFrame:
@@ -918,7 +935,8 @@ def reconstruct_kicker_kicks_from_pbp(
     if not seasons:
         return pd.DataFrame(columns=_KICKS_SCHEMA)
 
-    cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    seasons = sorted(set(int(s) for s in seasons))
+    cache_path = f"{cache_dir}/kicker_kicks_pbp_{_seasons_cache_signature(seasons)}.parquet"
     if pbp is None and os.path.exists(cache_path) and _cached_kick_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
     if pbp is None:
@@ -996,17 +1014,6 @@ def reconstruct_kicker_kicks_from_pbp(
             skipped_seasons.append(yr)
             continue
 
-    if not all_kicks:
-        return pd.DataFrame(columns=_KICKS_SCHEMA)
-
-    result = pd.concat(all_kicks, ignore_index=True)
-    result = result.dropna(subset=["player_id"]).reset_index(drop=True)
-    # Sort by (player_id, season, week, play_id) so downstream truncation by
-    # most-recent kicks within a game has well-defined semantics.
-    result = result.sort_values(
-        ["player_id", "season", "week", "play_id"], kind="stable"
-    ).reset_index(drop=True)
-
     if skipped_seasons:
         # FAIL LOUD on a partial kick history. Not caching the partial frame
         # (the prior guard) stops a poisoned cache from PERSISTING, but the
@@ -1026,6 +1033,16 @@ def reconstruct_kicker_kicks_from_pbp(
             f"Not caching the partial result; check nfl_source PBP availability / "
             f"schema and retry."
         )
+
+    if not all_kicks:
+        return pd.DataFrame(columns=_KICKS_SCHEMA)
+
+    result = pd.concat(all_kicks, ignore_index=True)
+    result = result.dropna(subset=["player_id"]).reset_index(drop=True)
+    # Keep deterministic within-game ordering for history truncation.
+    result = result.sort_values(
+        ["player_id", "season", "week", "play_id"], kind="stable"
+    ).reset_index(drop=True)
 
     if supplied_pbp is None:
         os.makedirs(cache_dir, exist_ok=True)

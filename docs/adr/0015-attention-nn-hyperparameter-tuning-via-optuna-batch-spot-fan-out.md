@@ -25,6 +25,26 @@ dependency upgrade does not silently change the existing study recipe.
 
 The trial objective is `min(history["val_loss"])` from the attention NN training curve (exposed via `result["attn_history"]`) — **val-only, no test contamination**. The pipeline reports val loss per epoch via the `epoch_callback` hook on `MultiHeadTrainer` (the only invasive change inside `src/shared/`), gated to attention trainer kinds so the regular NN's earlier phase doesn't bleed into the pruner's monotonic trajectory. HyperbandPruner (`min_resource=8`) kills clearly-bad trials at low epoch counts; without pruning, 30 NN trials × ~2 min each per position would dominate wall-clock past the Spot retry budget.
 
+**Validation reduction (2026-09-10).** Each epoch's combined and per-target
+validation losses are weighted by the number of observations in each batch:
+`sum(batch_mean_loss * batch_size) / total_samples`. Ordinary, stacked-member
+and captured-prefix/eager-tail validation use the same reduction. A short tail
+must not receive the weight of a full batch: squared errors `[1, 1, 1, 100]`
+average 25.75, whether batched as 2+2, 3+1 or 4. The former mean of batch means
+reported 50.5 for 3+1, distorting trial comparison when batch size varied.
+Optuna's objective/pruning and plateau scheduling consume the corrected loss;
+checkpoint selection remains the existing loss-weighted per-target MAE.
+Training losses and gradients are unchanged by this reduction repair.
+
+The default study roots are now `scheduler_v3` and `history_v3` in
+`src/tuning/tune_nn_storage.py`. The sampled parameter spaces are unchanged,
+but old batch-weighted objective values are not comparable to the new values.
+Existing backend/graph/full-capture and ensemble suffixes still separate their
+execution regimes. Historical v2 studies remain available by explicit namespace
+for inspection; new default trials must not resume them. CPU tests establish
+the reduction arithmetic; captured validation also requires an actual CUDA
+acceptance run of `src.analysis.verify_validation_reduction`.
+
 **Rejected.**
 - **Searching loss-config (`HUBER_DELTAS`, `LOSS_WEIGHTS`, `head_losses`, `gated_targets`)**: `LOSS_WEIGHTS` derives from `HUBER_DELTAS` (2.0/δ for the Huber heads at the time of this decision; 1/δ for the MSE yards heads since the PR #870 Huber→MSE switch) — a coupling, not two independent axes ([src/qb/config.py](../../src/qb/config.py)). Searching deltas + deriving weights also blows up the dimensionality past what ~30 trials resolve. Hand-tune loss-config via `ablate_rb_gate.py` instead. Captured as a Stop rule in [AGENTS.md](../../AGENTS.md).
 - **Ray Tune**: heavyweight dep; the 24-vCPU Spot quota means the only parallelism worth distributing is across positions, which Batch already does without a new framework. Reconsider if the quota grows past one g4dn per position.
@@ -38,6 +58,11 @@ The trial objective is `min(history["val_loss"])` from the attention NN training
 
 ## Changelog
 
+- **2026-09-10** — Scope temporary trainer-capture hooks to each thread and nested context, retaining ordinary calls in other threads and restoring hooks on failure. Resolve stacked training and `--print-best` through the same graph-off namespace. (PR pending)
+
+- **2026-09-10** — Weight ordinary, stacked and graph-prefix/tail validation
+  losses by observation count; isolate the changed Optuna objective in
+  `scheduler_v3` / `history_v3` while retaining weighted-MAE checkpoint selection.
 - **2026-09-10** — Upgrade Optuna to 5.0.0 while preserving the previous
   TPE sampler settings explicitly at all three production construction sites.
 - **2026-07-04** — Rejected loss-config bullet era-scoped post-#870 (`2.0/δ` stated as at-decision-time; `1/δ` for the MSE yards heads since the Huber→MSE switch). Docs-only audit sweep (#1407, PR #1461).

@@ -105,6 +105,22 @@ def test_dropped_summary_reports_each_path():
     assert set(summary["attn_static_dropped"]) == {"game_status", "practice_status"}
 
 
+def test_injury_table_deltas_match_seeds_when_one_arm_is_missing(capsys):
+    from src.tuning.ablation_runner import AblationResult
+
+    rows = []
+    for seed, variant, value in [(42, "with", 100.0), (43, "with", 2.0), (43, "without", 3.0)]:
+        subgroups = {
+            key: {"n": 10, "label": key, "models": {"NN": {"mae": value}}}
+            for key in ("global", "returning")
+        }
+        rows.append(AblationResult("QB", seed, variant, {"subgroups": subgroups}, {}, {}))
+    aif._print_position_table("QB", rows, [42, 43])
+    output = capsys.readouterr().out
+    assert "1.0000±0.0000" in output
+    assert "-97.0000" not in output
+
+
 def test_dropped_summary_empty_when_no_injury_features_present():
     """A cfg with no injury features → both lists are empty (the NO-OP warning case)."""
     cfg = _fake_cfg_no_injury()

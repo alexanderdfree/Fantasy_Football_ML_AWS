@@ -612,6 +612,8 @@ _LAUNCH_MAX_CELLS_DEFAULT = 120
 
 
 def cmd_plan(args) -> int:
+    from src.tuning.tune_nn_storage import stacked_default_seed_list
+
     want = [p.upper() for p in args.positions]
     print("Staged feature-selection plan (one Batch job per position; cells run sequentially):\n")
     print("Stage 1 — family screen:")
@@ -619,15 +621,17 @@ def cmd_plan(args) -> int:
         pos = [p for p in applies if p in want]
         if not pos:
             continue
-        seeds = 24 if (stackable and args.stacked) else 3
+        stacked_seeds = stacked_default_seed_list() if (stackable and args.stacked) else None
+        seeds = len(stacked_seeds) if stacked_seeds else 3
         cells = _grid_size(spec, pos, seeds)
         stack_flag = " --stacked-seeds" if (stackable and args.stacked) else ""
+        seed_flag = f" --seeds {' '.join(map(str, stacked_seeds))}" if stacked_seeds else ""
         # Raise the cost guard when the per-seed cell count exceeds it (stacked
         # runs ~len(variants) cheap vmap groups regardless of the seed count).
         cap = f" --max-cells {cells}" if cells > _LAUNCH_MAX_CELLS_DEFAULT else ""
         print(
             f"  ~{cells} cells  python -m src.tuning.launch_ab --spec {spec} "
-            f"--positions {' '.join(pos)}{stack_flag}{cap}"
+            f"--positions {' '.join(pos)}{stack_flag}{seed_flag}{cap}"
         )
     print("\nStage 2 — sub-family zoom (auto-selected from the Stage-1 reports):")
     print(f"  python -m src.tuning.feature_selection substage --positions {' '.join(want)}")

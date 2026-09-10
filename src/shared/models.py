@@ -810,6 +810,8 @@ class LightGBMMultiTarget:
             num_leaves=num_leaves,
             max_depth=max_depth,
             subsample=subsample,
+            # LightGBM otherwise ignores subsample: its default frequency is zero.
+            subsample_freq=1 if subsample < 1.0 else 0,
             colsample_bytree=colsample_bytree,
             reg_lambda=reg_lambda,
             reg_alpha=reg_alpha,

@@ -33,11 +33,12 @@ from src.config import SPLITS_DIR
 from src.data.split import expanding_window_folds
 from src.shared.evaluation import compute_ranking_metrics, compute_target_metrics
 from src.shared.models import LightGBMMultiTarget
-from src.shared.pipeline import _prepare_position_data
+from src.shared.pipeline import _prepare_position_data, _reporting_frame
 from src.tuning.history import append_tuning_run
 
 _DEFAULT_SEEDS = (42, 43, 44)
-_OBJECTIVE_VERSION = "seedavg_v1"
+# Older trials sampled subsample while LightGBM's frequency=0 disabled bagging.
+_OBJECTIVE_VERSION = "seedavg_bagging_v2"
 _OBJECTIVE_NAME = "mean_cv_mae_across_folds_and_seeds"
 
 
@@ -235,9 +236,11 @@ def _prepare_cv_folds(pos, cfg):
         # Kickers use a PBP-reconstructed dataset (2015+), not the general splits.
         from src.k.data import load_data, season_split
         from src.k.features import compute_features
+        from src.k.run_pipeline import with_fold_imputation
         from src.k.targets import compute_targets
 
-        k_df = load_data()
+        k_df = load_data(impute_context=False)
+        cfg = with_fold_imputation(cfg)
         k_df = compute_targets(k_df)
         compute_features(k_df)
         train_df, val_df, _ = season_split(k_df)
@@ -248,9 +251,11 @@ def _prepare_cv_folds(pos, cfg):
         from src.config import TRAIN_SEASONS, VAL_SEASONS
         from src.dst.data import build_data
         from src.dst.features import compute_features
+        from src.dst.run_pipeline import with_fold_imputation
         from src.dst.targets import compute_targets
 
-        dst_df = build_data()
+        dst_df = build_data(impute_context=False)
+        cfg = with_fold_imputation(cfg)
         dst_df = compute_targets(dst_df)
         compute_features(dst_df)
         train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
@@ -501,11 +506,18 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
         if k.startswith("lgbm_") and k != "lgbm_objective"
     }
     old_params["objective"] = cfg.get("lgbm_objective", "huber")
+    # The loss family is fixed during tuning, so it is absent from trial.params.
+    # Preserve it when rebuilding the tuned model for the holdout comparison.
+    new_params = {**best_params, "objective": old_params["objective"]}
 
     agg = cfg.get("aggregate_fn")
 
     def _total(preds):
         return agg(preds) if agg is not None else sum(preds[t] for t in targets)
+
+    report_test = _reporting_frame(
+        pos_test, {**cfg, "aggregate_fn": agg or _total}, y_test_dict, source_frame=test_df
+    )
 
     per_seed = []
     for seed in seeds:
@@ -520,9 +532,13 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
         old_preds = old_model.predict(X_test)
         old_metrics = compute_target_metrics(y_test_dict, old_preds, targets)
 
-        pos_test_old = pos_test.copy()
+        pos_test_old = report_test.copy()
         pos_test_old["pred_lgbm_total"] = _total(old_preds)
-        old_ranking_raw = compute_ranking_metrics(pos_test_old, pred_col="pred_lgbm_total")
+        old_ranking_raw = compute_ranking_metrics(
+            pos_test_old.dropna(subset=["actual_projected_total"]),
+            pred_col="pred_lgbm_total",
+            true_col="actual_projected_total",
+        )
         old_ranking = {
             "hit_rate": old_ranking_raw["season_avg_hit_rate"],
             "spearman": old_ranking_raw["season_avg_spearman"],
@@ -533,15 +549,19 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
                 target_names=targets,
                 seed=seed,
                 n_jobs=leased_n_jobs,
-                **best_params,
+                **new_params,
             )
             new_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
         new_preds = new_model.predict(X_test)
         new_metrics = compute_target_metrics(y_test_dict, new_preds, targets)
 
-        pos_test_new = pos_test.copy()
+        pos_test_new = report_test.copy()
         pos_test_new["pred_lgbm_total"] = _total(new_preds)
-        new_ranking_raw = compute_ranking_metrics(pos_test_new, pred_col="pred_lgbm_total")
+        new_ranking_raw = compute_ranking_metrics(
+            pos_test_new.dropna(subset=["actual_projected_total"]),
+            pred_col="pred_lgbm_total",
+            true_col="actual_projected_total",
+        )
         new_ranking = {
             "hit_rate": new_ranking_raw["season_avg_hit_rate"],
             "spearman": new_ranking_raw["season_avg_spearman"],

@@ -106,6 +106,9 @@ jobs:
           INPUT_SEED: ${{ github.event.inputs.seed }}
         run: |
           SEED="${INPUT_SEED:-42}"
+          case "$SEED" in
+            ""|*[!0-9]*) echo "Invalid seed (expected a non-negative integer)" >&2; exit 1 ;;
+          esac
           IMAGE="${{ steps.img.outputs.uri }}"
           # Compose the docker run with the same env + mounts ff-train uses
           # (see infra/ec2/user-data.sh). SSM's AWS-RunShellScript runs via
@@ -131,7 +134,7 @@ jobs:
             -v /opt/ff/scratch/input:/opt/ml/input/data/training \
             -v /opt/ff/scratch/model:/opt/ml/model \
             -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \
-            $IMAGE --position RB --ablation rb-gate --seed $SEED
+            $IMAGE --position RB --ablation rb-gate --seed '$SEED'
           RC=\$?
           date -Iseconds > /opt/ff/logs/last-activity
           if [ \$RC -eq 99 ]; then

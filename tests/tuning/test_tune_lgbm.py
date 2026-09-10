@@ -90,8 +90,10 @@ def test_parse_seeds_accepts_commas_and_rejects_bad_values():
 def test_seed_versioned_study_names_do_not_match_legacy_names():
     seeds = (42, 43, 44)
     assert tune_lgbm._seed_key(seeds) == "s42-43-44"
-    assert tune_lgbm._study_name("RB", seeds) == "lgbm_seedavg_v1_s42-43-44_rb"
-    assert tune_lgbm._study_db_path("RB", seeds) == "tune_lgbm_seedavg_v1_s42-43-44_rb.db"
+    assert tune_lgbm._study_name("RB", seeds) == "lgbm_seedavg_bagging_v2_s42-43-44_rb"
+    assert tune_lgbm._study_db_path("RB", seeds) == "tune_lgbm_seedavg_bagging_v2_s42-43-44_rb.db"
+    assert tune_lgbm._study_name("RB", seeds) != "lgbm_seedavg_v1_s42-43-44_rb"
+    assert tune_lgbm._study_db_path("RB", seeds) != "tune_lgbm_seedavg_v1_s42-43-44_rb.db"
     assert tune_lgbm._study_name("RB", seeds) != "lgbm_rb"
     assert tune_lgbm._study_db_path("RB", seeds) != "tune_lgbm_rb.db"
 
@@ -196,7 +198,8 @@ def test_maybe_local_core_pool_disabled_preserves_thread_guard(monkeypatch):
         assert os.environ["LGBM_N_JOBS"] == "1"
 
 
-def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
+@pytest.mark.parametrize("objective", ["huber", "fair", "regression"])
+def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch, objective):
     calls = []
 
     @contextlib.contextmanager
@@ -209,7 +212,14 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
             self.seed = seed
             self.n_jobs = n_jobs
             self.tuned = params.get("num_leaves") == 99
-            calls.append({"seed": seed, "n_jobs": n_jobs, "tuned": self.tuned})
+            calls.append(
+                {
+                    "seed": seed,
+                    "n_jobs": n_jobs,
+                    "tuned": self.tuned,
+                    "objective": params.get("objective"),
+                }
+            )
 
         def fit(self, X_train, y_train_dict, X_val, y_val_dict, feature_names=None):
             return None
@@ -244,7 +254,8 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
             "points": {"mae": mae + 1, "rmse": mae + 1.5, "r2": mae * 3, "unit": "pts"},
         }
 
-    def fake_ranking(df, pred_col):
+    def fake_ranking(df, pred_col, true_col):
+        assert true_col == "actual_projected_total"
         val = float(df[pred_col].iloc[0])
         return {"season_avg_hit_rate": val + 100, "season_avg_spearman": val + 200}
 
@@ -257,13 +268,11 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
 
     cfg = {
         "targets": ["points"],
-        "lgbm_objective": "huber",
+        "lgbm_objective": objective,
         "lgbm_num_leaves": 31,
         "aggregate_fn": lambda preds: preds["points"],
     }
-    result = tune_lgbm._run_comparison(
-        "QB", cfg, {"num_leaves": 99, "objective": "huber"}, seeds=(1, 2)
-    )
+    result = tune_lgbm._run_comparison("QB", cfg, {"num_leaves": 99}, seeds=(1, 2))
 
     assert result["seeds"] == [1, 2]
     assert [row["seed"] for row in result["per_seed"]] == [1, 2]
@@ -278,6 +287,7 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
     assert result["per_seed"][0]["old_metrics"]["total"]["unit"] == "pts"
     assert result["aggregate"]["old_ranking"]["hit_rate"]["mean"] == pytest.approx(101.5)
     assert all(call["n_jobs"] == 5 for call in calls)
+    assert all(call["objective"] == objective for call in calls)
 
 
 @pytest.mark.parametrize("logical,expected", [(32, 16), (16, 16), (8, 8), (4, 4), (1, 1)])

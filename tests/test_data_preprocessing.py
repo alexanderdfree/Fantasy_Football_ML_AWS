@@ -106,6 +106,7 @@ def test_preprocess_drops_rows_with_no_snaps_and_zero_stats():
             _base_row(
                 player_id="ghost",
                 passing_yards=0.0,
+                passing_tds=0,
                 rushing_yards=0.0,
                 receiving_yards=0.0,
                 receptions=0,
@@ -130,6 +131,7 @@ def test_preprocess_keeps_zero_stats_row_with_nonzero_snaps():
             _base_row(
                 player_id="snapper",
                 passing_yards=0.0,
+                passing_tds=0,
                 rushing_yards=0.0,
                 receiving_yards=0.0,
                 receptions=0,
@@ -143,6 +145,165 @@ def test_preprocess_keeps_zero_stats_row_with_nonzero_snaps():
     )
     out = preprocess(df)
     assert "snapper" in set(out["player_id"])
+
+
+def _zero_event_row(**overrides):
+    return _base_row(
+        **{
+            "passing_yards": 0.0,
+            "passing_tds": 0,
+            "rushing_yards": 0.0,
+            "rushing_tds": 0,
+            "receiving_yards": 0.0,
+            "receiving_tds": 0,
+            "receptions": 0,
+            "targets": 0,
+            "carries": 0,
+            "completions": 0,
+            "attempts": 0,
+            "snap_pct": np.nan,
+            **overrides,
+        }
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("snap_column", [True, False])
+@pytest.mark.parametrize(
+    "event",
+    [
+        "passing_tds",
+        "rushing_tds",
+        "receiving_tds",
+        "interceptions",
+        "sacks",
+        "sack_fumbles_lost",
+        "rushing_fumbles_lost",
+        "receiving_fumbles_lost",
+        "passing_2pt_conversions",
+        "rushing_2pt_conversions",
+        "receiving_2pt_conversions",
+    ],
+)
+def test_recorded_offensive_event_is_activity_without_snap_coverage(event, snap_column):
+    frame = pd.DataFrame([_zero_event_row(**{event: 1})], index=[73])
+    if not snap_column:
+        frame = frame.drop(columns="snap_pct")
+    original = frame.copy(deep=True)
+    result = preprocess(frame)
+    assert result.player_id.tolist() == ["P1"]
+    assert result[event].tolist() == [1]
+    pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.unit
+def test_sack_fumble_only_game_keeps_its_negative_raw_target():
+    from src.qb.targets import compute_targets
+
+    # Josh Johnson's2012W17 line: one sack/fumble loss, no pass/carry,
+    # and no2012snap-count source. The recorded event proves appearance.
+    frame = pd.DataFrame(
+        [
+            _zero_event_row(
+                player_id="00-0026300",
+                season=2012,
+                week=17,
+                sacks=1,
+                sack_yards=8,
+                sack_fumbles_lost=1,
+            )
+        ]
+    )
+    result = compute_targets(preprocess(frame))
+    assert result.fumbles_lost.tolist() == [1]
+    assert result.fantasy_points.tolist() == [-2.0]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("count", [0.0, np.nan])
+def test_zero_or_unknown_events_are_not_replaced_by_derived_or_roster_evidence(count):
+    frame = pd.DataFrame(
+        [
+            _zero_event_row(
+                passing_tds=count,
+                sacks=count,
+                sack_fumbles_lost=count,
+                passing_epa=10.0,
+                total_fantasy_points_exp=20.0,
+                fantasy_points_ppr=9.0,
+                depth_team=1,
+                status="ACT",
+            )
+        ]
+    )
+    assert preprocess(frame).empty
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("snaps", [0.0, 0.45])
+def test_known_snap_coverage_preserves_existing_zero_event_policy(snaps):
+    frame = pd.DataFrame([_zero_event_row(snap_pct=snaps)])
+    assert preprocess(frame).player_id.tolist() == ["P1"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE"])
+@pytest.mark.parametrize("snap_column", [True, False])
+def test_preprocess_keeps_played_stats_that_cancel(position, snap_column):
+    """A negative rushing yard can cancel its attempt without erasing the play."""
+    df = pd.DataFrame(
+        [
+            _base_row(
+                player_id="played",
+                position=position,
+                passing_yards=0,
+                passing_tds=0,
+                rushing_yards=-1,
+                carries=1,
+                completions=0,
+                attempts=0,
+                snap_pct=np.nan,
+            )
+        ]
+    )
+    if not snap_column:
+        df = df.drop(columns="snap_pct")
+    out = preprocess(df)
+    assert out["player_id"].tolist() == ["played"]
+    assert out["rushing_yards"].tolist() == [-1]
+    assert out["carries"].tolist() == [1]
+    assert out["fantasy_points"].iloc[0] == pytest.approx(-0.1)
+    if snap_column:
+        assert out["snap_pct"].isna().all()
+
+
+@pytest.mark.unit
+def test_preprocess_distinguishes_cancelled_stats_from_missing_and_zero_stats():
+    """Missing statistics count as zero; an observed snap still keeps the row."""
+    rows = []
+    for player, yards, carries, snaps in [
+        ("played", -1, 1, np.nan),
+        ("zero", 0, 0, np.nan),
+        ("unknown", np.nan, np.nan, np.nan),
+        ("snapped", 0, 0, 0.25),
+    ]:
+        rows.append(
+            _base_row(
+                player_id=player,
+                passing_yards=0,
+                passing_tds=0,
+                rushing_yards=yards,
+                carries=carries,
+                completions=0,
+                attempts=0,
+                snap_pct=snaps,
+            )
+        )
+    df = pd.DataFrame(rows, index=[91, -4, 20, 3])
+    original = df.copy(deep=True)
+    out = preprocess(df)
+    assert set(out["player_id"]) == {"played", "snapped"}
+    pd.testing.assert_frame_equal(df, original)
 
 
 @pytest.mark.unit

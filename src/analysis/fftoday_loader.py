@@ -49,6 +49,7 @@ from src.data.cache_io import atomic_write_parquet
 from src.data.nflcom_loader import (
     _build_roster_lookup,
     _format_unmatched_diagnostic,
+    _joined_identity_cache_is_valid,
     _team_abbr_normalize,
     normalize_player_name,
 )
@@ -61,20 +62,21 @@ FFTODAY_POS_IDS: dict[str, int] = {"QB": 10, "RB": 20, "WR": 30, "TE": 40}
 FFTODAY_POSITIONS: tuple[str, ...] = tuple(FFTODAY_POS_IDS)
 
 FFTODAY_DEFAULT_WEEKS = tuple(range(1, 19))
-# v2: cache keys disambiguate non-contiguous season lists (v1 keyed on min/max
-# only, so a sampled [2013, 2019, 2024] pull silently satisfied a later
-# [2013..2024] request — wrong data, no error).
+# Payload version. Exact season/week signatures below also isolate the older
+# min/max/count cache names, which did not identify every requested value.
 _CACHE_VERSION = "v2"
+_FETCH_COMPLETE_ATTR = "fftoday_fetch_complete_v1"
+# Joined caches retain matched rows only; keep the original denominator so
+# nearby thresholds sharing a rounded filename cannot turn partial coverage
+# into 100%. Legacy caches without this provenance must rebuild.
+_JOIN_SOURCE_ROWS_ATTR = "fftoday_join_source_rows_v1"
 
 
 def _seasons_sig(seasons: list[int]) -> str:
-    """Cache-key fragment for a season list; non-contiguous lists get a count
-    suffix so they can't collide with the full range (mirrors ``weeks_sig``)."""
-    uniq = sorted(set(seasons))
-    lo, hi = uniq[0], uniq[-1]
-    if uniq == list(range(lo, hi + 1)):
-        return f"{lo}_{hi}"
-    return f"{lo}_{hi}-n{len(uniq)}"
+    """Canonical cache-key fragment containing every requested season."""
+    # The prefix also isolates caches written with the ambiguous min/max/count
+    # recipe, which cannot establish the membership of a sparse request.
+    return "s" + "-".join(str(s) for s in sorted(set(seasons)))
 
 
 _MIN_SEASON = 2010  # FFToday weekly-projection archive floor.
@@ -199,6 +201,10 @@ def _parse_projection_html(page: str, position: str) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+class _FFTodayFetchIncompleteError(RuntimeError):
+    """A transient source failure exhausted retries; coverage is unknown."""
+
+
 def _read_one_projection(
     year: int,
     week: int,
@@ -230,8 +236,9 @@ def _read_one_projection(
                 )
                 time.sleep(backoff_s)
                 continue
-            print(f"  WARN fftoday: skip {position} {year} W{week} ({type(e).__name__})")
-            return None
+            raise _FFTodayFetchIncompleteError(
+                f"FFToday {position} {year} W{week}: {type(e).__name__} after retry"
+            ) from e
         else:
             df = _parse_projection_html(page, position)
             if df.empty:
@@ -253,27 +260,29 @@ def load_fftoday_projections(
 ) -> pd.DataFrame:
     """Fetch + cache FFToday weekly projections for one or more seasons.
 
-    Cache: ``{cache_dir}/fftoday_projections_{ver}_{min}_{max}_{weeks}.parquet``.
+    Cache keys contain the complete canonical season and week sets.
     """
     if not seasons:
         raise ValueError("seasons must be a non-empty list of ints")
+    seasons = sorted({int(season) for season in seasons})
     bad = [s for s in seasons if s < _MIN_SEASON]
     if bad:
         raise ValueError(f"FFToday archive starts at {_MIN_SEASON}; got {sorted(bad)}")
-    weeks_to_try = tuple(weeks) if weeks is not None else FFTODAY_DEFAULT_WEEKS
-    os.makedirs(cache_dir, exist_ok=True)
-    lo, hi = min(weeks_to_try), max(weeks_to_try)
-    weeks_sig = (
-        f"w{lo}-{hi}"
-        if list(weeks_to_try) == list(range(lo, hi + 1))
-        else f"w{lo}-{hi}-{len(set(weeks_to_try))}"
+    weeks_to_try = (
+        sorted({int(week) for week in weeks}) if weeks is not None else FFTODAY_DEFAULT_WEEKS
     )
+    if not weeks_to_try:
+        raise ValueError("weeks must be non-empty")
+    os.makedirs(cache_dir, exist_ok=True)
+    weeks_sig = "w" + "-".join(map(str, weeks_to_try))
     cache_path = (
         f"{cache_dir}/fftoday_projections_{_CACHE_VERSION}"
         f"_{_seasons_sig(seasons)}_{weeks_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
-        return pd.read_parquet(cache_path)
+        cached = pd.read_parquet(cache_path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+            return cached
 
     tasks = [
         (year, week, position)
@@ -282,13 +291,19 @@ def load_fftoday_projections(
         for position in FFTODAY_POSITIONS
     ]
     parts: list[pd.DataFrame] = []
+    fetch_complete = True
     with ThreadPoolExecutor(max_workers=_MAX_FETCH_WORKERS) as executor:
         futures = {
             executor.submit(_read_one_projection, y, w, p, reader=reader): (y, w, p)
             for (y, w, p) in tasks
         }
         for future in as_completed(futures):
-            raw = future.result()
+            try:
+                raw = future.result()
+            except _FFTodayFetchIncompleteError as exc:
+                fetch_complete = False
+                print(f"  WARN fftoday: {exc}; partial result will not be cached")
+                continue
             if raw is not None:
                 parts.append(raw)
 
@@ -299,7 +314,9 @@ def load_fftoday_projections(
         )
     df = pd.concat(parts, ignore_index=True)
     df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
-    atomic_write_parquet(df, cache_path)
+    df.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete:
+        atomic_write_parquet(df, cache_path)
     return df
 
 
@@ -322,18 +339,25 @@ def load_fftoday_with_gsis_id(
     """
     if not seasons:
         raise ValueError("seasons must be a non-empty list of ints")
+    seasons = sorted({int(season) for season in seasons})
     os.makedirs(cache_dir, exist_ok=True)
+    default_rosters = rosters is None
     rate_sig = f"mr{int(round(min_match_rate * 100))}"
     cache_path = (
         f"{cache_dir}/fftoday_projections_joined_{_CACHE_VERSION}"
         f"_{_seasons_sig(seasons)}_{rate_sig}.parquet"
     )
-    if os.path.exists(cache_path) and not force_refresh and rosters is None:
-        return pd.read_parquet(cache_path)
+    if os.path.exists(cache_path) and not force_refresh and default_rosters:
+        cached = pd.read_parquet(cache_path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True and _joined_identity_cache_is_valid(
+            cached, min_match_rate, total_rows=cached.attrs.get(_JOIN_SOURCE_ROWS_ATTR, -1)
+        ):
+            return cached
 
     proj = load_fftoday_projections(
         seasons, cache_dir=cache_dir, force_refresh=force_refresh, reader=reader
     )
+    fetch_complete = proj.attrs.get(_FETCH_COMPLETE_ATTR) is True
     if rosters is None:
         rosters = nfl_source.rosters(list(seasons))
     lookup = _build_roster_lookup(rosters)
@@ -392,5 +416,8 @@ def load_fftoday_with_gsis_id(
     # Drop rows that never matched a gsis_id — the comparison joins on player_id and
     # an NaN id can't pair to a model prediction anyway (mirrors Sleeper/NFL.com).
     primary = primary[primary["player_id"].notna()].reset_index(drop=True)
-    atomic_write_parquet(primary, cache_path)
+    primary.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    primary.attrs[_JOIN_SOURCE_ROWS_ATTR] = n_total
+    if fetch_complete and default_rosters:
+        atomic_write_parquet(primary, cache_path)
     return primary

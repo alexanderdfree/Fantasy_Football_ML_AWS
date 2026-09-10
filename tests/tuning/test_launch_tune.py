@@ -7,6 +7,9 @@ Batch itself works.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -70,7 +73,7 @@ def test_submit_tune_job_builds_expected_command():
     # *_graphfull namespace so they never mix with model-only-graph studies.
     assert env["FF_CUDA_GRAPH_FULL"] == "1"
     assert env["FF_COMPILE"] == "0"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graphfull"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_mps_graphfull"
     assert kwargs["timeout"] == {"attemptDurationSeconds": 7200}
     # Retry strategy comes from launch.py — Spot interruptions retry, other
     # errors exit fast.
@@ -82,7 +85,7 @@ def test_submit_tune_job_builds_expected_command():
 def test_submit_tune_job_stacked_default_per_position():
     """The CLI default stacked width (24) lands as FF_TUNE_STACKED_SEEDS + an
     _ens24x30 namespace for flat-history positions, but K/DST resolve to eager
-    (no stacked env, no suffix) so the predicted namespace matches the
+    (explicit zero width, no suffix) so the predicted namespace matches the
     container's fallback."""
     from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS
 
@@ -113,15 +116,15 @@ def test_submit_tune_job_stacked_default_per_position():
         e["name"]: e["value"]
         for e in batch_k.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
-    assert "FF_TUNE_STACKED_SEEDS" not in env_k
+    assert env_k["FF_TUNE_STACKED_SEEDS"] == "0"
     assert "_ens" not in env_k["TUNE_NN_STORAGE_VERSION"]
     assert env_k["FF_CUDA_GRAPH"] == "1"
 
 
 def test_submit_tune_job_history_scope_sets_env_and_namespace():
     """--scope history rides FF_TUNE_SCOPE (fixed ENTRYPOINT can't take --scope)
-    and lands in the separate history_v2 root; with the default stacked width
-    that's history_v2_mps_ens24x30."""
+    and lands in the separate history_v3 root; with the default stacked width
+    that's history_v3_mps_ens24x30."""
     from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS
 
     batch = MagicMock()
@@ -134,7 +137,7 @@ def test_submit_tune_job_history_scope_sets_env_and_namespace():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_TUNE_SCOPE"] == "history"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v2_mps_ens24x30"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v3_mps_ens24x30"
 
 
 def test_submit_tune_job_full_scope_omits_scope_env():
@@ -151,7 +154,7 @@ def test_submit_tune_job_full_scope_omits_scope_env():
 
 def test_submit_tune_job_history_root_applies_when_eager():
     """The history root applies regardless of stacking — eager lands in
-    history_v2_mps_graphfull (graphs on)."""
+    history_v3_mps_graphfull (graphs on)."""
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "j"}
     launch_tune.submit_tune_job(
@@ -162,7 +165,7 @@ def test_submit_tune_job_history_root_applies_when_eager():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_TUNE_SCOPE"] == "history"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v2_mps_graphfull"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v3_mps_graphfull"
 
 
 def test_submit_tune_job_history_scope_rejects_non_flat_position():
@@ -306,7 +309,7 @@ def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
     assert env["FF_CUDA_GRAPH"] == "0"
     # full_graph composes only WITH cuda_graph: graph disabled -> plain
     # eager namespace even though --cuda-graph-full defaults true.
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3"
     assert kwargs["timeout"] == {"attemptDurationSeconds": 900}
 
 
@@ -322,7 +325,7 @@ def test_submit_tune_job_can_disable_full_graph_only():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_CUDA_GRAPH_FULL"] == "0"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v2_mps_graph"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_mps_graph"
 
 
 def test_submit_tune_job_stacked_env_and_namespace():
@@ -348,7 +351,7 @@ def test_submit_tune_job_stacked_env_and_namespace():
         launch_tune.submit_tune_job("RB", stacked_seeds=1, batch_client=batch)
 
 
-def test_submit_tune_job_eager_has_no_stacked_env():
+def test_submit_tune_job_eager_explicitly_disables_container_default():
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "job-eager"}
     launch_tune.submit_tune_job("RB", n_trials=8, batch_client=batch)
@@ -356,5 +359,66 @@ def test_submit_tune_job_eager_has_no_stacked_env():
         e["name"]: e["value"]
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
-    assert "FF_TUNE_STACKED_SEEDS" not in env
+    assert env["FF_TUNE_STACKED_SEEDS"] == "0"
     assert "FF_TUNE_STACKED_EPOCHS" not in env
+
+
+@pytest.mark.parametrize("position", launch_tune.SUPPORTED_POSITIONS)
+@pytest.mark.parametrize("width", [None, 0, 4])
+@pytest.mark.parametrize("graph", [False, True])
+def test_batch_namespaces_match_effective_container_mode(position, width, graph):
+    from src.tuning import tune_nn
+    from src.tuning.ab_ensemble_seeds import resolve_default_stacked_seeds
+    from src.tuning.tune_nn_storage import resolve_batch_storage_versions
+
+    effective_request = launch_tune.DEFAULT_STACKED_SEEDS if width is None else width
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "mode-probe"}
+    launch_tune.submit_tune_job(
+        position, stacked_seeds=effective_request, cuda_graph=graph, batch_client=batch
+    )
+    env = {
+        item["name"]: item["value"]
+        for item in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+    }
+    with patch("src.shared.utils.cuda_enabled", return_value=True):
+        container_width = resolve_default_stacked_seeds(env.get("FF_TUNE_STACKED_SEEDS"))
+    expected_width = effective_request if position in launch_tune.ENSEMBLE_POSITIONS else 0
+    assert container_width == expected_width
+    with (
+        patch.object(tune_nn, "_cuda_graph_enabled", return_value=env["FF_CUDA_GRAPH"] == "1"),
+        patch.object(
+            tune_nn,
+            "_cuda_graph_full_enabled",
+            return_value=env["FF_CUDA_GRAPH"] == "1" and env["FF_CUDA_GRAPH_FULL"] == "1",
+        ),
+    ):
+        version, _, _ = tune_nn._resolve_storage_version("mps")
+    if container_width:
+        version += f"_ens{container_width}x30"
+    assert env["TUNE_NN_STORAGE_VERSION"] == version
+    assert resolve_batch_storage_versions([position], stacked_seeds=width, cuda_graph=graph) == {
+        position: version
+    }
+
+
+def test_launch_and_collection_metadata_do_not_import_torch():
+    code = """
+import sys
+class WithoutTorch:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'torch' or fullname.startswith('torch.'):
+            raise ImportError('torch is not installed on the orchestration runner')
+sys.meta_path.insert(0, WithoutTorch())
+import src.tuning.launch_tune
+import src.tuning.aggregate_results
+import src.tuning.ab_opp_def
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr

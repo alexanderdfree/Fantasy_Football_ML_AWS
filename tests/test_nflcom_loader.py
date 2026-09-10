@@ -8,7 +8,7 @@ passing ``rosters=`` directly to ``load_nflcom_with_gsis_id``.
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import pandas as pd
 import pytest
@@ -362,8 +362,8 @@ def test_read_one_projection_does_not_retry_404():
 
 
 def test_read_one_projection_gives_up_after_max_retries():
-    """Persistent transient errors should ultimately give up and return None."""
-    from src.data.nflcom_loader import _read_one_projection
+    """An exhausted retry remains distinguishable from an absent archive."""
+    from src.data.nflcom_loader import _ProjectionFetchUnavailable, _read_one_projection
 
     state = {"n": 0}
 
@@ -371,9 +371,75 @@ def test_read_one_projection_gives_up_after_max_retries():
         state["n"] += 1
         raise HTTPError(url, 503, "Service Unavailable", hdrs=None, fp=None)
 
-    df = _read_one_projection(2024, 1, "QB", reader=stub, max_retries=1, backoff_s=0.0)
-    assert df is None
+    with pytest.raises(_ProjectionFetchUnavailable, match="QB 2024 W1"):
+        _read_one_projection(2024, 1, "QB", reader=stub, max_retries=1, backoff_s=0.0)
     assert state["n"] == 2  # initial + 1 retry
+
+
+@pytest.mark.parametrize("joined", [False, True])
+@pytest.mark.parametrize("error_kind", ["http", "connection"])
+def test_transient_failures_do_not_persist_partial_caches(
+    tmp_path, monkeypatch, joined, error_kind
+):
+    import src.data.nflcom_loader as loader
+
+    monkeypatch.setattr(loader.time, "sleep", lambda seconds: None)
+    calls = []
+    recovered = False
+
+    def reader(url):
+        calls.append(url)
+        if not recovered and "/2/projected/WR_" in url:
+            if error_kind == "http":
+                raise HTTPError(url, 503, "Unavailable", hdrs=None, fp=None)
+            raise URLError("connection lost")
+        position = url.rsplit("/", 1)[1].split("_")[0]
+        return pd.DataFrame(
+            [
+                {
+                    "PlayerId": position,
+                    "PlayerName": f"{position} Player",
+                    "Team": "KC",
+                    "PlayerOpponent": "BUF",
+                }
+            ]
+        )
+
+    rosters = pd.DataFrame(
+        [
+            {
+                "player_id": f"00-{p}",
+                "player_name": f"{p} Player",
+                "position": p,
+                "season": 2024,
+                "team": "KC",
+            }
+            for p in NFLCOM_POSITIONS
+        ]
+    )
+    monkeypatch.setattr(loader.nfl_source, "rosters", lambda seasons: rosters)
+    load = loader.load_nflcom_with_gsis_id if joined else loader.load_nflcom_projections
+    kwargs = {"seasons": [2024], "weeks": [1, 2], "cache_dir": str(tmp_path), "reader": reader}
+    partial = load(**kwargs)
+    assert len(partial) == 9
+    assert not list(tmp_path.glob("*.parquet"))
+
+    recovered = True
+    full = load(**kwargs)
+    assert len(full) == 10
+    calls_after_recovery = len(calls)
+    pd.testing.assert_frame_equal(load(**kwargs), full)
+    assert len(calls) == calls_after_recovery
+
+    # A cache written before the completion marker cannot establish coverage.
+    # This also checks that a legacy joined cache cannot shadow a repaired raw cache.
+    for path in tmp_path.glob("*.parquet"):
+        legacy = pd.read_parquet(path).iloc[:1].copy()
+        legacy.attrs.clear()
+        legacy.to_parquet(path)
+    repaired = load(**kwargs)
+    assert len(repaired) == 10
+    assert len(calls) > calls_after_recovery
 
 
 def test_load_projections_empty_seasons_raises():
@@ -679,7 +745,7 @@ def test_load_with_gsis_id_below_threshold_raises(tmp_path):
         )
 
 
-def test_load_with_gsis_id_writes_cache(tmp_path):
+def test_load_with_gsis_id_writes_cache(tmp_path, monkeypatch):
     rosters = _make_rosters(
         [
             {"player_id": f"00-{i}", "player_name": n, "team": t, "position": "QB", "season": 2024}
@@ -694,10 +760,12 @@ def test_load_with_gsis_id_writes_cache(tmp_path):
             )
         ]
     )
+    import src.data.nflcom_loader as loader
+
+    monkeypatch.setattr(loader.nfl_source, "rosters", lambda seasons: rosters)
     load_nflcom_with_gsis_id(
         seasons=[2024],
         cache_dir=str(tmp_path),
-        rosters=rosters,
         reader=_fixture_reader_qb_only,
     )
     # Joined cache key includes min_match_rate (F105): default 0.90 -> "mr90".
@@ -717,7 +785,7 @@ def test_load_with_gsis_id_writes_cache(tmp_path):
     assert len(df) == 5
 
 
-def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
+def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path, monkeypatch):
     """F105: a stricter ``min_match_rate`` must not silently hit an earlier,
     looser-threshold cache. Distinct thresholds -> distinct cache files."""
     rosters = _make_rosters(
@@ -736,17 +804,18 @@ def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
     )
     # Full-match roster, so both thresholds pass — we are checking the cache
     # KEY varies, not the RuntimeError path.
+    import src.data.nflcom_loader as loader
+
+    monkeypatch.setattr(loader.nfl_source, "rosters", lambda seasons: rosters)
     load_nflcom_with_gsis_id(
         seasons=[2024],
         cache_dir=str(tmp_path),
-        rosters=rosters,
         reader=_fixture_reader_qb_only,
         min_match_rate=0.80,
     )
     load_nflcom_with_gsis_id(
         seasons=[2024],
         cache_dir=str(tmp_path),
-        rosters=rosters,
         reader=_fixture_reader_qb_only,
         min_match_rate=0.99,
     )
@@ -755,6 +824,83 @@ def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
         "nflcom_projections_joined_v1_2024_2024_mr80.parquet",
         "nflcom_projections_joined_v1_2024_2024_mr99.parquet",
     ], files
+
+
+def test_roster_overrides_do_not_read_or_replace_default_joined_cache(tmp_path, monkeypatch):
+    import src.data.nflcom_loader as loader
+
+    monkeypatch.setattr(loader, "NFLCOM_POSITIONS", ("QB",))
+    raw = pd.DataFrame(
+        [{"PlayerId": "q", "PlayerName": "QB Player", "Team": "KC", "PlayerOpponent": "BUF"}]
+    )
+    default = pd.DataFrame(
+        [
+            {
+                "player_id": "00-DEFAULT",
+                "player_name": "QB Player",
+                "position": "QB",
+                "season": 2024,
+                "team": "KC",
+            }
+        ]
+    )
+    custom = default.assign(player_id="00-CUSTOM")
+    monkeypatch.setattr(loader.nfl_source, "rosters", lambda seasons: default)
+    kwargs = {
+        "seasons": [2024],
+        "weeks": [1],
+        "cache_dir": str(tmp_path),
+        "reader": lambda url: raw,
+    }
+
+    overridden = loader.load_nflcom_with_gsis_id(**kwargs, rosters=custom)
+    assert overridden.player_id.tolist() == ["00-CUSTOM"]
+    assert not list(tmp_path.glob("nflcom_projections_joined_*.parquet"))
+    normal = loader.load_nflcom_with_gsis_id(**kwargs)
+    assert normal.player_id.tolist() == ["00-DEFAULT"]
+
+    cache = next(tmp_path.glob("nflcom_projections_joined_*.parquet"))
+    original_bytes = cache.read_bytes()
+    overridden = loader.load_nflcom_with_gsis_id(**kwargs, rosters=custom)
+    assert overridden.player_id.tolist() == ["00-CUSTOM"]
+    assert cache.read_bytes() == original_bytes
+    assert loader.load_nflcom_with_gsis_id(**kwargs).player_id.tolist() == ["00-DEFAULT"]
+
+
+def test_joined_cache_enforces_exact_match_threshold(tmp_path, monkeypatch):
+    import src.data.nflcom_loader as loader
+
+    monkeypatch.setattr(loader, "NFLCOM_POSITIONS", ("QB",))
+    raw = pd.DataFrame(
+        [
+            {"PlayerId": str(i), "PlayerName": f"Player {i}", "Team": "KC", "PlayerOpponent": "BUF"}
+            for i in range(10)
+        ]
+    )
+    rosters = pd.DataFrame(
+        [
+            {
+                "player_id": f"00-{i}",
+                "player_name": f"Player {i}",
+                "position": "QB",
+                "season": 2024,
+                "team": "KC",
+            }
+            for i in range(9)
+        ]
+    )
+    monkeypatch.setattr(loader.nfl_source, "rosters", lambda seasons: rosters)
+    kwargs = {
+        "seasons": [2024],
+        "weeks": [1],
+        "cache_dir": str(tmp_path),
+        "reader": lambda url: raw,
+    }
+    allowed = loader.load_nflcom_with_gsis_id(**kwargs, min_match_rate=0.9)
+    assert allowed.player_id.notna().mean() == 0.9
+    # Both requests map to mr90; the stricter request must still reject 90%.
+    with pytest.raises(RuntimeError, match="match rate"):
+        loader.load_nflcom_with_gsis_id(**kwargs, min_match_rate=0.9001)
 
 
 def test_normalize_one_position_missing_optional_columns_no_crash():

@@ -26,13 +26,18 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from src.tuning.tune_nn_storage import SEARCH_SPACE_VERSION, s3_key_prefix, s3_prefix  # noqa: E402
+from src.tuning.tune_nn_storage import (  # noqa: E402
+    SEARCH_SPACE_VERSION,
+    resolve_batch_storage_versions,
+    s3_key_prefix,
+    s3_prefix,
+)
 
 ALL_TUNABLE_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 
 def _download_from_s3(
-    bucket: str, positions: list[str], dest_dir: str, search_space_version: str
+    bucket: str, positions: list[str], dest_dir: str, search_space_version: str | dict[str, str]
 ) -> list[str]:
     """Download per-position results.json from S3 into ``dest_dir``.
 
@@ -47,7 +52,12 @@ def _download_from_s3(
     os.makedirs(dest_dir, exist_ok=True)
     downloaded: list[str] = []
     for pos in positions:
-        key = f"{s3_key_prefix(pos, search_space_version)}/results.json"
+        version = (
+            search_space_version[pos]
+            if isinstance(search_space_version, dict)
+            else search_space_version
+        )
+        key = f"{s3_key_prefix(pos, version)}/results.json"
         local_path = os.path.join(dest_dir, f"tune_nn_{pos.lower()}_results.json")
         try:
             s3.download_file(bucket, key, local_path)
@@ -152,13 +162,18 @@ def main():
             "(default: $S3_BUCKET or ff-predictor-training)"
         ),
     )
-    parser.add_argument(
+    storage = parser.add_mutually_exclusive_group()
+    storage.add_argument(
         "--search-space-version",
         default=os.environ.get("TUNE_NN_STORAGE_VERSION", SEARCH_SPACE_VERSION),
         help=(
-            "Storage namespace under tune_nn/ to aggregate. Batch MPS+graph tuning "
-            "passes scheduler_v2_mps_graph."
+            "Storage namespace under tune_nn/ to aggregate; explicit historical "
+            "names remain supported. Use --batch-cuda-graph to match current Batch defaults."
         ),
+    )
+    storage.add_argument(
+        "--batch-cuda-graph",
+        help="Collect launch_tune's default per-position namespaces with this graph override.",
     )
     parser.add_argument(
         "--no-s3",
@@ -187,7 +202,13 @@ def main():
     if args.no_s3:
         paths = _collect_local_files(args.local_dir, positions)
     else:
-        paths = _download_from_s3(args.bucket, positions, args.local_dir, args.search_space_version)
+        versions = args.search_space_version
+        if args.batch_cuda_graph is not None:
+            versions = resolve_batch_storage_versions(
+                positions,
+                cuda_graph=args.batch_cuda_graph.strip().lower() in {"1", "true", "yes", "on"},
+            )
+        paths = _download_from_s3(args.bucket, positions, args.local_dir, versions)
 
     merged = _merge_results(paths)
 

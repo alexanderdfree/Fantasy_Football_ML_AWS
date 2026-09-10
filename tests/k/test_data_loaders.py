@@ -694,24 +694,70 @@ def test_reconstruct_kicks_from_pbp_stale_cache_regenerates(tmp_path, monkeypatc
         raise RuntimeError("synthetic boom — we just need to know PBP was tried")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _stub_pbp)
-    _ = k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
+    with pytest.raises(RuntimeError, match="2022"):
+        k_data.reconstruct_kicker_kicks_from_pbp([2022], cache_dir=str(tmp_path))
     assert called["n"] == 1
     assert "Stale kick cache" in capsys.readouterr().out
 
 
 @pytest.mark.unit
-def test_reconstruct_kicks_pbp_skips_failing_seasons(tmp_path, monkeypatch, capsys):
-    """If ``pbp_data`` throws for a season, we log and continue."""
+@pytest.mark.parametrize("seasons", [[2020], [2020, 2021]])
+def test_reconstruct_kicks_pbp_all_failures_raise(tmp_path, monkeypatch, capsys, seasons):
+    """A total outage must not masquerade as a season with no kick attempts."""
     import src.k.data as k_data
 
     def _bad(seasons, cols):
         raise RuntimeError(f"pbp fetch boom for {seasons}")
 
     monkeypatch.setattr(k_data.nfl_source, "pbp_data", _bad)
-    # Every season fails, so the result is the empty frame the function returns.
+    with pytest.raises(RuntimeError, match="2020"):
+        k_data.reconstruct_kicker_kicks_from_pbp(seasons, cache_dir=str(tmp_path))
+    assert "per-kick PBP extraction failed" in capsys.readouterr().out
+    assert not list(tmp_path.glob("kicker_kicks_pbp_*.parquet"))
+
+
+@pytest.mark.unit
+def test_reconstruct_kicks_pbp_successful_empty_response(tmp_path, monkeypatch):
+    import src.k.data as k_data
+
+    pbp = _synthetic_pbp(2020)
+    pbp["field_goal_attempt"] = 0
+    pbp["extra_point_attempt"] = 0
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", lambda *a: pbp)
     out = k_data.reconstruct_kicker_kicks_from_pbp([2020], cache_dir=str(tmp_path))
     assert out.empty
-    assert "per-kick PBP extraction failed" in capsys.readouterr().out
+    assert set(k_data._KICKS_SCHEMA).issubset(out.columns)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "builder,prefix",
+    [
+        ("reconstruct_kicker_weekly_from_pbp", "kicker_pbp"),
+        ("reconstruct_kicker_kicks_from_pbp", "kicker_kicks_pbp"),
+    ],
+)
+def test_kicker_cache_keys_use_exact_season_set(tmp_path, monkeypatch, builder, prefix):
+    import src.k.data as k_data
+
+    calls = []
+
+    def fetch(seasons, columns):
+        calls.extend(seasons)
+        return _synthetic_pbp(seasons[0])
+
+    monkeypatch.setattr(k_data.nfl_source, "pbp_data", fetch)
+    build = getattr(k_data, builder)
+    sparse = build([2020, 2022], cache_dir=str(tmp_path))
+    full = build([2020, 2021, 2022], cache_dir=str(tmp_path))
+    assert set(sparse.season) == {2020, 2022}
+    assert set(full.season) == {2020, 2021, 2022}
+    assert calls == [2020, 2022, 2020, 2021, 2022]
+    # Normal production ranges keep their existing filenames.
+    assert (tmp_path / f"{prefix}_2020_2022.parquet").exists()
+    again = build([2022, 2020, 2021, 2022], cache_dir=str(tmp_path))
+    pd.testing.assert_frame_equal(full, again)
+    assert len(calls) == 5
 
 
 @pytest.mark.unit

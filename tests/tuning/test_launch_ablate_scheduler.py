@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.tuning import launch_ablate_scheduler as las
+from tests.batch.test_remote_data_binding import RECIPE_A, SHA_A, remote  # noqa: F401
 
 pytestmark = pytest.mark.unit
 
@@ -70,6 +71,46 @@ def test_dry_run_makes_no_aws_calls(capsys):
     assert "DRY RUN" in out
     assert "FF_CUDA_GRAPH: 0" in out
     assert "--seeds 42,43,44" in out
+
+
+@pytest.mark.parametrize(
+    "wait,case",
+    [
+        ("true", "submit"),
+        ("false", "submit"),
+        ("true", "failed"),
+        ("true", "timed_out"),
+        ("true", "success"),
+    ],
+)
+def test_scheduler_launcher_requires_complete_success(remote, monkeypatch, wait, case):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["prog", "--positions", "QB", "RB", "--wait", wait])
+    batch, s3 = remote
+    s3.published(RECIPE_A)
+
+    def submit(position, **kwargs):
+        assert kwargs["batch_client"] is batch
+        assert kwargs["binding"] == {
+            "image_sha": SHA_A,
+            "gpu_definition": "gpu:7",
+            "cpu_definition": "",
+        }
+        if case == "submit" and position == "RB":
+            raise RuntimeError("submission failed")
+        return position, f"job-{position}"
+
+    monkeypatch.setattr(las, "submit_ablate_job", submit)
+    statuses = {"QB": ("SUCCEEDED", "")}
+    if case != "submit":
+        statuses["RB"] = ({"failed": "FAILED", "timed_out": "TIMED_OUT"}.get(case, "SUCCEEDED"), "")
+    monkeypatch.setattr(las, "wait_for_jobs", lambda *a, **k: statuses)
+    if case == "success":
+        las.main()
+    else:
+        with pytest.raises(SystemExit):
+            las.main()
 
 
 def test_empty_seeds_rejected():

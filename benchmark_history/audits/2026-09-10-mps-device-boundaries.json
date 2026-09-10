@@ -1,0 +1,43 @@
+{
+  "seed_before": {
+    "mps_available": true,
+    "helper_repeat_equal": false,
+    "helper_different_values": 2074,
+    "explicit_mps_seed_repeat_equal": true,
+    "cpu_helper_repeat_equal": true
+  },
+  "seed_after": {
+    "test": "tests/shared/test_mps_seeding.py::test_seed_everything_repeats_real_mps_dropout",
+    "result": "passed on actual Apple MPS; same seed repeats exactly, different seed differs",
+    "validation_log_sha256": "0caa1eb55646a2dd5d5d675b45b375ec9c2301b8d057e2f4b6cde2d8372dd45c"
+  },
+  "stacked_smoke": {
+    "torch": "2.14.0",
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "mps_available": true,
+    "device_request": "mps",
+    "mps_fallback": "0",
+    "seed_count": 2,
+    "epochs": 1,
+    "head": "e3ed317f3dc0fafab4b8a7c5a611b85d91cd9550",
+    "source_hashes": {
+      "src/tuning/ab_harness.py": "9b86e6cdc3efea59287afeef7fbcdd6fcb90bcfc05fdc405f26a667715e1a5b1",
+      "src/tuning/ab_ensemble_seeds.py": "75bd19a417c380acb24d494d0f40577838134dfe2defae1a8e30d487401473a3",
+      "src/tuning/tune_nn.py": "1f5b76d6fbcca6ec5f9b043c956dde7854459dc40237d7eae3cefb64fd139a51",
+      "src/shared/utils.py": "94096dfb1e5fd33f8fba0250d264a6d98a0b79740a50d8a77763d90876f53e19"
+    },
+    "captured_devices": [
+      "mps:0",
+      "mps:0"
+    ],
+    "train_devices": [
+      "mps:0"
+    ],
+    "ok": false,
+    "error": "RuntimeError: mse_loss_out_mps: target and input tensors must have identical shapes",
+    "production_artifacts_unchanged": true,
+    "production_artifact_count": 38
+  },
+  "resolution": "Apple MPS stacked execution explicitly rejected; eager MPS remains supported. No successful stacked MPS or speedup claim.",
+  "tests": "164 affected stacked/device tests passed; 40 MPS seed/device-policy tests passed including hardware test."
+}

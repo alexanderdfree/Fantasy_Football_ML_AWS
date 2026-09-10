@@ -377,6 +377,25 @@ def test_dropout_draws_differ_across_members():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("failure", ["entry", "body"])
+def test_ensemble_env_restores_settings_when_context_fails(monkeypatch, failure):
+    import os
+
+    from src.tuning.ab_ensemble_seeds import _ENSEMBLE_ENV_KEYS, ensemble_env
+
+    monkeypatch.setenv("FF_NN_NORM", "batch")
+    monkeypatch.setenv("FF_AMP_DTYPE", "bf16")
+    monkeypatch.setenv("FF_CUDA_GRAPH", "1")
+    monkeypatch.delenv("FF_CUDA_GRAPH_FULL", raising=False)
+    monkeypatch.delenv("FF_NN_FIXED_EPOCHS", raising=False)
+    monkeypatch.setenv("FF_COMPILE", "1" if failure == "entry" else "0")
+    before = {key: os.environ.get(key) for key in _ENSEMBLE_ENV_KEYS}
+    with pytest.raises(SystemExit if failure == "entry" else RuntimeError):
+        with ensemble_env(30):
+            raise RuntimeError("body failed")
+    assert {key: os.environ.get(key) for key in _ENSEMBLE_ENV_KEYS} == before
+
+
 def test_apply_ensemble_env_sets_regime_and_rejects_compile(monkeypatch):
     # apply_ensemble_env writes os.environ directly (it's the CLI regime
     # setter), so route every key it touches through monkeypatch.setenv FIRST:

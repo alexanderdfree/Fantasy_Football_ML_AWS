@@ -94,6 +94,6 @@ The App Store listing metadata is tracked in `AppStoreMetadata.md`.
 
 ## Not in v1 (future)
 
-- `NWPathMonitor` offline banner, K/DST in the live Upcoming slate (the API
-  itself defers them — skill positions only), iPad layout, widgets, analytics,
+- `NWPathMonitor` offline banner, dedicated K/DST live position filters (the API
+  now provides these rows in the All view), iPad layout, widgets, analytics,
   and verified third-party player imagery.

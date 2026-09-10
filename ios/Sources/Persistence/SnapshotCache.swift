@@ -3,9 +3,13 @@ import Foundation
 /// Persists the last good `/api/snapshot` bytes to Application Support so a cold
 /// launch (incl. offline) can paint instantly before the network resolves.
 struct SnapshotCache {
+    private let directory: URL?
+
+    init(directory: URL? = nil) { self.directory = directory }
+
     private var fileURL: URL? {
         let fm = FileManager.default
-        guard let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        guard let dir = directory ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("last_snapshot.json")
     }

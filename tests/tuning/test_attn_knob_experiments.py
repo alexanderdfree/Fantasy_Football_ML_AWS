@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 from contextlib import contextmanager
 
@@ -202,7 +203,11 @@ def test_fanova_importance_uses_core_pool_lease(monkeypatch):
         return {"attn_lr": 1.0}
 
     monkeypatch.setattr(ake, "lease_cores", fake_lease)
-    monkeypatch.setattr(ake, "get_param_importances", fake_get_param_importances)
+    monkeypatch.setattr(
+        importlib.import_module("optuna.importance"),
+        "get_param_importances",
+        fake_get_param_importances,
+    )
 
     study = optuna.create_study()
     importances = ake._fanova_param_importances(study, seed=123)
@@ -229,7 +234,11 @@ def test_fanova_importance_no_pool_preserves_rf_default(monkeypatch):
         return {"attn_dropout": 1.0}
 
     monkeypatch.setattr(ake, "lease_cores", fake_lease)
-    monkeypatch.setattr(ake, "get_param_importances", fake_get_param_importances)
+    monkeypatch.setattr(
+        importlib.import_module("optuna.importance"),
+        "get_param_importances",
+        fake_get_param_importances,
+    )
 
     study = optuna.create_study()
     assert ake._fanova_param_importances(study, seed=123) == {"attn_dropout": 1.0}
