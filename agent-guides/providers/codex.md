@@ -6,6 +6,10 @@ Everything imported from `AGENTS.md` is the shared project brain. This file docu
 
 The project config uses Codex's discovered model catalog. If a workstation needs a custom `model_catalog_json`, configure it in that workstation's user config, not `.codex/config.toml`: a missing catalog file prevents configuration loading and session startup before hooks run.
 
+Repository defaults select `gpt-6-astra`, `max` reasoning in normal and Plan mode, and an 872,000-token context window (the maximum advertised by Codex 0.153.4's Astra catalog). No custom auto-compaction threshold is set; model defaults apply. Verify the installed catalog again when changing models or context limits.
+
+Fast mode is requested with `service_tier = "fast"` and enabled with `[features] fast_mode = true`. The [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) documents that `fast` maps to the `priority` request tier; Astra's catalog advertises that tier. These defaults apply when new sessions load the trusted repository configuration, subject to higher-precedence launch overrides.
+
 Codex loads project hooks from `.codex/hooks.json` when the project is trusted. Review and trust them with `/hooks` after a hook file changes.
 
 - `.codex/hooks/session-start.sh` adds project-specific startup context, warns when the session did not start from a clean Codex worktree, and runs a best-effort Codex memory pull from S3 via `scripts/agent-memory-sync.sh codex pull`. It cannot persist shell exports the way Claude's remote `SessionStart` hook writes `CLAUDE_ENV_FILE`, and it cannot move an already-running Codex session into a new worktree, so environment bootstrap remains a SETUP.md/manual step and fresh-worktree startup belongs in `scripts/codex-fresh-worktree.sh`.
