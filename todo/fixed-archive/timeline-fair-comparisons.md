@@ -1,0 +1,6 @@
+### [FIXED] Timeline used incompatible actuals, source populations, and hindsight winners
+
+- **File(s):** `src/serving/timeline.py`, `routes.py`, `frontend/src/views/Timeline.jsx`, generated frontend bundle, and `tests/test_app_timeline.py` (PR pending).
+- **What:** The live 2025 Week 1 Timeline graded models on 466 rows, NFL.com on 431, and RotoWire on 370, using full-fantasy actuals and incompatible NFL.com kicker totals. Its edge switched to the minimum-error model after each week's outcomes. Intersecting forecast coverage alone leaves 338 offensive rows and drops K/DST entirely.
+- **Fix:** Apply ADR-0024 component truth with explicit offense/K/DST source groups and a fixed required-source intersection. Return coverage and unavailable reasons, preserve missing-week gaps, and score each model's own season record. Pool row errors for season MAE and count wins only over evaluable weeks. Test mismatched player IDs, missing components/sources, all positions/formats, and alternating weekly winners.
+- **Lesson:** Every displayed metric and performance claim must share its scoring, sample, and model-selection contract. Pairing only an edge cannot repair a table of unrelated populations or an outcome-selected model sequence.

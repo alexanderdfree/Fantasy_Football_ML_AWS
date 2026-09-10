@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Timeline used incompatible actuals, source populations, and hindsight winners
+[Read the incident record](fixed-archive/timeline-fair-comparisons.md).
+
 ### [FIXED] Live QBR qualification and roster/practice identity joins omitted available data
 [Read the incident record](fixed-archive/live-source-identity-qbr-2026-09.md).
 

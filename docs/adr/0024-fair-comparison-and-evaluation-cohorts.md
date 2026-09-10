@@ -44,6 +44,36 @@ missing rows never promote the next-ranked player. Ties use player ID, and
 seasons are ranked independently. Actual-week winners' negative bias is not a
 calibration target: selection on realized outcomes creates that pattern.
 
+## Timeline records
+
+The Timeline applies the same component truth to its `all` regular-season cohort.
+It separates offense (QB/RB/WR/TE, NFL.com and RotoWire), K (ESPN), and DST
+(RotoWire and ESPN). All four models and the group's required experts share one
+finite player-week intersection. The source set is fixed, including when a whole
+source or week is missing; an unavailable source never relaxes the comparison.
+The selected season is explicit. Missing position-weeks remain unavailable entries
+when that week exists elsewhere in the season's cached slate.
+
+Every model retains its own weekly errors, edges, and season record. A model's
+edge is the minimum of expert MAE minus its own MAE on the common rows. A positive
+edge requires beating every expert in the group. Unevaluable weeks are excluded
+from the win denominator, and ties are not wins. These decisions use unrounded
+errors; only display formatting rounds them. Season MAE pools player-week errors
+rather than averaging differently sized weekly means. No weekly winner or
+season-selected champion supplies an aggregate performance claim.
+
+The API reports the actual basis, components, source set, position scope, common
+sample size, pre-intersection coverage, and unavailable/excluded-source reasons.
+The web UI renders all four fixed model series, leaves gaps for unavailable weeks,
+and keys requests by scoring, group, and season. This is retrospective evaluation
+of the current cached forecasts, separate from the dated release changelog.
+Timeline schema v2 replaces the old winner/edge summary with per-model records;
+its web consumer and committed bundle ship together.
+
+Expert comparison totals must continue to use the declared component contract.
+Preserving additional raw expert stats or full-fantasy forecast totals for another
+view does not authorize grading those totals against restricted comparison truth.
+
 ## Reference artifact
 
 `data/raw/weekly_evaluation_reference_v1.parquet` contains only player/week keys,
@@ -117,6 +147,9 @@ Historical static tables remain dated research snapshots and are not comparable
 to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
+
+- 2026-09-10 — Apply matched component scoring and compatible position groups to
+  Timeline; replace hindsight-selected winners with per-model records (PR pending).
 
 - 2026-09-10 — Establish matched full-score comparison and versioned pregame
   top-24 reporting across all benchmark paths (PR pending).

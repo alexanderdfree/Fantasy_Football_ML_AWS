@@ -393,11 +393,18 @@ def api_weekly_accuracy():
 
 @app.route("/api/timeline")
 def api_timeline():
-    """Changelog & Timeline tab payload: the live weekly head-to-head log
-    (models + experts, winner, edge on common rows) plus the committed
-    release-changelog entries. See src/serving/timeline.py for semantics."""
+    """Matched weekly per-model records plus the committed release changelog."""
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
-    payload = timeline.compute_timeline(scoring)
+    group = request.args.get("group", "offense")
+    if group not in timeline.TIMELINE_GROUPS:
+        return jsonify({"error": f"Invalid comparison group: {group}"}), 400
+    season = request.args.get("season")
+    if season is not None:
+        try:
+            season = int(season)
+        except ValueError:
+            return jsonify({"error": f"Invalid season: {season}"}), 400
+    payload = timeline.compute_timeline(scoring, group, season)
     payload["releases"] = timeline.load_release_changelog()
     return jsonify(payload)
 

@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Correct Timeline scoring and source populations, retain K/DST comparisons, and report fixed per-model records · (PR pending) · → ADR-0024
+
 - 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR pending) · → ADR-0018
 
 - 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR #1560) · → ADR-0011, ADR-0014

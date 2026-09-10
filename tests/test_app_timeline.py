@@ -12,9 +12,12 @@ import datetime
 import json
 import os
 
+import numpy as np
+import pandas as pd
 import pytest
 
 import src.serving.timeline as timeline
+from src.shared.comparison_scoring import ACTUAL_BASIS, scoring_components
 
 pytestmark = pytest.mark.unit
 
@@ -22,35 +25,87 @@ _MODELS = ("ridge", "nn", "attn_nn", "lgbm")
 _EXPERTS = ("nflcom", "rotowire")
 
 
+def records(positions=("WR",), weeks=(1, 2), players=3):
+    """Known component truth, deliberately different from full-fantasy actuals."""
+    raw = {
+        "passing_yards": 250.0,
+        "passing_tds": 2.0,
+        "interceptions": 1.0,
+        "rushing_yards": 40.0,
+        "rushing_tds": 1.0,
+        "receiving_yards": 50.0,
+        "receiving_tds": 1.0,
+        "receptions": 5.0,
+        "fumbles_lost": 1.0,
+    }
+    rows = []
+    for position in positions:
+        for week in weeks:
+            for player in range(players):
+                row = {
+                    "player_id": f"{position}-{player}",
+                    "position": position,
+                    "season": 2025,
+                    "season_type": "REG",
+                    "week": week,
+                    "fantasy_points": 9999.0,
+                    **{
+                        f"actual_{name}": raw.get(name, 0.0)
+                        for name in scoring_components(position)
+                    },
+                }
+                for fmt, reception_weight in (("ppr", 1.0), ("half_ppr", 0.5), ("standard", 0.0)):
+                    truth = {
+                        "QB": 24,
+                        "RB": 19 + 5 * reception_weight,
+                        "WR": 9 + 5 * reception_weight,
+                        "TE": 9 + 5 * reception_weight,
+                        "K": 0,
+                        "DST": 15,
+                    }[position]
+                    row.update(
+                        {f"{model}_pred_{fmt}": truth + 1 + reception_weight for model in _MODELS}
+                    )
+                    row.update(
+                        {
+                            f"{expert}_pred_{fmt}": truth + 2 + reception_weight
+                            for expert in (*_EXPERTS, "espn")
+                        }
+                    )
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def evaluate(monkeypatch, data, scoring="ppr", group="offense", season=None):
+    monkeypatch.setattr(timeline.core, "_get_data", lambda _scoring: (data, {}))
+    return timeline.compute_timeline(scoring, group, season)
+
+
 class TestTimelineEndpoint:
     def test_payload_shape(self, client_with_data):
         data = client_with_data.get("/api/timeline").get_json()
-        assert data["edge_basis"] == "common_rows"
+        assert data["edge_basis"] == "common_rows_per_model"
+        assert data["actual_basis"] == ACTUAL_BASIS
+        assert data["schema_version"] == 2
         assert data["model_labels"]["attn_nn"] == "Attention NN"
         assert isinstance(data["releases"], list)
         weekly = data["weekly"]
         assert weekly, "synthetic cache has weeks 1-7"
         for entry in weekly:
-            assert set(("week", "n", "winner", "edge")).issubset(entry)
+            assert set(("week", "n", "cohort_n", "source_n", "mae", "edges")).issubset(entry)
+            assert "winner" not in entry
             for src in (*_MODELS, *_EXPERTS):
-                assert src in entry
-
-    def test_winner_is_argmin_of_model_maes(self, client_with_data):
-        weekly = client_with_data.get("/api/timeline").get_json()["weekly"]
-        for entry in weekly:
-            maes = {m: entry[m] for m in _MODELS if entry[m] is not None}
-            assert maes, "synthetic cache carries all four models"
-            assert entry["winner"] == min(maes, key=maes.get)
+                assert src in entry["mae"]
 
     def test_summary_is_consistent_with_weekly(self, client_with_data):
         data = client_with_data.get("/api/timeline").get_json()
         weekly, summary = data["weekly"], data["summary"]
         assert summary["total_weeks"] == len(weekly)
-        wins = [w for w in weekly if w["winner"] == summary["champion"]]
-        assert summary["champion_weeks"] == len(wins)
-        assert 0 <= summary["beat_experts"] <= summary["total_weeks"]
-        best = min(w[w["winner"]] for w in weekly if w["winner"])
-        assert summary["best_mae"] == pytest.approx(best)
+        assert "champion" not in summary
+        for model in _MODELS:
+            report = summary["models"][model]
+            assert report["beat_experts"] == sum(w["edges"][model] > 0 for w in weekly)
+            assert report["evaluated_weeks"] == len(weekly)
 
     def test_scoring_routes_to_format_slice(self, client_with_data):
         # The synthetic cache builds each format at a different multiplier, so
@@ -59,10 +114,175 @@ class TestTimelineEndpoint:
         ppr = client_with_data.get("/api/timeline?scoring=ppr").get_json()["weekly"]
         std = client_with_data.get("/api/timeline?scoring=standard").get_json()["weekly"]
         assert any(
-            a["ridge"] != b["ridge"]
+            a["mae"]["ridge"] != b["mae"]["ridge"]
             for a, b in zip(ppr, std, strict=True)
-            if a["ridge"] and b["ridge"]
+            if a["n"] and b["n"]
         )
+
+    @pytest.mark.parametrize("query", ["group=ALL", "season=invalid"])
+    def test_invalid_selection(self, client_with_data, query):
+        assert client_with_data.get(f"/api/timeline?{query}").status_code == 400
+
+    def test_group_and_season_reach_the_evaluator(self, client_with_data, monkeypatch):
+        data = records(positions=("K",))
+        monkeypatch.setattr(timeline.core, "_get_data", lambda _scoring: (data, {}))
+        payload = client_with_data.get(
+            "/api/timeline?group=k&season=2025&scoring=standard"
+        ).get_json()
+        assert payload["group"] == "k" and payload["season"] == 2025
+        assert payload["sources"] == [*_MODELS, "espn"]
+        assert payload["summary"]["mae"]["ridge"] == 1
+
+
+@pytest.mark.parametrize("fmt,expected", [("ppr", 2.0), ("half_ppr", 1.5), ("standard", 1.0)])
+@pytest.mark.parametrize(
+    "pos,group",
+    [
+        ("QB", "offense"),
+        ("RB", "offense"),
+        ("WR", "offense"),
+        ("TE", "offense"),
+        ("K", "k"),
+        ("DST", "dst"),
+    ],
+)
+def test_shared_components_for_every_position_and_format(monkeypatch, fmt, expected, pos, group):
+    data = records(positions=(pos,))
+    payload = evaluate(monkeypatch, data, fmt, group)
+    assert payload["summary"]["n"] == 6
+    assert all(payload["summary"]["mae"][model] == expected for model in _MODELS)
+    assert payload["summary"]["edges"] == dict.fromkeys(_MODELS, 1.0)
+
+
+def test_same_player_ids_for_every_metric_despite_different_source_populations(monkeypatch):
+    data = records(weeks=(1,))
+    data.loc[0, "nflcom_pred_ppr"] = np.nan
+    data.loc[1, "rotowire_pred_ppr"] = np.nan
+    # Disjoint missing players, not merely equal counts. Poison excluded rows.
+    data.loc[:1, "ridge_pred_ppr"] = 10000
+    payload = evaluate(monkeypatch, data)
+    row = payload["weekly"][0]
+    assert row["n"] == 1 and row["cohort_n"] == 3
+    assert row["source_n"]["ridge"] == 3
+    assert row["source_n"]["nflcom"] == row["source_n"]["rotowire"] == 2
+    assert all(row["mae"][model] == 2 for model in _MODELS)
+    assert row["edges"] == dict.fromkeys(_MODELS, 1.0)
+
+
+def test_extra_actual_components_and_full_totals_cannot_change_results_or_cache(monkeypatch):
+    data = records()
+    expected = evaluate(monkeypatch, data)
+    data["actual_rushing_yards"] = 10000
+    data["actual_rushing_tds"] = 100
+    data["fantasy_points"] = -10000
+    before = data.copy(deep=True)
+    assert evaluate(monkeypatch, data) == expected
+    pd.testing.assert_frame_equal(data, before)
+
+
+@pytest.mark.parametrize("missing", [None, np.nan, np.inf])
+def test_missing_component_never_falls_back_to_full_actuals(monkeypatch, missing):
+    data = records()
+    if missing is None:
+        data = data.drop(columns="actual_fumbles_lost")
+    else:
+        data["actual_fumbles_lost"] = missing
+    payload = evaluate(monkeypatch, data)
+    assert payload["summary"]["reason"] == "shared_actual_components_missing"
+    assert all(w["n"] == 0 and all(v is None for v in w["mae"].values()) for w in payload["weekly"])
+    assert payload["summary"]["models"]["ridge"]["evaluated_weeks"] == 0
+
+
+def test_kicker_and_dst_comparisons_keep_their_own_compatible_sources(monkeypatch):
+    data = records(positions=("WR", "K", "DST"))
+    data.loc[data.position.eq("K"), "nflcom_pred_ppr"] = 99999
+    data.loc[data.position.eq("K"), "rotowire_pred_ppr"] = np.nan
+    data.loc[data.position.eq("DST"), "nflcom_pred_ppr"] = np.nan
+    for group, position in (("k", "K"), ("dst", "DST")):
+        payload = evaluate(monkeypatch, data, group=group)
+        assert payload["positions"] == (position,)
+        assert payload["summary"]["n"] == 6
+        assert "nflcom" not in payload["sources"]
+        assert "nflcom" in payload["excluded_sources"]
+        assert payload["summary"]["mae"]["ridge"] == 2
+
+
+@pytest.mark.parametrize("source", ["rotowire", "attn_nn"])
+def test_missing_required_week_does_not_relax_source_set_or_count_as_a_win(monkeypatch, source):
+    data = records()
+    data.loc[data.week.eq(2), f"{source}_pred_ppr"] = np.nan
+    payload = evaluate(monkeypatch, data)
+    assert payload["weekly"][1]["n"] == 0
+    assert payload["weekly"][1]["unavailable_sources"] == [source]
+    assert all(edge is None for edge in payload["weekly"][1]["edges"].values())
+    assert payload["summary"]["models"]["ridge"]["beat_experts"] == 1
+    assert payload["summary"]["models"]["ridge"]["evaluated_weeks"] == 1
+    data = data.drop(columns=f"{source}_pred_ppr")
+    assert evaluate(monkeypatch, data)["summary"]["n"] == 0
+
+
+def test_zero_forecasts_are_valid_but_infinity_is_not(monkeypatch):
+    data = records(weeks=(1,))
+    for source in (*_MODELS, *_EXPERTS):
+        data[f"{source}_pred_ppr"] = 0.0
+    data.loc[0, "nflcom_pred_ppr"] = np.inf
+    payload = evaluate(monkeypatch, data)
+    assert payload["summary"]["n"] == 2
+    assert set(payload["summary"]["mae"].values()) == {14.0}
+    assert payload["summary"]["models"]["ridge"]["beat_experts"] == 0
+
+
+def test_missing_position_week_remains_an_explicit_gap(monkeypatch):
+    data = records(positions=("WR", "K"))
+    data = data[~(data.position.eq("K") & data.week.eq(2))]
+    payload = evaluate(monkeypatch, data, group="k")
+    assert [w["week"] for w in payload["weekly"]] == [1, 2]
+    assert payload["weekly"][1]["reason"] == "no_regular_season_rows"
+    assert payload["summary"]["evaluated_weeks"] == 1
+
+
+def test_alternating_winners_never_create_an_oracle_model_record(monkeypatch):
+    data = records(players=1)
+    data["ridge_pred_ppr"] = [14.0, 18.0]
+    data["nn_pred_ppr"] = [18.0, 14.0]
+    data["attn_nn_pred_ppr"] = data["lgbm_pred_ppr"] = 18.0
+    data["nflcom_pred_ppr"] = data["rotowire_pred_ppr"] = 16.0
+    summary = evaluate(monkeypatch, data)["summary"]
+    assert "champion" not in summary and "best_mae" not in summary
+    for model in ("ridge", "nn"):
+        assert summary["models"][model] == {
+            "mae": 2.0,
+            "edge": 0.0,
+            "beat_experts": 1,
+            "evaluated_weeks": 2,
+        }
+    assert max(model["beat_experts"] for model in summary["models"].values()) == 1
+
+
+def test_season_mae_pools_player_errors_instead_of_averaging_week_means(monkeypatch):
+    data = records()
+    data = data[(data.week == 2) | (data.player_id == "WR-0")].copy()
+    data["ridge_pred_ppr"] = np.where(data.week == 1, 24.0, 15.0)
+    assert evaluate(monkeypatch, data)["summary"]["mae"]["ridge"] == 3.25
+
+
+def test_seasons_and_postseason_never_share_a_week(monkeypatch):
+    data = records()
+    older = data.assign(season=2024, ridge_pred_ppr=114.0)
+    postseason = data.assign(week=19, season_type="POST", ridge_pred_ppr=10000.0)
+    data = pd.concat([data, older, postseason], ignore_index=True)
+    current = evaluate(monkeypatch, data)
+    assert current["season"] == 2025 and current["seasons"] == [2024, 2025]
+    assert current["summary"]["n"] == 6 and len(current["weekly"]) == 2
+    assert evaluate(monkeypatch, data, season=2024)["summary"]["mae"]["ridge"] == 100.0
+    assert evaluate(monkeypatch, data, season=2023)["summary"]["reason"] == "no_regular_season_rows"
+
+
+def test_empty_cache_is_explicit_and_json_safe(monkeypatch):
+    payload = evaluate(monkeypatch, pd.DataFrame())
+    assert payload["weekly"] == [] and payload["season"] is None
+    assert payload["summary"]["status"] == "unavailable"
+    json.dumps(payload, allow_nan=False)
 
 
 class TestReleaseChangelog:
