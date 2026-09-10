@@ -176,6 +176,7 @@ def build_pipeline_config(
         "specific_features": (pc.all_features if pos == Position.K else pc.specific_features),
         # === Ridge ===
         "ridge_alpha_grids": pc.ridge_alpha_grids,
+        "ridge_selection_metric": pc.ridge_selection_metric,
         # === Per-position callables ===
         **build_position_callables(pos),
         # === Loss + scheduler ===
@@ -222,6 +223,7 @@ def build_pipeline_config(
         "lgbm_min_child_samples": pc.lgbm_min_child_samples,
         "lgbm_min_split_gain": pc.lgbm_min_split_gain,
         "lgbm_objective": pc.lgbm_objective,
+        "lgbm_selection_metric": pc.lgbm_selection_metric,
         # === TabPFN (5th model variant) ===
         "train_tabpfn": pc.train_tabpfn,
         "tabpfn_n_estimators": pc.tabpfn_n_estimators,

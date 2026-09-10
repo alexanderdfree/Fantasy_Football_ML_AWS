@@ -21,6 +21,7 @@ from src.config import MIN_GAMES_PER_SEASON, SPLITS_DIR
 from src.shared.evaluation import compute_metrics
 from src.shared.models import RidgeMultiTarget
 from src.shared.pipeline import _tune_ridge_alphas_cv
+from src.shared.registry import get_config
 from src.wr.config import POSITION_CONFIG
 from src.wr.data import filter_to_position
 from src.wr.features import (
@@ -112,6 +113,7 @@ def _run_variant(
         n_cv_folds=4,
         refine_points=5,
         pca_n_components=pca_n,
+        cfg=get_config("WR"),
     )
 
     # Fit final model

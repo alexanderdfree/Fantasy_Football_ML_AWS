@@ -37,8 +37,8 @@ from src.shared.pipeline import _prepare_position_data
 from src.tuning.history import append_tuning_run
 
 _DEFAULT_SEEDS = (42, 43, 44)
-_OBJECTIVE_VERSION = "seedavg_v1"
-_OBJECTIVE_NAME = "mean_cv_mae_across_folds_and_seeds"
+_OBJECTIVE_VERSION = "ppr_rmse_v1"
+_OBJECTIVE_NAME = "mean_cv_ppr_rmse_across_folds_and_seeds"
 
 
 def _ensure_data_from_s3():
@@ -298,13 +298,10 @@ def _make_objective(
 ):
     """Return an Optuna objective function that evaluates LightGBM on CV folds.
 
-    ``lgbm_objective`` is the fixed loss family (``"huber"``, ``"fair"``, etc.)
-    pulled from the position's cfg. Earlier revisions searched over
-    ``{"huber", "fair", "regression"}`` and landed on Fair for QB/RB/WR/TE and
-    Huber for K/DST — an undocumented split. PR 3 of the loss refactor
-    unified RB/WR/TE/K/DST on ``"huber"``; QB stays on ``"fair"`` because its
-    passing_yards heavy tail regresses ~0.2 pts/game under Huber's 90th-
-    percentile-quantile quadratic zone. Respecting cfg keeps this explicit.
+    The fitting loss comes from cfg (regression/L2 for all current positions).
+    Each fold/seed selects tree prefixes by validation PPR fantasy RMSE; the
+    trial and pruner average those RMSEs across seeds and completed folds.
+    Test data never participates in either selection step.
     """
 
     def objective(trial):
@@ -329,17 +326,18 @@ def _make_objective(
             )
 
             # --- Evaluate across CV folds and seeds ---
-            fold_maes = []
+            fold_rmses = []
             for fold_i, (X_train, X_val, y_train_dict, y_val_dict, feature_cols) in enumerate(
                 folds_data
             ):
-                seed_maes = []
+                seed_rmses = []
                 for seed in seeds:
                     with _lease_lgbm_cores("tune_lgbm_cv") as leased_n_jobs:
                         model = LightGBMMultiTarget(
                             target_names=targets,
                             seed=seed,
                             n_jobs=leased_n_jobs,
+                            selection_metric="fantasy_rmse_ppr",
                             **params,
                         )
                         model.fit(
@@ -352,16 +350,16 @@ def _make_objective(
 
                     preds = model.predict(X_val)
                     metrics = compute_target_metrics(y_val_dict, preds, targets)
-                    seed_maes.append(metrics["total"]["mae"])
+                    seed_rmses.append(metrics["total"]["rmse"])
 
-                fold_maes.append(float(np.mean(seed_maes)))
+                fold_rmses.append(float(np.mean(seed_rmses)))
 
                 # Report once per fold so pruning semantics stay fold-level.
-                trial.report(float(np.mean(fold_maes)), fold_i)
+                trial.report(float(np.mean(fold_rmses)), fold_i)
                 if trial.should_prune():
                     raise optuna.TrialPruned()
 
-            return float(np.mean(fold_maes))
+            return float(np.mean(fold_rmses))
 
     return objective
 
@@ -533,7 +531,7 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
                 target_names=targets,
                 seed=seed,
                 n_jobs=leased_n_jobs,
-                **best_params,
+                **{**old_params, **best_params},
             )
             new_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
         new_preds = new_model.predict(X_test)
@@ -575,6 +573,12 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
 
     for key in ["total"] + targets:
         label = key.replace("_", " ").title()
+        print(
+            f"  {label + ' RMSE':<23} "
+            f"{_fmt_mean_std(aggregate['old_metrics'][key]['rmse']):>17} "
+            f"{_fmt_mean_std(aggregate['new_metrics'][key]['rmse']):>19} "
+            f"{_fmt_mean_std(aggregate['delta_metrics'][key]['rmse']):>19}"
+        )
         print(
             f"  {label + ' MAE':<23} "
             f"{_fmt_mean_std(aggregate['old_metrics'][key]['mae']):>17} "
@@ -767,7 +771,7 @@ def main():
                     best = _trial_to_params(study.best_trial)
                     print(
                         f"\n{pos} best trial #{study.best_trial.number} "
-                        f"(CV MAE = {study.best_value:.4f}, seeds={list(seeds)}):"
+                        f"(CV PPR RMSE = {study.best_value:.4f}, seeds={list(seeds)}):"
                     )
                     print(_format_config_lines(pos, best))
                 except Exception as e:
@@ -821,7 +825,7 @@ def main():
             best = _trial_to_params(study.best_trial)
 
             print(f"\n{pos} tuning complete in {elapsed:.0f}s")
-            print(f"  Best trial #{study.best_trial.number}: CV MAE = {study.best_value:.4f}")
+            print(f"  Best trial #{study.best_trial.number}: CV PPR RMSE = {study.best_value:.4f}")
             print(f"\n{_format_config_lines(pos, best)}")
 
             # Before/after holdout comparison
@@ -829,7 +833,10 @@ def main():
 
             all_results[pos] = {
                 "best_trial": study.best_trial.number,
-                "best_cv_mae": study.best_value,
+                "best_cv_rmse": study.best_value,
+                "scoring_format": "ppr",
+                "selection_metric": "fantasy_rmse_ppr",
+                "fitting_objective": lgbm_objective,
                 "best_params": best,
                 "n_trials": len(study.trials),
                 "elapsed_seconds": round(elapsed, 1),

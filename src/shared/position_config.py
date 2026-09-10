@@ -125,6 +125,7 @@ class PositionConfig:
     ridge_pca_components: int | None = None
     ridge_cv_folds: int | None = None
     ridge_refine_points: int | None = None
+    ridge_selection_metric: str = "fantasy_rmse_ppr"
     cv_split_column: str | None = None
     train_elasticnet: bool = False
     enet_l1_ratios: list[float] = field(default_factory=lambda: list(DEFAULT_ENET_L1_RATIOS))
@@ -242,6 +243,7 @@ class PositionConfig:
     lgbm_min_child_samples: int = 30
     lgbm_min_split_gain: float = 0.0
     lgbm_objective: str = "huber"
+    lgbm_selection_metric: str = "fantasy_rmse_ppr"
 
     # === TabPFN (pretrained tabular transformer; 5th model variant) ===
     # Off by default — only positions that opt in run it (and the env must have

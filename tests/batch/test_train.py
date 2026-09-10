@@ -1036,6 +1036,22 @@ class TestMergedSplitMetrics:
         assert summary["nn_selection"] == selection
         assert summary["attn_nn_selection"] == selection
 
+    def test_cpu_model_selection_survives_extraction_merge_and_history(self):
+        from src.batch.train import _extract_metrics, _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        cpu = self._cpu_branch_metrics()
+        ridge = {"metric": "mean_cv_fantasy_rmse_ppr", "score": 5.0, "alphas": {"x": 2.0}}
+        lgbm = {"metric": "fantasy_rmse_ppr", "score": 4.9, "iterations": {"x": 12}}
+        result = {**cpu, "ridge_selection": ridge, "lgbm_selection": lgbm}
+        cpu.update(_extract_metrics("WR", result))
+        merged = _merged_split_metrics(
+            "WR", "run-1", self._nn_branch_metrics(), cpu, {}, time.monotonic()
+        )
+        summary = summarize_pipeline_result("WR", merged)
+        assert summary["ridge_selection"] == ridge
+        assert summary["lgbm_selection"] == lgbm
+
     def _cpu_branch_metrics(self) -> dict:
         return {
             "position": "WR",

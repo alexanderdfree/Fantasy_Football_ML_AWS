@@ -150,6 +150,7 @@ IGNORED_FIELDS: frozenset[str] = frozenset(
         "ridge_pca_components",
         "ridge_cv_folds",
         "ridge_refine_points",
+        "ridge_selection_metric",
         "cv_split_column",
         "train_elasticnet",
         "enet_l1_ratios",
@@ -191,6 +192,7 @@ IGNORED_FIELDS: frozenset[str] = frozenset(
         "lgbm_min_child_samples",
         "lgbm_min_split_gain",
         "lgbm_objective",
+        "lgbm_selection_metric",
         # TabPFN (benchmark-only, never served)
         "train_tabpfn",
         "tabpfn_n_estimators",

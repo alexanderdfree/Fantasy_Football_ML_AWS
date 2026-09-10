@@ -409,23 +409,35 @@ def _tune_ridge_alphas_cv(
     refine_points=5,
     pca_n_components=None,
     n_jobs=-1,
+    cfg=None,
+    selection_info=None,
 ):
-    """Per-target Ridge alpha tuning with expanding-window CV.
+    """Select per-target Ridge alphas within expanding-window CV.
 
-    Pass 1: coarse grid search across CV folds.
-    Pass 2: fine refinement around the best coarse alpha.
-
-    Each pass fans its alpha grid out over ``joblib.Parallel(n_jobs=-1,
-    prefer="threads")``. Threads (not processes) because sklearn's Ridge
-    delegates the normal-equation solve to BLAS, which releases the GIL —
-    actual parallelism without process-spawn / pickle / nested-pool costs that
-    bite on macOS. Each ``_eval_alpha_cv`` call is pure and the final
-    best-alpha selection uses ``argmin``, so execution order is immaterial and
-    output is numerically identical to the serial version.
-
-    Returns dict mapping each target name to its optimal alpha.
+    Production cfgs use joint PPR RMSE, including special-head predictions,
+    through a bounded coordinate search over cached coarse/refined candidates.
+    Missing cfg or explicit ``raw_mae`` retains the legacy independent search
+    for synthetic callers and controlled comparisons. Both use joblib threads
+    for candidate fitting and return a plain target-to-alpha dictionary.
     """
     folds = _build_expanding_cv_folds(split_values, n_cv_folds)
+    if cfg is not None and cfg.get("ridge_selection_metric", "raw_mae") == "fantasy_rmse_ppr":
+        from src.shared.model_selection import tune_ridge_ppr
+
+        return tune_ridge_ppr(
+            X_train,
+            y_train_dict,
+            folds,
+            targets,
+            alpha_grids,
+            cfg,
+            refine_points=refine_points,
+            pca_n_components=pca_n_components,
+            n_jobs=n_jobs,
+            selection_info=selection_info,
+        )
+    if cfg is not None and cfg.get("ridge_selection_metric", "raw_mae") != "raw_mae":
+        raise ValueError("Unknown Ridge selection metric")
     best_alphas = {}
 
     for target in targets:
@@ -475,8 +487,8 @@ def _tune_ridge_alphas_cv(
 def _eval_enet_cv(X, y, folds, alpha, l1_ratio):
     """Evaluate a single ElasticNet (alpha, l1_ratio) across CV folds.
 
-    Returns mean post-clip MAE, matching Ridge's ``_eval_alpha_cv`` so the
-    two linear baselines are tuned on the same objective.
+    Returns mean post-clip raw-stat MAE. ElasticNet retains this legacy
+    independent objective; production Ridge uses joint fantasy-point RMSE.
     """
     maes = []
     for train_idx, val_idx in folds:
@@ -1407,6 +1419,7 @@ def _build_lgbm(targets, cfg, seed, n_jobs):
         min_child_samples=cfg.get("lgbm_min_child_samples", 20),
         min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
         objective=cfg.get("lgbm_objective", "huber"),
+        selection_metric=cfg.get("lgbm_selection_metric", "per_target"),
         seed=seed,
         n_jobs=n_jobs,
         # Carry the per-head clamp set so the saved model persists it (predict()
@@ -1668,6 +1681,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         ridge_model = None
         ridge_test_preds = None
         ridge_metrics = None
+        ridge_selection = {}
         if cfg.get("train_ridge", True):
             print(f"\n=== {pos} Ridge Multi-Target (Per-Target CV Tuning) ===")
             with lease_cores("ridge_cv") as _nj, timed("ridge_tune", store=phase_seconds):
@@ -1682,6 +1696,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                         refine_points=cfg.get("ridge_refine_points", 5),
                         pca_n_components=pca_n,
                         n_jobs=_nj,
+                        cfg=cfg,
+                        selection_info=ridge_selection,
                     )
                     if ridge_tune_targets
                     else {}
@@ -1703,6 +1719,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     non_negative_targets=ridge_non_neg,
                 )
                 ridge_model.fit(X_train, y_train_dict)
+                ridge_model.selection_info = ridge_selection or None
                 ridge_test_preds = ridge_model.predict(X_test)
                 ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
@@ -1947,6 +1964,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         result = {
             "ridge_metrics": ridge_metrics,
             "nn_metrics": nn_metrics,
+            "ridge_selection": getattr(ridge_model, "selection_info", None),
+            "lgbm_selection": getattr(lgbm_model, "selection_info", None),
             "history": history,
             "phase_seconds": phase_seconds,
         }
@@ -2160,6 +2179,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     result = {
         "ridge_metrics": ridge_metrics,
         "nn_metrics": nn_metrics,
+        "ridge_selection": getattr(ridge_model, "selection_info", None),
+        "lgbm_selection": getattr(lgbm_model, "selection_info", None),
         "ridge_ranking": ridge_ranking,
         "nn_ranking": nn_ranking,
         "history": history,
@@ -2254,6 +2275,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
     # final Ridge models are fit on — without ``pca_n_components`` the alphas
     # were selected on the raw-feature basis while the models use PCA, so for
     # PCA positions (RB/WR/DST) CV picked alphas for the wrong basis (#386).
+    ridge_selection = {}
     with lease_cores("ridge_cv") as _nj:
         best_alphas = _tune_ridge_alphas_cv(
             X_alpha,
@@ -2265,6 +2287,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
             refine_points=cfg.get("ridge_refine_points", 5),
             pca_n_components=cfg.get("ridge_pca_components"),
             n_jobs=_nj,
+            cfg=cfg,
+            selection_info=ridge_selection,
         )
 
     # --- Per-fold training ---
@@ -2421,6 +2445,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         non_negative_targets=cfg.get("nn_non_negative_targets"),
     )
     ridge_model.fit(X_train, y_train_dict)
+    ridge_model.selection_info = ridge_selection or None
     ridge_test_preds = ridge_model.predict(X_test)
     ridge_metrics = compute_target_metrics(y_test_dict, ridge_test_preds, targets)
 
@@ -2659,6 +2684,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
     result = {
         "cv_metrics": cv_metrics,
         "best_cv_alphas": best_cv_alphas,
+        "ridge_selection": ridge_selection or None,
         "ridge_metrics": ridge_metrics,
         "nn_metrics": nn_metrics,
         "ridge_ranking": ridge_ranking,
@@ -2671,6 +2697,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
     if lgbm_metrics is not None:
         result["lgbm_metrics"] = lgbm_metrics
         result["lgbm_ranking"] = lgbm_ranking
+        result["lgbm_selection"] = lgbm_model.selection_info
     if enet_metrics is not None:
         result["elasticnet_metrics"] = enet_metrics
         result["elasticnet_ranking"] = enet_ranking

@@ -616,9 +616,11 @@ def _extract_metrics(position, result):
         m = result.get(m_key)
         if not m:
             continue
-        history_key = "attn_history" if model_key == "attn_nn" else "history"
-        selection = (result.get(history_key) or {}).get("checkpoint_selection")
-        if model_key in ("nn", "attn_nn") and selection is not None:
+        selection = result.get(f"{model_key}_selection")
+        if selection is None and model_key in ("nn", "attn_nn"):
+            history_key = "attn_history" if model_key == "attn_nn" else "history"
+            selection = (result.get(history_key) or {}).get("checkpoint_selection")
+        if selection is not None:
             metrics[f"{model_key}_selection"] = selection
         metrics[m_key] = {
             "total": {
