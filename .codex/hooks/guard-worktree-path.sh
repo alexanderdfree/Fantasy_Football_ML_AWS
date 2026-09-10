@@ -11,8 +11,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # approve an edit if its destination cannot be checked.
 jq_bin="$(codex_find_jq || true)"
 input="$(cat)"
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "guard-worktree-path: python3 is required to validate resolved edit paths" >&2
+if [ -z "$codex_python_bin" ]; then
+  echo "guard-worktree-path: a Python 3 interpreter is required to validate resolved edit paths" >&2
   exit 2
 fi
 cwd="$(codex_project_cwd "$input" "$jq_bin")"

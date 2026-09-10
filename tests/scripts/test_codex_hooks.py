@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -66,7 +68,8 @@ def _run_hook(
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     if script in (".codex/hooks/post-pr-create.sh", ".codex/hooks/post-pr-merge.sh"):
-        payload = {"tool_response": {"exit_code": 0}, **payload}
+        # Codex 0.153.4 ExecCommandToolOutput sends raw stdout, without status.
+        payload = {"tool_response": "", **payload}
     env = os.environ.copy()
     for key in (
         "CODEX_PROJECT_DIR",
@@ -202,7 +205,7 @@ def merge_scenario_codex(launcher_repo: tuple[Path, Path], tmp_path: Path) -> tu
     return main, worktree
 
 
-def _stub_merged_pr(worktree: Path, merge_commit: str) -> Path:
+def _stub_merged_pr(worktree: Path, merge_commit: str, *, state: str = "MERGED") -> Path:
     tools_dir = worktree / ".test-gh"
     tools_dir.mkdir()
     gh = tools_dir / "gh"
@@ -212,7 +215,7 @@ def _stub_merged_pr(worktree: Path, merge_commit: str) -> Path:
     metadata.write_text(
         json.dumps(
             {
-                "state": "MERGED",
+                "state": state,
                 "baseRefName": "main",
                 "headRefOid": _head(worktree),
                 "mergeCommit": {"oid": merge_commit},
@@ -358,7 +361,7 @@ def test_codex_json_context_uses_resolved_jq_path(tmp_path: Path):
     }
 
 
-def _call_codex_lib(func_call: str, *args: str) -> subprocess.CompletedProcess[str]:
+def _call_codex_lib(func_call: str, *args: str, env=None) -> subprocess.CompletedProcess[str]:
     """Source .codex/hooks/lib.sh and run one function call, passing args as bash
     positionals ($1=lib path, $2.. = args) so payloads are never re-quoted."""
     lib = PROJECT_ROOT / ".codex/hooks/lib.sh"
@@ -366,6 +369,7 @@ def _call_codex_lib(func_call: str, *args: str) -> subprocess.CompletedProcess[s
         [_bash(), "-c", f'source "$1"; {func_call}', "_", str(lib), *args],
         text=True,
         capture_output=True,
+        env=env,
         check=False,
     )
 
@@ -413,13 +417,43 @@ def test_codex_hook_command_python3_fallback_without_jq():
         (None, False),
         ('{"exit_code": 0}', True),
         ("Wall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n", True),
-        ("Wall time: 0.1 seconds\nProcess exited with code 1\nOutput:\nExit code: 0", False),
-        ("Output:\nProcess exited with code 0", False),
+        ("Wall time: 0.1 seconds\nProcess exited with code 1\nOutput:\nExit code: 0", True),
+        ("Output:\nProcess exited with code 0", True),
+        ("https://github.com/example/repo/pull/123\n", True),
+        ("", True),
     ],
 )
-def test_codex_hook_checks_actual_completion_status(response, success: bool):
-    result = _call_codex_lib('codex_hook_succeeded "$2"', json.dumps({"tool_response": response}))
+def test_codex_hook_allows_state_lookup_for_raw_stdout(response, success: bool):
+    result = _call_codex_lib(
+        'codex_hook_can_verify_pr "$2"', json.dumps({"tool_response": response})
+    )
     assert (result.returncode == 0) is success
+
+
+def test_codex_normalizes_native_windows_paths_for_shell_comparison(tmp_path: Path):
+    # Run the actual normalization code with ntpath's Windows semantics. The
+    # machine running pytest need not have a native Windows Python installed.
+    driver = tmp_path / "native_python.py"
+    driver.write_text(
+        'import ntpath, os, sys\nprogram = sys.argv[2]\nsys.argv = ["-c", *sys.argv[3:]]\n'
+        'sys.stdout.reconfigure(newline="\\r\\n")\n'
+        'if "os.path.realpath" in program:\n    os.path = ntpath\n    os.sep = "\\\\"\n'
+        "exec(program)\n"
+    )
+    python = tmp_path / "python3"
+    python.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(driver))} "$@"\n'
+    )
+    python.chmod(0o755)
+    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ.get("PATH", "")}
+    result = _call_codex_lib(
+        'root=$(codex_abs_path "$2" .); target=$(codex_abs_path "$2" "src/new.py"); '
+        'printf "%s\\n" "$root" "$target"; case "$target" in "$root"/*) exit 0;; *) exit 1;; esac',
+        "C:/WorkTree",
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["c:/worktree", "c:/worktree/src/new.py"]
 
 
 @pytest.mark.skipif(not _jq_available(), reason="Codex hooks need jq to parse hook JSON")
@@ -527,6 +561,36 @@ class TestCodexHooks:
             worktree,
         )
         assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize("parent_edit", [False, True])
+    def test_guard_works_with_python_but_no_python3_command(
+        self, git_worktree_pair: tuple[Path, Path], tmp_path: Path, parent_edit: bool
+    ):
+        main, worktree = git_worktree_pair
+        tools = tmp_path / "python-only-bin"
+        tools.mkdir()
+        for name in ("bash", "dirname", "git", "cat", "sed", "awk", "tr", "jq"):
+            executable = shutil.which(name)
+            if executable:
+                (tools / name).symlink_to(executable)
+        driver = tools / "native_python.py"
+        driver.write_text(
+            'import sys\nprogram = sys.argv[2]\nsys.argv = ["-c", *sys.argv[3:]]\n'
+            'sys.stdout.reconfigure(newline="\\r\\n")\nexec(program)\n'
+        )
+        python = tools / "python"
+        python.write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(driver))} "$@"\n'
+        )
+        python.chmod(0o755)
+        target = (main if parent_edit else worktree) / "new.py"
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(worktree), "tool_input": {"file_path": str(target)}},
+            worktree,
+            {"PATH": str(tools)},
+        )
+        assert result.returncode == (2 if parent_edit else 0), result.stderr
 
     @pytest.mark.parametrize("escape", [False, True])
     @pytest.mark.parametrize("nested", [False, True])
@@ -747,11 +811,16 @@ class TestCodexHooks:
             "env GH_TOKEN=example gh pr create --fill",
         ],
     )
-    def test_post_pr_hook_injects_compact_codex_review_workflow(self, command: str):
+    @pytest.mark.parametrize("response", ["", "https://github.com/example/repo/pull/123\n"])
+    def test_post_pr_hook_injects_compact_codex_review_workflow(
+        self, command: str, response: str, git_worktree_pair: tuple[Path, Path]
+    ):
+        _, worktree = git_worktree_pair
+        _stub_merged_pr(worktree, _head(worktree), state="OPEN")
         result = _run_hook(
             ".codex/hooks/post-pr-create.sh",
-            {"cwd": str(PROJECT_ROOT), "tool_input": {"command": command}},
-            PROJECT_ROOT,
+            {"cwd": str(worktree), "tool_input": {"command": command}, "tool_response": response},
+            worktree,
         )
 
         assert result.returncode == 0
@@ -764,6 +833,26 @@ class TestCodexHooks:
         assert "post-session-critique" in additional_context
         assert "Run this Codex post-create workflow now, in order" not in additional_context
         assert "1. Rebase onto latest main" not in additional_context
+
+    @pytest.mark.parametrize("metadata", [{}, {"state": "CLOSED"}, {"headRefOid": "0" * 40}])
+    def test_post_pr_hook_requires_a_verified_open_pr(
+        self, git_worktree_pair: tuple[Path, Path], metadata
+    ):
+        _, worktree = git_worktree_pair
+        path = _stub_merged_pr(worktree, _head(worktree), state="OPEN")
+        data = json.loads(path.read_text()) | metadata if metadata else {}
+        path.write_text(json.dumps(data))
+        result = _run_hook(
+            ".codex/hooks/post-pr-create.sh",
+            {
+                "cwd": str(worktree),
+                "tool_input": {"command": "gh pr create --fill"},
+                "tool_response": "Exit code: 0\n",
+            },
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == ""
 
     def test_stop_hook_emits_valid_stop_output_when_memory_sync_is_noop(self, tmp_path: Path):
         result = _run_hook(

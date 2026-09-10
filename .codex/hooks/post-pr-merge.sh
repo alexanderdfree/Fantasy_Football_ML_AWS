@@ -21,7 +21,7 @@ case "$cmd" in *gh*) ;; *) exit 0 ;; esac
 if ! codex_command_invokes_gh_pr_merge "$cmd"; then
   exit 0
 fi
-codex_hook_succeeded "$input" || exit 0
+codex_hook_can_verify_pr "$input" || exit 0
 
 root="$(codex_project_root "$input" "$jq_bin")"
 merged_commit="$(codex_merged_pr_commit "$root" "$jq_bin")" || exit 0

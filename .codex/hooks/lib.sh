@@ -11,6 +11,19 @@ _codex_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/agent-hooks-lib.sh
 . "$_codex_lib_dir/../../scripts/agent-hooks-lib.sh"
 
+codex_find_python() {
+  local candidate
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+      && "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+codex_python_bin="$(codex_find_python || true)"
+
 # Re-export the shared core under the codex_* prefix. codex_hook_command is the
 # Codex name for the shared tool_command extractor.
 codex_find_jq() { agent_hooks_find_jq "$@"; }
@@ -18,10 +31,25 @@ codex_main_worktree() { agent_hooks_main_worktree "$@"; }
 # Resolve symlinks and dot segments before comparing paths. Missing leaf files
 # are valid for Add File. The caller supplies the event cwd for relative paths.
 codex_abs_path() {
-  python3 -c 'import os, sys
-print(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])))' "$1" "$2"
+  [ -n "$codex_python_bin" ] || return 1
+  "$codex_python_bin" -c 'import os, sys
+sys.stdout.reconfigure(newline="\n")
+path = os.path.normcase(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])))
+print(path.replace(os.sep, "/"))' "$1" "$2"
 }
-codex_hook_command() { agent_hooks_tool_command "$@"; }
+codex_hook_command() {
+  if [ -n "$2" ]; then
+    agent_hooks_tool_command "$@"
+  elif [ -n "$codex_python_bin" ]; then
+    printf '%s' "$1" | "$codex_python_bin" -c 'import json, sys
+sys.stdout.reconfigure(newline="\n")
+try:
+    value = json.load(sys.stdin).get("tool_input") or {}
+    print(value.get("CommandLine") or value.get("command") or "")
+except (ValueError, TypeError, AttributeError):
+    sys.exit(0)'
+  fi
+}
 codex_is_env_assignment() { agent_hooks_is_env_assignment "$@"; }
 codex_pr_subcommand_segment_matches() { agent_hooks_pr_subcommand_segment_matches "$@"; }
 codex_pr_create_segment_matches() { agent_hooks_pr_create_segment_matches "$@"; }
@@ -38,8 +66,9 @@ codex_project_cwd() {
 
   if [ -n "$jq_bin" ]; then
     candidate=$(printf '%s' "$input" | "$jq_bin" -r '.cwd // empty' 2>/dev/null || true)
-  elif command -v python3 >/dev/null 2>&1; then
-    candidate=$(printf '%s' "$input" | python3 -c 'import json, sys
+  elif [ -n "$codex_python_bin" ]; then
+    candidate=$(printf '%s' "$input" | "$codex_python_bin" -c 'import json, sys
+sys.stdout.reconfigure(newline="\n")
 try:
     print(json.load(sys.stdin).get("cwd") or "")
 except Exception:
@@ -57,35 +86,36 @@ codex_project_root() {
   git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$candidate"
 }
 
-# Bash PostToolUse also fires on failure. Accept completed successful structured
-# outputs and the CLI's text envelope; unknown/pending outputs cannot authorize
-# follow-up writes. Inspect only the envelope, never the command stdout.
-codex_hook_succeeded() {
-  printf '%s' "$1" | python3 -c 'import json, re, sys
+# Codex 0.153.4 unified exec sends raw stdout here, without an exit status.
+# A string (including empty stdout) therefore requires a separate PR-state
+# lookup. Reject explicit structured failures/pending responses when provided;
+# never interpret exit-code-looking text printed by the command as status.
+codex_hook_can_verify_pr() {
+  [ -n "$codex_python_bin" ] || return 1
+  printf '%s' "$1" | "$codex_python_bin" -c 'import json, sys
 try:
     response = json.load(sys.stdin).get("tool_response")
-    if isinstance(response, str):
-        try:
-            response = json.loads(response)
-        except ValueError:
-            envelope = re.split(r"(?m)^Output:\s*$", response, maxsplit=1)[0]
-            match = re.search(r"(?m)^(?:Process exited with code|Exit code:) ([0-9]+)\s*$", envelope)
-            response = {"exit_code": int(match.group(1))} if match else None
     code = response.get("exit_code", response.get("exitCode")) if isinstance(response, dict) else None
-    sys.exit(0 if type(code) is int and code == 0 else 1)
+    sys.exit(0 if isinstance(response, str) or (type(code) is int and code == 0) else 1)
 except (ValueError, TypeError, AttributeError):
     sys.exit(1)'
+}
+
+codex_current_pr() {
+  local root="$1" jq_bin="$2" branch head metadata
+  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" || return 1
+  head="$(git -C "$root" rev-parse HEAD)" || return 1
+  metadata="$(cd "$root" && gh pr view "$branch" --json state,baseRefName,headRefOid,mergeCommit 2>/dev/null)" || return 1
+  printf '%s' "$metadata" | "$jq_bin" -e --arg head "$head" 'select(.headRefOid == $head)'
 }
 
 # A successful `gh pr merge --auto` can merely queue a merge. Verify that this
 # worktree's exact HEAD actually merged into main before doing parent upkeep.
 codex_merged_pr_commit() {
-  local root="$1" jq_bin="$2" branch head metadata
-  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" || return 1
-  head="$(git -C "$root" rev-parse HEAD)" || return 1
-  metadata="$(cd "$root" && gh pr view "$branch" --json state,baseRefName,headRefOid,mergeCommit 2>/dev/null)" || return 1
-  printf '%s' "$metadata" | "$jq_bin" -er --arg head "$head" '
-    select(.state == "MERGED" and .baseRefName == "main" and .headRefOid == $head)
+  local metadata jq_bin="$2"
+  metadata="$(codex_current_pr "$1" "$jq_bin")" || return 1
+  printf '%s' "$metadata" | "$jq_bin" -er '
+    select(.state == "MERGED" and .baseRefName == "main")
     | .mergeCommit.oid | strings | select(test("^[0-9a-f]{40}$"))'
 }
 
@@ -232,8 +262,9 @@ codex_tool_paths() {
   local direct=""
   if [ -n "$jq_bin" ]; then
     direct=$(printf '%s' "$input" | "$jq_bin" -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
-  elif command -v python3 >/dev/null 2>&1; then
-    direct=$(printf '%s' "$input" | python3 -c 'import json, sys
+  elif [ -n "$codex_python_bin" ]; then
+    direct=$(printf '%s' "$input" | "$codex_python_bin" -c 'import json, sys
+sys.stdout.reconfigure(newline="\n")
 try:
     ti = json.load(sys.stdin).get("tool_input") or {}
 except Exception:

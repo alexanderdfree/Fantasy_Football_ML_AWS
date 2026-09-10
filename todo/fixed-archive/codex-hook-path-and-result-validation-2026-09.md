@@ -14,10 +14,13 @@ ran after failed commands: Codex emits `PostToolUse` for nonzero Bash exits too.
 
 **Fix:** Resolve filesystem destinations, including nonexistent new-file leaves,
 and use the event cwd ahead of inherited project hints. Restrict formatting to
-resolved paths inside the active worktree. Require a completed successful tool
-response before reporting PR creation or refreshing the parent after a merge;
-missing, pending, and failed responses skip those follow-ups. Path validation
-requires Python 3 and blocks edits if that dependency is unavailable.
+resolved paths inside the active worktree, with shell-compatible Windows path
+separators, LF-only helper output, and Python 3 discovery under either `python3` or `python`. Missing,
+pending, and explicitly failed structured responses skip PR follow-ups.
+Codex 0.153.4 unified exec sends only stdout to hooks, so raw stdout is never
+treated as an exit status: verify an open PR for the worktree's HEAD before
+emitting the post-create workflow. Path validation blocks edits if Python 3
+is unavailable.
 The merge follow-up also verifies that GitHub reports the worktree's exact HEAD
 merged into main: enabling auto-merge is insufficient. Dataset promotion checks
 the verified squash commit and skips when main has advanced beyond it.
