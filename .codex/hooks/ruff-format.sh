@@ -8,7 +8,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 jq_bin="$(codex_find_jq)" || exit 0
 input="$(cat)"
+cwd="$(codex_project_cwd "$input" "$jq_bin")"
 root="$(codex_project_root "$input" "$jq_bin")"
+root="$(codex_abs_path "$root" .)" || exit 0
 
 # Resolve ruff from a venv, then PATH. Probe the local .venv AND the MAIN
 # worktree's .venv (worktrees don't symlink .venv), each in the Unix bin/ and the
@@ -35,7 +37,7 @@ while IFS= read -r path; do
     *.py) ;;
     *) continue ;;
   esac
-  abs="$(codex_abs_path "$root" "$path")"
+  abs="$(codex_abs_path "$cwd" "$path")" || continue
   case "$abs" in
     "$root"/*) ;;
     *) continue ;;

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -65,6 +67,9 @@ def _run_hook(
     cwd: Path,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if script in (".codex/hooks/post-pr-create.sh", ".codex/hooks/post-pr-merge.sh"):
+        # Codex 0.153.4 ExecCommandToolOutput sends raw stdout, without status.
+        payload = {"tool_response": "", **payload}
     env = os.environ.copy()
     for key in (
         "CODEX_PROJECT_DIR",
@@ -74,6 +79,8 @@ def _run_hook(
         "GIT_WORK_TREE",
     ):
         env.pop(key, None)
+    if (cwd / ".test-gh/gh").exists():
+        env["PATH"] = str(cwd / ".test-gh") + os.pathsep + env.get("PATH", "")
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -194,7 +201,28 @@ def merge_scenario_codex(launcher_repo: tuple[Path, Path], tmp_path: Path) -> tu
     subprocess.run(
         ["git", "-C", str(other), "push", "origin", "main"], check=True, capture_output=True
     )
+    _stub_merged_pr(worktree, _head(other))
     return main, worktree
+
+
+def _stub_merged_pr(worktree: Path, merge_commit: str, *, state: str = "MERGED") -> Path:
+    tools_dir = worktree / ".test-gh"
+    tools_dir.mkdir()
+    gh = tools_dir / "gh"
+    gh.write_text('#!/bin/sh\ncat "$(dirname "$0")/pr.json"\n')
+    gh.chmod(0o755)
+    metadata = tools_dir / "pr.json"
+    metadata.write_text(
+        json.dumps(
+            {
+                "state": state,
+                "baseRefName": "main",
+                "headRefOid": _head(worktree),
+                "mergeCommit": {"oid": merge_commit},
+            }
+        )
+    )
+    return metadata
 
 
 def _matcher_result(command: str, fn: str = "codex_command_invokes_gh_pr_create") -> bool:
@@ -333,7 +361,7 @@ def test_codex_json_context_uses_resolved_jq_path(tmp_path: Path):
     }
 
 
-def _call_codex_lib(func_call: str, *args: str) -> subprocess.CompletedProcess[str]:
+def _call_codex_lib(func_call: str, *args: str, env=None) -> subprocess.CompletedProcess[str]:
     """Source .codex/hooks/lib.sh and run one function call, passing args as bash
     positionals ($1=lib path, $2.. = args) so payloads are never re-quoted."""
     lib = PROJECT_ROOT / ".codex/hooks/lib.sh"
@@ -341,6 +369,7 @@ def _call_codex_lib(func_call: str, *args: str) -> subprocess.CompletedProcess[s
         [_bash(), "-c", f'source "$1"; {func_call}', "_", str(lib), *args],
         text=True,
         capture_output=True,
+        env=env,
         check=False,
     )
 
@@ -376,6 +405,55 @@ def test_codex_hook_command_python3_fallback_without_jq():
     result = _call_codex_lib('codex_hook_command "$2" ""', payload)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "gh pr create --fill"
+
+
+@pytest.mark.parametrize(
+    ("response", "success"),
+    [
+        ({"exit_code": 0}, True),
+        ({"exit_code": 1}, False),
+        ({"exit_code": None, "session_id": 42}, False),
+        ({"exit_code": False}, False),
+        (None, False),
+        ('{"exit_code": 0}', True),
+        ("Wall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n", True),
+        ("Wall time: 0.1 seconds\nProcess exited with code 1\nOutput:\nExit code: 0", True),
+        ("Output:\nProcess exited with code 0", True),
+        ("https://github.com/example/repo/pull/123\n", True),
+        ("", True),
+    ],
+)
+def test_codex_hook_allows_state_lookup_for_raw_stdout(response, success: bool):
+    result = _call_codex_lib(
+        'codex_hook_can_verify_pr "$2"', json.dumps({"tool_response": response})
+    )
+    assert (result.returncode == 0) is success
+
+
+def test_codex_normalizes_native_windows_paths_for_shell_comparison(tmp_path: Path):
+    # Run the actual normalization code with ntpath's Windows semantics. The
+    # machine running pytest need not have a native Windows Python installed.
+    driver = tmp_path / "native_python.py"
+    driver.write_text(
+        'import ntpath, os, sys\nprogram = sys.argv[2]\nsys.argv = ["-c", *sys.argv[3:]]\n'
+        'sys.stdout.reconfigure(newline="\\r\\n")\n'
+        'if "os.path.realpath" in program:\n    os.path = ntpath\n    os.sep = "\\\\"\n'
+        "exec(program)\n"
+    )
+    python = tmp_path / "python3"
+    python.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(driver))} "$@"\n'
+    )
+    python.chmod(0o755)
+    env = {**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ.get("PATH", "")}
+    result = _call_codex_lib(
+        'root=$(codex_abs_path "$2" .); target=$(codex_abs_path "$2" "src/new.py"); '
+        'printf "%s\\n" "$root" "$target"; case "$target" in "$root"/*) exit 0;; *) exit 1;; esac',
+        "C:/WorkTree",
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["c:/worktree", "c:/worktree/src/new.py"]
 
 
 @pytest.mark.skipif(not _jq_available(), reason="Codex hooks need jq to parse hook JSON")
@@ -423,6 +501,125 @@ class TestCodexHooks:
 
         assert result.returncode == 0
         assert result.stderr == ""
+
+    @pytest.mark.parametrize(
+        "path_kind", ["relative", "absolute_dotdot", "symlink", "alias", "nested"]
+    )
+    @pytest.mark.parametrize("tool", ["file_path", "apply_patch_move"])
+    def test_guard_blocks_resolved_parent_paths(
+        self, git_worktree_pair: tuple[Path, Path], path_kind: str, tool: str
+    ):
+        main, worktree = git_worktree_pair
+        cwd = worktree
+        if path_kind == "relative":
+            target = "../main/new.py"
+        elif path_kind == "absolute_dotdot":
+            target = str(worktree / "../main/new.py")
+        elif path_kind == "symlink":
+            (worktree / "linked").symlink_to(main, target_is_directory=True)
+            target = "linked/new.py"
+        elif path_kind == "alias":
+            alias = worktree.parent / "parent-alias"
+            alias.symlink_to(main, target_is_directory=True)
+            target = str(alias / "new.py")
+        else:
+            cwd = worktree / "subdir"
+            cwd.mkdir()
+            target = "../../main/new.py"
+        tool_input = {"file_path": target}
+        if tool == "apply_patch_move":
+            tool_input = {
+                "command": f"*** Begin Patch\n*** Update File: old.py\n*** Move to: {target}\n*** End Patch\n"
+            }
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(cwd), "tool_input": tool_input},
+            cwd,
+        )
+        assert result.returncode == 2, result.stderr
+        assert "main checkout" in result.stderr
+
+    def test_guard_uses_event_cwd_over_inherited_parent_environment(
+        self, git_worktree_pair: tuple[Path, Path]
+    ):
+        main, worktree = git_worktree_pair
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(worktree), "tool_input": {"file_path": str(main / "new.py")}},
+            worktree,
+            {"CLAUDE_PROJECT_DIR": str(main)},
+        )
+        assert result.returncode == 2
+
+    def test_guard_allows_alias_into_own_worktree(self, git_worktree_pair: tuple[Path, Path]):
+        _, worktree = git_worktree_pair
+        alias = worktree.parent / "worktree-alias"
+        alias.symlink_to(worktree, target_is_directory=True)
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(alias), "tool_input": {"file_path": str(alias / "new.py")}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize("parent_edit", [False, True])
+    def test_guard_works_with_python_but_no_python3_command(
+        self, git_worktree_pair: tuple[Path, Path], tmp_path: Path, parent_edit: bool
+    ):
+        main, worktree = git_worktree_pair
+        tools = tmp_path / "python-only-bin"
+        tools.mkdir()
+        for name in ("bash", "dirname", "git", "cat", "sed", "awk", "tr", "jq"):
+            executable = shutil.which(name)
+            if executable:
+                (tools / name).symlink_to(executable)
+        driver = tools / "native_python.py"
+        driver.write_text(
+            'import sys\nprogram = sys.argv[2]\nsys.argv = ["-c", *sys.argv[3:]]\n'
+            'sys.stdout.reconfigure(newline="\\r\\n")\nexec(program)\n'
+        )
+        python = tools / "python"
+        python.write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(driver))} "$@"\n'
+        )
+        python.chmod(0o755)
+        target = (main if parent_edit else worktree) / "new.py"
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(worktree), "tool_input": {"file_path": str(target)}},
+            worktree,
+            {"PATH": str(tools)},
+        )
+        assert result.returncode == (2 if parent_edit else 0), result.stderr
+
+    @pytest.mark.parametrize("escape", [False, True])
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_formatter_resolves_relative_paths_from_event_cwd(
+        self, git_worktree_pair: tuple[Path, Path], escape: bool, nested: bool
+    ):
+        main, worktree = git_worktree_pair
+        cwd = worktree / "subdir" if nested else worktree
+        cwd.mkdir(exist_ok=True)
+        (cwd / "local.py").write_text("x=1\n")
+        (main / "parent.py").write_text("x=1\n")
+        (cwd / "linked").symlink_to(main, target_is_directory=True)
+        ruff = worktree / ".venv/bin/ruff"
+        ruff.parent.mkdir(parents=True)
+        calls = worktree / "ruff-calls"
+        ruff.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$RUFF_CALLS"\n')
+        ruff.chmod(0o755)
+        path = "linked/parent.py" if escape else "local.py"
+        result = _run_hook(
+            ".codex/hooks/ruff-format.sh",
+            {"cwd": str(cwd), "tool_input": {"file_path": path}},
+            cwd,
+            {"RUFF_CALLS": str(calls)},
+        )
+        assert result.returncode == 0, result.stderr
+        if escape:
+            assert not calls.exists()
+        else:
+            assert str((cwd / "local.py").resolve()) in calls.read_text().splitlines()
 
     def test_session_start_emits_codex_context(self, git_worktree_pair: tuple[Path, Path]):
         _, worktree = git_worktree_pair
@@ -614,11 +811,16 @@ class TestCodexHooks:
             "env GH_TOKEN=example gh pr create --fill",
         ],
     )
-    def test_post_pr_hook_injects_compact_codex_review_workflow(self, command: str):
+    @pytest.mark.parametrize("response", ["", "https://github.com/example/repo/pull/123\n"])
+    def test_post_pr_hook_injects_compact_codex_review_workflow(
+        self, command: str, response: str, git_worktree_pair: tuple[Path, Path]
+    ):
+        _, worktree = git_worktree_pair
+        _stub_merged_pr(worktree, _head(worktree), state="OPEN")
         result = _run_hook(
             ".codex/hooks/post-pr-create.sh",
-            {"cwd": str(PROJECT_ROOT), "tool_input": {"command": command}},
-            PROJECT_ROOT,
+            {"cwd": str(worktree), "tool_input": {"command": command}, "tool_response": response},
+            worktree,
         )
 
         assert result.returncode == 0
@@ -631,6 +833,26 @@ class TestCodexHooks:
         assert "post-session-critique" in additional_context
         assert "Run this Codex post-create workflow now, in order" not in additional_context
         assert "1. Rebase onto latest main" not in additional_context
+
+    @pytest.mark.parametrize("metadata", [{}, {"state": "CLOSED"}, {"headRefOid": "0" * 40}])
+    def test_post_pr_hook_requires_a_verified_open_pr(
+        self, git_worktree_pair: tuple[Path, Path], metadata
+    ):
+        _, worktree = git_worktree_pair
+        path = _stub_merged_pr(worktree, _head(worktree), state="OPEN")
+        data = json.loads(path.read_text()) | metadata if metadata else {}
+        path.write_text(json.dumps(data))
+        result = _run_hook(
+            ".codex/hooks/post-pr-create.sh",
+            {
+                "cwd": str(worktree),
+                "tool_input": {"command": "gh pr create --fill"},
+                "tool_response": "Exit code: 0\n",
+            },
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == ""
 
     def test_stop_hook_emits_valid_stop_output_when_memory_sync_is_noop(self, tmp_path: Path):
         result = _run_hook(
@@ -707,6 +929,57 @@ class TestCodexHooks:
                 capture_output=True,
             ).stdout.strip()
         )
+
+    @pytest.mark.parametrize("response", [{"exit_code": 1}, None, {"session_id": 42}])
+    def test_post_pr_merge_does_not_mutate_parent_after_failed_or_unknown_command(
+        self, merge_scenario_codex: tuple[Path, Path], response
+    ):
+        main, worktree = merge_scenario_codex
+        before = _head(main)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {
+                "cwd": str(worktree),
+                "tool_input": {"command": "gh pr merge 1 --squash"},
+                "tool_response": response,
+            },
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert _head(main) == before
+        assert result.stdout == ""
+
+    def test_post_pr_create_does_not_report_failed_creation(self):
+        result = _run_hook(
+            ".codex/hooks/post-pr-create.sh",
+            {
+                "cwd": str(PROJECT_ROOT),
+                "tool_input": {"command": "gh pr create --fill"},
+                "tool_response": {"exit_code": 1},
+            },
+            PROJECT_ROOT,
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+    @pytest.mark.parametrize(
+        "change", [{"state": "OPEN"}, {"headRefOid": "0" * 40}, {"baseRefName": "other"}]
+    )
+    def test_post_pr_merge_requires_this_head_merged_into_main(
+        self, merge_scenario_codex: tuple[Path, Path], change
+    ):
+        main, worktree = merge_scenario_codex
+        metadata = worktree / ".test-gh/pr.json"
+        metadata.write_text(json.dumps(json.loads(metadata.read_text()) | change))
+        before = _head(main)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash --auto"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert _head(main) == before
+        assert result.stdout == ""
 
     def test_post_pr_merge_skips_dirty_parent(self, merge_scenario_codex: tuple[Path, Path]):
         main, worktree = merge_scenario_codex
@@ -796,6 +1069,7 @@ def _setup_promote_repo(tmp_path: Path, *, splits_affecting: bool) -> tuple[Path
     _git(main, "worktree", "add", "-b", "feature", str(worktree), "main")
     _write_splits(main / "data" / "splits", "STALE")
     _write_splits(worktree / "data" / "splits", "FRESH")
+    _stub_merged_pr(worktree, _head(main))
     return main, worktree
 
 
@@ -842,6 +1116,33 @@ class TestCodexPromoteSplits:
         assert result.returncode == 0
         assert self._parent_splits(main) == {"STALE"}
         assert "splits promote: copied" not in result.stdout
+
+    def test_does_not_promote_splits_for_a_different_main_tip(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=True)
+        (main / "src/features/foo.py").write_text("x = 3\n")
+        _git(main, "add", "src/features/foo.py")
+        _git(main, "commit", "-m", "another PR")
+        _git(main, "push", "origin", "main")
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert self._parent_splits(main) == {"STALE"}
+        assert "verified merge" in result.stderr
+
+    def test_does_not_promote_splits_when_main_cannot_be_refreshed(self, tmp_path: Path):
+        main, worktree = _setup_promote_repo(tmp_path, splits_affecting=True)
+        _git(main, "remote", "set-url", "origin", str(tmp_path / "missing-remote.git"))
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {"cwd": str(worktree), "tool_input": {"command": "gh pr merge 1 --squash"}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert self._parent_splits(main) == {"STALE"}
+        assert "could not refresh main" in result.stderr
 
 
 class TestMainWorktreePipefailSafe:

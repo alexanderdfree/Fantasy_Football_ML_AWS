@@ -21,12 +21,14 @@ case "$cmd" in *gh*) ;; *) exit 0 ;; esac
 if ! codex_command_invokes_gh_pr_merge "$cmd"; then
   exit 0
 fi
+codex_hook_can_verify_pr "$input" || exit 0
 
 root="$(codex_project_root "$input" "$jq_bin")"
+merged_commit="$(codex_merged_pr_commit "$root" "$jq_bin")" || exit 0
 # (1) fast-forward the parent's main; (2) promote the worktree's locally-built
 # data/splits to the parent if this merge changed splits-affecting code.
 main_status="$(codex_refresh_parent_main "$root")"
-splits_status="$(codex_promote_worktree_splits "$root")"
+splits_status="$(codex_promote_worktree_splits "$root" "$merged_commit")"
 status="$(printf '%s\n%s\n' "$main_status" "$splits_status" | sed '/^[[:space:]]*$/d')"
 [ -n "$status" ] || exit 0
 

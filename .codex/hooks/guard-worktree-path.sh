@@ -7,27 +7,27 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=.codex/hooks/lib.sh
 . "$script_dir/lib.sh"
 
-# Resolve jq, but do NOT exit when it is absent: this guard is the deterministic
-# backstop for the parent-checkout-write footgun (parity with
-# .claude/hooks/guard-worktree-path.sh). The codex_* extractors fall back to
-# python3's JSON parser when jq_bin is empty, so the guard stays ARMED. It only
-# truly disarms — with a WARNING, never silently — if neither jq nor python3 exists.
+# Python resolves filesystem aliases as well as parsing JSON without jq. Do not
+# approve an edit if its destination cannot be checked.
 jq_bin="$(codex_find_jq || true)"
 input="$(cat)"
-if [ -z "$jq_bin" ] && ! command -v python3 >/dev/null 2>&1; then
-  echo "guard-worktree-path: neither jq nor python3 found; cannot validate paths (guard disarmed for this edit)" >&2
-  exit 0
+if [ -z "$codex_python_bin" ]; then
+  echo "guard-worktree-path: a Python 3 interpreter is required to validate resolved edit paths" >&2
+  exit 2
 fi
+cwd="$(codex_project_cwd "$input" "$jq_bin")"
 root="$(codex_project_root "$input" "$jq_bin")"
 main_worktree="$(codex_main_worktree "$root")"
 
 [ -n "$main_worktree" ] || exit 0
+root="$(codex_abs_path "$root" .)" || exit 2
+main_worktree="$(codex_abs_path "$main_worktree" .)" || exit 2
 [ "$root" != "$main_worktree" ] || exit 0
 
 blocked=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
-  abs="$(codex_abs_path "$root" "$path")"
+  abs="$(codex_abs_path "$cwd" "$path")" || exit 2
   case "$abs" in
     "$root"/*) ;;
     "$main_worktree"/*)
