@@ -31,11 +31,12 @@ from src.batch.launch import (
     ALL_POSITIONS,
     AWS_REGION,
     S3_BUCKET,
-    TRAIN_GIT_SHA,
     WAIT_TIMEOUT_SECONDS,
     pin_data_release,
+    resolve_launch_binding,
     submit_job,
     upload_data,
+    validate_local_publish,
     validate_submission_source,
     wait_for_jobs,
 )
@@ -397,35 +398,41 @@ def main():
     )
     args = parser.parse_args()
 
-    if not args.download_only:
-        try:
-            validate_submission_source(args.positions)
-        except RuntimeError as exc:
-            parser.error(str(exc))
-
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
     os.chdir(project_root)
 
     if not args.download_only:
+        binding = resolve_launch_binding(None, None, args.positions)
+        try:
+            validate_submission_source(args.positions, binding=binding)
+        except RuntimeError as exc:
+            parser.error(str(exc))
+        if args.git_hash and not binding["image_sha"].startswith(args.git_hash):
+            parser.error("--git-hash must match the selected training image source SHA")
+        args.git_hash = binding["image_sha"]
+        validate_local_publish(binding["image_sha"])
+
         from src.shared.artifact_publication import register_source
 
         register_source(
             boto3.client("s3", region_name=AWS_REGION),
             S3_BUCKET,
             _model_s3_prefix(),
-            TRAIN_GIT_SHA or "",
+            binding["image_sha"],
         )
-        # Upload data
-        print("Uploading data splits to S3...")
+        print("Publishing data for the selected remote image...")
         upload_data(S3_BUCKET)
-        pin_data_release()
+        pin_data_release(source_ref=binding["image_sha"])
 
         # Submit all jobs in parallel (mirrors src/batch/launch.py:main)
         total_t0 = time.time()
         print(f"Submitting {len(args.positions)} benchmark jobs: {args.positions}")
         job_ids = {}
         with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
-            futures = {pool.submit(submit_job, pos, args.seed): pos for pos in args.positions}
+            futures = {
+                pool.submit(submit_job, pos, args.seed, binding=binding): pos
+                for pos in args.positions
+            }
             for future in as_completed(futures):
                 pos = futures[future]
                 try:

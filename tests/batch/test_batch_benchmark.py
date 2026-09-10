@@ -23,6 +23,14 @@ import pytest
 @pytest.fixture(autouse=True)
 def _legacy_data_for_benchmark_stubs(monkeypatch):
     monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+    from src.batch import benchmark
+
+    monkeypatch.setattr(
+        benchmark,
+        "resolve_launch_binding",
+        lambda *a, **k: {"image_sha": "a" * 40, "gpu_definition": "gpu:1", "cpu_definition": ""},
+    )
+    monkeypatch.setattr(benchmark, "validate_local_publish", lambda *a: None)
 
 
 # --------------------------------------------------------------------------
@@ -279,7 +287,7 @@ def _main_stubs(tmp_path, monkeypatch):
         lambda *_args: launched.append({"source_registration": True}),
     )
 
-    def _submit_job(pos, seed):
+    def _submit_job(pos, seed, **kwargs):
         launched.append({"pos": pos, "seed": seed})
         return pos, f"job-{pos}"
 
@@ -412,7 +420,7 @@ def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
-    monkeypatch.setattr(bb, "submit_job", lambda pos, seed: (pos, "id"))
+    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kwargs: (pos, "id"))
     monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
     monkeypatch.setattr(bb, "wait_for_jobs", lambda job_ids: {p: ("SUCCEEDED", 0) for p in job_ids})
 
@@ -436,7 +444,7 @@ def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
-    monkeypatch.setattr(bb, "submit_job", lambda pos, seed: (pos, f"j-{pos}"))
+    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kwargs: (pos, f"j-{pos}"))
 
     def _wait(job_ids):
         out = {p: ("SUCCEEDED", 0) for p in job_ids}
@@ -462,7 +470,7 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
 
-    def _bad_submit(pos, seed):
+    def _bad_submit(pos, seed, **kwargs):
         raise RuntimeError(f"{pos} submit boom")
 
     waited_for: list[dict] = []

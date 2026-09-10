@@ -25,6 +25,18 @@ def _legacy_data_for_launcher_stubs(monkeypatch):
     # These orchestration-only fakes do not provide S3 manifests. Real release
     # pinning and split-job propagation are covered by test_data_release.py.
     monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+    from src.batch import launch
+
+    monkeypatch.setattr(
+        launch,
+        "resolve_launch_binding",
+        lambda *a, **k: {
+            "image_sha": "a" * 40,
+            "gpu_definition": "gpu:1",
+            "cpu_definition": "cpu:1",
+        },
+    )
+    monkeypatch.setattr(launch, "validate_local_publish", lambda *a: None)
 
 
 @pytest.mark.unit
@@ -107,7 +119,7 @@ def _main_happy_stubs(monkeypatch):
     def _upload(bucket, s3_client=None, force=False):
         calls.append({"upload": bucket, "force": force})
 
-    def _submit(pos, seed, batch_client=None):
+    def _submit(pos, seed, batch_client=None, **kwargs):
         calls.append({"submit": pos, "seed": seed})
         return pos, f"job-{pos}"
 
@@ -188,7 +200,7 @@ def test_main_failed_jobs_branch(monkeypatch, capsys):
     calls: list[dict] = []
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
     monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
-    monkeypatch.setattr(lm, "submit_job", lambda p, s, c: (p, f"j-{p}"))
+    monkeypatch.setattr(lm, "submit_job", lambda p, s, c, **kwargs: (p, f"j-{p}"))
 
     def _wait(job_ids, timeout_seconds=None, batch_client=None):
         out = {p: ("SUCCEEDED", 0) for p in job_ids}
@@ -229,7 +241,7 @@ def test_main_submit_exception_is_logged(monkeypatch, capsys):
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
     monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
 
-    def _bad_submit(pos, seed, batch_client=None):
+    def _bad_submit(pos, seed, batch_client=None, **kwargs):
         if pos == "QB":
             raise RuntimeError("transient aws fault")
         return pos, f"j-{pos}"
@@ -273,7 +285,7 @@ def test_main_wait_timeout_override(monkeypatch, capsys):
 
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
     monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
-    monkeypatch.setattr(lm, "submit_job", lambda p, s, c: (p, f"j-{p}"))
+    monkeypatch.setattr(lm, "submit_job", lambda p, s, c, **kwargs: (p, f"j-{p}"))
     monkeypatch.setattr(lm, "download_artifacts", lambda *a, **k: None)
 
     captured_timeouts: list[int | None] = []

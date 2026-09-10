@@ -70,6 +70,7 @@ from src.batch.launch import (  # noqa: E402
     pin_data_release,
     wait_for_jobs,
 )
+from src.scripts.resolve_training_image import resolve_definition  # noqa: E402
 from src.tuning.ablate_batch import (  # noqa: E402
     DEFAULT_S3_PREFIX,
     ENV_MOD,
@@ -418,7 +419,11 @@ def main() -> None:
             )
 
     job_definition = resolve_job_definition(image_sha, batch)
-    pin_data_release(s3)
+    binding = resolve_definition(batch, job_definition)
+    if binding["image_sha"] != image_sha:
+        raise RuntimeError("Resolved ablation job image differs from the requested source SHA")
+    job_definition = binding["job_definition"]
+    pin_data_release(s3, source_ref=binding["image_sha"])
 
     print(f"Submitting {len(positions)} eager-ablation jobs (run_id={run_id}): {positions}")
     job_ids: dict[str, str] = {}
