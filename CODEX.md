@@ -6,6 +6,8 @@ Everything imported from `AGENTS.md` is the shared project brain. This file docu
 
 ## Hooks
 
+The project config uses Codex's discovered model catalog. If a workstation needs a custom `model_catalog_json`, configure it in that workstation's user config, not `.codex/config.toml`: a missing catalog file prevents configuration loading and session startup before hooks run.
+
 Codex loads project hooks from `.codex/hooks.json` when the project is trusted. Review and trust them with `/hooks` after a hook file changes.
 
 - `.codex/hooks/session-start.sh` adds project-specific startup context, warns when the session did not start from a clean Codex worktree, and runs a best-effort Codex memory pull from S3 via `scripts/agent-memory-sync.sh codex pull`. It cannot persist shell exports the way Claude's remote `SessionStart` hook writes `CLAUDE_ENV_FILE`, and it cannot move an already-running Codex session into a new worktree, so environment bootstrap remains a SETUP.md/manual step and fresh-worktree startup belongs in `scripts/codex-fresh-worktree.sh`.
