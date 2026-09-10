@@ -10,7 +10,7 @@ season-suffixed cache convention in :mod:`src.data.loader` and
 All raw fetches go through :mod:`src.data.nfl_source` (the nflreadpy→pandas
 boundary): ``nfl_source.ff_opportunity`` / ``nfl_source.contracts`` /
 ``nfl_source.player_ids`` wrap nflreadpy loaders, and ``nfl_source.qbr_weekly``
-reads the espnscrapeR-data CSV (nflreadpy has no QBR loader).
+reads the maintained nflverse ESPN release (nflreadpy has no QBR loader).
 
 Three sources, three shapes:
 
@@ -242,7 +242,8 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     caches the bridged result. Returns ``[player_id, season, week]`` +
     ``QBR_FEATURE_COLUMNS`` (empty if the source is unavailable).
     """
-    path = f"{cache_dir}/qbr_weekly_{_seasons_cache_signature(seasons)}.parquet"
+    # v2 invalidates the old source's schema-valid but 2023-capped cache.
+    path = f"{cache_dir}/qbr_weekly_v2_{_seasons_cache_signature(seasons)}.parquet"
     keep = ["player_id", "season", "week", *QBR_FEATURE_COLUMNS]
     # Gate on the full merge-ready schema (keys + features), not just the feature
     # tuple, so a cache missing/renaming a (player_id, season, week) merge key

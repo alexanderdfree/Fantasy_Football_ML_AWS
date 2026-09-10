@@ -48,6 +48,33 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **Lesson:** A year/week API selector is insufficient: check stat-source discriminators, full-season response filtering, player coverage and scoring. A missing rushing field does not invalidate a receiving-only RB forecast. Historical availability is not proof that values were frozen at kickoff.
 - **Review follow-up:** Track ESPN load/scoring completeness on the results frame and refuse to persist/upload incomplete results. Otherwise a transient outage becomes an all-null cache reused indefinitely under the unchanged model fingerprint. A later cold boot now retries; complete existing disk snapshots remain untouched.
 
+### [FIXED] Live history omitted the current season and the held-out year's career context
+- **File(s):** `src/serving/upcoming_week.py`, `src/serving/espn_live.py`, `tests/test_live_history.py`, `tests/test_app_upcoming_week.py` (PR pending).
+- **What:** The live loader stopped at 2025, and inference supplied only train/validation plus 2026 rows. Eight returning QBs received rookie_early=1; 86 RBs omitted 2025 carries (Jeanty 0 instead of 266). Later 2026 weeks would also have empty current-season attention histories.
+- **Fix:** Load completed live-season player and team data afresh without changing evaluation seasons; retain the held-out year for inference and exclude already-fitted years. Mark synthetic rows and serialize only scheduled games, avoiding duplicate observed/synthetic rows after an early-week game finishes.
+- **Review follow-up (#1545):** Republish intervening archived seasons into the fixed schedule/team cache paths at rollover, including a season opener with no live games. Opportunity coverage requires observed player-game rows, not just an existing parquet file.
+- **Lesson:** Preserving current-season rows is insufficient for features rebuilt across years; trace the complete train/validation/inference input union. Real season-opener validation also found PFR snaps and ff_opportunity not yet published for 2026. Late snaps use an explicitly empty disposable cache (retried next build); existing missing-data encodings remain, and the artifact reports unavailable supplementary sources. Completed player/team stats remain required.
+
+### [FIXED] QBR's schema-valid source was frozen at 2023
+- **File(s):** `src/data/nfl_source.py`, `src/data/external_sources.py`, `tests/test_qbr_source_freshness.py` (PR pending).
+- **What:** The old espnscrapeR-data CSV lacked 2024–25 observations, zeroing both QBR prior features for every live QB. The maintained replacement also published 540 2025 records under a 2026 label.
+- **Fix:** Use the maintained release, validate game ID/season/week against completed schedules, and invalidate derived caches with a source-version bump. Rebuild data and rebaseline the affected pipeline.
+- **Lesson:** Check observed season/game coverage as well as file timestamps and schema; a newer file can still mislabel an entire prior season.
+
+### [FIXED] Partial practice coverage silently became full participation
+- **File(s):** `src/serving/practice_reports.py`, `src/serving/live_sources.py`, `src/serving/upcoming_week.py`, `src/serving/core.py`, `tests/test_practice_reports.py` (PR pending).
+- **What:** Four teams in the primary report suppressed the all-or-nothing fallback; Sleeper's practice field mapped no players. Known limited participants such as Flowers and Odunze consequently received full-practice values.
+- **Fix:** Read official current-week NFL tables, join by canonical team/name/position, and combine coverage per team. Official reports supersede older fallback values; unpublished/unknown reports use the fitted training mean and expose coverage metadata.
+- **Review follow-up (#1545):** An unmatched official name can be a roster alias (Andrew/Drew Ogletree). Preserve an ID-matched fallback or unknown for that unresolved team/position group; do not overwrite it with synthetic full participation.
+- **Lesson:** A nonempty feed is not league-wide coverage, and an unknown report is not a healthy player. Normalize historical team-directory aliases before matching current nicknames.
+
+### [FIXED] Live venue fields were neutralized and implied totals reversed
+- **File(s):** `src/serving/live_schedule.py`, `src/serving/espn_live.py`, `src/shared/weather_features.py`, `src/k/data.py`, `tests/test_live_schedule.py`, `tests/shared/test_weather_features.py` (issues #1519/#1529; PR pending).
+- **What:** ESPN-only schedule rows dropped venue/rest/weather fields, making all live inputs outdoor, 65F, windless, and seven days rested. Shared/K formulas assigned the favored team the underdog's implied points.
+- **Fix:** Join live lines to the current calendar, verify neutral-site surfaces/roof, and supply kickoff forecasts with source coverage. Use home=(total+spread)/2 for nflverse's positive-home-favorite spread and the inverse for away. Validate the actual downstream feature merge and rebaseline the changed model inputs.
+- **Review follow-up (#1545):** Neutral games require an authoritative venue ID plus boolean grass/indoor details; successful but incomplete source responses cannot preserve a nominal home-stadium default. Unknown retractable-roof states retain imputation and JSON-safe source disclosure. Missing ESPN lines keep non-null current-calendar odds.
+- **Lesson:** Reusing feature-building code does not establish source parity; verify event identity, source sign conventions, and the values after the last merge.
+
 ### [FIXED] Machine-specific Codex catalog path prevented session startup on macOS
 - **File(s):** [../.codex/config.toml](../.codex/config.toml), [../CODEX.md](../CODEX.md).
 - **What:** The tracked config referenced `/home/alex/.codex/my_catalog.json`, a WSL-local file absent on macOS. Desktop `config/read` failed with `failed to resolve feature override precedence: No such file or directory (os error 2)`, and `codex features list` failed to load configuration before any hook could run.

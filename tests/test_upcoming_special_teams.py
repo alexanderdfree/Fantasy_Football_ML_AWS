@@ -141,3 +141,50 @@ def test_live_roster_includes_pk_but_not_punter_or_inactive():
             "recent_team": "BUF",
         }
     ]
+
+
+def test_prepare_reuses_verified_schedule_for_both_special_positions(monkeypatch, tmp_path):
+    games = schedule()
+    verified = games.assign(temp=52.0, wind=17.0, roof="outdoors", surface="grass")
+    espn = games[games.week.eq(1)].assign(game_id="espn-id", venue=[{"id": "new"}] * 2)
+    weekly, teams = _make_weekly(), _make_team_stats()
+    weekly["season_type"] = "REG"
+    suffix = f"{special.SEASONS[0]}_{special.SEASONS[-1]}"
+    weekly.to_parquet(tmp_path / f"weekly_{suffix}.parquet")
+    games.to_parquet(tmp_path / f"schedules_{suffix}.parquet")
+    monkeypatch.setattr(special, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(special, "load_team_week_stats", lambda *args, **kwargs: teams)
+    live = special.LiveInputs(games, weekly.iloc[:0], teams.iloc[:0], pd.DataFrame())
+    monkeypatch.setattr(special, "fetch_live_inputs", lambda *args: live)
+    monkeypatch.setattr(special.k_data, "load_data", lambda: weekly.iloc[:0])
+    monkeypatch.setattr(
+        special.forecast_weather,
+        "enrich_forecasts",
+        lambda *args: pytest.fail("forecast fetched twice"),
+    )
+    seen = []
+
+    def capture(schedules):
+        seen.append(schedules)
+        return weekly.iloc[:0]
+
+    monkeypatch.setattr(special, "build_kicker_frame", lambda h, c, r, s, *a: capture(s))
+    monkeypatch.setattr(special, "build_defense_frame", lambda w, t, s, *a: capture(s))
+    roster = pd.DataFrame({"player_id": ["K1"], "position": ["K"], "recent_team": ["BUF"]})
+    statuses = [{"game_id": "g", "weather": "forecast"}]
+    result = special.prepare_special_teams(
+        2024,
+        1,
+        roster,
+        espn,
+        pd.DataFrame(columns=["season", "week"]),
+        schedule_context=verified,
+        weather_status=statuses,
+    )
+    assert len(seen) == 2
+    for frame in seen:
+        assert set(frame.week) == {1}  # no later schedule rows become synthetic games
+        assert frame.temp.eq(52).all() and frame.wind.eq(17).all()
+        assert frame.roof.eq("outdoors").all() and frame.surface.eq("grass").all()
+        assert "venue" not in frame  # nested ESPN metadata must not break input hashing
+    assert result.source_status["weather"] == statuses

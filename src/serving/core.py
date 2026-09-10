@@ -359,6 +359,17 @@ def _apply_position_models(
     games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
     pos_train = pos_train[games_per_season >= min_games].copy()
 
+    # Live reports can be unavailable for teams that have not practiced yet.
+    # Neutralize those rows using the same filtered train population as the
+    # scaler, rather than turning missing information into a full-practice flag.
+    if "_practice_status_missing" in pos_test:
+        unknown = pos_test["_practice_status_missing"].eq(True)
+        if unknown.any():
+            mean_practice = pos_train["practice_status"].mean()
+            if pd.isna(mean_practice):
+                raise ValueError("Training data has no practice status for live imputation")
+            pos_test.loc[unknown, "practice_status"] = mean_practice
+
     feature_cols = reg["get_feature_columns_fn"]()
     pos_train, pos_val, pos_test = build_position_features(
         pos_train, pos_val, pos_test, reg, feature_cols, full_train=full_train

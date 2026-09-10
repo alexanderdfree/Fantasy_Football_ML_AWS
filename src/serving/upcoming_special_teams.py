@@ -245,7 +245,14 @@ def build_defense_frame(weekly, team_stats, schedules, season, week) -> pd.DataF
 
 
 def prepare_special_teams(
-    season, week, roster, espn_schedule, historical_kicks
+    season,
+    week,
+    roster,
+    espn_schedule,
+    historical_kicks,
+    *,
+    schedule_context: pd.DataFrame | None = None,
+    weather_status=None,
 ) -> SpecialTeamsFrames:
     root = Path(CACHE_DIR)
     suffix = f"{SEASONS[0]}_{SEASONS[-1]}"
@@ -254,8 +261,15 @@ def prepare_special_teams(
     old_schedule = normalize_schedules(pd.read_parquet(root / f"schedules_{suffix}.parquet"))
     live = fetch_live_inputs(season, week, weekly, team_stats)
     refreshed_seasons = live.schedules["season"].unique()
-    upcoming = merge_live_schedule(live.schedules, espn_schedule)
-    upcoming, weather_status = forecast_weather.enrich_forecasts(upcoming)
+    if schedule_context is None:
+        upcoming = merge_live_schedule(
+            live.schedules, espn_schedule.drop(columns=["venue"], errors="ignore")
+        )
+        upcoming, weather_status = forecast_weather.enrich_forecasts(upcoming)
+    else:
+        # Reuse the same verified venue, surface, odds and kickoff forecast as
+        # the skill positions. Select only the ESPN slate from the full calendar.
+        upcoming = merge_live_schedule(schedule_context, espn_schedule[[*GAME_KEYS, "game_type"]])
     # Keep only completed history and the target slate. Later scheduled games
     # must not become zero-outcome rows in the defense builder.
     past_schedule = pd.concat(

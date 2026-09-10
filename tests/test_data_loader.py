@@ -655,7 +655,7 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
         tmp_path / f"ff_opportunity_{seasons[0]}_{seasons[-1]}.parquet"
     )
     pd.DataFrame(columns=["player_id", "season", "week", *QBR_FEATURE_COLUMNS]).to_parquet(
-        tmp_path / f"qbr_weekly_{seasons[0]}_{seasons[-1]}.parquet"
+        tmp_path / f"qbr_weekly_v2_{seasons[0]}_{seasons[-1]}.parquet"
     )
     pd.DataFrame(columns=["player_id", "season", *CONTRACT_FEATURE_COLUMNS]).to_parquet(
         tmp_path / f"contracts_{seasons[0]}_{seasons[-1]}.parquet"

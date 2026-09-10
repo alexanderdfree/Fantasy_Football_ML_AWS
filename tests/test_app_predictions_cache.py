@@ -229,7 +229,7 @@ def test_fingerprint_ignores_non_serving_raw_caches(tmp_path, monkeypatch):
         "depth_charts_2012_2025.parquet",
         "ff_opportunity_2012_2025.parquet",
         "player_ids_2012_2025.parquet",
-        "qbr_weekly_2012_2025.parquet",
+        "qbr_weekly_v2_2012_2025.parquet",
         "redzone_pbp_2012_2025.parquet",
         "weekly_2023_2023.parquet",
         "nflcom_projections_v1_2025_2025_w1-18.parquet",
