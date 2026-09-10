@@ -1,6 +1,6 @@
 ### [FIXED] macOS tests and benchmarks crashed with multiple OpenMP runtimes
 
-**File(s):** `scripts/fix_macos_openmp.py`, `tests/scripts/test_fix_macos_openmp.py`, `SETUP.md`.
+**File(s):** `scripts/fix_macos_openmp.py`, `tests/scripts/test_fix_macos_openmp.py`, `SETUP.md` ([PR #1554](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/1554), initial repair `f894c5d0`).
 
 **What:** On 2026-09-10, 41 local Python crash reports pointed to the same
 PyTorch-bundled OpenMP binary. Each process also loaded scikit-learn's bundled
@@ -17,11 +17,12 @@ changes on failure. Package reinstalls can be repaired again with new backups.
 
 **Validation:** Seven local environments each loaded one runtime after repair.
 The current pinned Python 3.12 environment passed `pytest -m unit -n 4` without
-a loader override: 3,670 passed, 2 skipped in 81.10 seconds after rebasing onto
-current main, including the
-previously crashing `test_api_rows_expose_age_and_rookie` endpoint test. Repair
+a loader override: 3,672 passed, 2 skipped in 66.70 seconds after rebasing onto
+current main and addressing review, including the previously crashing
+`test_api_rows_expose_age_and_rookie` endpoint test. Repair
 tests cover preservation of hardlinked package-cache files, rollback of multiple
-libraries, repeated application, package reinstalls, environment ownership, and
+libraries and cancellation during replacement/verification, repeated application,
+package reinstalls, environment ownership, and
 Linux/Windows no-op behavior. No new Python crash reports appeared during these
 checks. The older Python 3.12 and 3.13 environments each also passed the 57-test
 model/training subset with one GPU-only test skipped.

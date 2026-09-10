@@ -1,6 +1,6 @@
 # ADR Changelog
 
-- 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR pending) · → ADR-0017
+- 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR #1554) · → ADR-0017
 - 2026-09-10 · Delete superseded recommendations and consolidate agent rules and memory retrieval pointers · (PR #1553) · → ADR-0025
 
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017

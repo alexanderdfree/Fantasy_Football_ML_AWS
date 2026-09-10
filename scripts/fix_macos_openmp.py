@@ -83,15 +83,16 @@ def repair(library: Path) -> Path | None:
             backup = backup_dir / path.relative_to(prefix)
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, backup, follow_symlinks=False)
+            changed.append((path, backup))
             # Replace the directory entry, never edit the binary in place:
             # uv can hardlink package files to its cache or another environment.
             with tempfile.TemporaryDirectory(prefix=".openmp-", dir=path.parent) as tmp:
                 link = Path(tmp) / path.name
                 link.symlink_to(library)
                 os.replace(link, path)
-            changed.append((path, backup))
         verify_runtime(library)
-    except Exception:
+    except BaseException:
+        # A cancelled verification must restore the environment too.
         for path, backup in reversed(changed):
             with tempfile.TemporaryDirectory(prefix=".openmp-", dir=path.parent) as tmp:
                 original = Path(tmp) / path.name

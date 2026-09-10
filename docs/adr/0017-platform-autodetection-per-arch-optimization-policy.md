@@ -24,7 +24,7 @@ repair does not change device selection, training settings, or other platforms.
 
 ## Changelog
 
-- **2026-09-10** — Add reversible macOS OpenMP environment repair and a fresh-process runtime check after native test/benchmark crashes (PR pending).
+- **2026-09-10** — Add reversible macOS OpenMP environment repair and a fresh-process runtime check after native test/benchmark crashes (PR #1554).
 
 > **Current status (as of 2026-06-22).** Default NN training dtype is **FP32 storage + TF32 matmuls (AMP off)** on every CUDA GPU, **pure FP32** off-CUDA — one FP32 family everywhere, so CPU/CI and cross-GPU benchmarks stay comparable (TF32 is numerically neutral). **FP16** (`FF_AMP_DTYPE=fp16`) and **BF16** (`bf16`, sm_80+) are opt-in. CUDA graphs autodetect ON for sm_80+ (`FF_CUDA_GRAPH{,_FULL,_OPT}` are force-off overrides). On the default path the graphed path is **per-step bit-exact / effectively inert** (graph-on vs -off = dropout-RNG seed-noise; A3 is bit-identical to A2) — **no rebaseline needed**. The ~0.5% worst-target graphed-vs-eager drift and the "graphed rebaseline" discipline apply **only to the opt-in FP16 path**. Dated entries below are historical and may describe the pre-flip FP16-default regime.
 

@@ -64,6 +64,35 @@ def test_reinstall_can_be_repaired_without_overwriting_old_backup(environment):
     assert list(second.rglob("libomp.dylib"))[0].read_bytes() == b"upgraded runtime"
 
 
+def test_cancelled_verification_restores_original(environment, monkeypatch):
+    bundled, library = environment
+
+    def interrupted_probe():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(openmp, "runtime_paths", interrupted_probe)
+    with pytest.raises(KeyboardInterrupt):
+        openmp.repair(library)
+    assert not bundled.is_symlink()
+    assert bundled.read_bytes() == b"original runtime"
+
+
+def test_cancelled_replacement_restores_original(environment, monkeypatch):
+    bundled, library = environment
+    replace = os.replace
+
+    def replace_then_interrupt(source, destination):
+        replace(source, destination)
+        if Path(destination) == bundled and bundled.is_symlink():
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(openmp.os, "replace", replace_then_interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        openmp.repair(library)
+    assert not bundled.is_symlink()
+    assert bundled.read_bytes() == b"original runtime"
+
+
 def test_discovery_excludes_inherited_packages_but_keeps_repaired_links(tmp_path, monkeypatch):
     prefix = tmp_path / "venv"
     prefix.mkdir()
