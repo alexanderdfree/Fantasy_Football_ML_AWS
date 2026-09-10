@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-10 · Delete superseded recommendations and consolidate agent rules and memory retrieval pointers · (PR pending) · → ADR-0025
+
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017
 - 2026-09-10 · Owner-selected shared-component comparison truth, ESPN K reference, and explicit scoring metadata · (PR pending) · → ADR-0024
 - 2026-09-10 · Restore played offensive observations, correct opponent-score history, and align D/ST net-yard and K blocked-miss targets · (PR pending) · → ADR-0001, ADR-0002, ADR-0004

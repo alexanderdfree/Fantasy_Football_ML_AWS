@@ -1,20 +1,95 @@
 # Tested and rejected approaches
 
-Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies the shared entrypoint; current code/config and linked decisions supply operational state. Dated measurements describe their recorded regime, not a promise about today.
+Read the relevant subsystem, including its exceptions and reopening conditions:
+[modeling/features](#modeling-and-features), [GPU execution](#gpu-execution),
+[CI/serving](#ci-and-serving). These are rejected, conditional or superseded
+approaches; they were not all shipped and reverted. Historical measurements are
+retained in linked records and apply to their recorded regime.
 
-### Stop rules — things that have been tried and reverted
-These have all been attempted, shipped, and reverted. Re-proposing them costs a round-trip; don't.
+<a id="stop-rules-things-that-have-been-tried-and-reverted"></a>
+<a id="stop-rules--things-that-have-been-tried-and-reverted"></a>
+
+## Modeling and features
+
+- **Training models directly on `fantasy_points`** — see [Raw-stat targets](modeling.md#raw-stat-targets-never-fantasy-point-targets); regresses the ~1.9 pt/game double-count fix in [todo/fixed-archive.md](../todo/fixed-archive.md).
+- **Promoting rolling / L3 / L5 / L8 / ewma / trend features into `ATTN_STATIC_FEATURES`** — see [the attention whitelist](modeling.md#attention-static-feature-whitelist-is-separate-per-position); the static branch is deliberately non-temporal. Not a way to "close the gap to LightGBM" — the gap is architecture, not input availability.
+- **Routing a role / inheritance / "spot-start" signal through `ATTN_HISTORY_STATS`** — tested-rejected (RB 3-seed, [src/tuning/ab_history_token.py](../src/tuning/ab_history_token.py), 2026-06-07). The history branch already encodes a past spot-start via the existing per-game usage tokens (`snap_pct_raw`, `game_carry_share`, carries, production); a derived inheritance token (an expanding-mean of `snap_pct_raw`) is *averaging an average* and re-encodes signal already there → −0.32 FP / ~3σ worse on the ascension cohort than the static-only arm, MAE flat. The *current-week* value belongs in the **static** path (`INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES`), where it's genuinely new (the upcoming game's vacancy is in no past sequence). See "Attention static-feature whitelist" reach #2.
+- **Adding loss-config knobs (`HUBER_DELTAS`, `LOSS_WEIGHTS`, `head_losses`, `gated_targets`) to [src/tuning/tune_nn.py](../src/tuning/tune_nn.py)'s search space** — see [loss weights](modeling.md#loss-weights-are-tuned-inverse-to-huber-delta). `LOSS_WEIGHTS ≈ 1/HUBER_DELTAS` (2.0/δ in the pre-#870 Huber era) is a coupling, not two independent axes; sampling them independently produces inconsistent pairs and blows up dimensionality past what ~30 trials resolve. Hand-tune via the [src/tuning/ablate_rb_gate.py](../src/tuning/ablate_rb_gate.py) pattern (hardcoded variants, decision table).
+- **Rookie draft-capital / NFL-combine features** — investigated, implemented, reverted 2026-05-29 (see [the rookie-feature record](../todo/fixed-archive/tested-rejected-draft-capital-combine-rookie-cold-start-features-benchmark-f-3be5bb00.md)). Combine testing carries no marginal signal beyond draft position; draft capital (`log(pick)`) *does* have real rookie signal but is **benchmark-flat** — the gain concentrates in LightGBM (best model only for RB) and rookies are ~14% of rows, so it's invisible in overall MAE. Don't re-propose without a tracked rookie-subgroup metric, or scope to RB / LightGBM-only.
+
+- **Dormant attention-architecture extensions:** `attn_learn_temperature`,
+  `attn_history_dropout`, `attn_use_swiglu_encoder`, `attn_entropy_coeff`,
+  `attn_use_alibi_bias` (including `alibi_only`) and `attn_self_layers` stay
+  default-OFF; do not re-propose without a tracked subgroup metric. The
+  `selfattn` trials regressed and destabilized small positions. The exception is
+  `attn_condition_queries_on_static` (`condq`), enabled for RB/WR/TE by owner
+  decision; QB/K/DST remain OFF absent a tracked metric. Its RMSE screen wins
+  did **not** transfer to the eager FP16 retrain `ac3686f` (RB/TE flat, WR worse).
+  Retention is a forward bet on matchup features
+  ([#1210](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/issues/1210)),
+  not a measured production win. Re-screen in the current production regime
+  when those features land; the historical FP16 evidence is not today's FP32
+  regime. Judge tail effects on RMSE and the eager pipeline, not MAE alone.
+  Forward `condq` on both the training config and
+  `registry._{flat,nested}_attn_kwargs_static` serving paths: its `cond_proj`
+  layer changes checkpoint shape. Full per-position results, accepted tradeoffs
+  and rejection evidence are in [ADR-0004](../docs/adr/0004-attention-over-game-history.md#changelog)
+  and [the experiment record](../todo/fixed-archive/tested-attention-architecture-default-off-extensions-prs-109-121-6-rejected-f1bf1cff.md).
+
+## GPU execution
+
+- **Per-architecture training-dtype defaults** require the
+  [platform policy's comparability argument](platform.md#device-and-dtype-policy).
+  GPU support alone is insufficient; FP16/BF16 remain opt-in.
+- **Stacked and eager runs are never seed-by-seed comparable.** Sub-ULP kernel
+  differences amplified by Adam fork trajectories even when the stacking
+  machinery is bitwise-correct. Production training stays eager. Comparative
+  tuning/A/Bs may stack under the owner-approved regime, but compare stacked
+  against stacked and rebaseline before shipping to eager production. Keep
+  `_ens{N}x{E}` studies and artifacts separate from coexisting eager history.
+  The [Lever C evidence](../todo/gpu_launch_bound_levers.md#stacked-seed-evidence)
+  retains the initial rejection, reversal, parity gates and width measurements.
+- **Stacking is GPU-gated and width-coupled.** Local CUDA tuning/`ab_harness`
+  defaults to `DEFAULT_STACKED_SEEDS=24`; CPU/MPS use lean 3-seed eager runs,
+  and K/DST fall back to eager because they cannot vmap. Batch `launch_ab`
+  defaults eager unless `--stacked-seeds` is explicit. Check
+  [resolve_default_stacked_seeds](../src/tuning/ab_ensemble_seeds.py) and the
+  actual entrypoint before launching. Overrides include `--stacked-seeds 0`,
+  `--no-stacked-seeds` and `FF_TUNE_STACKED_SEEDS=0`. Do not narrow the default
+  below the measured ~9-seed L4 crossover without new evidence; those historic
+  eager-FP16/full-graph timings are not a universal hardware threshold.
+- **Do not finish stacking deliberately eager ablations without reconfirming.**
+  `attn_arch` and `scheduler_type` have stackable
+  [ab_attn_arch](../src/tuning/ab_attn_arch.py) /
+  [ab_scheduler_type](../src/tuning/ab_scheduler_type.py) specs; the former omits
+  entropy (vmap side-channel), the latter plateau (`ReduceLROnPlateau` rejected
+  by `train_stacked`). Their legacy `ablate_*` runners remain the eager/per-head
+  table path. `rb_gate` needs per-head MAE/gate AUC unavailable through the
+  stacked harness's `pred_attn_nn_total` (D/E were reverted `hurdle_poisson`).
+  `batch_lr` measures throughput the fixed-epoch FP32/vmap regime cannot assess.
+  `backbone_norm` forces LN, `ridge_pca` is not an NN ablation, and
+  `min_games`/`injury_features` change data: all remain eager. The full rationale
+  is retained with [Lever C](../todo/gpu_launch_bound_levers.md#stacked-seed-evidence).
+- **In-process base-NN/attention-NN overlap (`FF_NN_OVERLAP`) is rejected.**
+  Concurrent CUDA-graph capture conflicts across streams; graphs-off overlap
+  is slower than sequential graphs-on and threads share global RNG. The
+  [2026-06-22 RB/5080 measurements](../todo/gpu_launch_bound_levers.md#within-position-overlap-evidence)
+  retain the 1.58× graphs-off mechanism result and ~6.7× domination by graphs.
+  Do not re-propose the in-process flag. Process-based overlap and its Linux
+  NVIDIA MPS variant are a separate untested track with their own gate;
+  NVIDIA MPS is unavailable on WSL2/native Windows.
+- **Epoch-boundary work is closed pending a material-overhead profile.**
+  Val-tail padding and batching/deferring validation-MAE transfers change
+  early-stopping/model selection; they are metric changes. Per-epoch `randperm`
+  transfer is safe but negligible. The [2026-06-22 gate evidence](../todo/gpu_launch_bound_levers.md#epoch-boundary-evidence)
+  retains the 1.5–5.7 s/position, <3–5% overhead and <0.3 s maximum savings on an
+  orchestration-bound run. K/DST graphing remains blocked by the positional,
+  all-tensor `make_graphed_callables` contract versus nested keyword histories
+  and `None` leaves. Reopen only with a profile showing materially large
+  epoch-boundary overhead.
+
+## CI and serving
 
 - **Shared-venv CI optimization** — reverted in #110 / #111 (2026-04-23). Artifact download (~25s/shard) is slower than the warm `uv` install (~10s). Wall-clock is the metric, not compute.
 - **Module-level pre-warm under gunicorn `--preload`** — reverted in #148 / #149 (2026-04-27). The bind happens *after* preload import; a slow pre-warm causes ALB TCP-refused → unhealthy. Use a `post_fork` hook or a background thread instead.
 - **Building the upcoming-week artifact inside the serving container** — shipped in #1069, reverted to a CI build in #1076 (2026-06-08). A 2-worker serving task OOMs (worker SIGKILL) running `load_raw_data` + `build_features` + inference and attempts a runtime PBP download (which SSL-failed in-container); raising the task to 4 vCPU/8 GB did **not** fix it — it's an architectural mismatch, not sizing. Build the artifact in a scheduled CI job ([.github/workflows/refresh-upcoming-week.yml](../.github/workflows/refresh-upcoming-week.yml)) and have serving only **download** it from S3 (`sync_artifact_from_s3`). General rule: heavy `load_raw_data`/`build_features`/inference work doesn't belong in the serving container — build artifacts in CI, serve them. See [docs/adr/0018-live-upcoming-week-predictions-espn.md](../docs/adr/0018-live-upcoming-week-predictions-espn.md).
-- **Training models directly on `fantasy_points`** — see [Raw-stat targets](modeling.md#raw-stat-targets-never-fantasy-point-targets); regresses the ~1.9 pt/game double-count fix in [todo/fixed-archive.md](../todo/fixed-archive.md).
-- **Promoting rolling / L3 / L5 / L8 / ewma / trend features into `ATTN_STATIC_FEATURES`** — see [the attention whitelist](modeling.md#attention-static-feature-whitelist-is-separate-per-position); the static branch is deliberately non-temporal. Not a way to "close the gap to LightGBM" — the gap is architecture, not input availability.
-- **Enabling the default-OFF attention-architecture extensions (#109–121)** — benchmarked 2026-06-19/20 (RB stacked N=24 `ab_attn_arch-…b5b46ea` + `condq-screen-stacked-80494dd`; eager RB/QB/K/DST via [src/tuning/launch_ablate.py](../src/tuning/launch_ablate.py)). **Six stay default-OFF — don't re-propose without a tracked subgroup metric:** `attn_learn_temperature` / `attn_history_dropout` / `attn_use_swiglu_encoder` / `attn_entropy_coeff` / `attn_use_alibi_bias`(+`alibi_only`) / `attn_self_layers` (`selfattn`, which actively regresses + destabilizes — RB Δ +0.116, QB +0.076, 14/16 worse, an RB seed +19%, the "larger regressed on 15K-sample positions" stop-rule). **The ONE exception is `attn_condition_queries_on_static` (`condq`), now ENABLED for RB + WR + TE** (PR #1198): MAE-flat but it trims the boom/bust tail (RB RMSE −0.051±0.028, 24/24; TE tail gain at a small median cost). It is **per-position, not a blanket win** — RB/TE earned it on the screen; **WR is an owner forward-bet** (WR regresses on the screen, but that's a *matchup-feature data gap* — WR boom/bust is CB-level/coverage, absent from our features — not a broken mechanism; re-screen when those features land, [#1210](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/issues/1210)). **Eager caveat (retrain `ac3686f`):** the production retrain did NOT reproduce the screen wins — RB/TE flat, WR +0.046 RMSE regress on the real FP16 path; condq is kept as an owner forward-bet for #1210, **not a measured production win** (stacked-FP32 screen ≠ eager-FP16 prod; the eager `benchmark_history` is authoritative). Note that prod is FP32 since the 2026-06-22 flip, so the `ac3686f` eager-FP16 reading no longer matches the production dtype — a re-screen would land in the FP32 regime. **QB/K/DST stay OFF** (QB overfit + destabilize; K/DST noise) — don't enable them without a tracked metric. **Two condq gotchas:** (a) judge it on **RMSE, not MAE** (it's a tail effect — MAE-only screening called it dead); (b) condq adds a `cond_proj` layer, so forward it on BOTH the cfg path AND the `registry._{flat,nested}_attn_kwargs_static` served-kwargs path (contract-tested) or serving NaN's on the shape mismatch. The attn-NN↔LightGBM gap is architecture, not these knobs. Tables: [todo/fixed-archive.md](../todo/fixed-archive.md) / ADR-0004.
-- **Routing a role / inheritance / "spot-start" signal through `ATTN_HISTORY_STATS`** — tested-rejected (RB 3-seed, [src/tuning/ab_history_token.py](../src/tuning/ab_history_token.py), 2026-06-07). The history branch already encodes a past spot-start via the existing per-game usage tokens (`snap_pct_raw`, `game_carry_share`, carries, production); a derived inheritance token (an expanding-mean of `snap_pct_raw`) is *averaging an average* and re-encodes signal already there → −0.32 FP / ~3σ worse on the ascension cohort than the static-only arm, MAE flat. The *current-week* value belongs in the **static** path (`INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES`), where it's genuinely new (the upcoming game's vacancy is in no past sequence). See "Attention static-feature whitelist" reach #2.
-- **Adding loss-config knobs (`HUBER_DELTAS`, `LOSS_WEIGHTS`, `head_losses`, `gated_targets`) to [src/tuning/tune_nn.py](../src/tuning/tune_nn.py)'s search space** — see [loss weights](modeling.md#loss-weights-are-tuned-inverse-to-huber-delta). `LOSS_WEIGHTS ≈ 1/HUBER_DELTAS` (2.0/δ in the pre-#870 Huber era) is a coupling, not two independent axes; sampling them independently produces inconsistent pairs and blows up dimensionality past what ~30 trials resolve. Hand-tune via the [src/tuning/ablate_rb_gate.py](../src/tuning/ablate_rb_gate.py) pattern (hardcoded variants, decision table).
-- **Rookie draft-capital / NFL-combine features** — investigated, implemented, reverted 2026-05-29 (see [todo/fixed-archive.md](../todo/fixed-archive.md) `[TESTED, REJECTED] Draft-capital / combine rookie cold-start features`). Combine testing carries no marginal signal beyond draft position; draft capital (`log(pick)`) *does* have real rookie signal but is **benchmark-flat** — the gain concentrates in LightGBM (best model only for RB) and rookies are ~14% of rows, so it's invisible in overall MAE. Don't re-propose without a tracked rookie-subgroup metric, or scope to RB / LightGBM-only.
-- **Per-arch training-dtype default (BF16, etc.)** — see [platform policy](platform.md); FP32+TF32 default on all CUDA, FP16/BF16 opt-in (BF16 hung the T4 #293→#301 + regressed high-magnitude heads #640; FP16 was the default until the 2026-06-22 flip). "The GPU supports it" isn't sufficient — bring a benchmark-comparability argument.
-- **Stacked-vs-eager same-seed comparability (vmap seed-ensembles)** — settled in two owner decisions, 2026-06-11. A stacked run of seed s is NOT bit-comparable to an eager run of seed s and never will be (sub-ULP vmapped-vs-eager kernel diffs × Adam's sign-like step-1 `g/√v̂` deterministically fork trajectories — all 8 members 0.3–0.8 FP RMS by 30 GPU epochs; forks follow the seed, not the slot, and the machinery itself is proven bitwise-correct). First rejected outright on that determinism ground, then **reversed for the comparative pipelines** after the throughput numbers (4.4–4.6×/host-thread on L4), and finally (2026-06-15) **made the GPU default at N=24** for NN tuning and the `ab_harness` A/B path (which every `ab_*.py` spec — and any `ab_harness`-based ablation — inherits on **local** CUDA runs; the Batch fleet path via `launch_ab` defaults eager — pass `--stacked-seeds` explicitly) — the measured per-seed optimum (~1.0 s/seed; above the eager-FP16+full-graph crossover at N≈9, so default-24 beats eager per seed). The **legacy `ablate_*` scripts on `ablation_runner` stay eager**, except the two stackable NN ones, now **ported to `ab_harness` specs** that inherit this default (owner call, 2026-06-15): `attn_arch` → [src/tuning/ab_attn_arch.py](../src/tuning/ab_attn_arch.py) (drops the `entropy` arm — `attn_entropy_coeff` is a vmap side-channel reject) and `scheduler_type` → [src/tuning/ab_scheduler_type.py](../src/tuning/ab_scheduler_type.py) (drops `plateau` — `train_stacked` rejects `ReduceLROnPlateau`). `rb_gate` (its per-target head-MAE + gate-AUC decision rule isn't reachable through the stacked harness, which only surfaces `pred_attn_nn_total`; D/E are the reverted `hurdle_poisson`) and `batch_lr` (a throughput ablation the FP32/vmap/fixed-epochs regime structurally can't measure) were **evaluated and deliberately left eager**; `backbone_norm` (forces LN), `ridge_pca` (not an NN ablation), and `min_games`/`injury_features` (data ablations) stay eager too — so don't "finish" ablation stacking without re-confirming. The default is **GPU-gated and width-coupled**: `cuda_enabled()` → stack at `DEFAULT_STACKED_SEEDS`=24 ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py) `resolve_default_stacked_seeds`); CPU/MPS → eager at the lean 3-seed default (the FP32 stack is *slower* there, so a default-on stack would regress local/CI). K/DST always fall back to eager (can't vmap). Override: `--stacked-seeds 0` / `--no-stacked-seeds` / `FF_TUNE_STACKED_SEEDS=0`. Stacked results live in flag-/namespace-separated artifacts (`_ens{N}x{E}` studies) that **coexist** with eager-regime history — never seed-by-seed-comparable to it. **Production training stays eager** — never propose stacking there, never compare a stacked arm against an eager arm seed-by-seed (rebaseline instead), and don't narrow the default below ~9 (eager wins there). History + measurements: [todo/gpu_launch_bound_levers.md](../todo/gpu_launch_bound_levers.md) Lever C.
-- **In-process base-NN ∥ attention-NN overlap (Lever B′, `FF_NN_OVERLAP`)** — measured-rejected 2026-06-22 (RB/5080, draft PR #1332). Overlapping the two GPU-branch trainers on two CUDA streams **inside one process** is mutually exclusive with the shipped CUDA-graph path: concurrent capture crashes (`cudaErrorStreamCaptureUnsupported`). Even graphs-OFF where it runs (1.58× on the GPU branch — the mechanism is real, not GIL-bound), it's strictly dominated — graphs-ON *sequential* (7.5s) beats graphs-OFF *overlap* (50.4s) ~6.7× because graphs and overlap reclaim the **same** host-dispatch idle and graphs win — plus the in-process threads share the global RNG (non-deterministic). Don't re-propose the in-process flag. The **process-based** B′ (separate CUDA contexts dodge the capture conflict; per-child RNG dodges non-determinism) + its **AWS-MPS** cousin are a different, still-untested track gated on MPS (unavailable on WSL2/Windows) — see [todo/gpu_launch_bound_levers.md](../todo/gpu_launch_bound_levers.md) Lever B′.
-- **Epoch-boundary host-work levers (val-tail padding / host-sync batching / per-epoch `randperm`)** — gate-evaluated → **CLOSED 2026-06-22** (no code). The gate was "only pursue if profiled material"; it isn't. `attn_nn_train` is **1.5–5.7 s/position** (L4/A10G, run `1e67be7`) and **off the orchestration-bound critical path**, and epoch-boundary host work is **~<3–5 %** of it (A2/A3/D2 + the GPU-resident batcher #309 already collapsed the per-step launch storm — confirmed by Lever B's 1.03×), so even 100 % removal saves <0.3 s/position. The only non-trivial levers — padding the ragged val tail (`_GraphedValPass.tail_batches`, `training.py:672`) and batching/deferring the val-MAE H2D (`training.py:1711-1712`) — feed `val_mae_weighted` → early-stopping/model-selection (`training.py:1746-1754`), so changing them **shifts which epoch is selected as best** (a metric change, not a free speedup); the safe lever (per-epoch `randperm` H2D, 160 KB) is negligible. K/DST graphing stays structurally blocked (`make_graphed_callables` positional/all-tensor contract vs the nested trainer's kwarg `x_game_history=`+`None`-leaf, `training.py:2079-2124`). Don't re-propose without a profile showing epoch-boundary overhead is materially large — see [todo/gpu_launch_bound_levers.md](../todo/gpu_launch_bound_levers.md) "Epoch-boundary host work".

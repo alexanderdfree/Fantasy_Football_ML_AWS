@@ -2,20 +2,14 @@
 
 # Codex
 
-Use [the Codex reference](agent-guides/providers/codex.md) for hooks, worktree
-startup, skills/prompts, audit wrappers and memory sync. Read only the relevant
-section before using or changing that mechanism. Shared behavior lives in
-`agent-workflows/`; wrappers supply provider-specific runtime values.
+Read the relevant provider section before using or changing its mechanism:
 
-- Start through `scripts/codex-fresh-worktree.sh` when launching from the CLI.
-  SessionStart can warn and add context, but cannot move an active session.
-- Trust changed project hooks through `/hooks`. Hooks do not intercept every
-  possible shell write; use `apply_patch` and verify the active checkout.
-- Prefer `.agents/skills/` workflows (`pre-pr-judge`, `post-session-critique`,
-  `solve-issues`); `.codex/prompts/` holds legacy templates installed into the
-  user home by `scripts/bootstrap-codex-local.sh`.
-- Read actual user/project configuration and runtime state for model, reasoning
-  and compaction settings. Do not restore historical values from memory.
-- Codex memory updates require explicit user authorization and the supported
-  update-note path; do not edit generated memory summaries/indexes directly.
-  Keep personal memory out of git. See [context maintenance](agent-guides/context-maintenance.md).
+- CLI startup: [fresh worktree launcher](agent-guides/providers/codex.md#fresh-worktree-launcher).
+- Hook trust, coverage and tool use: [hooks](agent-guides/providers/codex.md#hooks).
+- Reusable workflows and legacy aliases: [skills and prompts](agent-guides/providers/codex.md#skills-and-slash-prompts).
+- Audit automation: [wrapper](agent-guides/providers/codex.md#audit-automation-wrapper).
+- Personal memory: [write policy](agent-guides/context-maintenance.md#memory) and
+  [sync mechanics](agent-guides/providers/codex.md#auto-memory).
+
+Shared workflow behavior lives in `agent-workflows/`; provider wrappers supply
+runtime values. Current configuration follows the evidence rule in `AGENTS.md`.

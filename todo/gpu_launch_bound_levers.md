@@ -1,22 +1,25 @@
 # GPU launch-bound optimization — CUDA graph built; streams measured-negative
 
-Planning doc for making **local 6-position parallel training faster**, written after the
-core-pool work (#670) established that the bottleneck is the GPU, not the CPU. **Lever A is
-now built & measured** (2026-05-31, see below); **Lever B is now MEASURED-NEGATIVE**
-(2026-06-22, 5080 sm_120 — no cross-stream overlap; lever closed, see below). Both levers are opt-in and
-gated like the existing `FF_COMPILE` per-arch speed knobs (ADR-0017). The intended gate was a
-per-position A/B (inertness Δ=0 MAE + speedup) — Lever A cleared the speedup but **not** the
-strict Δ=0 inertness, and shipped as a documented opt-in speed knob anyway (details below).
+Investigation record for local 6-position parallel training, starting with the
+core-pool work (#670). CUDA graphs shipped; the single-process streams and
+in-process overlap proposals were measured-rejected on 2026-06-22. The separate
+process/MPS proposal retains its benchmark gate below.
+
+Current graph and precision policy lives in [ADR-0017](../docs/adr/0017-platform-autodetection-per-arch-optimization-policy.md),
+implemented by the `cuda_graph_*_enabled()` and `amp_dtype()` helpers in
+[src/shared/utils.py](../src/shared/utils.py). Base, full-step and optimizer-tail
+capture autodetect on for supported sm_80+ training paths; their `FF_CUDA_GRAPH*`
+flags are force-off overrides. FP32+TF32 is the default; the FP16 trajectory-drift
+results below describe the opt-in FP16 regime. K's nested trainer and the stacked
+regime retain their capture exceptions.
 
 ## Diagnosis: the parallel local trainer is GPU launch/host-bound, not CPU-bound
 
-Measured on the WSL2 / 9950X3D / RTX 5080 box, all 6 positions, pool ON:
+Historical diagnosis (2026-05-31, before graph optimizations): WSL2 / 9950X3D / RTX 5080, all 6 positions, pool ON:
 
 - The core pool (#670) cut the **LightGBM stage 15–90×** (RB 92s→6s, TE 91s→3s, DST 71s→1s) but **total wall-clock was unchanged (~242s).**
 - `-j` sweep (total wall-clock): **`-j6` 242s < `-j3` 244s < `-j2` 269s** — *more* concurrency is *faster*. If the GPU were compute-saturated this would tie or hurt; instead each process leaves the GPU ~80% idle and stacking processes fills the gaps. (Per-position `elapsed_sec` breakdown across `-jN`: [core-pool-jN-benchmark-measurements.md](core-pool-jN-benchmark-measurements.md).)
 - Per-position wall-clock = `max(CPU branch ≈ 6–11s, GPU branch ≈ 200s)`. The **attention-NN** training dominates and is **launch-bound**: a tiny model (~69K params, `attn_batch_size=256`, ~18K steps/position) fires hundreds of thousands of microsecond kernels; the GPU idles between launches waiting on CPU/Python dispatch. The 5080's TFLOPS are irrelevant — the limit is launch/host overhead, not occupancy.
-
-**Implication:** the lever for total wall-clock is **reducing GPU launch/host overhead or packing kernels**, not CPU allocation. The core pool was a correctness/cleanliness win (and shipped the auto-`total_wall_sec` + measured dispatch order), but it cannot move this wall.
 
 ### Already done (don't redo)
 - `#305` — train-branch per-batch sync removal (GPU-resident loss accumulation). **The val branch is also already sync-free** (`training.py:751-811`, one sync/epoch) — verified 2026-05-31, nothing to remove there.
@@ -27,19 +30,8 @@ Measured on the WSL2 / 9950X3D / RTX 5080 box, all 6 positions, pool ON:
 ### Stop-rule (don't relitigate without a benchmark)
 - **`torch.compile` is measured-rejected** (`#641`, **+169% on the 5080**) — dynamic-shape recompiles. A hand-rolled CUDA graph sidesteps that (train shapes are static via `drop_last`), but anything touching this area must clear a per-position A/B.
 
-## Precision & quantization levers (FP16 / TF32 / AMP / quant) — SHIPPED: FP32+TF32 is now the default (2026-06-22; autocast-removal speedup measured + shipped — see UPDATE/SHIPPED below)
+## Precision & quantization levers (FP16 / TF32 / AMP / quant) — SHIPPED: FP32+TF32 is now the default (2026-06-22; autocast-removal speedup measured + shipped)
 
-Asked whether fp16-vs-tf32, mixed precision, or quantization offer an easy win. They don't:
-the model is **launch-bound** (above), so any lever that targets math throughput or memory
-can't move wall-clock. Current state, for the record so it isn't re-investigated:
-
-- **FP16 vs TF32 — already optimal, orthogonal, both on.** Autocast downcasts to FP16 tensor
-  cores; residual FP32 GEMMs use TF32 via the modern `torch.set_float32_matmul_precision("high")`
-  in `_nn_device()` ([src/shared/pipeline.py](../src/shared/pipeline.py)), sm_80+-effective,
-  `not deterministic`-gated, across all 4 NN training paths + the CV path — not the legacy
-  `allow_tf32` booleans. Nothing to tune; `"medium"` would alter the deliberately-frozen
-  FP32-GEMM metric path. (But see the UPDATE below: the measured speed lever is *removing*
-  autocast, not tuning the TF32 `set_float32_matmul_precision` setting.)
 - **Mixed precision (AMP) — textbook, mature; now OFF by default (FP16 opt-in).** Since 2026-06-22 the
   default is AMP-off FP32+TF32 on every CUDA GPU (`amp_dtype` returns `None` for `auto`,
   [src/shared/utils.py](../src/shared/utils.py)); the FP16 path below remains as `FF_AMP_DTYPE=fp16`. When
@@ -54,9 +46,7 @@ can't move wall-clock. Current state, for the record so it isn't re-investigated
   job; serving only downloads the S3 artifact, ADR-0018), not the ~276 KB NN forward. Calibration +
   accuracy risk for zero measurable gain.
 
-**UPDATE (2026-06-22, measured — the "precision can't move wall-clock" framing above was too strong).** An owner-requested A/B (QB + RB + WR, 5080/sm_120, via an `ab_harness` spec toggling `nn_use_amp=False`, i.e. `FF_AMP_DTYPE=fp32`) found that **dropping FP16 autocast entirely** — FP32 storage + TF32 matmuls instead of FP16 + autocast + GradScaler — **moves wall-clock**: NN-wall **−27% QB / −11% RB / −13% WR**, and is **accuracy-neutral on the served attention NN** (n=8, graphs-off / per-step bit-exact; every |Δ|/SE < 1; no high-magnitude-head regression, opposite of BF16; Ridge+LGBM bit-identical → clean NN-only change). This does **not** contradict "launch-bound" — it *confirms* it: the win is a **launch** lever, not a throughput one. Autocast inserts per-op FP16↔FP32 **cast kernels**; on this tiny launch-bound model those extra launches cost more than FP16's tensor-core throughput saves, while TF32 keeps a single dtype (FP32 storage, matmul uses TF32 internally) and launches fewer kernels. A 3-arm attribution isolated the cause: **GradScaler is NOT it** — FP16-without-GradScaler is **−3.5% (slightly *slower*)** and the scaler is near-inert (dynamic scale settles to 4.0, 1.43% inf-skips confined to warmup, removing it leaves served-model accuracy unchanged); the entire win is the `fp16-no-scaler → tf32` (autocast-removal) step. **SHIPPED (2026-06-22, owner-approved):** FP32+TF32 is now the **default** training path (`amp_dtype()`→`None` for `auto`; FP16 autocast removed from the default path), with FP16+GradScaler retained as the `FF_AMP_DTYPE=fp16` opt-in. It is a **metric-path change**, so the rebaseline happens via the first post-merge **6-position retrain** (ADR-0017 updated, owner sign-off gated on K/DST validation). The absolute seconds are tiny (~1–2.4 s/position) and near-invisible on the orchestration-bound Batch critical path, and the local magnitude is contended/position-dependent — but the change is accuracy-neutral and removes the autocast cast-kernel launches, so it ships. **Net: the conclusion ("don't switch for speed alone") is superseded — the autocast-removal IS the switch, shipped as the new default; the old stated reason ("precision can't move wall-clock") was wrong** — removing the autocast machinery does.
-
-The largest *dedicated* un-shipped GPU lever is still **launch**-side — Lever B/B′ (CUDA streams), below — but "launch, not precision" is a false dichotomy: the precision-*path* change in the UPDATE above is itself a launch lever (autocast cast-kernel removal).
+**Autocast-removal A/B (2026-06-22).** An owner-requested A/B (QB + RB + WR, 5080/sm_120, via an `ab_harness` spec toggling `nn_use_amp=False`, i.e. `FF_AMP_DTYPE=fp32`) found that **dropping FP16 autocast entirely** — FP32 storage + TF32 matmuls instead of FP16 + autocast + GradScaler — **moves wall-clock**: NN-wall **−27% QB / −11% RB / −13% WR**, and is **accuracy-neutral on the served attention NN** (n=8, graphs-off / per-step bit-exact; every |Δ|/SE < 1; no high-magnitude-head regression, opposite of BF16; Ridge+LGBM bit-identical → clean NN-only change). This does **not** contradict "launch-bound" — it *confirms* it: the win is a **launch** lever, not a throughput one. Autocast inserts per-op FP16↔FP32 **cast kernels**; on this tiny launch-bound model those extra launches cost more than FP16's tensor-core throughput saves, while TF32 keeps a single dtype (FP32 storage, matmul uses TF32 internally) and launches fewer kernels. A 3-arm attribution isolated the cause: **GradScaler is NOT it** — FP16-without-GradScaler is **−3.5% (slightly *slower*)** and the scaler is near-inert (dynamic scale settles to 4.0, 1.43% inf-skips confined to warmup, removing it leaves served-model accuracy unchanged); the entire win is the `fp16-no-scaler → tf32` (autocast-removal) step. **SHIPPED (2026-06-22, owner-approved):** FP32+TF32 is now the **default** training path (`amp_dtype()`→`None` for `auto`; FP16 autocast removed from the default path), with FP16+GradScaler retained as the `FF_AMP_DTYPE=fp16` opt-in. It is a **metric-path change**, so the rebaseline happens via the first post-merge **6-position retrain** (ADR-0017 updated, owner sign-off gated on K/DST validation). The absolute seconds are tiny (~1–2.4 s/position) and near-invisible on the orchestration-bound Batch critical path, and the local magnitude is contended/position-dependent — but the change is accuracy-neutral and removes the autocast cast-kernel launches, so it ships.
 
 ## Why not MPS locally (researched 2026-05-31, rejected on both OSes)
 NVIDIA MPS would give true multi-process kernel co-residency — but it is **Linux/QNX-only**. MPS Overview r590 (Dec 2025), verbatim: *"MPS is only supported on the Linux and QNX operating systems. The MPS server will fail to start when launched on an operating system other than Linux."*
@@ -89,18 +79,13 @@ process-backed MPS backend for that environment:
   flat-history positions use graph capture, and all six positions can run under
   the same graph-on tune workflow.
 
-**Production now autodetects graphs ON (2026-06-05, owner decision).**
-`cuda_graph_enabled()` defaults ON for **any** CUDA sm_80+ box (g6/L4 `sm_89`,
-5080 `sm_120`), so the production Batch fan-out and local sm_80+ runs are graphed
-with no env opt-in; `FF_CUDA_GRAPH=0` is the force-off override. `train-batch.yml`
-still threads the `FF_BATCH_CUDA_GRAPH` repo variable as an optional fleet
-override (set it to `0` to force eager), and labels Batch benchmark rows
-`g6.xlarge (Spot, CUDA-graph)` so the graphed era stays separate from the
-pre-cutover eager baseline. This was shipped **without** a pre-merge A/B (owner
-chose speed-now); the first post-merge 6-position retrain *is* the graphed
-rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
-(byte-identical). To run a bit-comparable eager A/B locally, set `FF_CUDA_GRAPH=0`
-(~3 seeds per AGENTS.md).
+**Autodetect-on cutover (2026-06-05, owner decision).** Production and local
+sm_80+ training adopted graphs, with `FF_CUDA_GRAPH=0` as the eager override.
+The owner authorized shipping without a pre-merge A/B; the first post-merge
+6-position retrain was designated as the graphed rebaseline. Batch rows were labeled
+`g6.xlarge (Spot, CUDA-graph)` to distinguish the FP16 graphed era from the eager
+baseline. K's nested trainer and CPU/CI/T4 remained eager. The later FP32+TF32
+regime and its different comparability policy are recorded in ADR-0017.
 
 ---
 
@@ -108,9 +93,9 @@ rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
 
 **Idea:** capture the per-step forward+backward kernel sequence once and replay it, turning thousands of host launches into one.
 
-**Shipped:** opt-in `FF_CUDA_GRAPH` (off by default, sm_80+ gate, mirrors `FF_COMPILE`; `cuda_graph_enabled()` in `utils.py`). `MultiHeadTrainer._maybe_graph_model` wraps the model with `torch.cuda.make_graphed_callables` at the top of `train()`, leaving GradScaler/optimizer step *outside* the captured fwd+bwd. The nested-K trainer is deliberately **not** graphed (its `x_game_history=` kwarg + `None`-leaf inputs violate the tensor-only `sample_args` contract). The three original "friction points" mostly evaporated against the real torch 2.11 `make_graphed_callables`: it is **pytree-native** (the dict-returning forward round-trips with no adapter), **auto-dispatches** train→graph / eval→eager (so the ragged val pass is untouched, no manual plumbing), and the **entropy regulariser is dormant** (`attn_entropy_coeff=0` in every config, so the side-effect never fires).
+**Original model-only implementation (2026-05-31, FP16 regime):** `MultiHeadTrainer._maybe_graph_model` wraps the model with `torch.cuda.make_graphed_callables` at the top of `train()`, leaving GradScaler/optimizer step *outside* the captured fwd+bwd. The nested-K trainer is deliberately **not** graphed (its `x_game_history=` kwarg + `None`-leaf inputs violate the tensor-only `sample_args` contract). The three original "friction points" mostly evaporated against the real torch 2.11 `make_graphed_callables`: it is **pytree-native** (the dict-returning forward round-trips with no adapter), **auto-dispatches** train→graph / eval→eager (so the ragged val pass is untouched, no manual plumbing), and the **entropy regulariser is dormant** (`attn_entropy_coeff=0` in every config, so the side-effect never fires).
 
-**Result on RB (single position, 5080, dropout-0 unless noted):**
+**Result on RB (2026-05-31, FP16 regime; single position, 5080, dropout-0 unless noted):**
 - **Speedup: 1.84× on `attn_nn_train`** (23.8s→13.1s); ~1.54× total pipeline. Real — the model is *partly* launch-bound (but only partly: FP32 is 2× slower than FP16, so tensor-core compute matters too).
 - **NOT bit-inert.** Graph-vs-eager attn_nn drifts **+0.13% aggregate / ~0.5% worst-target** (`receiving_yards`), while **eager-vs-eager is Δ=0.0000** (fully reproducible). So the drift is graph-attributable, not noise.
 
@@ -125,13 +110,9 @@ rebaseline. K's nested trainer still no-ops capture, and CPU/CI/T4 stay eager
 | Deterministic stop (`FF_NN_FIXED_EPOCHS=N`) | No — 0.077 worst | 1.84× | drift is model-state divergence, not best-epoch *selection* |
 | BN running-stat recalibration (implied) | No | — | learnable weights also diverge (0.074), not just BN buffers |
 
-**Decision (2026-05-31):** ship `FF_CUDA_GRAPH` as an **opt-in local-iteration speed knob** with the non-inertness documented — per-step math is exact and the model is equivalent quality, but it is **not** suitable for bit-comparable benchmark A/Bs against eager baselines. Off by default ⇒ AWS / CI / production byte-identical (the commit is training-skippable; Ridge MAE unchanged). The investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`) are **kept** for a follow-up. Note `FF_NN_NORM` overlaps [src/tuning/ablate_backbone_norm.py](../src/tuning/ablate_backbone_norm.py) (which monkeypatches the same BN→LN swap) but composes with the graph env knobs in a single `benchmark` invocation.
-
-**Decision SUPERSEDED (2026-06-05, owner call):** `cuda_graph_enabled()` now **autodetects ON for sm_80+** (graphs are the default on g6/L4 + 5080); `FF_CUDA_GRAPH` is demoted to a force-off override. This deliberately makes the sm_80+ training path non-byte-identical to CPU/CI — the launch-bound speedup was prioritised over benchmark comparability, and benchmark history rebaselines graphed-vs-graphed from the cutover (Batch rows self-label `g6.xlarge (Spot, CUDA-graph)`). Shipped **without** a pre-merge A/B; the first post-merge retrain is the new graphed baseline. The "off by default ⇒ production byte-identical" property above no longer holds for sm_80+ — use `FF_CUDA_GRAPH=0` to recover the eager path for a bit-comparable A/B. See ADR-0017.
-
 **Benchmarkability follow-up (2026-06-01):** the `cuda_graph_gradscale` harness resolved the GradScaler question. Graph-vs-graph is clean (identical metrics + scale schedule), BN warmup snapshot/restore is inert, and eager-vs-graph first diverges in `GradScaler` at step 1. Fixed normal-scale mode is invalid because the default initial scale 65536 overflows at step 0. **(Tooling removed 2026-06-22:** the `cuda_graph_gradscale` harness + the `FF_AMP_FIXED_SCALE` / `FF_AMP_INIT_SCALE` / `FF_GRADSCALER_TRACE_*` instrumentation were deleted once the FP32+TF32 default (#1311) dropped the `GradScaler` from the default path — the FP16-graph bit-comparability question is now moot on the default path; the conclusion above stands for the opt-in FP16 path.)
 
-**Fixed-scale follow-up (2026-06-01):** lower explicit scales were tested on RB with fixed 30 epochs, dropout disabled, deterministic mode on, and graph BN warmup restored. `init_scale=2048` and `1024` still overflowed in the graph arm; `512` completed both graph and eager with identical scale/skip traces (2130 steps, 0 scale changes) but still produced a graph-vs-eager MAE delta (`4.044157` vs `4.060941`). That isolates the remaining difference to the expected multi-step FP16 trajectory drift from graph replay/kernel ordering. Fixed scale is not a bit-comparable bridge to eager and is its own worse-quality training regime, so the decision is: **graphed runs compare to graphed runs, not to eager baselines**; use a graphed local rebaseline for `FF_CUDA_GRAPH=1` A/Bs.
+**Fixed-scale follow-up (2026-06-01):** lower explicit scales were tested on RB with fixed 30 epochs, dropout disabled, deterministic mode on, and graph BN warmup restored. `init_scale=2048` and `1024` still overflowed in the graph arm; `512` completed both graph and eager with identical scale/skip traces (2130 steps, 0 scale changes) but still produced a graph-vs-eager MAE delta (`4.044157` vs `4.060941`). That isolates the remaining difference to the expected multi-step FP16 trajectory drift from graph replay/kernel ordering. Fixed scale is not a bit-comparable bridge to eager and is its own worse-quality training regime, so **FP16 graphed runs compare to FP16 graphed baselines**. This rebaseline constraint does not apply to the later FP32+TF32 default.
 
 ### Thread-vs-MPS backend A/B (2026-06-11) — MPS wins by disqualification; thread+graph is concurrency-UNSAFE
 
@@ -166,7 +147,7 @@ not a valid configuration at all — the backend A/B is thread-eager-vs-MPS-grap
 (different training regimes, separate namespaces), or thread `n_jobs=1` graphed vs MPS
 graphed for a same-regime comparison.
 
-### Lever A2 — FULL-STEP capture (`FF_CUDA_GRAPH_FULL`) — BUILT 2026-06-11; gates i/iv/v measured PASS, ii/iii pending
+### Lever A2 — FULL-STEP capture (`FF_CUDA_GRAPH_FULL`) — BUILT 2026-06-11; validation completed 2026-06-22
 
 Lever A collapsed the launches *inside* the model, but the L4 step remained ~7.5 ms of
 host dispatch for ≲0.1 ms of GPU math (measured 2026-06-10: per-step time is
@@ -176,11 +157,10 @@ the Python loop). A2 widens the capture: `_GraphedTrainStep` (training.py) graph
 gather+forward+combined-loss as one callable (branch-free hurdle dispatch via
 `compute_combined_capturable`; the train loop feeds bare idx tensors from
 `_GPUResidentBatcher.index_batches()`), leaving only the idx handoff + scaler/optimizer
-tail eager. **Opt-in** (`cuda_graph_full_enabled()`: `FF_CUDA_GRAPH_FULL` truthy AND the
-base sm_80+ gate) — training default-off (one approved rebaseline, not two); tune jobs
-default-on via `launch_tune --cuda-graph-full` with studies isolated in `*_graphfull`
-namespaces; capture failure falls back to the model-only graph; K no-ops. Ship gates (run
-on Batch): step-ms ≥2× vs model-only graph, graph-vs-graph same-seed Δ=0, tune smoke
+tail eager. Full-step capture became the production default on 2026-06-15 (#1171);
+`FF_CUDA_GRAPH_FULL=0` forces it off under the base graph gate. The original tune
+studies used isolated `*_graphfull` namespaces; capture failure falls back to the
+model-only graph, and K no-ops. Recorded validation gates: step-ms ≥2× vs model-only graph, graph-vs-graph same-seed Δ=0, tune smoke
 ≥1.7× trials/min with pruning live, flat `memory_reserved` across ≥30 sequential trials
 per worker. Context: under the Spot G+VT quota (~1 launch-bound trial per vCPU; 24 vCPU
 when written, raised to 64 on 2026-06-11), host-CPU per trial is the only lever that
@@ -219,8 +199,8 @@ raises per-host tune throughput — the quota raise multiplies hosts, not trials
   (same fixed-epoch knobs) → full-step-vs-model-only attn FP-MAE delta for (iii).
   Note the graphfull regime now INCLUDES the graphed val pass (D2 below).
   - **(ii) PASS, exactly.** Two same-seed `FF_CUDA_GRAPH_FULL=1` RB runs gave attn FP-MAE
-    `4.134755` vs `4.134755`, |Δ| = 0.00e+00 (deterministic Ridge FP-MAE identical too → same
-    data path). The graphed full-step path is bit-deterministic run-to-run.
+    `4.134755` vs `4.134755`, |Δ| = 0.00e+00 (deterministic Ridge FP-MAE was also
+    identical; input identity requires checking inputs/configuration separately). The graphed full-step path is bit-deterministic run-to-run.
   - **(iii) PASS in substance (8 seeds, RB, 30 fixed epochs, dropout-0).** Paired same-seed
     Δ(full−model) total FP-MAE = **−0.001 ± 0.041 (−0.02% of the 4.13 base) = 0.02× the
     seed-to-seed spread** (model-only std 0.043 = 1.0% of base, full-step std 0.020 = 0.5%) —
@@ -291,8 +271,8 @@ default, GradScaler's data-dependent inf/NaN skip branch (`scaler.step` may skip
 GradScaler, so the step is now branch-free and capturable.
 
 **Architecture (`_GraphedFullStep` in training.py).** A3 gates ON TOP of A2
-(`cuda_graph_opt_enabled()`: `FF_CUDA_GRAPH_OPT` truthy on top of `cuda_graph_full_enabled()`
-— A3 ⊆ A2 ⊆ base sm_80+ gate). Two non-obvious design points the implementation had to solve
+(`cuda_graph_opt_enabled()` defaults on when `cuda_graph_full_enabled()` does;
+`FF_CUDA_GRAPH_OPT=0` forces A3 off — A3 ⊆ A2 ⊆ base sm_80+ gate). Two non-obvious design points the implementation had to solve
 (both would have made it NOT inert; both caught by the local Δ=0 gate before any Batch run):
 
 1. **You cannot re-capture A2's `make_graphed_callables` output inside an outer graph** —
@@ -314,8 +294,8 @@ GradScaler, so the step is now branch-free and capturable.
 **STRICTLY INERT (no rebaseline) — local end-to-end Δ=0 gate, 2026-06-22 (5080 sm_120).**
 Per position, two same-seed runs (`FF_NN_FIXED_EPOCHS=30 FF_FORCE_DROPOUT_ZERO=1`,
 `FF_CUDA_GRAPH_OPT={1,0}`), attention-NN test FP-MAE compared; deterministic Ridge FP-MAE
-identical throughout (data-identity tell). The owner skipped Batch validation, so this local
-gate is the proof. **Engagement is a true positive, not a Δ=0-because-it-never-fired false
+identical throughout (an unchanged aggregate, not proof of identical inputs). The owner
+skipped Batch validation, so this local gate is the proof. **Engagement is a true positive, not a Δ=0-because-it-never-fired false
 pass** (independently verified): with `FF_CUDA_GRAPH_OPT=1` the optimizer is built
 `capturable=True`, `_graphed_opt` is set, and the trainer logs `[cuda-graph] optimizer-tail
 capture engaged (Lever A3)`; with `FF_CUDA_GRAPH_OPT=0` the optimizer is `capturable=False`,
@@ -331,7 +311,7 @@ capture engaged (Lever A3)`; with `FF_CUDA_GRAPH_OPT=0` the optimizer is `captur
 | RB seed 2024 | 4.136827474537323 | 4.136827474537323 | **0.000000** |
 
 RB same-seed determinism (A3-on run twice): `4.161292110313279` both times, |Δ|=0. Every
-Ridge FP-MAE was bit-identical within each pair (data-identity tell). All twelve cells: **Δ=0
+Ridge FP-MAE was bit-identical within each pair. All twelve cells: **Δ=0
 exactly.**
 
 The verified mechanisms: `AdamW(fused=True)` vs `fused=True, capturable=True` over identical
@@ -357,6 +337,8 @@ stacked-graphs-OFF and production is orchestration-bound. The value of A3 is its
 
 
 ---
+
+<a id="stacked-seed-evidence"></a>
 
 ## Lever C — vmap seed-ensembles — REJECTED then REVERSED as opt-in for comparative pipelines (both 2026-06-11, owner calls)
 
@@ -566,19 +548,11 @@ happened to pass a number. Fixed via the env channel (not argv): `launch_tune` n
 
 ## Lever B — single process + per-position CUDA streams (the MPS substitute) — MEASURED-NEGATIVE (2026-06-22, 5080 sm_120); CLOSED
 
-**Idea:** the thing MPS would have done. Collapse the 6 subprocesses into **one process** running the 6 positions on separate `torch.cuda.Stream`s, so their kernels co-reside in one CUDA context and fill each other's idle gaps inside the scheduler — without a cross-process server.
-
-**Approach:** a new in-process orchestrator that builds all 6 positions' data + models, then drives their training steps on per-position streams. The launch-bound nature means the GPU has headroom to overlap independent streams' kernels.
-
-**Frictions / risks:**
-- **GIL.** Python's GIL serialises the *host-side* launches across threads, which is the very thing that's the bottleneck. So **one thread issuing to multiple streams** (round-robin a step per position per stream), not 6 Python threads. This is a real restructure of the training loop, not a wrapper.
-- **Supersedes recent work.** It largely *replaces* the subprocess model + the just-merged core pool (#670) + the AF_UNIX coordinator — those exist to share *CPU* cores across *processes*; a single process shares the GPU via streams and the CPU via in-process thread/`n_jobs` control. Don't build B without deciding the core pool's fate (B would retire it for the local path).
-- **Blast radius.** One crash kills all 6 (vs. the subprocess model's isolation); shared CUDA OOM risk (6 models resident at once — fine at ~69K params each); much higher implementation complexity.
-- **CUDA graphs compose with streams** — B and A are not mutually exclusive (graph each position's step, replay on its stream).
-
-**Benchmark gate:** total wall-clock of the single-process-streams run vs the current `-j6` subprocess run (~242s), same inertness assertion. Only pursue if Lever A's per-position win is insufficient and the total-wall-clock ceiling is worth the refactor.
-
-**Effort:** multi-session; architectural. Highest ceiling, highest risk.
+**Evaluated design:** one process issued round-robin training steps for six positions
+on separate CUDA streams. This would replace subprocess isolation and core-pool
+coordination, adding shared crash/OOM exposure. The prototype below tested whether
+streams could overlap enough device work to offset serialized Python launches;
+the measured result closed the proposal.
 
 **Prototype (2026-06-07) — runs the benchmark gate, no production change:** a standalone,
 no-retrain measurement harness for the single-process round-robin is built —
@@ -591,14 +565,7 @@ construction) and drives the 6 attention NNs **one step per position per round o
 per-position contention factor, and per-position prediction parity (re-seeding per
 (position, epoch) + `--force-dropout-zero` keeps the two arms bit-comparable despite the
 shared global RNG). It composes with CUDA graphs (`--graph`/`--no-graph`) and degrades to a
-serial no-stream run off-CUDA. The gate itself is still **unrun** (no local GPU in this
-environment / CI); run it on a CUDA box:
-`for s in 42 1337 2024; do python -m src.analysis.streams_6pos_prototype --seed $s --fixed-epochs 30; done`,
-then compare its `streams wall-clock` to `python -m src.benchmarking.parallel_train -j 6`.
-**Honest expectation:** the win is bounded — graphs already collapsed the launch storm, the
-single thread only overlaps *device-side* work (the GIL serialises launches), and `-j6`
-already fills some idle gaps; so the incremental win over graphed `-j6` may be modest. The
-harness exists to replace that estimate with a number.
+serial no-stream run off-CUDA. The gate was run on 2026-06-22 as recorded below.
 
 **MEASURED — NEGATIVE (2026-06-22, RTX 5080 / sm_120 / WSL2; PR #1309).** The prototype
 was first refreshed to **full-step-graph parity** (its per-step body, capture, and batch
@@ -618,9 +585,7 @@ confirmed captured `full`**:
   time. (2) *Graphed:* full-step capture has already collapsed the launch storm into one cheap
   replay per step, so there is little host-launch idle left to overlap, and the FP16+GradScaler
   per-step inf/NaN-check sync plus each replay's own GPU occupancy leave no device-side slack for
-  a neighbouring stream to slot into. This **matches the section's own "honest expectation"**
-  above (graphs already collapsed the launches; the single thread only overlaps device-side work;
-  `-j6` already fills some gaps).
+  a neighbouring stream to slot into.
 - **Limitations (don't over-read):** measured on the **4 skill positions only** — K and DST are
   unbuildable from this environment's `data/splits` (their targets `fg_yards_made` /
   `points_allowed` are computed from raw kicker/defense PBP downstream of the shared splits, a
@@ -636,11 +601,13 @@ confirmed captured `full`**:
   #1309), so any future re-measure on a different GPU / regime (e.g. an L4 with real MPS, or a
   larger model where device-side overlap could exist) starts from a faithful baseline.
 
+<a id="within-position-overlap-evidence"></a>
+
 ### Lever B′ — within-position overlap (base NN ∥ attention NN) — IN-PROCESS variant MEASURED-REJECTED (2026-06-22, 5080 sm_120); process+MPS variant still separate
 
 **MEASURED-REJECTED for the in-process implementation (2026-06-22, RB / 5080 sm_120, draft PR #1332, FF_NN_OVERLAP).** The doc's suggested productionization — "overlap the two trainers in `_gpu_branch` behind an `FF_*` flag" — was built as in-process threads on two CUDA streams and A/B'd on the production path. Verdict: **reject, three independent reasons.**
 
-1. **Mutually exclusive with the shipped CUDA-graph path.** On the production default (graph capture autodetect-ON, sm_80+) the overlap run **crashes**: `CUDA error: operation not permitted when stream is capturing` (`cudaErrorStreamCaptureUnsupported` → `StreamCaptureInvalidated`). One stream capturing a graph forbids any other stream from launching work, so two trainers capturing concurrently in the **same process/context** invalidate each other. This corrects the "**composes with CUDA graphs**" claim below — it does **not**, for the in-process variant. (The *process*-based prototype above sidesteps this: separate processes = separate CUDA contexts = independent capture.)
+1. **Mutually exclusive with the shipped CUDA-graph path.** On the production default (graph capture autodetect-ON, sm_80+) the overlap run **crashes**: `CUDA error: operation not permitted when stream is capturing` (`cudaErrorStreamCaptureUnsupported` → `StreamCaptureInvalidated`). One stream capturing a graph forbids any other stream from launching work, so two trainers capturing concurrently in the **same process/context** invalidate each other. (The *process*-based prototype below sidesteps this: separate processes = separate CUDA contexts = independent capture.)
 2. **Strictly dominated even where it runs.** Graphs-OFF (`FF_CUDA_GRAPH=0`) the overlap is real and **not** GIL-strangled — RB `train_models_total` 79.6s → **50.4s (1.58×)** on the GPU branch (so, unlike Lever B's 1.03×, the mechanism works). But graphs and B′ reclaim the **same** host-dispatch idle, and graphs do it far better: graphs-ON **sequential** = **7.5s** vs graphs-OFF **overlap** = 50.4s (~6.7×). You would never trade graphs for overlap.
 3. **Off the critical path + non-deterministic.** NN training is ~7.5s of a ~23s RB run (`prepare_data` 10.6s dominates), and production wall-clock is orchestration-bound (warm-AMI / Batch lifecycle), so the GPU branch barely moves it. Separately the in-process threads share the **global RNG**, so the overlap path is **not** byte-identical (the process prototype's per-child RNG re-seed avoids this, but the in-process flag can't).
 
@@ -648,24 +615,21 @@ confirmed captured `full`**:
 
 ---
 
-A smaller, lower-risk slice of B scoped to **one position**: the pipeline trains
-the base NN then the attention NN *sequentially* in `_gpu_branch`, but they are
-independent (no stacking) and each is launch-bound, so overlapping them as **two
-processes sharing one GPU** collapses the GPU branch from `nn_train + attn_nn_train`
-→ `max(...)` (~2× for balanced positions like DST 98+94 / QB 36+36). Two
-processes (not threads) because host launch dispatch is GIL-bound, and each child
-re-seeds its own RNG so solo and concurrent runs stay bitwise-identical (the
-harness asserts per-target prediction-fingerprint parity). **GPU-arch-independent**
-(fills idle gaps on T4/L4/5080 alike — measurable on the current T4 fleet, no L4
-migration needed) and **composes with CUDA graphs** (graph each model AND overlap).
+**Remaining process-based hypothesis:** overlap the base NN and attention NN in
+separate processes sharing one GPU. The original pre-graph estimate was
+`nn_train + attn_nn_train` → `max(...)` (~2× for then-balanced positions such as
+DST 98+94 / QB 36+36 seconds). Per-child RNG reseeding is intended to preserve
+solo/concurrent parity; the harness asserts per-target prediction fingerprints.
+Graph compatibility, parity and a speedup on the current regime remain subject
+to the process/MPS benchmark gate.
 
 Standalone benchmark harness (does NOT touch the production pipeline ⇒ no
 retrain): [src/analysis/overlap_base_attn_prototype.py](../src/analysis/overlap_base_attn_prototype.py).
 Run on a CUDA box with `data/splits`:
 `python -m src.analysis.overlap_base_attn_prototype --position QB --seed 42` — it
 reports solo-vs-concurrent per-model train time, the contention factor, the
-overlap speedup, and prediction parity. If the win holds, productionize by
-overlapping the two trainers in `_gpu_branch` behind an `FF_*` flag (default off).
+overlap speedup, and prediction parity. Any production proposal remains subject to
+the separate warm-MPS benchmark gate below.
 
 **AWS cousin:** the same "pack all six on one GPU" idea, but via **real NVIDIA MPS on a
 warm Linux L4** (MPS is available there, unlike WSL2/Windows) instead of in-process CUDA
@@ -674,6 +638,8 @@ streams, is sketched in [proposed-adr-warm-mps-packed-training.md](proposed-adr-
 per-position worker entry.
 
 ---
+
+<a id="epoch-boundary-evidence"></a>
 
 ## Epoch-boundary host work (W3 — val-tail padding, host-sync batching, randperm) — GATE-EVALUATED → CLOSED (2026-06-22)
 
@@ -695,12 +661,3 @@ The remaining host syncs are **per-epoch, not per-step**: ~1 train-loss `.item()
 **Instrumentation note.** Per-epoch wall-clock already exists in `history["epoch_sec"]` (`training.py:1728`) but is **not decomposed** into train-pass / val-pass / boundary-overhead. A *measured* (vs inferred) boundary % would need that decomposition + a local `FF_CUDA_GRAPH=0 --fixed-epochs` A/B — deliberately **not** done: the inferred <3–5 % of a 1.5–5.7 s off-critical-path phase already answers the gate, and the only changes worth measuring are the metric-risky ones above.
 
 **Conclusion — CLOSED.** Don't pad the val tail, don't batch/defer the val-MAE sync, don't chase the randperm H2D, don't unblock K/DST graphing — none moves a material amount of an off-critical-path phase, and the non-trivial two carry model-selection risk. Re-propose only with a profile showing epoch-boundary overhead is materially large (it isn't, post-A2/A3/D2/#309).
-
----
-
-## Recommended sequencing
-1. ~~**Lever A first**~~ — **DONE** (shipped behind `FF_CUDA_GRAPH`, 1.84×, off by default; not bit-inert — see the Lever A result above).
-2. ~~**Lever B only if A is insufficient**~~ — **CLOSED, MEASURED-NEGATIVE** (2026-06-22, 5080): the single-process round-robin streams arm gave **1.03×** (1.033 ± 0.005×, no cross-stream overlap) even with full-step graphs engaged — the GIL serialises launches and graphs already collapsed the launch storm, so there's no idle to fill. The `-j6` subprocess model + core pool stay; A's per-position 1.84× remains the local-iteration win. (See the Lever B section for the measurement.) The within-position **Lever B′** in-process overlap is also **MEASURED-REJECTED** (graph-incompatible + dominated; see the B′ section).
-3. ~~**Epoch-boundary host work (W3)**~~ — **CLOSED, GATE-EVALUATED** (2026-06-22): immaterial (<3–5 % of a 1.5–5.7 s **off-critical-path** `attn_nn_train`) and the only non-trivial levers (val-tail padding, val-MAE sync) are model-selection-risky. See the "Epoch-boundary host work" section above.
-
-Levers A and B are **launch-overhead** levers (the measured bottleneck), not occupancy/FLOP levers (the 5080 has those to spare); W3 (epoch-boundary) is a gate-fail close, not a pursued lever.

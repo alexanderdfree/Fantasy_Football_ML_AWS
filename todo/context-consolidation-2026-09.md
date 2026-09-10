@@ -2,6 +2,25 @@
 
 Guidance baseline: `41941966ba59a45b978b09533e684275d9673e80`. Archive baseline, including concurrently merged incidents: `7dd5e923dc7ac27888dfbd688d6a5a1f272fcb01`. This ledger distinguishes relocated constraints from deliberate corrections. Source line numbers refer to the guidance baseline, not the shortened files. The new evaluation-cohort constraint from PR #1541 is retained in both the entrypoint and validation guide.
 
+## Follow-up pruning and rule ownership
+
+Baseline: `5321a84d` (PR #1548), 2026-09-10. This follow-up removes obsolete
+recommendations and duplicate explanations; the earlier relocation ledger below
+remains historical evidence.
+
+| Removed or consolidated material | Retained source or reason |
+|---|---|
+| TODO's deferred Batch cohort stamp and old implementation location | Completed in PR #1537: [incident](fixed-archive/fixed-batch-and-alternate-benchmark-paths-silently-omitted-elite-cohort-metr-add67964.md). Games-gap and questionable-streak A/Bs remain open. |
+| GPU plan's opt-in/default-off graph advice, pending A2 gates, closed stream-build advice and completed sequencing | Superseded by [ADR-0017](../docs/adr/0017-platform-autodetection-per-arch-optimization-policy.md) and current graph helpers. Dated results, approval history, capture exceptions, rejection reasons and the separate process/MPS gate remain in the [investigation](gpu_launch_bound_levers.md). |
+| GPU record's Ridge equality implies data identity phrasing | Remove the inference; retain measured equality and use the qualified [validation rule](../agent-guides/validation.md#production-path). |
+| CODEX root's detailed launcher, hook, prompt and memory reminders | Direct section links to the existing [provider reference](../agent-guides/providers/codex.md) and [memory policy](../agent-guides/context-maintenance.md#memory). |
+| Repeated delivery and investigation validation recipes | [Production validation](../agent-guides/validation.md#production-path), [subgroup evidence](../agent-guides/validation.md#metrics-and-subgroups), [A/B harness](../agent-guides/validation.md#ab-harness) and [GPU checks](../agent-guides/validation.md#gpu-and-batch-validation). |
+| Repeated worktree and merge narratives | [Worktree workflow](../agent-guides/delivery.md#worktree-workflow) and [PR/merge gates](../agent-guides/delivery.md#pr-and-merge-gates); authorization, current CI/review, gate sequencing and merge verification remain. |
+| Flat stop-rule list and repeated platform explanations | [Modeling](../agent-guides/stop-rules.md#modeling-and-features), [GPU](../agent-guides/stop-rules.md#gpu-execution) and [CI/serving](../agent-guides/stop-rules.md#ci-and-serving) groups retain exceptions and reopening criteria; detailed dtype/graph policy lives in [platform](../agent-guides/platform.md). |
+| Operational facts and copied procedures in global memory summaries | [Memory policy](../agent-guides/context-maintenance.md#memory) scopes summaries to durable preferences and project pointers. Personal corrections use provider update notes outside git; generation must be verified separately. |
+| ADR-0025's inherit-only Codex configuration prescription | Superseded by repository defaults in PR #1548. Resolve effective project/user/runtime settings; this follow-up does not change configuration. |
+| Startup reminder to compare full-fantasy actuals | Superseded by the shared-component comparison decision merged in PR #1549 during this follow-up. The [cohort section](../agent-guides/validation.md#evaluation-cohorts) retains that decision; no evaluation code changes here. |
+
 ## Guidance destinations
 
 | Original source | Retained destination | Disposition |
