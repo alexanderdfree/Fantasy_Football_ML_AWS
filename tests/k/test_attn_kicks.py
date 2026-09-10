@@ -76,7 +76,7 @@ class TestBuildNestedKickHistory:
 
     def test_no_current_week_leakage(self):
         """Row for week N must only see kicks with kicks.week < N."""
-        weekly = _weekly("K1", 2023, [3])
+        weekly = _weekly("K1", 2023, [3, 1, 2])
         kicks = pd.DataFrame(
             [
                 _kick("K1", 2023, 1, kick_distance=20.0),
@@ -98,7 +98,7 @@ class TestBuildNestedKickHistory:
 
     def test_outer_ordering_newest_first(self):
         """Most-recent prior game sits in slot 0, oldest in the last real slot."""
-        weekly = _weekly("K1", 2023, [4])
+        weekly = _weekly("K1", 2023, [4, 1, 2, 3])
         kicks = pd.DataFrame(
             [
                 _kick("K1", 2023, 1, kick_distance=20.0),
@@ -116,7 +116,7 @@ class TestBuildNestedKickHistory:
 
     def test_outer_truncation_keeps_most_recent(self):
         """When prior-game count > max_games, the oldest games are dropped."""
-        weekly = _weekly("K1", 2023, [8])
+        weekly = _weekly("K1", 2023, [8, *range(1, 8)])
         # 7 prior games, weeks 1..7
         kicks = pd.DataFrame(
             [_kick("K1", 2023, w, kick_distance=float(w * 10)) for w in range(1, 8)]
@@ -133,7 +133,7 @@ class TestBuildNestedKickHistory:
 
     def test_inner_truncation_keeps_most_recent_kick(self):
         """When a game has > max_kicks_per_game kicks, the oldest inside-game kicks drop."""
-        weekly = _weekly("K1", 2023, [2])
+        weekly = _weekly("K1", 2023, [2, 1])
         kicks = pd.DataFrame(
             [_kick("K1", 2023, 1, kick_distance=float(d)) for d in [10, 20, 30, 40, 50]]
         )
@@ -151,7 +151,7 @@ class TestBuildNestedKickHistory:
         """play_id is the deterministic within-game sort key. Truncation must
         keep the highest play_ids (latest kicks of the game), regardless of
         the row order in kicks_df."""
-        weekly = _weekly("K1", 2023, [2])
+        weekly = _weekly("K1", 2023, [2, 1])
         # Shuffle row order intentionally — sort must rely on play_id, not insertion order.
         kicks = pd.DataFrame(
             [
@@ -173,7 +173,7 @@ class TestBuildNestedKickHistory:
         )
 
     def test_different_players_dont_cross_contaminate(self):
-        weekly = _weekly("K1", 2023, [2])
+        weekly = _weekly("K1", 2023, [2, 1])
         kicks = pd.DataFrame(
             [
                 _kick("K2", 2023, 1, kick_distance=20.0),  # different player
@@ -189,7 +189,7 @@ class TestBuildNestedKickHistory:
         assert not inner[0, 0, 1:].any()
 
     def test_different_seasons_dont_cross_contaminate(self):
-        weekly = _weekly("K1", 2023, [2])
+        weekly = _weekly("K1", 2023, [2, 1])
         kicks = pd.DataFrame(
             [
                 _kick("K1", 2022, 5, kick_distance=20.0),  # prior season
@@ -204,15 +204,84 @@ class TestBuildNestedKickHistory:
         assert X[0, 0, 0, distance_idx] == 30.0
 
     def test_empty_kicks_df(self):
-        """No kick records at all — all masks False, output all zeros."""
+        """Real empty games survive even when there are no kicks in the dataset."""
         weekly = _weekly("K1", 2023, [1, 2])
         kicks = pd.DataFrame(columns=["player_id", "season", "week", *ATTN_KICK_STATS])
         X, outer, inner = build_nested_kick_history(
             weekly, kicks, ATTN_KICK_STATS, max_games=2, max_kicks_per_game=2
         )
         assert X.shape == (2, 2, 2, len(ATTN_KICK_STATS))
-        assert not outer.any()
+        np.testing.assert_array_equal(outer, [[False, False], [True, False]])
         assert not inner.any()
+        assert not X.any()
+
+    def test_empty_game_aligns_with_aggregates_and_preserves_misses(self):
+        from src.features.engineer import build_game_history_arrays
+
+        # Week 2 is a real empty game; week 3 is absent (e.g. a bye).
+        # A shuffled, non-contiguous index also exercises output alignment.
+        weekly = _weekly("K1", 2023, [4, 1, 2]).assign(fg_att=[1, 2, 0])
+        weekly.index = [20, 4, 12]
+        kicks = pd.DataFrame(
+            [
+                _kick("K1", 2023, 1, kick_distance=42.0, kick_made=1),
+                _kick("K1", 2023, 1, kick_distance=55.0, kick_made=0),
+                _kick("K1", 2023, 3, kick_distance=60.0),  # outside the game index
+                _kick("K1", 2023, 4, kick_distance=35.0),  # target game
+            ]
+        )
+        X, outer, inner = build_nested_kick_history(
+            weekly, kicks, ATTN_KICK_STATS, max_games=3, max_kicks_per_game=3
+        )
+        aggregates, aggregate_mask = build_game_history_arrays(
+            weekly, history_stats=["fg_att"], max_seq_len=3
+        )
+        np.testing.assert_array_equal(outer, aggregate_mask)
+        np.testing.assert_array_equal(outer[0], [True, True, False])
+        np.testing.assert_array_equal(aggregates[0, :, 0], [0, 2, 0])
+        assert not inner[0, 0].any()  # empty game, not padding
+        assert inner[0, 1].sum() == 2
+        np.testing.assert_array_equal(
+            X[0, 1, :2, ATTN_KICK_STATS.index("kick_distance")], [42.0, 55.0]
+        )
+        np.testing.assert_array_equal(X[0, 1, :2, ATTN_KICK_STATS.index("kick_made")], [1.0, 0.0])
+        # Truncation counts actual games, including empty games.
+        _, short_outer, short_inner = build_nested_kick_history(
+            weekly, kicks, ATTN_KICK_STATS, max_games=1, max_kicks_per_game=3
+        )
+        assert short_outer[0, 0]
+        assert not short_inner[0].any()
+
+        # Real empty games exercise an all-masked inner pool inside a valid
+        # outer token. They must remain finite during backward, not just inference.
+        import torch
+
+        from src.shared.neural_net import MultiHeadNetWithNestedHistory
+
+        model = MultiHeadNetWithNestedHistory(
+            static_dim=2,
+            kick_dim=len(ATTN_KICK_STATS),
+            target_names=POSITION_CONFIG.targets,
+            backbone_layers=[4],
+            d_kick=4,
+            d_model=8,
+            n_attn_heads=1,
+            head_hidden=4,
+            dropout=0,
+            game_dim=1,
+            non_negative_targets=set(),
+        )
+        preds = model(
+            torch.ones(3, 2),
+            torch.from_numpy(X),
+            torch.from_numpy(outer),
+            torch.from_numpy(inner),
+            x_game_history=torch.from_numpy(aggregates),
+        )
+        loss = sum(p.square().mean() for p in preds.values())
+        assert torch.isfinite(loss)
+        loss.backward()
+        assert all(torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None)
 
     def test_empty_weekly_df(self):
         weekly = pd.DataFrame(columns=["player_id", "season", "week"])

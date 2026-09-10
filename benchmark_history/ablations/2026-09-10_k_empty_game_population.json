@@ -1,0 +1,430 @@
+{
+  "purpose": "K no-attempt game population and nested history validation; no claimed accuracy improvement",
+  "runner": "src.tuning.ab_harness.run_ab, one identity Variant per checkout, default_metric_fn on result[test_df]",
+  "runtime": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.13",
+    "FF_DEVICE": "cpu",
+    "LGBM_N_JOBS": 1,
+    "OPENBLAS_NUM_THREADS": 1,
+    "OMP_NUM_THREADS": 1,
+    "MKL_NUM_THREADS": 1,
+    "VECLIB_MAXIMUM_THREADS": 1
+  },
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "baseline_provenance": {
+    "commit": "2d20bd89ae4b88b2a903f1ae277f41dc63848047",
+    "code_fingerprints": {
+      "K": "f0ddfafbcda9cb5cbd468aed6d89f5e45c5bc9428b4d42309d7aa6a537995477"
+    },
+    "device": "cpu",
+    "lgbm_threads": "1",
+    "seeds": [
+      42,
+      123,
+      7
+    ]
+  },
+  "candidate_provenance": {
+    "commit": "b6fc3d54caa3889a8bc9d1f887aa6603563103d5",
+    "code_fingerprints": {
+      "K": "a94d6cf532a2ca6b489b5e8ef450ced076e919b4e5365e998ec9f3a268709cc0"
+    },
+    "device": "cpu",
+    "lgbm_threads": "1",
+    "seeds": [
+      42,
+      123,
+      7
+    ]
+  },
+  "cohorts": {
+    "common": "2025 REG games with fg_att + pat_att > 0, n=535 in both arms",
+    "candidate_all": "All 543 observed 2025 REG kicker games",
+    "candidate_zero_attempt": "The 8 restored zero-attempt 2025 games, absent from baseline evaluation"
+  },
+  "population_audit": {
+    "cached_rows_before": 5729,
+    "cached_rows_after": 5815,
+    "historical_no_attempt_rows_added": 78,
+    "existing_2025_no_attempt_rows_retained": 8,
+    "duplicate_player_season_week_keys": 0
+  },
+  "models": {
+    "Ridge": {
+      "baseline_common": {
+        "mae": {
+          "mean": 3.996676738308023,
+          "std": 0.0,
+          "n": 3
+        },
+        "bias": {
+          "mean": -0.7109316085456726,
+          "std": 0.0,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.056430063880586,
+          "std": 0.0,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_common": {
+        "mae": {
+          "mean": 4.018573972183266,
+          "std": 0.0,
+          "n": 3
+        },
+        "bias": {
+          "mean": -0.8393471882026399,
+          "std": 0.0,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.092073411860185,
+          "std": 0.0,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_all": {
+        "mae": {
+          "mean": 4.068121460742139,
+          "std": 0.0,
+          "n": 3
+        },
+        "bias": {
+          "mean": -0.7182281171703101,
+          "std": 0.0,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.134371111028987,
+          "std": 0.0,
+          "n": 3
+        },
+        "n": {
+          "mean": 543.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_zero_attempt": {
+        "mae": {
+          "mean": 7.381609758116749,
+          "std": 0.0,
+          "n": 3
+        },
+        "bias": {
+          "mean": 7.381609758116749,
+          "std": 0.0,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 7.435649755013006,
+          "std": 0.0,
+          "n": 3
+        },
+        "n": {
+          "mean": 8.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "common_mae_delta": 0.021897233875243227
+    },
+    "NN": {
+      "baseline_common": {
+        "mae": {
+          "mean": 4.083682218741777,
+          "std": 0.014306086641752393,
+          "n": 3
+        },
+        "bias": {
+          "mean": -1.5052632333927811,
+          "std": 0.19694376820679974,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.246740040164592,
+          "std": 0.026956469255149804,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_common": {
+        "mae": {
+          "mean": 4.1092009987935105,
+          "std": 0.008172058313174115,
+          "n": 3
+        },
+        "bias": {
+          "mean": -1.6002410433225547,
+          "std": 0.11994766422610754,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.287209760528495,
+          "std": 0.017832566789423375,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_all": {
+        "mae": {
+          "mean": 4.150436573280302,
+          "std": 0.004472727072607127,
+          "n": 3
+        },
+        "bias": {
+          "mean": -1.4748884590071654,
+          "std": 0.1194701700112783,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.316128426172626,
+          "std": 0.017210469817789977,
+          "n": 3
+        },
+        "n": {
+          "mean": 543.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_zero_attempt": {
+        "mae": {
+          "mean": 6.908065617084503,
+          "std": 0.24560466204326367,
+          "n": 3
+        },
+        "bias": {
+          "mean": 6.908065617084503,
+          "std": 0.24560466204326367,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 6.980634670971036,
+          "std": 0.23673251953276753,
+          "n": 3
+        },
+        "n": {
+          "mean": 8.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "common_mae_delta": 0.02551878005173336
+    },
+    "Attention NN": {
+      "baseline_common": {
+        "mae": {
+          "mean": 4.15485551400348,
+          "std": 0.03394420270057061,
+          "n": 3
+        },
+        "bias": {
+          "mean": -1.2566021076095442,
+          "std": 0.20509599474493023,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.267369498397735,
+          "std": 0.05467675906697181,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_common": {
+        "mae": {
+          "mean": 4.159773593082606,
+          "std": 0.04478606154232084,
+          "n": 3
+        },
+        "bias": {
+          "mean": -1.3061982101963323,
+          "std": 0.24776934558098287,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.280828871505769,
+          "std": 0.07305639689899822,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_all": {
+        "mae": {
+          "mean": 4.196116690111716,
+          "std": 0.03907500996871113,
+          "n": 3
+        },
+        "bias": {
+          "mean": -1.1893251418481954,
+          "std": 0.24909667798076857,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.303981203087278,
+          "std": 0.0652363729143421,
+          "n": 3
+        },
+        "n": {
+          "mean": 543.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_zero_attempt": {
+        "mae": {
+          "mean": 6.626561303933461,
+          "std": 0.34301222695897116,
+          "n": 3
+        },
+        "bias": {
+          "mean": 6.626561303933461,
+          "std": 0.34301222695897116,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 6.662910552258687,
+          "std": 0.348681011756646,
+          "n": 3
+        },
+        "n": {
+          "mean": 8.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "common_mae_delta": 0.004918079079125448
+    },
+    "LightGBM": {
+      "baseline_common": {
+        "mae": {
+          "mean": 4.028575057924049,
+          "std": 0.005067736639164715,
+          "n": 3
+        },
+        "bias": {
+          "mean": -0.6765949769481434,
+          "std": 0.004713061344319861,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.086853946168779,
+          "std": 0.0046593107415388866,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_common": {
+        "mae": {
+          "mean": 4.034351254656749,
+          "std": 0.008204656528040664,
+          "n": 3
+        },
+        "bias": {
+          "mean": -0.7469441319176783,
+          "std": 0.022473289100475583,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.094769436206462,
+          "std": 0.006763721851739099,
+          "n": 3
+        },
+        "n": {
+          "mean": 535.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_all": {
+        "mae": {
+          "mean": 4.082077385007361,
+          "std": 0.008116090741058917,
+          "n": 3
+        },
+        "bias": {
+          "mean": -0.6287753439379777,
+          "std": 0.02167538933048679,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 5.134366498478292,
+          "std": 0.0063428227877328274,
+          "n": 3
+        },
+        "n": {
+          "mean": 543.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "candidate_zero_attempt": {
+        "mae": {
+          "mean": 7.273762352204501,
+          "std": 0.033950734132196486,
+          "n": 3
+        },
+        "bias": {
+          "mean": 7.273762352204501,
+          "std": 0.033950734132196486,
+          "n": 3
+        },
+        "rmse": {
+          "mean": 7.310798147871487,
+          "std": 0.03931172432443958,
+          "n": 3
+        },
+        "n": {
+          "mean": 8.0,
+          "std": 0.0,
+          "n": 3
+        }
+      },
+      "common_mae_delta": 0.005776196732700356
+    }
+  },
+  "cells_ok": 6,
+  "failed": [],
+  "limitations": [
+    "CPU validation; not a production GPU retrain.",
+    "The corrected all-game MAE is not directly comparable with the baseline conditional-on-an-attempt MAE.",
+    "Three seeds show a small common-cohort regression; no claim of a model accuracy gain."
+  ]
+}

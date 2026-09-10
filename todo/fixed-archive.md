@@ -4,6 +4,12 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 
 ---
 
+### [FIXED] K no-attempt games disappeared from training and nested history
+- **File(s):** `src/k/data.py`, `src/k/features.py`, `tests/k/test_data_loaders.py`, `tests/k/test_attn_kicks.py` (PR pending).
+- **What:** The 2025 weekly loader filtered out every row with `fg_att + pat_att == 0`, and the older PBP reconstruction emitted only FG/PAT-attempt games. Independently, `build_nested_kick_history` discovered its outer game slots from kick records: even an explicitly supplied empty weekly game vanished, shifting kicks away from the parallel per-game aggregate branch. A cached-data replay dropped 8 of 543 regular-season 2025 K rows. Misses were already retained; the missing case was a real game with no attempts.
+- **Fix:** Preserve existing weekly zero-attempt rows; add missing observed K appearances from the shared snap-count/roster caches with GSIS identity resolution, without constructing byes/inactive games from a roster. Fill new game context from schedules and preserve existing kick outcomes. Build nested outer slots from the weekly game index, matching `build_game_history_arrays`; real empty games have `outer=True`, all `inner=False`. Preserve missed-kick distances/outcomes, chronological leakage guards, same-season boundaries, and existing caps. Regression tests cover both data eras, specialist/inactive exclusions, shuffled index alignment, empty datasets, truncation, and finite model gradients.
+- **Lesson:** An event table is not a complete game index. Build the observation population from game participation, then join events; use separate masks for a real empty observation and padding. When concatenating per-event and per-game branches, their slots must refer to the same games, not merely have matching tensor dimensions.
+
 ### [FIXED] Lint CI drifted from the development Ruff pin
 - **File(s):** [../.github/workflows/tests.yml](../.github/workflows/tests.yml), [../tests/test_dependency_pins.py](../tests/test_dependency_pins.py) (audit #1509; PR pending).
 - **What:** The lint job independently pinned Ruff 0.15.16 while development requirements had advanced to 0.15.20, and then 0.16.6. Existing dependency parity tests did not inspect the lint install command.
