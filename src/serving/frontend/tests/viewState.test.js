@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createLatestRequest } from "../src/lib/latestRequest.js";
 import { meetsMinimumProjection, sliceAccuracy } from "../src/lib/predictionFilters.js";
+import { parseWikiHash, wikiLinkTarget } from "../src/lib/wikiLinks.js";
 
 function deferred() {
     let resolve, reject;
@@ -65,6 +66,25 @@ test("minimum points includes the kicker's Ridge projection", () => {
 });
 
 const accuracySources = [{ key: "ridge_pred", label: "Ridge" }, { key: "nn_pred", label: "NN" }];
+
+test("local Wiki headings retain their document route while other links keep their destination", () => {
+    assert.deepEqual(wikiLinkTarget("#1-context", "architecture"),
+        { slug: "architecture", anchor: "1-context" });
+    assert.deepEqual(wikiLinkTarget("#wiki:batch-design:overview", "architecture"),
+        { slug: "batch-design", anchor: "overview" });
+    assert.deepEqual(wikiLinkTarget("#wiki:batch-design", "architecture"),
+        { slug: "batch-design", anchor: null });
+    assert.equal(wikiLinkTarget("https://example.com/#heading", "architecture"), null);
+    assert.equal(wikiLinkTarget("#", "architecture"), null);
+});
+
+test("Wiki deep-link reloads resolve encoded and literal heading IDs consistently", () => {
+    const expected = { slug: "architecture", anchor: "some heading:part" };
+    assert.deepEqual(wikiLinkTarget("#some%20heading%3Apart", "architecture"), expected);
+    assert.deepEqual(parseWikiHash("#wiki:architecture:some%20heading:part"), expected);
+    assert.deepEqual(parseWikiHash("#wiki:architecture:100%"),
+        { slug: "architecture", anchor: "100%" });
+});
 const comparisonRow = (extra = {}) => ({
     actual: 16, comparison_actual: 10,
     comparison_actual_basis: "shared_projected_components_v1", ...extra,

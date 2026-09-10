@@ -8,18 +8,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchJSON } from "../api.js";
 import { createLatestRequest } from "../lib/latestRequest.js";
+import { parseWikiHash, wikiLinkTarget } from "../lib/wikiLinks.js";
 
 const WIKI_DEFAULT_SLUG = "architecture";
 let wikiIndexCache = null; // fetched once from /api/wiki/index
 let wikiCurrentSlug = null;
 const wikiPageCache = new Map(); // slug → server-sanitized html
-
-function parseWikiHash(hash) {
-    if (!hash || !hash.startsWith("#wiki:")) return null;
-    const rest = hash.slice("#wiki:".length);
-    const [slug, ...anchorParts] = rest.split(":");
-    return { slug, anchor: anchorParts.join(":") || null };
-}
 
 export function WikiView({ scoring, search, theme, onPlayer, activateView }) {
     const [index, setIndex] = useState(() => (
@@ -140,17 +134,16 @@ export function WikiView({ scoring, search, theme, onPlayer, activateView }) {
         loadWikiPage(slug);
     };
 
-    // One delegated listener on the content article catches the intra-content
-    // `#wiki:` links produced by the server-side link rewriter; other links
-    // (external GitHub etc.) pass through.
+    // Keep local heading links in the Wiki route too: native #heading navigation
+    // would otherwise activate App's unknown-route homepage fallback.
     const onContentClick = (e) => {
         const a = e.target.closest("a");
         if (!a) return;
         const href = a.getAttribute("href") || "";
-        if (!href.startsWith("#wiki:")) return;
+        const target = wikiLinkTarget(href, page.slug);
+        if (!target && href !== "#") return;
         e.preventDefault();
-        const parsed = parseWikiHash(href);
-        if (parsed) loadWikiPage(parsed.slug, parsed.anchor);
+        if (target) loadWikiPage(target.slug, target.anchor);
     };
 
     return (

@@ -50,6 +50,11 @@ Timeline cache hit clears the previous request error. Season Leaders receives
 separate canonical comparison actuals and source exclusions, grades every
 candidate on common rows, and displays their count. Its Avg Actual retains full
 fantasy totals; older snapshots without comparison truth show unavailable.
+Plain Wiki table-of-contents fragments now use the canonical Wiki slug/anchor
+route, so they scroll within the document and survive reload and browser
+history. Comparison rows with actual data but no finite forecast source report
+unavailable coverage and `predictions_missing`, rather than available rows with
+every metric blank.
 
 **Validation**: Exact before/after browser flows exercised the committed bundle;
 the frontend was rebuilt from authored sources. Node tests use out-of-order
@@ -71,6 +76,10 @@ WR rushing-stat control, an older snapshot, and PPR→failed Half-PPR→cached P
 The visible sparse winner changes from Ridge (1.00) to NN (0.50 on 1/2 rows),
 while the complete-sample result stays unchanged. Wiki tests edit the actual
 Markdown file during rendering and verify the following request recovers.
+The composed-tree browser replay covers the real Architecture TOC, reload,
+Back/Forward, and cross-document links. It also verifies that no-forecast rows
+display Unavailable while an exact Ridge forecast keeps its zero MAE. Those
+final two fixes passed 87 Python and 24 Node checks.
 
 **Lesson**: A request's completion order does not establish freshness. Cache
 mode, request identity and visible controls must agree with the data displayed.

@@ -71,6 +71,9 @@ def _shared_rows(frame, scoring, columns=None):
     for col in [actual, *columns.values()]:
         data[col] = pd.to_numeric(data[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
     common = data.dropna(subset=[actual, *columns.values()])
+    if not columns:
+        # Actuals alone do not constitute an available forecast comparison.
+        common = common.iloc[:0]
     return common, columns
 
 
@@ -149,6 +152,8 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                     prefix: int(cohort[col].notna().sum()) for prefix, col in columns.items()
                 },
             }
+            if not columns:
+                coverage[name][pos]["reason"] = "predictions_missing"
             if name == "weekly_reference_top24":
                 coverage[name][pos].update({k: v for k, v in ref_meta.items() if k != "status"})
                 coverage[name][pos]["reference_status"] = ref_meta["status"]

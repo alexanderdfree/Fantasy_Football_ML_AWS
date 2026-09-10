@@ -193,5 +193,39 @@
     },
     "active_pr_overlap": "1533changesonlyClaudeSessionStarttimeout;1557and1566donotedittheseconfigs;quotesdonotaltertimeoutsemantics",
     "frozen": true
+  },
+  "composed_client_followups": {
+    "worktree": "/private/tmp/final-project-runtime-followup.eOYNNq",
+    "frozen_at": "2026-09-10T21:56:46.190994+00:00",
+    "paths": {
+      "src/serving/comparison.py": "953b9a3e417763a2710fa59349afd482ef17ed196f6ec7a0026e39405efd410d",
+      "src/serving/frontend/src/lib/wikiLinks.js": "c3cf48300340e15d6f3ce5279ac63a27843865f98cfeac66ae1c92273889129b",
+      "src/serving/frontend/src/views/Wiki.jsx": "b61e87f5ac24325e54a9dd81bd85a6b044cc81d6d6a9ce47ff1f2b8a905ff8b8",
+      "src/serving/frontend/tests/viewState.test.js": "ad89a62aa3c6e6d4519880a47a593243ff4d0b211edb03576f5b67bf3ca0e973",
+      "src/serving/static/js/app.js": "3606d7bae49011cbb2457cd61b00ea1a5779c27cc50caaa8da700180ecea2995",
+      "tests/test_app_comparison.py": "01c7310c6d3995d4b053cc002ddeb9209d5509531042aa52555dc0710f347331"
+    },
+    "python_tests": "87 passed",
+    "node_tests": "24 passed",
+    "logs": [
+      "/tmp/audit-composed-runtime-final-gate.out",
+      "/tmp/audit-composed-wiki-node.out",
+      "/tmp/audit-composed-wiki-build.out"
+    ],
+    "browser": [
+      "/tmp/audit-composed-wiki-anchor-after.json",
+      "/tmp/audit-composed-comparison-browser.json"
+    ],
+    "screenshots": [
+      "/tmp/audit-composed-wiki-anchor-fixed.png",
+      "/tmp/audit-composed-comparison-no-forecast-fixed.png"
+    ],
+    "record_notes": [
+      "Wiki same-document TOC links escaped to homepage; route through canonical Wiki slug+anchor, including encoded anchors and reload/back/forward. Cross-document links remain unchanged.",
+      "With actual components but no finite forecast source, Comparison falsely reported available rows. It now reports unavailable/n0 and predictions_missing; missing actual components retain their distinct reason."
+    ],
+    "temporary_links_removed": [
+      "/private/tmp/final-project-runtime-followup.eOYNNq/src/serving/frontend/node_modules/node_modules"
+    ]
   }
 }
