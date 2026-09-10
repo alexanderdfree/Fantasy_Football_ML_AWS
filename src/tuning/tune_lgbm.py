@@ -37,7 +37,8 @@ from src.shared.pipeline import _prepare_position_data, _reporting_frame
 from src.tuning.history import append_tuning_run
 
 _DEFAULT_SEEDS = (42, 43, 44)
-_OBJECTIVE_VERSION = "seedavg_v1"
+# Older trials sampled subsample while LightGBM's frequency=0 disabled bagging.
+_OBJECTIVE_VERSION = "seedavg_bagging_v2"
 _OBJECTIVE_NAME = "mean_cv_mae_across_folds_and_seeds"
 
 

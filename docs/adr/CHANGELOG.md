@@ -3,6 +3,8 @@
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
 
 - 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR pending) · → ADR-0018
+- 2026-09-10 · Stabilize count likelihoods and expectations, reject empty training, and honor LightGBM row-sampling fractions with new tuning studies · (PR pending) · → ADR-0002, ADR-0003
+- 2026-09-10 · Seed explicit Apple MPS runs, preserve captured stacked devices, and expose unsupported Apple MPS stacking · (PR pending) · → ADR-0017
 - 2026-09-10 · Correct truncated-count expectations and conditional diagnostics; weight validation losses by observations and separate the corrected tuning objective namespaces · (PR pending) · → ADR-0002, ADR-0005, ADR-0015
 - 2026-09-10 · Preserve played signed-stat rows, fit D/ST imputation within each fold, and isolate concurrent tuner capture and stacked study lookup · (PR pending) · → ADR-0001, ADR-0015
 

@@ -1,7 +1,8 @@
 ### [FIXED] Model expectations, fold preprocessing and tuning boundaries diverged
 
 **File(s)**: `src/shared/neural_net.py`, `src/shared/evaluation.py`,
-`src/shared/registry.py`, `src/shared/training.py`, `src/data/preprocessing.py`,
+`src/shared/registry.py`, `src/shared/training.py`, `src/shared/count_math.py`,
+`src/shared/models.py`, `src/shared/utils.py`, `src/data/preprocessing.py`,
 `src/wr/features.py`, `src/te/features.py`, `src/dst/data.py`,
 `src/dst/run_pipeline.py`, `src/benchmarking/benchmark.py`, and the affected
 `src/tuning/` entrypoints. Reproduced against `0f0fec55` in the 2026-09-10 audit.
@@ -25,6 +26,19 @@
   could steal each other's trainers, retain hooks after failure, or intercept
   unrelated training. Read-only best-study lookup selected a graph namespace
   that stacked training never wrote.
+- Explicit Apple MPS runs did not seed their accelerator RNG, and four stacked
+  entrypoints discarded the captured trainer's device. Repeated seed 42 changed
+  2,074 of 4,096 real MPS dropout values while explicit MPS seeding repeated them.
+- At a valid low positive rate, the truncated NB likelihood assigned probability
+  greater than one and reversed its rate-gradient direction. Exponentiating
+  finite log-dispersion 90 also produced NaN even when the head's expected count
+  was representable. These are boundary reproductions, not claims that the
+  default measured cohorts reached either state.
+- A training loader with fewer rows than a dropped-tail batch saved an untouched
+  model after reporting zero training loss.
+- All six LightGBM configurations and the tuner supplied row-sampling fractions,
+  but sampling frequency remained zero. The supposedly tuned dimension never
+  affected a fitted tree.
 
 **Fix**: Convert truncated count means using their positive probability mass,
 keeping raw NLL inputs and checkpoint tensor shapes unchanged. Route the loss
@@ -36,6 +50,15 @@ checkpoint selection; version tuning objectives as `scheduler_v3`/`history_v3`.
 Defer D/ST context fills to the actual fold's existing fill hook. Dispatch
 temporary capture hooks by thread/nested context and unify stacked namespace
 selection for training and lookup.
+Seed the selected MPS accelerator and retain the captured device in stacked
+callers. Reject Apple MPS stacking with actionable guidance because the actual
+Torch 2.14 MPS vmap/MSE smoke fails on that backend; eager MPS remains available.
+Use shared `count_math.py` tensor primitives, a stable conditional probability
+and log-gamma ratio, and log-domain expectations; retain the same distributions
+and parameter shapes. Fail zero-batch training clearly. Enable LightGBM sampling
+for fractions below one and isolate corrected trials in `seedavg_bagging_v2`.
+Existing fraction-one fits are a positive control; historical tuned fractions
+do not establish the corrected recipe's accuracy.
 
 **Validation**: Regression suites retain ordinary Poisson, likelihood-gradient,
 six-position reload, mixed precision, vmap, same-team, zero-event, empty-tail,
@@ -48,6 +71,11 @@ loader inputs, all six positions and seeds 42/123/7; a separate 2023 D/ST origin
 comparison covers the affected fold path. Actual CUDA acceptance is required
 for changed capture arithmetic. Final comparison and hardware evidence is added
 with delivery; unit or schema checks alone do not establish those results.
+The intermediate 36-cell comparison at `e3ed317f` and its successful real L4
+CUDA probes are retained under `benchmark_history/audits/2026-09-10-model-*`.
+They precede subsequent numerical fixes and main merges, so they do not establish
+final-branch metric neutrality. The MPS record separately distinguishes passing
+RNG controls from the unsupported stacked backend smoke.
 
 **Lesson**: Keep distribution parameters distinct from reported expectations,
 fit preprocessing on the population actually used for training, and preserve

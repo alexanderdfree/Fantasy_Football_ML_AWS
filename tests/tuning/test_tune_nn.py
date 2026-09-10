@@ -1100,7 +1100,9 @@ def test_stacked_objective_reports_mean_trajectory_and_returns_min(monkeypatch):
         seen["seeds"] = list(seeds)
         seen["memo_is_trial_memo"] = memo is tune_nn._TRIAL_DATA_MEMO
         seen["sampled_override_applied"] = "attn_lr" in base_cfg
-        return ["cap"] * len(seeds), {}
+        from types import SimpleNamespace
+
+        return [{"trainer": SimpleNamespace(device="cpu")} for _ in seeds], {}
 
     def fake_train(captures, cfg, device, n_epochs, base_order_seed=0, epoch_callback=None):
         seen["n_epochs"] = n_epochs

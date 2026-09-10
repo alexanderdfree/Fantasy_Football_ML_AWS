@@ -1,0 +1,87 @@
+{
+  "branch": "codex/audit-model-correctness",
+  "base_sha": "e3ed317f3dc0fafab4b8a7c5a611b85d91cd9550",
+  "files": {
+    "src/shared/count_math.py": "22e957cc77856d7d09036fc4675a3ba7c96f119db90b284f1ac53943bccf3c03",
+    "src/shared/training.py": "eb1fa7e3679470f92174c4a98145b58d026bd5631c2f2d7fbbf11ef23c4c7c49",
+    "src/shared/neural_net.py": "966af842e1c1aec4e4f9bdc0cbdbcd0b59f2aea4a245e1fe140e1445a9a40623",
+    "src/shared/models.py": "c3f735f9d02f7fdaac9d1420c55b9a9d07f67ed240fc424ca4a47ce3b19100b6",
+    "src/tuning/tune_lgbm.py": "f2c3c94d1703f65a53ff990ab63824aef8cb531e9e6979d607a6b906c54b13f1",
+    "tests/shared/test_count_likelihood_precision.py": "2c37ce2af0c076b052bf5c7f09b45b971e17ba094778526ba80560bf290eeee5",
+    "tests/shared/test_empty_training.py": "3cb2f10a76cc295706be1a98f15b53f98ca54a3ebd376a840b513ec68ac58582",
+    "tests/shared/test_lgbm_subsample.py": "c52a2b0180420f080f3e1de975d5289697252c8f079efa7102d37de63a045311",
+    "tests/tuning/test_tune_lgbm.py": "0409a772b4bfe23b12d28312b9e15c12b797aa4701a2fc86f45d55c49df94077"
+  },
+  "findings": [
+    {
+      "id": "COUNT-PRECISION",
+      "trigger": "actual GatedHead mu approximately2e-6/log_alpha-5",
+      "before": "conditional P1=16.7771969; NLL mu gradient=-499998.9375",
+      "expected": "P1=.9999989933; NLL mu gradient=+.503369",
+      "fix": "Stable conditional P1 and fixed-shift gamma ratio, FP32-or-higher tensor arithmetic; no probability clamp/count cap",
+      "evidence": [
+        "/tmp/audit-ztnb-head-proof.json",
+        "/tmp/audit-numerical-new-regressions-before.log"
+      ],
+      "incidence": "No invalid P1 in18 existing RB/WR/TE default test parameter frames; finite-domain boundary proof, not observed default-cohort incidence."
+    },
+    {
+      "id": "TRAIN-EMPTY",
+      "trigger": "2 training rows with production batch256/drop_last=True",
+      "before": "Actual _train_nn returned finite predictions from untouched initialization, zero train_loss and best checkpoint",
+      "fix": "Reject sized empty loaders before graph/validation setup and unsized/exhausted empty epochs before validation",
+      "evidence": [
+        "/tmp/audit-empty-loader-production-proof.json",
+        "/tmp/audit-empty-training-loader-proof.json"
+      ]
+    },
+    {
+      "id": "LGBM-BAGGING",
+      "trigger": "all6 POSITION_CONFIG fractions<1 and tuner subsample dimension",
+      "before": "frequency0 ignored subsample; half/full-data trees identical",
+      "fix": "frequency1 for fraction<1, frequency0 for fraction1; tuner seedavg_bagging_v2 namespace",
+      "evidence": [
+        "/tmp/audit-lgbm-subsample-proof.json",
+        "/tmp/audit-lgbm-bagging-intent.json"
+      ],
+      "risk": "Model-impact all6; historic tuned fractions were not evidence for active bagging quality; fresh paired3seed pipeline validation owned by root."
+    },
+    {
+      "id": "HURDLE-MEAN-OVERFLOW",
+      "trigger": "finite mu2e-6/log_alpha90",
+      "before": "NaN instead of representable conditional mean3.174924e31",
+      "fix": "log E[Y|Y>0]=log_exprel(r)-log_exprel(-z) shared torch math; keep raw rate, output parameters and ordinary Poisson heads unchanged",
+      "evidence": [
+        "/tmp/audit-hurdle-large-dispersion-before.json",
+        "/tmp/audit-bagging-dispersion-before.log"
+      ]
+    }
+  ],
+  "validation": {
+    "command_log": "/tmp/audit-numerical-final-focused.log",
+    "passed": 467,
+    "skipped": 8,
+    "max_workers": 2,
+    "real_mps_forward_backward_cases": 4,
+    "actual_cuda_executed": false,
+    "initial_new_regressions_before": "35 failed, 5 passed, 1 skipped",
+    "bagging_large_dispersion_before": "8 failed",
+    "ruff": "check and format --check passed on all9 ownedfiles",
+    "git_diff_check": "passed",
+    "existing_training_fixture_changes": "None needed: all trainer/validation fixtures already had real training batches.",
+    "command_log_sha256": "d45fffa6c1c9908ab58c3a814daa6f90876b0af065e2c98d6076bd9ef5333a0f"
+  },
+  "source_frozen": true,
+  "interpretation": "Targeted CPU/MPS evidence at the recorded source hashes. Fresh all-position production comparisons and actual-CUDA acceptance are still required for the final branch.",
+  "combined_unit_gate": {
+    "passed": 4556,
+    "skipped": 5,
+    "seconds": 118.77,
+    "workers": 2,
+    "source_snapshot_sha256": "2c09a4fe0bee8584e66b5ff878bfea3ca2e126997102a2df701d4d01596e4db1",
+    "log_sha256": "9f89636d1f0e14702c9c8992a672365e67dbdca45b4a532b5713d5e522ccc5ba",
+    "source_changed_during_run": false,
+    "ruff": "passed",
+    "format": "794files passed"
+  }
+}

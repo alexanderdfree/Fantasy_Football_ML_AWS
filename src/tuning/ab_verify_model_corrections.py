@@ -34,12 +34,14 @@ def _tiny_config(cfg):
 
 
 def metric_fn(result, position):
+    from src.analysis.verify_count_likelihoods import verify_count_likelihoods
     from src.analysis.verify_hurdle_expectations import verify_hurdle_expectations
     from src.analysis.verify_validation_reduction import verify_validation_reduction
 
     if position != "RB" or not result.get("attn_nn_metrics") or result["test_df"].empty:
         raise RuntimeError("The normal RB pipeline must produce attention and test results")
     return {
+        "count_likelihoods": verify_count_likelihoods(seed=SEEDS[0]),
         "hurdle_expectations": verify_hurdle_expectations(seed=SEEDS[0]),
         "validation_reduction": verify_validation_reduction(seed=SEEDS[0]),
         "pipeline": {

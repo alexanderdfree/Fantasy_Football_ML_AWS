@@ -90,8 +90,10 @@ def test_parse_seeds_accepts_commas_and_rejects_bad_values():
 def test_seed_versioned_study_names_do_not_match_legacy_names():
     seeds = (42, 43, 44)
     assert tune_lgbm._seed_key(seeds) == "s42-43-44"
-    assert tune_lgbm._study_name("RB", seeds) == "lgbm_seedavg_v1_s42-43-44_rb"
-    assert tune_lgbm._study_db_path("RB", seeds) == "tune_lgbm_seedavg_v1_s42-43-44_rb.db"
+    assert tune_lgbm._study_name("RB", seeds) == "lgbm_seedavg_bagging_v2_s42-43-44_rb"
+    assert tune_lgbm._study_db_path("RB", seeds) == "tune_lgbm_seedavg_bagging_v2_s42-43-44_rb.db"
+    assert tune_lgbm._study_name("RB", seeds) != "lgbm_seedavg_v1_s42-43-44_rb"
+    assert tune_lgbm._study_db_path("RB", seeds) != "tune_lgbm_seedavg_v1_s42-43-44_rb.db"
     assert tune_lgbm._study_name("RB", seeds) != "lgbm_rb"
     assert tune_lgbm._study_db_path("RB", seeds) != "tune_lgbm_rb.db"
 

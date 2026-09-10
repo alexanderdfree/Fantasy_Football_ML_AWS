@@ -476,7 +476,6 @@ def run_group_stacked(
     are passed through from Phase A and do not reflect the stacked arm).
     """
     from src.shared.aggregate_targets import predictions_to_fantasy_points
-    from src.shared.utils import cuda_enabled
     from src.tuning.ab_ensemble_seeds import (
         capture_seeds,
         ensemble_env,
@@ -509,13 +508,11 @@ def run_group_stacked(
         # attention column yet, and a custom metric_fn may require it. Each
         # per-seed metrics_k below carries the (constant) Ridge value instead.
 
-        import torch
-
         with ensemble_env(stacked_epochs):
             captures, test_capture = capture_seeds(
                 pos, list(group.seeds), base_cfg=cfg, frames=frames
             )
-            device = torch.device("cuda" if cuda_enabled() else "cpu")
+            device = captures[0]["trainer"].device
             params, buffers, template = train_stacked(captures, cfg, device, stacked_epochs)
             member_preds = predict_stacked(template, params, buffers, test_capture, device)
 

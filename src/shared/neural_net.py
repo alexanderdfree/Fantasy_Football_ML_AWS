@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.shared.count_math import _count_loss_inputs, _log_exprel, _nb2_zero_mass_terms
+
 
 def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
     """Clamp ``val`` to ``>= 0`` when ``name`` is in ``non_negative``.
@@ -276,16 +278,14 @@ class GatedHead(nn.Module):
         """
         if self.loss_family not in ("hurdle_negbin", "hurdle_poisson"):
             return mu
-        # Opt-in AMP must not underflow alpha * mu before log1p can preserve
-        # the small positive mass. Keep double inputs double for diagnostics.
-        if mu.dtype in (torch.float16, torch.bfloat16):
-            mu = mu.float()
-            log_alpha = log_alpha.float()
+        mu, log_alpha = _count_loss_inputs(mu, log_alpha)
         if self.loss_family == "hurdle_negbin":
-            alpha = torch.exp(log_alpha).clamp(min=1e-6)
-            log_p_zero = -torch.log1p(alpha * mu) / alpha
-            return mu / -torch.expm1(log_p_zero)
-        return mu / -torch.expm1(-mu)
+            _, _, r, z = _nb2_zero_mass_terms(mu, log_alpha)
+            # mu/(1-P0) = exprel(r)/exprel(-z), r=log1p(alpha*mu),
+            # z=r/alpha. The log ratio stays finite when exp(log_alpha)
+            # would overflow but the conditional mean is representable.
+            return torch.exp(_log_exprel(r) - _log_exprel(-z))
+        return torch.exp(-_log_exprel(-mu.clamp_min(1e-10)))
 
     def forward(
         self, x: torch.Tensor

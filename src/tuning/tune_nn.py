@@ -967,8 +967,6 @@ def _make_stacked_objective(
     """
 
     def objective(trial: optuna.Trial) -> float:
-        import torch
-
         from src.tuning.ab_ensemble_seeds import capture_seeds, train_stacked
 
         overrides = _sample_overrides(trial, scope, pos)
@@ -988,7 +986,7 @@ def _make_stacked_objective(
         seeds = [seed + k for k in range(stacked_n)]
         with _lease_cores("tune_nn_trial", default=None):
             captures, _ = capture_seeds(pos, seeds, base_cfg=cfg, memo=_TRIAL_DATA_MEMO)
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device = captures[0]["trainer"].device
             train_stacked(captures, cfg, device, stacked_epochs, epoch_callback=epoch_callback)
         if not captured:
             raise RuntimeError(

@@ -427,6 +427,13 @@ def train_stacked(
     combined val loss (the stacked tune objective's per-epoch report; an
     ``optuna.TrialPruned`` raised inside it propagates out).
     """
+    if device.type == "mps":
+        raise RuntimeError(
+            "MPS stacked training is not supported by the current PyTorch backend. "
+            "Use eager MPS (--no-stacked-seeds for A/B or --stacked-seeds 0 for tune_nn), "
+            "or select FF_DEVICE=cpu / FF_DEVICE=cuda for stacking."
+        )
+
     from src.shared.pipeline import _build_scheduler
 
     trainer0 = captures[0]["trainer"]
@@ -651,11 +658,11 @@ def run_ensemble_ab(position: str, n_seeds: int, fixed_epochs: int, parity_check
             "draws are not comparable across arms otherwise)"
         )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seeds = list(range(42, 42 + n_seeds))
     print(f"[ensemble] capturing {len(seeds)} seed constructions for {position}...", flush=True)
     t0 = time.perf_counter()
     captures, test_capture = capture_seeds(position, seeds, base_cfg=None)
+    device = captures[0]["trainer"].device
     from src.shared.platform_detect import detect_platform
     from src.shared.registry import get_config
 
@@ -822,7 +829,6 @@ def run_compare(position: str, n_seeds: int, fixed_epochs: int) -> dict:
     from src.shared.utils import amp_dtype, cuda_graph_full_enabled
     from src.tuning.resource_probe import ResourceProbe
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     seeds = list(range(42, 42 + n_seeds))
     cfg = get_config(position)
     memo: dict = {}
@@ -831,6 +837,7 @@ def run_compare(position: str, n_seeds: int, fixed_epochs: int) -> dict:
     # regime-independent — no dtype/norm/graph dependence), outside both arms.
     with ensemble_env(fixed_epochs):
         warm, _ = capture_seeds(position, seeds[:1], base_cfg=None, memo=memo)
+    device = warm[0]["trainer"].device
     del warm
     if device.type == "cuda":
         torch.cuda.empty_cache()

@@ -20,11 +20,15 @@ def verify_hurdle_expectations(seed=42):
     proof = {"cuda_available": 1.0, "sm": float(major * 10 + minor)}
     cases = 0
     largest_error = 0.0
+    largest_relative_error = 0.0
     with torch.random.fork_rng(devices=[device.index]):
         torch.manual_seed(seed)
         for family in ("hurdle_negbin", "hurdle_poisson"):
             for dtype in (torch.float32, torch.float16, torch.bfloat16):
-                for rate, alpha in ((1.0, 1.0), (2e-6, 1e-6)):
+                distribution_cases = [(1.0, 1.0), (2e-6, 1e-6)]
+                if family == "hurdle_negbin":
+                    distribution_cases.append((2e-6, math.exp(90)))
+                for rate, alpha in distribution_cases:
                     head = GatedHead(2, gate_hidden=2, value_hidden=2, loss_family=family).to(
                         device=device, dtype=dtype
                     )
@@ -48,6 +52,10 @@ def verify_hurdle_expectations(seed=42):
                         raise RuntimeError("A truncated positive mean must be finite and at least1")
                     largest_error = max(
                         largest_error, float((prediction.double() - expected).abs().max())
+                    )
+                    largest_relative_error = max(
+                        largest_relative_error,
+                        float(((prediction.double() - expected).abs() / expected.abs()).max()),
                     )
                     if rate == 1.0:
                         prediction.sum().backward()
@@ -81,5 +89,9 @@ def verify_hurdle_expectations(seed=42):
                             captured.double(), expected, rtol=1e-5, atol=1e-6
                         )
                     cases += 1
-    proof.update(passed_cases=float(cases), max_abs_error=largest_error)
+    proof.update(
+        passed_cases=float(cases),
+        max_abs_error=largest_error,
+        max_relative_error=largest_relative_error,
+    )
     return proof

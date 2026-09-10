@@ -289,6 +289,8 @@ def seed_everything(seed: int) -> None:
     torch.random.default_generator.manual_seed(seed)
     if cuda_enabled():
         torch.cuda.manual_seed_all(seed)
+    elif mps_enabled():
+        torch.mps.manual_seed(seed)
 
 
 @contextmanager
