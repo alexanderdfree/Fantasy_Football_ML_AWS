@@ -657,7 +657,7 @@ class TestStaticAssets:
     def test_vendored_chartjs_is_served(self, client):
         r = client.get("/static/js/vendor/chart.umd.min.js")
         assert r.status_code == 200
-        assert b"Chart.js v4.4.0" in r.get_data()
+        assert b"Chart.js v4.5.1" in r.get_data()
 
     def test_espn_headshot_resize_preserves_aspect_ratio(self, client):
         """ESPN's combiner stretches when both width and height are forced."""

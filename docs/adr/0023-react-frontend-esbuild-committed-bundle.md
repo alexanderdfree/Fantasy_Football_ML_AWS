@@ -33,8 +33,8 @@ front:
 
 - **esbuild** (`build.mjs`): `--bundle --jsx=automatic --minify-whitespace
   --minify-syntax` with **identifier minification off** so the pinned
-  headshot-combiner literal survives byte-for-byte; React 18.3 from npm is
-  bundled in; Chart.js stays the vendored `window.Chart` global (never
+  headshot-combiner literal survives byte-for-byte; React 19.3 from npm is
+  bundled in; Chart.js 4.5.1 stays the vendored `window.Chart` global (never
   bundled), keeping `test_vendored_chartjs_is_served` authoritative.
 - **Committed bundle** at `src/serving/static/js/app.js` (same idiom as the
   vendored Chart.js and the committed `comparison_experts.json`): pytest, the
@@ -80,5 +80,8 @@ front:
 
 ## Changelog
 
+- 2026-09-10 · Upgrade React/React DOM to 19.3.0, esbuild to 0.28.2, and
+  vendored Chart.js to 4.5.1; rebuild the committed bundle. The automatic JSX
+  transform already satisfies React 19's requirement.
 - 2026-07-05 · Initial decision: React + esbuild committed-bundle frontend,
   design-system adoption (midnight/OLED themes), CI staleness guard.

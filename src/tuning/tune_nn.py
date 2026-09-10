@@ -1277,7 +1277,8 @@ def _create_or_load_study(
         storage=_make_storage(_study_db_path(pos, storage_version), sqlite_timeout),
         load_if_exists=True,
         direction="minimize",
-        sampler=TPESampler(seed=sampler_seed),
+        # Optuna 5 enables both by default; preserve the existing study recipe.
+        sampler=TPESampler(seed=sampler_seed, multivariate=False, constant_liar=False),
         pruner=HyperbandPruner(
             min_resource=_HYPERBAND_MIN_RESOURCE,
             reduction_factor=_HYPERBAND_REDUCTION_FACTOR,

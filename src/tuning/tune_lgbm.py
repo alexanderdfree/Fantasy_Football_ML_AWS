@@ -798,7 +798,8 @@ def main():
                 storage=f"sqlite:///{db_path}",
                 load_if_exists=True,
                 direction="minimize",
-                sampler=TPESampler(seed=42),
+                # Optuna 5 enables both by default; preserve the existing study recipe.
+                sampler=TPESampler(seed=42, multivariate=False, constant_liar=False),
                 pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=1),
             )
 

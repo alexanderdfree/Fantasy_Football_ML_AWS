@@ -4,7 +4,7 @@ FROM python:3.12-slim
 # uv: pinned single-binary installer (~10x faster than pip, parallel wheels).
 # Pin the same minor as batch/Dockerfile.train so wheel resolution stays
 # consistent across training and serving images.
-COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.12 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
@@ -17,16 +17,15 @@ ENV UV_LINK_MODE=copy
 # Single uv-install layer. Any change to requirements.txt invalidates exactly
 # one cached layer. The /root/.cache/uv mount persists wheel downloads across
 # builds (CI mirrors this via actions/cache in deploy.yml). Torch uses the
-# CPU-only index; --extra-index-url keeps pypi.org as a fallback because uv's
-# --index-url fully overrides the default index (pip's does not). The nflverse
+# CPU-only index; --extra-index-url gives it priority over PyPI while keeping
+# PyPI available for dependencies missing from that index. The nflverse
 # data feed (nflreadpy + polars) is a normal pinned entry in requirements.txt
 # — no --no-deps workaround like the deprecated nfl_data_py needed.
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system \
-        --index-url https://download.pytorch.org/whl/cpu \
-        --extra-index-url https://pypi.org/simple \
-        torch==2.12.0 && \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        torch==2.14.0 && \
     uv pip install --system -r requirements.txt
 
 # All Python source, Flask templates/static, and per-position assets live
