@@ -351,9 +351,7 @@ def test_main_auto_appends_history_for_succeeded(_main_happy_stubs, monkeypatch)
 
 @pytest.mark.unit
 def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
-    """``--append-history false`` (what CI passes — train-batch.yml appends
-    separately via benchmark.py with the image SHA + PR number) must not
-    auto-append."""
+    """The explicit history opt-out disables publication and local collection."""
     from src.batch import launch as lm
 
     monkeypatch.setattr(
@@ -362,4 +360,29 @@ def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
     )
     lm.main()
 
+    assert not [c for c in _main_happy_stubs if "append" in c]
+
+
+@pytest.mark.unit
+def test_ci_skips_local_collection_but_registers_completion_publication(
+    _main_happy_stubs, monkeypatch
+):
+    from src.batch import launch as lm
+
+    registered = []
+    monkeypatch.setattr(lm, "create_run", lambda *a, **kw: registered.append(kw) or "ci-run")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "launch.py",
+            "--positions",
+            "QB",
+            "--history-run-id",
+            "ci-run",
+            "--collect-history",
+            "false",
+        ],
+    )
+    lm.main()
+    assert registered[0]["run_id"] == "ci-run"
     assert not [c for c in _main_happy_stubs if "append" in c]

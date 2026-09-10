@@ -351,6 +351,7 @@ def _main_stubs(tmp_path, monkeypatch):
             "run_id": "unit-run",
             "git_hash": "abc1234",
             "note": registered["note"],
+            "positions": list(fake_metrics),
             "results": [{"position": p, **m} for p, m in fake_metrics.items()],
         }
 

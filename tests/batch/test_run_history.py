@@ -170,6 +170,42 @@ def test_history_survives_artifact_pruning_and_uses_isolated_prefix(s3):
     assert run_history.complete_run(s3, "bucket", "run-a") == original
 
 
+@pytest.mark.parametrize("matching_checkout", [False, True])
+def test_collected_run_retains_only_sha_verified_local_fingerprints(
+    s3,
+    monkeypatch,
+    tmp_path,
+    matching_checkout,
+):
+    create(s3, ["QB"])
+    original = publish(s3, "run-a", "QB")
+    monkeypatch.setattr(benchmark.boto3, "client", lambda *a, **kw: s3)
+    monkeypatch.setattr(benchmark, "HISTORY_DIR", str(tmp_path / "history"))
+    monkeypatch.setattr(benchmark, "RESULTS_FILE", str(tmp_path / "results.json"))
+    monkeypatch.setattr(
+        benchmark, "get_git_hash", lambda: "a" * 8 if matching_checkout else "b" * 8
+    )
+    calls = []
+
+    def fingerprint(positions, *, repo_root, source):
+        calls.append((positions, source))
+        return {"QB": "f" * 64}
+
+    monkeypatch.setattr(benchmark, "collect_code_fingerprints", fingerprint)
+    path = benchmark.record_benchmark_run(["QB"], run_id="run-a")
+    with open(path) as file:
+        collected = json.load(file)
+    assert collected.get("code_fingerprints") == ({"QB": "f" * 64} if matching_checkout else None)
+    assert calls == ([(["QB"], "head")] if matching_checkout else [])
+    assert s3.history() == [original]
+    if matching_checkout:
+        from src.scripts import pre_pr_bench_check
+
+        monkeypatch.setattr(pre_pr_bench_check, "HISTORY_DIR", str(tmp_path / "history"))
+        monkeypatch.setattr(pre_pr_bench_check, "position_fingerprint", lambda *a, **kw: "f" * 64)
+        assert pre_pr_bench_check.cmd_evaluate(["src/qb/config.py"]) == 0
+
+
 def test_artifact_upload_publishes_its_own_metrics_even_when_stable_is_pinned(
     s3,
     monkeypatch,

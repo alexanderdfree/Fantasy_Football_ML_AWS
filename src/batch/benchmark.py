@@ -240,6 +240,16 @@ def record_benchmark_run(
         )
         if entry is None:
             raise RuntimeError(f"History run {run_id} still has unfinished positions")
+        # Keep local benchmark-gate evidence without changing the immutable S3
+        # summary. complete_run already verified every result against the run's
+        # SHA; only this exact checkout can attest its HEAD fingerprints.
+        local_sha = (get_git_hash() or "")[:7]
+        if local_sha and local_sha != "unknown" and entry.get("git_hash") == local_sha:
+            code_fps = collect_code_fingerprints(
+                entry["positions"], repo_root=_REPO_ROOT, source="head"
+            )
+            if code_fps:
+                entry = {**entry, "code_fingerprints": code_fps}
         print_comparison_table(
             entry["results"],
             header="AWS Batch Benchmark Results (MAE / R2)",

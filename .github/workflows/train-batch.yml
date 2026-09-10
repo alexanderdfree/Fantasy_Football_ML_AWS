@@ -417,6 +417,7 @@ jobs:
             --seed "$SEED"
             --skip-upload
             --history-run-id "$FF_BENCHMARK_RUN_ID"
+            --collect-history false
           )
           if [ -n "$PR_NUMBER" ]; then LAUNCH_ARGS+=(--pr-number "$PR_NUMBER"); fi
           split_active=$(echo "${BATCH_SPLIT_ACTIVE:-false}" | tr 'A-Z' 'a-z')
@@ -683,6 +684,9 @@ jobs:
             --note "Batch Spot auto-run (${NOTE_SHA})" \
             --git-hash "$HEAD_SHA" \
             "${PR_ARGS[@]}"
+          # Only history is committed below. Keep the tracked convenience
+          # table clean so a concurrent push can safely retry git pull --rebase.
+          git restore --worktree benchmark_results.json
 
       - name: Commit and push benchmark_history/
         if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'

@@ -13,8 +13,10 @@ publish history. The browser also cached its first response until a full reload.
 
 **Fix:** Register expected positions under an immutable run id before submitting
 jobs. Full/merge jobs save their own metrics and the last completing job publishes
-the complete summary with a conditional S3 write. The CLI retrieves that exact
-row for its local/git copy; known legacy SHA mismatches fail before writing.
+the complete summary with a conditional S3 write. The CLI retrieves those metrics
+and adds SHA-verified fingerprints to its local/git copy; known legacy SHA
+mismatches fail before writing. CI defers local collection until after rebasing
+and restores its convenience results table before any push/rebase retry.
 History refreshes on visits, focus, and a visible-page timer, retaining good data
 on a transient error and preserving expanded rows by stable run identity.
 
