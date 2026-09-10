@@ -396,7 +396,24 @@ def fetch_games(season: int, week: int, *, raise_on_error: bool = False) -> list
     can distinguish "ESPN answered: no games" from "ESPN unreachable".
     """
     try:
-        return _parse_scoreboard_games(_get_json(_scoreboard_url(season, week)))
+        payload = _get_json(_scoreboard_url(season, week))
+        if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
+            raise ValueError("ESPN scoreboard has no valid events list")
+        games = _parse_scoreboard_games(payload)
+        if len(games) != len(payload["events"]):
+            raise ValueError("ESPN scoreboard contains an incomplete game")
+        for game, event in zip(games, payload["events"], strict=True):
+            status = ((event["competitions"][0].get("status") or {}).get("type") or {}).get("name")
+            if not isinstance(status, str) or not status:
+                raise ValueError("ESPN scoreboard game has no status")
+            if not all(
+                game[key]
+                for key in ("game_id", "home_team", "away_team", "home_team_id", "away_team_id")
+            ):
+                raise ValueError("ESPN scoreboard game has incomplete identity")
+            if game["season"] != season or game["week"] != week:
+                raise ValueError("ESPN scoreboard returned a different season/week")
+        return games
     except Exception as e:  # noqa: BLE001 - network boundary
         if raise_on_error:
             raise

@@ -46,6 +46,7 @@ def injury_item(espn_id="10", status="Out", position="RB"):
 @pytest.fixture
 def builder_boundary(monkeypatch, tmp_path):
     """Stop only heavy inference/source boundaries; retain publication logic."""
+    real_week_detector = espn_live.next_unplayed_week
     monkeypatch.setattr(live.core, "_PREDICTIONS_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "unit-test-no-network")
     monkeypatch.setattr(live, "_last_signature", "last-good-signature")
@@ -91,7 +92,12 @@ def builder_boundary(monkeypatch, tmp_path):
     build = Mock(side_effect=AssertionError("Unverified injuries reached feature building"))
     monkeypatch.setattr(live, "build_upcoming_week_frame", build)
     return SimpleNamespace(
-        good=good, uploads=uploads, build=build, roster=roster, schedule=schedule
+        good=good,
+        uploads=uploads,
+        build=build,
+        roster=roster,
+        schedule=schedule,
+        detect_week=real_week_detector,
     )
 
 
@@ -171,6 +177,69 @@ def test_unverified_injury_report_aborts_before_replacing_or_publishing(
     builder_boundary.uploads.assert_not_called()
     builder_boundary.build.assert_not_called()
     request.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "payload", [{}, {"error": "unavailable"}, {"events": None}, {"events": [{}]}]
+)
+def test_malformed_scoreboard_never_publishes_false_offseason(
+    builder_boundary, monkeypatch, payload
+):
+    monkeypatch.setattr(espn_live, "next_unplayed_week", builder_boundary.detect_week)
+    monkeypatch.setattr(espn_live, "_get_json", lambda *args: payload)
+    with pytest.raises(espn_live.EspnUnreachableError):
+        live.refresh_upcoming_week_cache(force=True)
+    assert live.read_cached_artifact() == builder_boundary.good
+    builder_boundary.uploads.assert_not_called()
+
+
+def test_well_formed_empty_scoreboards_publish_verified_offseason(builder_boundary, monkeypatch):
+    monkeypatch.setattr(espn_live, "next_unplayed_week", builder_boundary.detect_week)
+    monkeypatch.setattr(espn_live, "_get_json", lambda *args: {"events": []})
+    result = live.refresh_upcoming_week_cache(force=True)
+    assert result["available"] is False
+    assert result["reason"] == "offseason"
+    builder_boundary.uploads.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "invalid", [None, "missing_status", "missing_id", "wrong_week", "wrong_season"]
+)
+def test_scoreboard_requires_game_status_identity_and_requested_week(monkeypatch, invalid):
+    payload = {
+        "season": {"year": 2026},
+        "week": {"number": 1},
+        "events": [
+            {
+                "id": "401872656",
+                "competitions": [
+                    {
+                        "status": {"type": {"name": "STATUS_SCHEDULED"}},
+                        "competitors": [
+                            {"homeAway": "home", "team": {"id": "12", "abbreviation": "KC"}},
+                            {"homeAway": "away", "team": {"id": "24", "abbreviation": "LAC"}},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    comp = payload["events"][0]["competitions"][0]
+    if invalid == "missing_status":
+        comp.pop("status")
+    elif invalid == "missing_id":
+        comp["competitors"][0]["team"].pop("id")
+    elif invalid == "wrong_week":
+        payload["week"]["number"] = 2
+    elif invalid == "wrong_season":
+        payload["season"]["year"] = 2025
+    monkeypatch.setattr(espn_live, "_get_json", lambda *args: payload)
+    if invalid:
+        with pytest.raises(ValueError):
+            espn_live.fetch_games(2026, 1, raise_on_error=True)
+    else:
+        games = espn_live.fetch_games(2026, 1, raise_on_error=True)
+        assert len(games) == 1 and games[0]["is_scheduled"]
 
 
 def test_valid_empty_team_reports_are_verified_healthy_not_outages(monkeypatch):

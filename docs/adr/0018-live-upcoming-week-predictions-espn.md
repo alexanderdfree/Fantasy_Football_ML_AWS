@@ -27,7 +27,7 @@ Availability is separate from model improvement. This extension does not retune 
 
 ## Freshness, availability and live metadata
 
-Publication requires one successful ESPN injury snapshot for the requested season, no more than four hours old, covering every scheduled team. Out exclusions, opportunity vacancies and numeric game status derive from that same response. Missing team rosters, malformed injury identities/statuses or an unavailable injury response stop publication; they do not imply healthy players. Every published position must contain usable model predictions. Verified offseason transitions are published to S3 too, replacing the previous active slate.
+Publication requires structurally valid scoreboards and one successful ESPN injury snapshot for the requested season, no more than four hours old, covering every scheduled team. A missing events list or incomplete game is a source failure, not a verified empty slate. Out exclusions, opportunity vacancies and numeric game status derive from that same injury response. Missing team rosters, malformed injury identities/statuses or an unavailable injury response stop publication; they do not imply healthy players. Every published position must contain usable model predictions. Verified offseason transitions are published to S3 too, replacing the previous active slate.
 
 The read-only endpoint attaches a `freshness` object computed from the oldest of artifact generation, input retrieval and the injury source's own timestamp. Downloads never reset that age. Four hours is the stale threshold for the existing three-hour CI build cadence plus build/download headroom. Last-good predictions remain inspectable with a stale warning. The browser revalidates on mount, every five minutes, focus/visibility and manual Refresh; warming/errors retry after thirty seconds, retain last-good rows with warnings, and preserve the original generation time. This remains an off-container build; the endpoint does no feature building or source fetching.
 
@@ -37,7 +37,7 @@ Age/rookie metadata uses the fetched current-season weekly roster and actual gam
 
 ## Changelog
 
-- **2026-09-10** — Enforce injury/roster publication boundaries and publish offseason transitions; add read-time source/artifact freshness, browser revalidation, partial-history coverage, faithful live QBR recovery, season-bound player metadata and explicit NFL.com archive policy. Training features and recipes unchanged. (PR pending.)
+- **2026-09-10** — Enforce scoreboard/injury/roster publication boundaries and publish offseason transitions; add read-time source/artifact freshness, browser revalidation, partial-history coverage, faithful live QBR recovery, season-bound player metadata and explicit NFL.com archive policy. Training features and recipes unchanged. (PR #1555.)
 
 - **2026-09-10** — Review hardening: carry intervening archived years into the fixed feature-consumer caches, verify neutral venue IDs and both physical flags, and report opportunity availability only when completed player-games are present. Preserve current-calendar odds when ESPN omits them, keep unknown roofs imputed, and avoid synthetic healthy statuses for unresolved player aliases. (PR #1545.)
 
