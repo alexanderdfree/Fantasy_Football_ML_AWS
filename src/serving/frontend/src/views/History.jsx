@@ -6,8 +6,8 @@
  * paths). PR numbers come from a top-level field that CI writes when it can
  * resolve the merge commit to a PR; for runs where the lookup returned empty
  * (manual dispatches, force pushes) we fall back to a commit-SHA link. The
- * fetched payload is cached at module level so tab revisits re-render without
- * re-fetching. */
+ * fetched payload is cached for immediate rendering and refreshed on visits,
+ * every 30 seconds, and when the browser regains focus. */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { fetchJSON } from "../api.js";
 import { fmt, formatTargetMae } from "../lib/format.js";
@@ -21,8 +21,8 @@ const HISTORY_MODEL_LABELS = { ridge: "Ridge", nn: "NN", attn_nn: "Attn NN", lgb
 const HISTORY_MODEL_COL_CLASS = { ridge: "ridge-col", nn: "nn-col", attn_nn: "attn-nn-col", lgbm: "lgbm-col" };
 const HISTORY_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
 
-// Module-level cache of the last fetch so tab revisits re-render without
-// re-fetching. { rows, repoSlug, targetLabels, targetUnits } | null.
+// Reuse the last successful response while a fresh request is in progress.
+// { rows, repoSlug, targetLabels, targetUnits } | null.
 let historyCache = null;
 
 function formatTrainingTime(seconds) {
@@ -380,32 +380,48 @@ export function HistoryView({ scoring, search, theme, onPlayer, activateView }) 
     // Re-renders from cached data on change — never refetches.
     const [metric, setMetric] = useState("mae");
     const [expanded, setExpanded] = useState(() => new Set());
+    const [retryVersion, setRetryVersion] = useState(0);
 
     useEffect(() => {
-        if (status !== "loading") return;
-        if (historyCache) {
-            setHistory({ status: "ready", data: historyCache });
-            return;
-        }
         let cancelled = false;
-        (async () => {
+        let inFlight = false;
+        const refresh = async () => {
+            if (inFlight || cancelled) return;
+            inFlight = true;
             try {
                 const payload = await fetchJSON("/api/benchmark_history");
+                if (cancelled) return;
                 historyCache = {
                     rows: payload.rows || [],
                     repoSlug: payload.repo_slug || "",
                     targetLabels: payload.target_labels || {},
                     targetUnits: payload.target_units || {},
                 };
-                if (!cancelled) setHistory({ status: "ready", data: historyCache });
+                setHistory({ status: "ready", data: historyCache });
             } catch (e) {
                 console.error("Failed to load benchmark history:", e);
-                historyCache = null;
-                if (!cancelled) setHistory({ status: "error", data: null });
+                if (!cancelled) {
+                    // A transient refresh failure must not erase already-visible runs.
+                    setHistory(current => current.data ? current : { status: "error", data: null });
+                }
+            } finally {
+                inFlight = false;
             }
-        })();
-        return () => { cancelled = true; };
-    }, [status]);
+        };
+        const whenVisible = () => {
+            if (document.visibilityState === "visible") refresh();
+        };
+        refresh();
+        const timer = setInterval(whenVisible, 30_000);
+        window.addEventListener("focus", refresh);
+        document.addEventListener("visibilitychange", whenVisible);
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+            window.removeEventListener("focus", refresh);
+            document.removeEventListener("visibilitychange", whenVisible);
+        };
+    }, [retryVersion]);
 
     const groupByPosition = !groupByModel;
     const rows = data ? data.rows : null;
@@ -450,7 +466,10 @@ export function HistoryView({ scoring, search, theme, onPlayer, activateView }) 
             return next;
         });
     };
-    const retry = () => setHistory({ status: "loading", data: null });
+    const retry = () => {
+        setHistory({ status: "loading", data: null });
+        setRetryVersion(version => version + 1);
+    };
 
     return (
         <section id="view-history" className="view active">
@@ -512,14 +531,15 @@ export function HistoryView({ scoring, search, theme, onPlayer, activateView }) 
                         {status === "ready" && !visibleRows.length && (
                             <tr><td colSpan={colSpan} className="arch-loading">No benchmark runs yet.</td></tr>
                         )}
-                        {status === "ready" && visibleRows.map((row, i) => {
+                        {status === "ready" && visibleRows.map(row => {
+                            const rowKey = row.run_id || `${row.timestamp}:${row.git_hash}`;
                             const expandable = detailed && historyRowHasDetail(row);
-                            const isOpen = expandable && expanded.has(i);
+                            const isOpen = expandable && expanded.has(rowKey);
                             return (
-                                <Fragment key={i}>
+                                <Fragment key={rowKey}>
                                     <tr
                                         className={expandable ? `history-row-expandable${isOpen ? " expanded" : ""}` : undefined}
-                                        onClick={expandable ? e => toggleRow(e, i) : undefined}
+                                        onClick={expandable ? e => toggleRow(e, rowKey) : undefined}
                                     >
                                         <td className="col-history-pr">
                                             {expandable && <span className="history-caret">▸</span>}

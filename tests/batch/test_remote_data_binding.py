@@ -6,6 +6,7 @@ import json
 from unittest import mock
 
 import pytest
+from botocore.exceptions import ClientError
 
 from src.batch import launch
 from src.data import release
@@ -53,6 +54,12 @@ class S3:
 
     def get_object(self, *, Bucket, Key):
         return {"Body": io.BytesIO(self.objects[Key])}
+
+    def put_object(self, *, Bucket, Key, Body, **kwargs):
+        if Key in self.objects and kwargs.get("IfNoneMatch") == "*":
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+        self.objects[Key] = Body
+        return {}
 
     def published(self, recipe):
         info = {"sha256": "0" * 64, "bytes": 1}
@@ -158,6 +165,10 @@ def test_skip_upload_selects_remote_a_data_and_freezes_revision_when_latest_move
     assert environment["FF_TRAIN_GIT_SHA"] == SHA_A
     assert environment["FF_DATA_RELEASE"] == data_a
     assert batch.registered_sources == [SHA_A]
+    run_id = environment["FF_BENCHMARK_RUN_ID"]
+    descriptor = json.loads(s3.objects[f"models/training_runs/{run_id}/run.json"])
+    assert descriptor["git_sha"] == SHA_A
+    assert descriptor["data_release"] == data_a
 
 
 def test_explicit_incompatible_data_pin_is_rejected_before_submit(remote, monkeypatch):
@@ -201,7 +212,12 @@ def test_bound_source_drives_preflight_registration_submission_and_history(
     assert environment["FF_TRAIN_GIT_SHA"] == SHA_A
     assert environment["FF_DATA_RELEASE"] == data_a
     history.assert_called_once_with(
-        ["WR"], backend="batch", note="Standalone Batch run", git_hash=SHA_A
+        ["WR"],
+        backend="batch",
+        note="Standalone Batch run",
+        git_hash=SHA_A,
+        run_id=environment["FF_BENCHMARK_RUN_ID"],
+        data_release=data_a,
     )
     assert stale_global == launch.TRAIN_GIT_SHA
     assert launch.JOB_DEFINITION_REVISION == "99"

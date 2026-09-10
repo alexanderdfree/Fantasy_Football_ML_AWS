@@ -18,6 +18,7 @@ import pytest
 def registered_source(monkeypatch):
     monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
     monkeypatch.setattr("src.batch.launch.validate_submission_source", lambda *a, **k: None)
+    monkeypatch.setattr("src.batch.launch.create_run", lambda *a, **k: "unit-run")
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +116,7 @@ def _main_happy_stubs(monkeypatch):
         return {"s3": _FakeS3(), "batch": _FakeBatch()}[service]
 
     monkeypatch.setattr(lm.boto3, "client", _fake_boto_client)
+    monkeypatch.setattr(lm, "create_run", lambda *a, **kw: "unit-run")
 
     def _upload(bucket, s3_client=None, force=False):
         calls.append({"upload": bucket, "force": force})
@@ -369,9 +371,7 @@ def test_main_auto_appends_history_for_succeeded(_main_happy_stubs, monkeypatch)
 
 @pytest.mark.unit
 def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
-    """``--append-history false`` (what CI passes — train-batch.yml appends
-    separately via benchmark.py with the image SHA + PR number) must not
-    auto-append."""
+    """The explicit history opt-out disables publication and local collection."""
     from src.batch import launch as lm
 
     monkeypatch.setattr(
@@ -380,4 +380,132 @@ def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
     )
     lm.main()
 
+    assert not [c for c in _main_happy_stubs if "append" in c]
+
+
+@pytest.mark.unit
+def test_history_registration_binds_resolved_image_and_selected_data(
+    _main_happy_stubs, monkeypatch
+):
+    from src.batch import launch as lm
+
+    release_id = "d" * 64
+    events = []
+
+    def pin(_client, *, source_ref):
+        assert source_ref == "a" * 40
+        events.append("data-pinned")
+        monkeypatch.setenv("FF_DATA_RELEASE", release_id)
+        return release_id
+
+    def create(_client, _bucket, positions, **kwargs):
+        assert events == ["data-pinned"]
+        assert not [c for c in _main_happy_stubs if "submit" in c]
+        assert positions == ["QB"]
+        assert kwargs["git_sha"] == "a" * 40
+        assert kwargs["data_release"] == release_id
+        events.append("run-registered")
+        return "bound-run"
+
+    def submit(pos, seed, batch_client=None, *, binding, history_run_id):
+        assert events == ["data-pinned", "run-registered"]
+        assert binding["image_sha"] == "a" * 40
+        assert history_run_id == "bound-run"
+        return pos, "job"
+
+    monkeypatch.setattr(lm, "TRAIN_GIT_SHA", "b" * 40)
+    monkeypatch.setattr(lm, "pin_data_release", pin)
+    monkeypatch.setattr(lm, "create_run", create)
+    monkeypatch.setattr(lm, "submit_job", submit)
+    monkeypatch.setattr(
+        "sys.argv", ["launch", "--positions", "QB", "--skip-upload", "--wait", "false"]
+    )
+    lm.main()
+    assert events == ["data-pinned", "run-registered"]
+
+
+@pytest.mark.unit
+def test_bad_data_cannot_register_a_history_run(_main_happy_stubs, monkeypatch):
+    from src.batch import launch as lm
+
+    create = mock.Mock()
+    submit = mock.Mock()
+    monkeypatch.setattr(lm, "create_run", create)
+    monkeypatch.setattr(lm, "submit_job", submit)
+    monkeypatch.setattr(
+        lm, "pin_data_release", mock.Mock(side_effect=RuntimeError("data mismatch"))
+    )
+    monkeypatch.setattr("sys.argv", ["launch", "--positions", "QB", "--skip-upload"])
+    with pytest.raises(RuntimeError, match="data mismatch"):
+        lm.main()
+    create.assert_not_called()
+    submit.assert_not_called()
+
+
+@pytest.mark.unit
+def test_partial_success_collects_registered_positions_not_a_subset(_main_happy_stubs, monkeypatch):
+    from src.batch import launch as lm
+
+    monkeypatch.setattr(
+        lm, "wait_for_jobs", lambda *a, **kw: {"QB": ("SUCCEEDED", 1), "RB": ("FAILED", 2)}
+    )
+    collect = mock.Mock()
+    monkeypatch.setattr(lm, "_append_benchmark_history", collect)
+    monkeypatch.setattr("sys.argv", ["launch", "--positions", "QB", "RB"])
+    with pytest.raises(SystemExit) as error:
+        lm.main()
+    assert error.value.code == 1
+    collect.assert_called_once_with(
+        ["QB", "RB"],
+        note="Standalone Batch run",
+        git_hash="a" * 40,
+        run_id="unit-run",
+        data_release="legacy",
+    )
+
+
+@pytest.mark.unit
+def test_split_submission_forwards_binding_and_only_merge_publishes_history(monkeypatch):
+    from src.batch import launch as lm
+
+    batch = mock.Mock()
+    batch.submit_job.side_effect = [{"jobId": "nn"}, {"jobId": "cpu"}, {"jobId": "merge"}]
+    binding = {"image_sha": "a" * 40, "gpu_definition": "gpu:7", "cpu_definition": "cpu:8"}
+    monkeypatch.setenv("FF_DATA_RELEASE", "d" * 64)
+    monkeypatch.setattr(lm, "JOB_DEFINITION_CPU", "cpu")
+    monkeypatch.setattr(lm, "JOB_QUEUE_CPU", "cpu-queue")
+    lm._submit_split_for_position(
+        "QB", 42, "split-attempt-1", batch, binding, history_run_id="history-1"
+    )
+    calls = [call.kwargs for call in batch.submit_job.call_args_list]
+    assert [call["jobDefinition"] for call in calls] == ["gpu:7", "cpu:8", "cpu:8"]
+    for index, call in enumerate(calls):
+        env = {e["name"]: e["value"] for e in call["containerOverrides"]["environment"]}
+        assert env["FF_TRAIN_GIT_SHA"] == binding["image_sha"]
+        assert env["FF_DATA_RELEASE"] == "d" * 64
+        assert (env.get("FF_BENCHMARK_RUN_ID") == "history-1") is (index == 2)
+
+
+@pytest.mark.unit
+def test_ci_skips_local_collection_but_registers_completion_publication(
+    _main_happy_stubs, monkeypatch
+):
+    from src.batch import launch as lm
+
+    registered = []
+    monkeypatch.setattr(lm, "create_run", lambda *a, **kw: registered.append(kw) or "ci-run")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "launch.py",
+            "--positions",
+            "QB",
+            "--history-run-id",
+            "ci-run",
+            "--collect-history",
+            "false",
+        ],
+    )
+    lm.main()
+    assert registered[0]["run_id"] == "ci-run"
     assert not [c for c in _main_happy_stubs if "append" in c]

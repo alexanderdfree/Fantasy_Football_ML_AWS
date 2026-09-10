@@ -7,6 +7,8 @@ these checks preserve its wiring in both the Batch and EC2 workflows.
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,6 +26,22 @@ def _load(name: str) -> dict:
 
 def _job_steps(doc: dict, job: str) -> list[dict]:
     return list(doc.get("jobs", {}).get(job, {}).get("steps", []))
+
+
+def test_batch_history_collection_keeps_rebase_checkout_clean():
+    steps = _job_steps(_load("train-batch.yml"), "train")
+    submit = next(s["run"] for s in steps if s.get("id") == "train")
+    collect = next(
+        s["run"] for s in steps if s.get("name") == "Append Batch run to benchmark_history/"
+    )
+    assert '--history-run-id "$FF_BENCHMARK_RUN_ID"' in submit
+    assert "--collect-history false" in submit
+    assert collect.index("git pull --rebase") < collect.index("python -m src.batch.benchmark")
+    # A push collision retries rebase after collection, so the tracked
+    # convenience table must also be restored before the commit/push step.
+    assert collect.index("git restore --worktree benchmark_results.json") > collect.index(
+        "python -m src.batch.benchmark"
+    )
 
 
 def _find_split_gate(steps: list[dict]) -> dict | None:
@@ -94,3 +112,44 @@ def test_ec2_registers_the_resolved_source_before_remote_training():
     assert "FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA'" in body
     assert "FF_TRAIN_IMAGE='$FF_TRAIN_IMAGE'" in body
     assert "FF_DATA_RELEASE='$DATA_RELEASE'" in body
+
+
+def test_batch_attempts_share_one_history_id_but_have_isolated_split_staging():
+    document = _load("train-batch.yml")
+    run_template = document["env"]["FF_BENCHMARK_RUN_ID"]
+    assert "github.run_id" in run_template and "github.run_attempt" in run_template
+    steps = _job_steps(document, "train")
+    training = next(step for step in steps if step.get("id") == "train")
+    collection = next(
+        step for step in steps if step.get("name") == "Append Batch run to benchmark_history/"
+    )
+    assert '--history-run-id "$FF_BENCHMARK_RUN_ID"' in training["run"]
+    assert '--run-id "$FF_BENCHMARK_RUN_ID"' in collection["run"]
+    assert "--append-history false" not in training["run"]
+    assert "--collect-history false" in training["run"]
+    assignment = next(
+        line.strip()
+        for line in training["run"].splitlines()
+        if line.strip().startswith("SPLIT_RUN_ID=")
+    )
+
+    def namespace(attempt):
+        history_id = run_template.replace("${{ github.run_id }}", "100").replace(
+            "${{ github.run_attempt }}", str(attempt)
+        )
+        env = {
+            **os.environ,
+            "split_sha": "a" * 40,
+            "GITHUB_RUN_ID": "100",
+            "GITHUB_RUN_ATTEMPT": str(attempt),
+            "FF_BENCHMARK_RUN_ID": history_id,
+        }
+        return subprocess.check_output(
+            ["bash", "-c", assignment + '\nprintf "%s" "$SPLIT_RUN_ID"'], env=env, text=True
+        )
+
+    first, second = namespace(1), namespace(2)
+    assert first != second  # negative control: old attempt cannot overwrite new staging
+    assert first == namespace(1)  # retries within the same attempt remain idempotent
+    assert "train-100-1" in first and "train-100-2" in second
+    assert all(character.isalnum() or character in "_.-" for character in first + second)

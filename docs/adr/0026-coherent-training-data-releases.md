@@ -29,6 +29,11 @@ combining branches from different releases fails. Local hydration installs files
 after all downloads pass validation; it is not an atomic transaction across two
 mounted directories, so consumers must bootstrap before opening data files.
 
+An aggregate training-history run also binds its data release, alongside the
+source revision and seed. Results with another or unknown release cannot enter a
+pinned run. Workflow retry attempts use separate split staging identifiers so a
+late branch from an older attempt cannot overwrite the current attempt's input.
+
 Historical source caches in a pinned release are read-only inputs. Missing or
 incompatible caches raise `DataReleaseError`; network fallback must not convert
 them to a mixed generation or zero-filled optional feature. Semantic cache

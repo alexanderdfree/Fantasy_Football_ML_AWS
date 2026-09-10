@@ -22,6 +22,8 @@
   archived and live ESPN payloads, including per-athlete slot identifiers.
   Reject incomplete historical loader caches before publication, and include
   D/ST scoring and kicker backfill inputs in serving-cache invalidation.
+  Bind aggregate History runs to their data release and isolate split staging
+  between workflow retry attempts when integrating concurrent publication fixes.
 - **Evidence:** Full-source D/ST reconciliation corrected exactly 441 games
   (+2,070 aggregate points; maximum 12 points/game), retaining other raw
   targets including points_allowed and yards_allowed. Identity replay left

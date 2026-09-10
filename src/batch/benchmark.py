@@ -17,6 +17,7 @@ FF_JOB_DEFINITION_REVISION to its registered numeric revision. The
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -43,7 +44,6 @@ from src.batch.launch import (
 from src.scripts.bench_fingerprint import collect_code_fingerprints
 from src.shared.benchmark_utils import (
     append_to_history,
-    get_git_hash,
     print_comparison_table,
     summarize_pipeline_result,
     utc_now_iso,
@@ -57,6 +57,21 @@ HISTORY_DIR = "benchmark_history"
 # independent of cwd. main() chdirs here, but src/batch/launch.py's auto-append
 # calls record_benchmark_run() without chdir-ing.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def get_git_hash():
+    """Identify the same checkout used for fingerprints, regardless of caller cwd."""
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "-C", _REPO_ROOT, "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return "unknown"
 
 
 # GPU name -> AWS instance family, for the History-tab hardware label derived
@@ -216,19 +231,54 @@ def record_benchmark_run(
     note="",
     pr_number=None,
     git_hash=None,
+    run_id=None,
+    data_release=None,
 ):
     """Aggregate already-trained artifacts into one benchmark_history row.
 
-    Downloads ``benchmark_metrics.json`` for ``positions`` (via each manifest),
-    prints the comparison table, writes ``benchmark_history/{run_id}.json``, and
-    mirrors it to S3. Returns the written path, or ``None`` if no metrics were
-    resolvable.
+    With ``run_id``, collect the immutable summary published by completing jobs.
+    Legacy calls without an id read serving artifacts and reject SHA divergence.
+    Prints the comparison table and writes the local history file; legacy rows
+    are also mirrored to S3. Returns the path, or None if no legacy metrics exist.
 
     Shared by ``main()`` (CLI / CI) and ``src/batch/launch.py``'s standalone
     auto-append so both go through exactly one code path. ``HISTORY_DIR`` /
     ``RESULTS_FILE`` are resolved against the repo root when relative, so the
     function is correct regardless of the caller's cwd.
     """
+    if run_id:
+        from src.batch.run_history import complete_run
+
+        entry = complete_run(
+            boto3.client("s3", region_name=AWS_REGION),
+            S3_BUCKET,
+            run_id,
+            positions=positions,
+            git_sha=git_hash,
+            **({"data_release": data_release} if data_release is not None else {}),
+        )
+        if entry is None:
+            raise RuntimeError(f"History run {run_id} still has unfinished positions")
+        # Keep local benchmark-gate evidence without changing the immutable S3
+        # summary. complete_run already verified every result against the run's
+        # SHA; only this exact checkout can attest its HEAD fingerprints.
+        local_sha = (get_git_hash() or "")[:7]
+        if local_sha and local_sha != "unknown" and entry.get("git_hash") == local_sha:
+            code_fps = collect_code_fingerprints(
+                entry["positions"], repo_root=_REPO_ROOT, source="head"
+            )
+            if code_fps:
+                entry = {**entry, "code_fingerprints": code_fps}
+        print_comparison_table(
+            entry["results"],
+            header="AWS Batch Benchmark Results (MAE / R2)",
+            show_time=False,
+        )
+        with open(os.path.join(_REPO_ROOT, RESULTS_FILE), "w") as file:
+            json.dump(entry["results"], file, indent=2)
+        history_dir = os.path.join(_REPO_ROOT, HISTORY_DIR)
+        return append_to_history(history_dir, entry)
+
     print("\nDownloading benchmark metrics...")
     all_metrics = download_metrics(positions)
 
@@ -249,14 +299,9 @@ def record_benchmark_run(
     expected_sha = ((git_hash or get_git_hash() or "")[:7]) or None
     diverged = find_git_sha_divergence(all_metrics, expected_sha)
     if diverged:
-        print(f"\nWARNING: git_sha divergence across positions (expected {expected_sha}):")
-        for pos, recorded in diverged:
-            print(f"  {pos}: trained image at {recorded}")
-        print(
-            "  Investigate whether two train-batch.yml runs overlapped on "
-            "this run's S3 writes. The model artifacts are still each "
-            "internally consistent (Layer A guarantees per-job image pinning), "
-            "but the run is heterogeneous and shouldn't be compared as a unit."
+        raise ValueError(
+            f"Refusing mismatched training history (expected {expected_sha}): {diverged}. "
+            "Collect the immutable run with --run-id instead."
         )
     elif expected_sha:
         with_sha = [p for p, m in all_metrics.items() if m.get("git_sha")]
@@ -360,8 +405,9 @@ def main():
     parser.add_argument(
         "--download-only",
         action="store_true",
-        help="Skip launching jobs; download metrics from latest artifacts",
+        help="Skip launching jobs; retrieve --run-id or validate the current artifacts' SHA",
     )
+    parser.add_argument("--run-id", default=os.environ.get("FF_BENCHMARK_RUN_ID"))
     parser.add_argument(
         "--backend",
         choices=["batch", "ec2"],
@@ -401,6 +447,7 @@ def main():
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
     os.chdir(project_root)
 
+    selected_release = None
     if not args.download_only:
         binding = resolve_launch_binding(None, None, args.positions)
         try:
@@ -412,6 +459,7 @@ def main():
         args.git_hash = binding["image_sha"]
         validate_local_publish(binding["image_sha"])
 
+        from src.batch.run_history import create_run
         from src.shared.artifact_publication import register_source
 
         register_source(
@@ -422,7 +470,18 @@ def main():
         )
         print("Publishing data for the selected remote image...")
         upload_data(S3_BUCKET)
-        pin_data_release(source_ref=binding["image_sha"])
+        selected_release = pin_data_release(source_ref=binding["image_sha"])
+        args.run_id = create_run(
+            boto3.client("s3", region_name=AWS_REGION),
+            S3_BUCKET,
+            args.positions,
+            run_id=args.run_id,
+            git_sha=binding["image_sha"],
+            data_release=selected_release,
+            pr_number=args.pr_number,
+            seed=args.seed,
+            note=args.note or "AWS Batch training run",
+        )
 
         # Submit all jobs in parallel (mirrors src/batch/launch.py:main)
         total_t0 = time.time()
@@ -430,7 +489,13 @@ def main():
         job_ids = {}
         with ThreadPoolExecutor(max_workers=len(args.positions)) as pool:
             futures = {
-                pool.submit(submit_job, pos, args.seed, binding=binding): pos
+                pool.submit(
+                    submit_job,
+                    pos,
+                    args.seed,
+                    binding=binding,
+                    history_run_id=args.run_id,
+                ): pos
                 for pos in args.positions
             }
             for future in as_completed(futures):
@@ -470,6 +535,8 @@ def main():
         note=args.note,
         pr_number=args.pr_number,
         git_hash=args.git_hash,
+        run_id=args.run_id,
+        **({"data_release": selected_release} if selected_release is not None else {}),
     )
 
 

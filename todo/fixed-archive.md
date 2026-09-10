@@ -6,6 +6,9 @@
 ### [FIXED] Training labels, role semantics, identity joins and raw/split generations diverged
 [Read the incident record](fixed-archive/training-data-audit-remediation-2026-09.md).
 
+### [FIXED] Out-of-order and late Batch runs lost or mislabeled History rows
+[Read the incident record](fixed-archive/training-history-arrivals.md).
+
 Historical evidence, retrieved one issue at a time. Search these titles, then open only the matching entry. Old paths, settings, measurements and prescriptions describe the incident at its recorded revision; verify the current implementation and relevant ADR before reusing a fix. Current standing constraints live in [the stop rules](../agent-guides/stop-rules.md).
 
 ### [FIXED] Shared projected components define both sides of expert comparison

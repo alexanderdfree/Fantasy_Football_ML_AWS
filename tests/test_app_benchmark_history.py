@@ -428,7 +428,8 @@ class TestCaching:
         second = client.get("/api/benchmark_history").get_json()
         assert second == first
 
-    def test_cache_invalidates_when_new_file_lands(self, history_client):
+    @pytest.mark.parametrize("arrival_ts", ["2026-05-19T22:47:20", "2026-04-19T22:47:20"])
+    def test_cache_invalidates_when_new_file_lands(self, history_client, arrival_ts):
         """A new file in the dir bumps the directory mtime, which is the
         cache key — the next request reparses and returns the new row."""
         import os
@@ -451,13 +452,16 @@ class TestCaching:
         os.utime(history_dir, None)
         _write_run(
             history_dir,
-            ts="2026-05-19T22:47:20",
+            ts=arrival_ts,
             sha="bbb2222",
             pr=199,
             results=[{"position": "K", "ridge_mae": 6.5, "elapsed_sec": 80.0}],
         )
         second = client.get("/api/benchmark_history").get_json()
         assert {r["git_hash"] for r in second["rows"]} == {"aaa1111", "bbb2222"}
+        assert [r["timestamp"] for r in second["rows"]] == sorted(
+            ["2026-05-01T10:00:00", arrival_ts], reverse=True
+        )
 
 
 class TestPerTargetDetail:

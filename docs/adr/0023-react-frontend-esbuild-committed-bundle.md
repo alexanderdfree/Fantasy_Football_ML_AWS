@@ -82,6 +82,8 @@ front:
 
 ## Changelog
 
+- **2026-09-10** — History retains its last successful response while refreshing on mount, every 30 seconds while visible, and on focus/visibility return. Run ids key expanded rows so arrivals cannot move an expansion onto another run. Refresh errors preserve the existing rows; the committed bundle is rebuilt with the source.
+
 - 2026-09-10 · Clarify which design-system primitives are live and document the
   dormant kit without changing component adoption or runtime behavior.
 - 2026-09-10 · Upgrade React/React DOM to 19.3.0, esbuild to 0.28.2, and
