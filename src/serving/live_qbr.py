@@ -152,7 +152,9 @@ def recover_qbr(
                 {
                     "qbrType": "weeks",
                     "seasontype": 2,
-                    "isqualified": "true",
+                    # Short appearances still belong in game-history tokens.
+                    # Qualification is a leaderboard filter, not data validity.
+                    "isqualified": "false",
                     "season": season,
                     "week": week,
                     "limit": 100,

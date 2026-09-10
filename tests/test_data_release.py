@@ -2,6 +2,10 @@
 
 import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +16,37 @@ from botocore.exceptions import ClientError
 from src.data import release
 
 pytestmark = pytest.mark.unit
+
+
+def test_unit_cache_is_mutable_without_unpinning_production_snapshot(tmp_path):
+    project = tmp_path / "project"
+    raw = project / "data/raw"
+    raw.mkdir(parents=True)
+    marker = raw / ".release.json"
+    marker.write_text('{"release_id":"production-snapshot"}')
+    (raw / "weekly.parquet").write_bytes(b"source-bytes")
+    shutil.copyfile(Path(__file__).parents[1] / "conftest.py", project / "conftest.py")
+    env = dict(os.environ)
+    env.pop("FF_CACHE_DIR", None)
+    script = """
+import json, os, runpy, sys
+from pathlib import Path
+runpy.run_path(sys.argv[1])
+cache = Path(os.environ['FF_CACHE_DIR'])
+print(json.dumps({'cache':str(cache), 'pinned':(cache/'.release.json').exists(), 'bytes':(cache/'weekly.parquet').read_text()}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(project / "conftest.py")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    observed = json.loads(result.stdout)
+    assert Path(observed["cache"]) != raw
+    assert observed["pinned"] is False
+    assert observed["bytes"] == "source-bytes"
+    assert json.loads(marker.read_text())["release_id"] == "production-snapshot"
 
 
 class FakeS3:
@@ -70,6 +105,33 @@ def test_upload_verifies_raw_splits_sidecars_and_records_coverage(producer):
     assert 2012 in manifest["coverage"]["raw/snap_counts.parquet"]["global_seasons_absent"]
     assert f"data/releases/{rid}/raw/weekly.json" in s3.objects
     assert "data/train.parquet" not in s3.objects
+
+
+def test_stat_correction_replaces_warm_raw_and_split_caches_together(producer, tmp_path):
+    """A corrected historical value must reach both live history and split readers."""
+    s3 = FakeS3()
+    raw, splits = producer["raw_dir"], producer["splits_dir"]
+    consumer = dict(raw_dir=tmp_path / "consumer/raw", splits_dir=tmp_path / "consumer/splits")
+    releases = []
+    for yards in (-2, 3):
+        corrected = pd.DataFrame(
+            {"player_id": ["00-0039918"], "season": [2025], "week": [6], "rushing_yards": [yards]}
+        )
+        corrected.to_parquet(raw / "weekly.parquet")
+        for name in release.SPLIT_NAMES:
+            corrected.to_parquet(splits / name)
+        release.seal_inputs(**producer)
+        releases.append(release.publish_release(s3, "bucket", **producer))
+        result = release.download_release(s3, "bucket", **consumer)
+        assert result["release_id"] == releases[-1]
+        assert pd.read_parquet(consumer["raw_dir"] / "weekly.parquet").rushing_yards.tolist() == [
+            yards
+        ]
+        for name in release.SPLIT_NAMES:
+            assert pd.read_parquet(consumer["splits_dir"] / name).rushing_yards.tolist() == [yards]
+    assert releases[0] != releases[1]
+    # A pinned historical run remains reproducible after correction publication.
+    assert release.resolve_release(s3, "bucket", release_id=releases[0])[0] == releases[0]
 
 
 def test_failed_upload_leaves_old_pointer_untouched(producer):

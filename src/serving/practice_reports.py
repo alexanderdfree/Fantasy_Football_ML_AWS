@@ -7,7 +7,6 @@ training mean by serving, rather than advertised as full participation.
 
 from __future__ import annotations
 
-import unicodedata
 import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,7 +15,9 @@ from html.parser import HTMLParser
 import pandas as pd
 
 from src.data import nfl_source
-from src.data.nflcom_loader import normalize_player_name, schedule_team_code_normalization
+from src.data.nflcom_loader import schedule_team_code_normalization
+from src.serving.roster_identity import current_rosters, practice_alias_lookup
+from src.serving.roster_identity import name_key as _name
 
 _STATUS = {
     "Full Participation in Practice": 2.0,
@@ -24,11 +25,6 @@ _STATUS = {
     "Did Not Participate In Practice": 0.0,
 }
 _HEADERS = ["Player", "Position", "Injuries", "Practice Status", "Game Status"]
-
-
-def _name(value: str) -> str:
-    ascii_name = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
-    return normalize_player_name(ascii_name)
 
 
 class _PracticeParser(HTMLParser):
@@ -130,7 +126,9 @@ class PracticeReport:
     metadata: dict
 
 
-def fetch_practice_report(season: int, week: int, roster: pd.DataFrame) -> PracticeReport:
+def fetch_practice_report(
+    season: int, week: int, roster: pd.DataFrame, *, rosters_df: pd.DataFrame | None = None
+) -> PracticeReport:
     """Combine per-team coverage; current official tables override older feeds."""
     values = {}
     covered = set()
@@ -162,14 +160,10 @@ def fetch_practice_report(season: int, week: int, roster: pd.DataFrame) -> Pract
             )
         )
         official_teams = {names[name] for name in official.covered if name in names}
-        lookup = {}
+        lookup = practice_alias_lookup(roster, current_rosters(rosters_df, season, week))
         reported = {}
         unknown = set()
         unresolved_groups = set()
-        for row in roster.to_dict("records"):
-            pid, team = str(row["player_id"]), row["recent_team"]
-            key = (team, row["position"], _name(row["espn_name"]))
-            lookup.setdefault(key, set()).add(pid)
         for row in official.records:
             key = (names.get(row["team_name"]), row["position"], _name(row["name"]))
             matches = lookup.get(key, set())

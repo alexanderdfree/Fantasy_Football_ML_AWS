@@ -55,6 +55,11 @@ if "FF_CACHE_DIR" not in os.environ:
     _real_raw = PROJECT_ROOT / "data" / "raw"
     if _real_raw.is_dir():
         for _entry in _real_raw.iterdir():
+            # This is a disposable, mutable unit-test cache, not a pinned
+            # production reader. Tests of pinning create their own marker.
+            # The original snapshot's marker and source bytes stay untouched.
+            if _entry.name == ".release.json":
+                continue
             (_tmp_raw / _entry.name).symlink_to(_entry)
     os.environ["FF_CACHE_DIR"] = str(_tmp_raw)
 

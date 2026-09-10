@@ -271,18 +271,27 @@ def test_partial_scheduled_team_roster_preserves_last_good_publication(
 def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_positions(
     builder_boundary, monkeypatch
 ):
+    builder_boundary.roster.attrs["source_metadata"] = {
+        "status": "partial",
+        "recovered_players": 1,
+        "unresolved_players": [
+            {"espn_name": "Exempt Player", "reason": "eligibility_unconfirmed:EXE"}
+        ],
+    }
     payload = injury_payload(items=[injury_item(), injury_item("11", "Questionable")])
     request = Mock(return_value=payload)
     monkeypatch.setattr(espn_live, "_get_json", request)
     monkeypatch.setattr(live.nfl_source, "rosters_weekly", lambda *args: pd.DataFrame())
-    monkeypatch.setattr(espn_live, "fetch_depth_chart_ranks", lambda *args: {})
+    monkeypatch.setattr(espn_live, "fetch_depth_chart_ranks", lambda *args, **kwargs: {})
     monkeypatch.setattr(
         live.practice_reports,
         "fetch_practice_report",
-        lambda *args: SimpleNamespace(values={}, metadata={"unknown_players": 0}),
+        lambda *args, **kwargs: SimpleNamespace(values={}, metadata={"unknown_players": 0}),
     )
     monkeypatch.setattr(live.live_sources, "fetch_contract_features", lambda *args: None)
-    monkeypatch.setattr(live, "_fetch_upcoming_expert_frames", lambda *args: (None, None, None))
+    monkeypatch.setattr(
+        live, "_fetch_upcoming_expert_frames", lambda *args, **kwargs: (None, None, None)
+    )
     monkeypatch.setattr(live.core, "_ensure_base_data", lambda: None)
     monkeypatch.setattr(live.core, "_compute_models_fingerprint", lambda: "test-models")
     monkeypatch.setattr(live.core, "_degraded_positions", lambda: [])
@@ -351,6 +360,11 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
     assert "00-out" not in {row["player_id"] for row in result["scoring"]["ppr"]}
     assert result["sources"]["injuries"]["source_updated_at"] == payload["timestamp"]
     assert result["sources"]["injuries"]["reported_players"] == 2
+    assert result["sources"]["roster"]["status"] == "partial"
+    assert result["sources"]["roster"]["recovered_players"] == 1
+    assert result["sources"]["roster"]["injury_excluded_players"] == 1
+    assert result["sources"]["roster"]["unresolved_players"][0]["espn_name"] == "Exempt Player"
+    assert any(issue["source"] == "roster" for issue in result["data_quality"]["issues"])
     assert live.read_cached_artifact() == result
     assert live._last_signature == result["input_signature"]
     builder_boundary.uploads.assert_called_once_with()

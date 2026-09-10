@@ -1,0 +1,11 @@
+### [FIXED] Live QBR qualification and roster/practice identity joins omitted available data
+
+**File(s):** `src/serving/{live_qbr,espn_live,roster_identity,practice_reports,upcoming_week,upcoming_status}.py`; regression tests in `tests/test_live_roster_identity.py`, `tests/test_app_live_qbr.py`, `tests/test_practice_reports.py`, `tests/test_app_live_publication.py`, and `tests/test_data_release.py`. PR pending.
+
+**What:** The September 10 live-data audit found that ESPN's qualified-leaderboard filter omitted Sam Darnold's two-attempt game from QBR history; a missing crosswalk entry dropped active GB tight end Mark Redman; and Andrew/Drew Ogletree's alias prevented the official practice report from resolving the IND/TE group. Thomas Odukoya also lacked a crosswalk entry, but his weekly status was exempt, requiring explicit uncertainty instead of automatic inclusion.
+
+**Fix:** Fetch unqualified QBR while retaining season/week/game/player validation. Resolve missing roster IDs only against a unique same-week team/position/name/date-of-birth match with corroborated active status; use the same recovered IDs in injury/depth consumers. Carry unresolved-player reasons and source coverage into the artifact and its data-quality messages. Match official practice aliases through GSIS and current roster context, preserving competing identities. The coherent raw/split publication fix is recorded separately in [the training-data incident](training-data-audit-remediation-2026-09.md); an additional correction regression verifies that warming a consumer with old bytes cannot retain them after a new complete release.
+
+**Lesson:** A populated schema or successful team-level request does not establish player-level completeness. Provider qualification filters and name aliases need positive controls against actual omitted observations. A newly found identity does not itself establish active eligibility.
+
+Review hardening keeps recovered ID mappings local to one build, passed explicitly to injury, depth, and ESPN comparison consumers. Repeated refreshes must revalidate ACT status; no recovery is promoted into the cached primary crosswalk. Regression controls cover transitions to EXE/RES/INA and loss of the next weekly reference.
