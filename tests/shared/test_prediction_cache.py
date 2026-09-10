@@ -217,3 +217,74 @@ def test_legacy_loose_files_alone_are_not_a_committed_generation(tmp_path):
     assert prediction_cache.current_generation(tmp_path) is None
     with pytest.raises(ValueError, match="No committed"):
         prediction_cache.read_generation(tmp_path)
+
+
+def test_shared_invalidation_blocks_reads_uploads_and_reinstall_of_old_bundle(tmp_path):
+    old = prediction_cache.publish_generation(tmp_path, _files(11))
+    _, old_bundle = prediction_cache.bundle_generation(tmp_path)
+    prediction_cache.invalidate_generation(tmp_path, old.name)
+    assert prediction_cache.current_generation(tmp_path) is None
+    for reader in (prediction_cache.read_generation, prediction_cache.bundle_generation):
+        with pytest.raises(ValueError):
+            reader(tmp_path)
+    assert (old / "predictions.parquet").read_bytes() == b"11"
+
+    new = prediction_cache.publish_generation(tmp_path, _files(99))
+    with pytest.raises(ValueError, match="invalidated"):
+        prediction_cache.install_bundle(tmp_path, old_bundle)
+    assert prediction_cache.current_generation(tmp_path) == new
+    assert prediction_cache.read_generation(tmp_path)[1] == _files(99)
+
+
+def test_invalidation_while_reading_rejects_selected_generation(tmp_path, monkeypatch):
+    old = prediction_cache.publish_generation(tmp_path, _files(11))
+    selected, resume = threading.Event(), threading.Event()
+    read_bytes = Path.read_bytes
+
+    def pause_after_selection(path):
+        if path == old / "predictions.parquet":
+            selected.set()
+            assert resume.wait(timeout=5)
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", pause_after_selection)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        reader = pool.submit(prediction_cache.read_generation, tmp_path)
+        try:
+            assert selected.wait(timeout=5)
+            prediction_cache.invalidate_generation(tmp_path, old.name)
+        finally:
+            resume.set()
+        with pytest.raises(ValueError, match="invalidated during read"):
+            reader.result(timeout=5)
+    assert (old / "predictions.parquet").read_bytes() == b"11"
+
+
+def test_invalidation_during_bundle_creation_prevents_upload(tmp_path, monkeypatch):
+    old = prediction_cache.publish_generation(tmp_path, _files(11))
+    addfile = tarfile.TarFile.addfile
+
+    def invalidate_during_compression(archive, member, stream):
+        result = addfile(archive, member, stream)
+        prediction_cache.invalidate_generation(tmp_path, old.name)
+        return result
+
+    monkeypatch.setattr(tarfile.TarFile, "addfile", invalidate_during_compression)
+    with pytest.raises(ValueError, match="invalidated before upload"):
+        prediction_cache.bundle_generation(tmp_path)
+
+
+def test_invalidation_before_commit_preserves_existing_pointer(tmp_path, monkeypatch):
+    previous = prediction_cache.publish_generation(tmp_path, _files(11))
+    rename = prediction_cache.os.rename
+
+    def invalidate_staged_generation(source, destination):
+        result = rename(source, destination)
+        prediction_cache.invalidate_generation(tmp_path, Path(destination).name)
+        return result
+
+    monkeypatch.setattr(prediction_cache.os, "rename", invalidate_staged_generation)
+    with pytest.raises(ValueError, match="invalidated before publication"):
+        prediction_cache.publish_generation(tmp_path, _files(99))
+    assert prediction_cache.current_generation(tmp_path) == previous
+    assert prediction_cache.read_generation(tmp_path)[1] == _files(11)

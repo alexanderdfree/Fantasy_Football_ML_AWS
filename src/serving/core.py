@@ -15,6 +15,7 @@ import io
 import json
 import os
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -1492,6 +1493,11 @@ def _iter_fingerprint_paths():
     ECS even when the actual serving inputs are identical.
     """
     for pos in _ALL_POSITIONS:
+        # Boot and refresh record the exact manifest GET consumed. Its content
+        # is stable across containers, unlike each local refresh sentinel mtime.
+        manifest_etag = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", ".manifest-etag")
+        if os.path.isfile(manifest_etag):
+            yield manifest_etag
         model_dir = os.path.join(_REPO_ROOT, "src", pos.lower(), "outputs", "models")
         if not os.path.isdir(model_dir):
             continue
@@ -1594,6 +1600,8 @@ def _snapshot_path():
             return None
         if fingerprint.get("sha256") != _compute_models_fingerprint()[0]:
             return None
+        if prediction_cache.is_invalidated(_PREDICTIONS_CACHE_DIR, directory.name):
+            return None
         return str(directory / _SNAPSHOT_JSON) if _SNAPSHOT_JSON in files else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -1621,6 +1629,8 @@ def _try_hydrate_from_disk():
         position_load_errors = metrics_payload.get("position_load_errors") or {}
         if _compute_models_fingerprint()[0] != live_sha:
             return False
+        if prediction_cache.is_invalidated(_PREDICTIONS_CACHE_DIR, directory.name):
+            return False
     except Exception as exc:
         print(f"[predcache] generation unavailable: {exc!r} — will recompute")
         return False
@@ -1637,16 +1647,20 @@ def _try_hydrate_from_disk():
     app_pkg._cache["position_details"] = position_details
     app_pkg._cache["position_load_errors"] = position_load_errors
     app_pkg._cache["prediction_inputs_fingerprint"] = live_sha
+    app_pkg._cache["prediction_cache_generation"] = directory.name
     print(f"[predcache] hydrated generation (sha={live_sha[:8]}, rows={len(results)})")
     if _SNAPSHOT_JSON not in files:
         snapshot = _snapshot_bytes()
-        if snapshot is not None:
+        if snapshot is not None and not prediction_cache.is_invalidated(
+            _PREDICTIONS_CACHE_DIR, directory.name
+        ):
             try:
                 # Use captured bytes, never re-resolve a pointer another worker changed.
-                prediction_cache.publish_generation(
+                regenerated = prediction_cache.publish_generation(
                     _PREDICTIONS_CACHE_DIR, {**files, _SNAPSHOT_JSON: snapshot}
                 )
-            except OSError as exc:
+                app_pkg._cache["prediction_cache_generation"] = regenerated.name
+            except (OSError, ValueError) as exc:
                 print(f"[snapshot] generation publish failed: {exc!r}")
     return True
 
@@ -1681,6 +1695,7 @@ def _persist_cache_to_disk():
             _FINGERPRINT_JSON: json.dumps(
                 {
                     "schema_version": _PREDICTIONS_CACHE_SCHEMA_VERSION,
+                    "computation_id": uuid.uuid4().hex,
                     "sha256": sha,
                     "files": input_files,
                 }
@@ -1693,6 +1708,7 @@ def _persist_cache_to_disk():
             print("[predcache] inputs changed during serialization — skipping publication")
             return
         directory = prediction_cache.publish_generation(_PREDICTIONS_CACHE_DIR, files)
+        app_pkg._cache["prediction_cache_generation"] = directory.name
         app_pkg._cache.pop("invalidated_generation", None)
         print(f"[predcache] committed generation {directory.name[:12]}")
         upload_predictions_cache_to_s3()
@@ -1810,16 +1826,17 @@ def _positions_pending() -> bool:
 
 
 def _invalidate_metrics_cache(*, reason: str) -> None:
-    """Invalidate this worker without unlinking another worker's cache generation.
+    """Invalidate this worker's consumed generation across all local workers.
 
     Fingerprint mismatches exclude old snapshots. Sentinel refresh skips hydrate
     and commits a new generation after inference; in-progress readers keep theirs.
     """
     app_pkg._cache.pop("metrics_by_format", None)
     app_pkg._cache.pop("metrics", None)
-    generation = prediction_cache.current_generation(_PREDICTIONS_CACHE_DIR)
+    generation = app_pkg._cache.get("prediction_cache_generation")
     if generation is not None:
-        app_pkg._cache["invalidated_generation"] = generation.name
+        app_pkg._cache["invalidated_generation"] = generation
+        prediction_cache.invalidate_generation(_PREDICTIONS_CACHE_DIR, generation)
     print(f"[predcache] invalidated in-memory cache ({reason})")
 
 

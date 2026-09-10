@@ -416,7 +416,7 @@ jobs:
           # path filters look safe; routing through env vars makes the value
           # a normal shell variable that downstream commands can quote.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
         run: |
           # Resolve the PR number from the merge commit so the serving UI's
           # History tab can deep-link rows to GitHub. Direct pushes to main

@@ -22,6 +22,7 @@ OPTIONAL_FILES = frozenset({"snapshot.json"})
 BUNDLE_NAME = "cache.tar.gz"
 _MANIFEST = "generation.json"
 _POINTER = "current.json"
+_INVALIDATED = "invalidated"
 _MAX_BYTES = 256 * 1024 * 1024
 
 
@@ -45,6 +46,8 @@ def current_generation(cache_dir: str | Path) -> Path | None:
         generation = pointer["generation"]
         if not isinstance(generation, str) or not re.fullmatch(r"[a-f0-9]{64}", generation):
             return None
+        if is_invalidated(root, generation):
+            return None
         directory = root / "generations" / generation
         manifest = (directory / _MANIFEST).read_bytes()
         if hashlib.sha256(manifest).hexdigest() != generation:
@@ -52,6 +55,20 @@ def current_generation(cache_dir: str | Path) -> Path | None:
         return directory
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def is_invalidated(cache_dir: str | Path, generation: str) -> bool:
+    """Shared invalidation survives worker replacement without deleting readers' files."""
+    return (Path(cache_dir) / _INVALIDATED / generation).exists()
+
+
+def invalidate_generation(cache_dir: str | Path, generation: str) -> None:
+    """Invalidate this exact generation, regardless of a newer current pointer."""
+    if not re.fullmatch(r"[a-f0-9]{64}", generation):
+        raise ValueError("Invalid prediction cache generation ID")
+    directory = Path(cache_dir) / _INVALIDATED
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / generation).touch()
 
 
 def read_generation(cache_dir: str | Path) -> tuple[Path, dict[str, bytes]]:
@@ -68,6 +85,8 @@ def read_generation(cache_dir: str | Path) -> tuple[Path, dict[str, bytes]]:
         files[name] = (directory / name).read_bytes()
     if _manifest_bytes(files) != manifest:
         raise ValueError("Prediction cache checksum mismatch")
+    if is_invalidated(cache_dir, directory.name):
+        raise ValueError("Prediction cache generation was invalidated during read")
     return directory, files
 
 
@@ -78,6 +97,8 @@ def publish_generation(cache_dir: str | Path, files: dict[str, bytes]) -> Path:
     parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_bytes(files)
     generation = hashlib.sha256(manifest).hexdigest()
+    if is_invalidated(root, generation):
+        raise ValueError("Cannot publish an invalidated prediction cache generation")
     directory = parent / generation
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=parent))
     pointer_tmp = None
@@ -95,6 +116,8 @@ def publish_generation(cache_dir: str | Path, files: dict[str, bytes]) -> Path:
         with tempfile.NamedTemporaryFile(dir=root, prefix=".current-", delete=False) as stream:
             pointer_tmp = Path(stream.name)
             stream.write(json.dumps({"generation": generation}).encode())
+        if is_invalidated(root, generation):
+            raise ValueError("Prediction cache generation was invalidated before publication")
         os.replace(pointer_tmp, root / _POINTER)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -113,6 +136,8 @@ def bundle_generation(cache_dir: str | Path) -> tuple[str, bytes]:
             member = tarfile.TarInfo(name)
             member.size = len(content)
             archive.addfile(member, io.BytesIO(content))
+    if is_invalidated(cache_dir, directory.name):
+        raise ValueError("Prediction cache generation was invalidated before upload")
     return directory.name, buffer.getvalue()
 
 

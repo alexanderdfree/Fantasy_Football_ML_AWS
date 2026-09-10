@@ -128,6 +128,80 @@ def test_sentinel_only_invalidation_rejects_old_generation_without_deleting_read
     assert core._try_hydrate_from_disk() is True
 
 
+def test_replacement_worker_cannot_hydrate_or_upload_invalidated_generation(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    from src.shared import prediction_cache
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    old, files = read_generation(cache_dir)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+
+    # Replacement gunicorn worker has no predecessor's in-memory error marker.
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+    assert core._snapshot_path() is None
+    with pytest.raises(ValueError):
+        prediction_cache.bundle_generation(cache_dir)
+    assert (old / "predictions.parquet").read_bytes() == files["predictions.parquet"]
+
+
+def test_delayed_invalidation_preserves_another_workers_new_generation(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    from src.shared import prediction_cache
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    worker_a = dict(core.app_pkg._cache)
+    old, _ = read_generation(cache_dir)
+
+    # B consumes the same initial generation, recomputes, and commits first.
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+    _persist_fixture_cache()
+    new, new_files = read_generation(cache_dir)
+    assert new != old
+    core.app_pkg._cache.clear()
+    core.app_pkg._cache.update(worker_a)
+    core._invalidate_metrics_cache(reason="worker-a-delayed-refresh")
+
+    assert prediction_cache.is_invalidated(cache_dir, old.name)
+    assert not prediction_cache.is_invalidated(cache_dir, new.name)
+    assert read_generation(cache_dir) == (new, new_files)
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+    assert core.app_pkg._cache["prediction_cache_generation"] == new.name
+
+
+def test_recompute_identical_predictions_publishes_new_generation_after_invalidation(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    # Even an absent/unchanged optional snapshot cannot be the uniqueness key.
+    monkeypatch.setattr(core, "_snapshot_bytes", lambda: None)
+    results, metrics = _fake_results(), _fake_metrics()
+    core.app_pkg._cache.update(results=results, metrics_by_format=metrics)
+    _persist_fixture_cache()
+    old, old_files = read_generation(cache_dir)
+    core._invalidate_metrics_cache(reason="sentinel-only-refresh")
+    core.app_pkg._cache["metrics_by_format"] = metrics
+    _persist_fixture_cache()
+    new, new_files = read_generation(cache_dir)
+
+    assert new != old
+    assert new_files["predictions.parquet"] == old_files["predictions.parquet"]
+    assert new_files["metrics.json"] == old_files["metrics.json"]
+    old_fp, new_fp = (json.loads(files["fingerprint.json"]) for files in (old_files, new_files))
+    assert old_fp["sha256"] == new_fp["sha256"]
+    assert old_fp["computation_id"] != new_fp["computation_id"]
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+
+
 @pytest.fixture
 def cache_dir(tmp_path, monkeypatch):
     """Redirect the module-level ``_PREDICTIONS_CACHE_DIR`` to a tmp dir so
@@ -221,6 +295,59 @@ def test_fingerprint_changes_on_size_change(fingerprint_files):
     Path(fingerprint_files[0]).write_bytes(b"alpha-extended")
     sha2, _ = core._compute_models_fingerprint()
     assert sha2 != sha1
+
+
+@pytest.mark.parametrize("position", core._ALL_POSITIONS)
+def test_manifest_identity_changes_fingerprint_even_with_identical_models(
+    tmp_path, monkeypatch, position
+):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    outputs = tmp_path / "src" / position.lower() / "outputs"
+    models = outputs / "models"
+    models.mkdir(parents=True)
+    (models / "weights.pt").write_bytes(b"unchanged model bytes")
+    sidecar = outputs / ".manifest-etag"
+    sidecar.write_text('"manifest-a"')
+    before, paths = core._compute_models_fingerprint()
+    assert any(entry["path"].endswith("outputs/.manifest-etag") for entry in paths)
+
+    # Equal-length identity changes must affect content hash, not just size.
+    sidecar.write_text('"manifest-b"')
+    after, _ = core._compute_models_fingerprint()
+    assert after != before
+
+
+def test_equal_manifest_identity_hydrates_across_containers_with_different_timestamps(
+    cache_dir, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    roots = [tmp_path / "producer", tmp_path / "consumer"]
+    for root, timestamp in zip(roots, (100.0, 900.0), strict=True):
+        for position in core._ALL_POSITIONS:
+            outputs = root / "src" / position.lower() / "outputs"
+            (outputs / "models").mkdir(parents=True)
+            (outputs / "models/weights.pt").write_bytes(position.encode())
+            sidecar = outputs / ".manifest-etag"
+            sidecar.write_text(f'"{position}-same-manifest"')
+            os.utime(sidecar, (timestamp, timestamp))
+            sentinel = outputs / ".refreshed_at"
+            sentinel.write_text(str(timestamp))
+            os.utime(sentinel, (timestamp, timestamp))
+
+    monkeypatch.setattr(core, "_REPO_ROOT", str(roots[0]))
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
+    _persist_fixture_cache()
+    producer_fingerprint = core._compute_models_fingerprint()[0]
+    monkeypatch.setattr(core, "_REPO_ROOT", str(roots[1]))
+    assert core._compute_models_fingerprint()[0] == producer_fingerprint
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk()
+
+    # A changed manifest in another container rejects the otherwise same bundle.
+    (roots[1] / "src/qb/outputs/.manifest-etag").write_text('"QB-new-manifest"')
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+    assert core._snapshot_path() is None
 
 
 def test_fingerprint_skips_missing_paths(tmp_path, monkeypatch):

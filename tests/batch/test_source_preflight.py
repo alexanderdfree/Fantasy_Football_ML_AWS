@@ -138,3 +138,46 @@ def test_standalone_benchmark_rejects_missing_pins_before_aws(monkeypatch, sha, 
         benchmark.main()
     assert exc.value.code == 2
     client.assert_not_called()
+
+
+@pytest.mark.parametrize("manual", [True, False])
+def test_ec2_records_the_image_used_for_training(monkeypatch, tmp_path, manual):
+    from src.batch import benchmark
+
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load((root / ".github/workflows/train-ec2.yml").read_text())
+    steps = workflow["jobs"]["train"]["steps"]
+    training = next(s for s in steps if "FF_TRAIN_GIT_SHA" in s.get("env", {}))
+    recording = next(s for s in steps if "python -m src.batch.benchmark" in s.get("run", ""))
+    context = {
+        "github.event.workflow_run.head_sha": "" if manual else SHA,
+        "github.event.inputs.image_sha": SHA if manual else "",
+        "github.sha": "b" * 40,
+    }
+
+    def evaluate(expression):
+        parts = expression.removeprefix("${{").removesuffix("}}").split("||")
+        return next((context.get(p.strip(), "") for p in parts if context.get(p.strip())), "")
+
+    trained = evaluate(training["env"]["FF_TRAIN_GIT_SHA"])
+    recorded = evaluate(recording["env"]["HEAD_SHA"])
+    saved = {}
+    monkeypatch.setattr(
+        benchmark, "download_metrics", lambda positions: {"QB": {"git_sha": trained}}
+    )
+    monkeypatch.setattr(benchmark, "get_git_hash", lambda: "b" * 7)
+    monkeypatch.setattr(benchmark, "summarize_pipeline_result", lambda p, m: {"position": p})
+    monkeypatch.setattr(benchmark, "print_comparison_table", lambda *a, **k: None)
+    monkeypatch.setattr(benchmark, "collect_code_fingerprints", lambda *a, **k: {})
+    monkeypatch.setattr(benchmark, "RESULTS_FILE", str(tmp_path / "results.json"))
+    monkeypatch.setattr(benchmark, "HISTORY_DIR", str(tmp_path))
+
+    def append(directory, entry, **kwargs):
+        saved.update(entry)
+        return str(tmp_path / "record.json")
+
+    monkeypatch.setattr(benchmark, "append_to_history", append)
+    monkeypatch.setattr(benchmark, "_maybe_upload_to_s3", lambda path: None)
+    benchmark.record_benchmark_run(["QB"], backend="ec2", git_hash=recorded)
+    assert trained == SHA
+    assert saved["git_hash"] == trained[:7]
