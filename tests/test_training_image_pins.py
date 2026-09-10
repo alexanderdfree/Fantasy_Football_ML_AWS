@@ -84,7 +84,8 @@ def test_ec2_trainer_without_digest_pin_fails_before_docker(tmp_path, image):
     assert not (tmp_path / "docker.log").exists()
 
 
-def test_warm_host_upgrade_honors_pin_and_is_idempotent(tmp_path):
+@pytest.mark.parametrize("old_source_override", [False, True])
+def test_warm_host_upgrade_honors_pin_and_is_idempotent(tmp_path, old_source_override):
     patch_step = next(
         s for s in steps("train-ec2.yml") if s["name"] == "Ensure feature-cache mount in ff-train"
     )
@@ -92,15 +93,23 @@ def test_warm_host_upgrade_honors_pin_and_is_idempotent(tmp_path):
         "\nBASH", 1
     )[0]
     script = tmp_path / "ff-train"
-    script.write_text('#!/bin/bash\nIMAGE="repository:latest"\nprintf "%s" "$IMAGE"\n')
+    old_retag = (
+        'if [ -n "${FF_TRAIN_GIT_SHA:-}" ]; then\n  IMAGE="${IMAGE%:*}:$FF_TRAIN_GIT_SHA"\nfi\n'
+        if old_source_override
+        else ""
+    )
+    script.write_text(
+        '#!/bin/bash\nIMAGE="repository:latest"\n' + old_retag + 'printf "%s" "$IMAGE"\n'
+    )
     patch = patch.replace("/usr/local/bin/ff-train", str(script))
     subprocess.run(["bash"], input=patch, text=True, check=True)
     first = script.read_text()
     subprocess.run(["bash"], input=patch, text=True, check=True)
     assert script.read_text() == first
+    assert "IMAGE%:*" not in first
     result = subprocess.run(
         ["bash", str(script)],
-        env={**os.environ, "FF_TRAIN_IMAGE": IMAGE},
+        env={**os.environ, "FF_TRAIN_IMAGE": IMAGE, "FF_TRAIN_GIT_SHA": SHA},
         capture_output=True,
         text=True,
         check=True,

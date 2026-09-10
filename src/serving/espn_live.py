@@ -30,6 +30,7 @@ Player identity is bridged ESPN ``athlete.id`` -> ``espn_id`` -> ``gsis_id``
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 import time
@@ -104,12 +105,11 @@ _GAME_STATUS_NUM = {
 }
 
 # nflverse depth_chart_rank is capped at 3 (the training distribution is
-# {-1, 1, 2, 3} for every skill position), so ESPN's per-position depth ORDER is
+# {-1, 1, 2, 3} for every skill position), so ESPN's per-slot depth ORDER is
 # clamped to [1, 3] to stay on the scale the models trained on.
 _MAX_DEPTH_RANK = 3
 # ESPN depthchart position keys -> our skill position. Some teams split WR into
-# lwr/rwr/swr slots; those pool into WR (so order is depth within the WR corps,
-# mirroring nflverse, which can carry >1 rank-1 WR via alignment).
+# lwr/rwr/swr slots; their starters each retain depth 1 within the WR position.
 _DEPTHCHART_POS_KEYS = {"qb": "QB", "rb": "RB", "hb": "RB", "wr": "WR", "te": "TE"}
 
 # Module-cached espn_id -> gsis_id crosswalk (built once; nflverse is stable).
@@ -355,16 +355,19 @@ def _norm_depth_pos(key: str | None) -> str | None:
 
 def _parse_depthchart(payload: dict) -> list[dict]:
     """Normalize an ESPN core ``/depthcharts`` payload into ordered skill entries:
-    ``[{espn_id, position, order}]`` where ``order`` is 1-based depth WITHIN that
-    position (1 = starter).
+    ``[{espn_id, position, order}]`` where ``order`` is depth within a formation
+    slot (1 = starter), matching the historical ESPN normalization.
 
     ESPN's raw per-athlete ``rank`` is grid-numbered (WRs come back 1, 4, 7, 10),
-    so we RE-RANK by sorted order rather than trusting the raw value, pooling
-    split WR slots into one WR list. The caller clamps to the nflverse [1, 3]
-    scale and maps espn_id -> gsis.
+    so multi-slot positions are ranked separately by athlete ``slot``. Older
+    payloads with split lwr/rwr/swr keys use each key as a slot. Assign depth
+    before dropping missing identities so an unidentified starter cannot promote
+    a backup. A player listed in multiple slots/formations keeps the best depth.
+    The caller clamps to [1, 3] and maps ESPN identities to GSIS.
     """
-    pooled: dict[str, list[tuple[float, str]]] = {}
+    best: dict[tuple[str, str], float] = {}
     for group in payload.get("items", []) or []:
+        positions: dict[str, dict[tuple[str, str], list[tuple[float, str | None]]]] = {}
         for key, pos_obj in (group.get("positions") or {}).items():
             pos = _norm_depth_pos(key)
             if pos is None:
@@ -372,17 +375,32 @@ def _parse_depthchart(payload: dict) -> list[dict]:
             for a in pos_obj.get("athletes") or []:
                 ref = (a.get("athlete") or {}).get("$ref") or ""
                 m = re.search(r"/athletes/(\d+)", ref)
-                if not m:
-                    continue
                 rank = a.get("rank")
-                pooled.setdefault(pos, []).append(
-                    (float(rank) if rank is not None else float("inf"), m.group(1))
+                slot = (
+                    ("slot", str(a["slot"])) if a.get("slot") is not None else ("key", key.lower())
                 )
-    out: list[dict] = []
-    for pos, lst in pooled.items():
-        for order, (_, espn_id) in enumerate(sorted(lst, key=lambda t: t[0]), start=1):
-            out.append({"espn_id": espn_id, "position": pos, "order": order})
-    return out
+                positions.setdefault(pos, {}).setdefault(slot, []).append(
+                    (float(rank) if rank is not None else float("inf"), m.group(1) if m else None)
+                )
+        for pos, slots in positions.items():
+            for slot, entries in slots.items():
+                levels = {
+                    rank: n
+                    for n, rank in enumerate(sorted({r for r, _ in entries if math.isfinite(r)}), 1)
+                }
+                for rank, espn_id in entries:
+                    if espn_id is None or not math.isfinite(rank):
+                        continue
+                    # The archived loader preserves raw ranks for a single
+                    # explicit slot. Legacy payloads lacking slot metadata keep
+                    # their existing within-key ordering (e.g. WR ranks 1,4,7).
+                    order = levels[rank] if len(slots) > 1 or slot[0] == "key" else rank
+                    identity = (pos, espn_id)
+                    best[identity] = min(best.get(identity, order), order)
+    return [
+        {"espn_id": espn_id, "position": pos, "order": order}
+        for (pos, espn_id), order in best.items()
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -626,8 +644,8 @@ def fetch_injuries_df(season: int, week: int, *, records: list[dict] | None = No
 def fetch_depth_chart_ranks(season: int, team_id_to_code: dict[str, str]) -> dict[str, float]:
     """``{player_id: depth_chart_rank}`` from ESPN's live depth charts.
 
-    For each team, GET the core ``/depthcharts`` endpoint, re-rank each skill
-    position by order (1 = starter), clamp to nflverse's [1, 3] scale, and map
+    For each team, GET the core ``/depthcharts`` endpoint, rank each formation
+    slot by depth (1 = starter), clamp to nflverse's [1, 3] scale, and map
     espn_id -> gsis. Falls back to the prior season's chart per team when the
     requested season isn't posted yet (offseason). ``{}`` on total failure —
     callers then keep the carry-forward / default behavior.
@@ -647,11 +665,14 @@ def fetch_depth_chart_ranks(season: int, team_id_to_code: dict[str, str]) -> dic
             entries = _parse_depthchart(payload)
             if entries:
                 break
+        team_ranks: dict[str, float] = {}
         for e in entries:
             gsis = crosswalk.get(e["espn_id"])
             if not gsis:
                 continue
-            ranks[gsis] = float(min(e["order"], _MAX_DEPTH_RANK))
+            depth = float(min(e["order"], _MAX_DEPTH_RANK))
+            team_ranks[gsis] = min(team_ranks.get(gsis, depth), depth)
+        ranks.update(team_ranks)
     return ranks
 
 

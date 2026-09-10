@@ -113,10 +113,16 @@ def test_manual_training_requires_built_image_sha_and_automatic_uses_upstream(wo
     assert trigger["workflow_dispatch"]["inputs"]["image_sha"]["required"] is True
     steps = doc["jobs"]["train"]["steps"]
     step = next(s for s in steps if "FF_TRAIN_GIT_SHA" in s.get("env", {}))
+    resolver_id = "revision" if workflow == "train-batch.yml" else "image"
+    resolver = next(s for s in steps if s.get("id") == resolver_id)
     assert (
-        step["env"]["FF_TRAIN_GIT_SHA"]
+        resolver["env"]["HEAD_SHA"]
         == "${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}"
     )
+    assert "^[0-9a-f]{40}$" in resolver["run"]
+    assert "resolve_training_image" in resolver["run"]
+    assert step["env"]["FF_TRAIN_GIT_SHA"] == "${{ steps." + resolver_id + ".outputs.image_sha }}"
+    assert steps.index(resolver) < steps.index(step)
     if workflow == "train-batch.yml":
         revision = next(s for s in steps if s.get("id") == "revision")
         assert "workflow_run" not in str(revision.get("if", ""))
@@ -159,6 +165,12 @@ def test_ec2_records_the_image_used_for_training(monkeypatch, tmp_path, manual):
         parts = expression.removeprefix("${{").removesuffix("}}").split("||")
         return next((context.get(p.strip(), "") for p in parts if context.get(p.strip())), "")
 
+    resolver = next(s for s in steps if s.get("id") == "image")
+    requested = evaluate(resolver["env"]["HEAD_SHA"])
+    assert requested == SHA
+    # The resolver verifies the requested source tag and emits that same SHA
+    # alongside its immutable image digest; current workspace HEAD may differ.
+    context["steps.image.outputs.image_sha"] = requested
     trained = evaluate(training["env"]["FF_TRAIN_GIT_SHA"])
     recorded = evaluate(recording["env"]["HEAD_SHA"])
     saved = {}

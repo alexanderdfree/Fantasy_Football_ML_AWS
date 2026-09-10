@@ -109,3 +109,11 @@ Canonical local history entries were written with the existing `summarize_pipeli
 - [Seed 7](../benchmark_history/2026-09-10T13-43-22_5044ea66_training_data_fix_seed7.json)
 
 Local row-level forecasts, complete paired metrics/cohort hashes, verifier outputs, and reproduction scripts remain under `/tmp/training-data-fix-validation-1e2d/`: `baseline_outputs/`, `fixed_outputs/`, `paired-comparison.json`, and `specs/`. Datasets and prediction frames are not committed.
+
+## Post-review boundary corrections
+
+The native PR review reproduced three additional boundary failures: live ESPN receiver ranks did not match the rebuilt archive, a transient optional-source failure could be sealed without a replayable cache, and serving prediction caches omitted the new K/DST dependencies. The fixes cover actual ESPN athlete-slot payloads, cache-only replay before building/sealing, and full-content fingerprints for the new scoring/depth inputs and release metadata.
+
+The review corrections preserve the inputs behind the three-seed comparison above. With historical source fetching forbidden, all six production preparation paths produced identical hashes for their train/validation/test feature arrays, targets, complete prepared frames, feature lists, and configurations before and after these corrections. The comparison used `4c672de4`, whose numerical source files are identical to the trained `5044ea66`, and the same frozen input bytes. This establishes input equivalence; the original benchmark fingerprints are retained as historical evidence rather than relabeled as new runs.
+
+The real complete-cache replay and seal retained all 25 raw files unchanged and the same 261,714-row loader frame, while both original missing-opportunity reproductions now reject publication. Empty 2012 snap coverage remains explicit. The full local unit suite passed **3,992 tests, with 2 skipped** after these fixes.

@@ -437,7 +437,10 @@ def test_fingerprint_ignores_non_serving_raw_caches(tmp_path, monkeypatch):
     raw_dir.mkdir(parents=True)
 
     serving_raw = {
-        "depth_charts_v2_2012_2025.parquet",
+        "depth_charts_v3_2012_2025.parquet",
+        "dst_scoring_pbp_v1_2012_2025.parquet",
+        "kicker_backfill_pbp_v1_2025.parquet",
+        ".release.json",
         "injuries_2012_2025.parquet",
         "kicker_pbp_2015_2024.parquet",
         "kicker_kicks_pbp_2015_2025.parquet",
@@ -450,6 +453,7 @@ def test_fingerprint_ignores_non_serving_raw_caches(tmp_path, monkeypatch):
     local_only_raw = {
         "contracts_2012_2025.parquet",
         "depth_charts_2012_2025.parquet",
+        "depth_charts_v2_2012_2025.parquet",
         "ff_opportunity_2012_2025.parquet",
         "player_ids_2012_2025.parquet",
         "qbr_weekly_v2_2012_2025.parquet",
@@ -497,6 +501,97 @@ def test_fingerprint_sha_ignores_extra_local_raw_caches(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Persist + hydrate round-trip
 # ---------------------------------------------------------------------------
+
+
+def _persist_hydratable_position(cache_dir, monkeypatch, position):
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    core.app_pkg._cache["prediction_inputs_fingerprint"] = core._compute_models_fingerprint()[0]
+    results = _fake_results(1).assign(position=position)
+    core.app_pkg._cache["results"] = results
+    core.app_pkg._cache["metrics_by_format"] = _fake_metrics()
+    core._persist_cache_to_disk()
+    core.app_pkg._cache.clear()
+    # Positive control: the real hydration path must accept the original cache.
+    assert core._try_hydrate_from_disk() is True
+    pd.testing.assert_frame_equal(core.app_pkg._cache["results"], results)
+    generation = _generation(cache_dir)
+    assert core._snapshot_path() == str(generation / core._SNAPSHOT_JSON)
+    core.app_pkg._cache.clear()
+    return generation
+
+
+@pytest.mark.parametrize(
+    "position,filename",
+    [
+        ("DST", "dst_scoring_pbp_v1_2012_2025.parquet"),
+        ("K", "kicker_backfill_pbp_v1_2025.parquet"),
+        ("WR", "depth_charts_v3_2012_2025.parquet"),
+    ],
+)
+def test_hydrate_invalidates_changed_historical_inputs(
+    tmp_path, cache_dir, monkeypatch, position, filename
+):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
+    source = raw / filename
+    pd.DataFrame({"value": [1]}).to_parquet(source, index=False)
+    generation = _persist_hydratable_position(cache_dir, monkeypatch, position)
+
+    pd.DataFrame({"value": [7]}).to_parquet(source, index=False)
+    assert core._try_hydrate_from_disk() is False
+    assert "results" not in core.app_pkg._cache
+    assert core._snapshot_path() is None
+    # Reject this input fingerprint without removing another reader's files.
+    retained, files = read_generation(cache_dir)
+    assert retained == generation and core._SNAPSHOT_JSON in files
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["data/raw/.release.json", f"data/splits/{core.DATA_RELEASE_SEAL_NAME}"],
+)
+def test_hydrate_invalidates_changed_release_identity(
+    tmp_path, cache_dir, monkeypatch, relative_path
+):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    marker = tmp_path / relative_path
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({"release_id": "a" * 64}))
+    generation = _persist_hydratable_position(cache_dir, monkeypatch, "DST")
+
+    marker.write_text(json.dumps({"release_id": "b" * 64}))
+    assert core._try_hydrate_from_disk() is False
+    assert "results" not in core.app_pkg._cache
+    assert core._snapshot_path() is None
+    retained, files = read_generation(cache_dir)
+    assert retained == generation and core._SNAPSHOT_JSON in files
+
+
+def test_hydrate_detects_same_size_kicker_change_after_sampled_head(
+    tmp_path, cache_dir, monkeypatch
+):
+    monkeypatch.setattr(core, "_REPO_ROOT", str(tmp_path))
+    source = tmp_path / "data/raw/kicker_backfill_pbp_v1_2025.parquet"
+    source.parent.mkdir(parents=True)
+    frame = pd.DataFrame({"kick_distance": np.full(24_000, 40, dtype="int32")})
+    options = dict(index=False, compression=None, use_dictionary=False, write_statistics=False)
+    frame.to_parquet(source, **options)
+    original = source.read_bytes()
+    assert len(original) > core._FINGERPRINT_CONTENT_BYTES
+    generation = _persist_hydratable_position(cache_dir, monkeypatch, "K")
+
+    frame.loc[len(frame) - 1, "kick_distance"] = 45
+    frame.to_parquet(source, **options)
+    changed = source.read_bytes()
+    assert len(changed) == len(original)
+    assert changed[: core._FINGERPRINT_CONTENT_BYTES] == original[: core._FINGERPRINT_CONTENT_BYTES]
+    assert changed != original
+    assert core._try_hydrate_from_disk() is False
+    assert "results" not in core.app_pkg._cache
+    assert core._snapshot_path() is None
+    retained, files = read_generation(cache_dir)
+    assert retained == generation and core._SNAPSHOT_JSON in files
 
 
 def test_persist_then_hydrate_round_trips_results_and_metrics(

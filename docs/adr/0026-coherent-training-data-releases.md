@@ -19,6 +19,8 @@ prewarms derived K/DST inputs and the shared evaluation reference, and seals its
 file hashes, source-code hashes, runtime versions, and source-season coverage.
 Uploading is a separate step and rejects missing or changed seals. Every file is
 uploaded and verified before the single current-release pointer advances.
+The producer verifies that historical loader dependencies can be replayed;
+an optional-source fetch failure cannot silently create an incomplete release.
 
 Consumers resolve a release once, verify its manifest and files, finish local
 hydration, and only then prepare models. Batch split branches, EC2, tuning, and
@@ -86,4 +88,4 @@ Identity sources are part of the release rather than a per-run network lookup.
 ## Changelog
 
 - **2026-09-10** — Seal, verify, publish, pin, and gate coherent raw/split releases;
-  isolate live-data overlays and record source coverage. (PR pending)
+  isolate live-data overlays and record source coverage. (PR #1564)

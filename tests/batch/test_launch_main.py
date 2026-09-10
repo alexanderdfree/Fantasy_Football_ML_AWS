@@ -138,7 +138,7 @@ def _main_happy_stubs(monkeypatch):
     # Stub the benchmark_history auto-append so the wait path doesn't reach S3
     # in unit tests; record the call so tests can assert it fired for the
     # succeeded set.
-    def _append(positions, *, note=None):
+    def _append(positions, *, note=None, **metadata):
         calls.append({"append": list(positions), "note": note})
 
     monkeypatch.setattr(lm, "_append_benchmark_history", _append)

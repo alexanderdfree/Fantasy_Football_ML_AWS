@@ -43,7 +43,10 @@ class FakeS3:
 
 
 @pytest.fixture
-def producer(tmp_path):
+def producer(tmp_path, monkeypatch):
+    # Storage/atomicity fixtures intentionally contain no model-ready corpus;
+    # real loader replay is exercised separately in test_release_loader_replay.
+    monkeypatch.setattr(release, "verify_historical_loader_inputs", lambda *a, **k: None)
     raw, splits = tmp_path / "raw", tmp_path / "splits"
     raw.mkdir()
     splits.mkdir()
@@ -430,6 +433,7 @@ def test_hydration_quarantines_unlisted_cache_hits_preserving_unrelated_files(
 
 
 def test_prewarm_rejects_incomplete_completed_dst_games_before_seal(monkeypatch, tmp_path):
+    monkeypatch.setattr(release, "verify_historical_loader_inputs", lambda *a, **k: None)
     from src import config
     from src.data import dst_scoring, identity, loader
     from src.dst import data as defense

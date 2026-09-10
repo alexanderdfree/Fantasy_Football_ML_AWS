@@ -110,6 +110,7 @@ class DataReleaseError(RuntimeError):
 
 
 _live_cache_roots: dict[Path, int] = {}
+_replay_cache_roots: dict[Path, int] = {}
 _live_cache_lock = threading.Lock()
 
 
@@ -137,6 +138,40 @@ def live_source_cache(cache_dir: str | Path):
                 del _live_cache_roots[root]
 
 
+@contextmanager
+def require_cached_sources(cache_dir: str | Path):
+    """Verify replay without allowing a failed source to recover mid-build.
+
+    Directory scope reaches the loader's worker threads without changing the
+    process environment or constraining unrelated live-cache directories.
+    """
+    root = Path(cache_dir).resolve()
+    with _live_cache_lock:
+        _replay_cache_roots[root] = _replay_cache_roots.get(root, 0) + 1
+    try:
+        yield
+    finally:
+        with _live_cache_lock:
+            _replay_cache_roots[root] -= 1
+            if not _replay_cache_roots[root]:
+                del _replay_cache_roots[root]
+
+
+def verify_historical_loader_inputs(cache_dir: str | Path, seasons=None) -> None:
+    """Replay every unconditional/conditional historical loader dependency.
+
+    Optional fetch failures are deliberately not cached by their producers. A
+    release must reject that transient state, since pinned readers cannot later
+    reproduce its empty fallback. Valid cached empty frames remain valid, and
+    missing years within a cached source (notably 2012 snaps) remain unknown.
+    """
+    from src.config import SEASONS
+    from src.data.loader import load_raw_data
+
+    with require_cached_sources(cache_dir):
+        load_raw_data(list(SEASONS if seasons is None else seasons), cache_dir=str(cache_dir))
+
+
 def assert_source_fetch_allowed(cache_path: str | Path) -> None:
     """Reject cache regeneration inside a selected immutable historical release.
 
@@ -145,13 +180,14 @@ def assert_source_fetch_allowed(cache_path: str | Path) -> None:
     removing a seal is not an automatic fallback to unrecorded live inputs.
     """
     selected = os.environ.get("FF_DATA_RELEASE", "")
-    if selected == "legacy":
-        return
     path = Path(cache_path).resolve()
     marker = path.parent / ".release.json"
     with _live_cache_lock:
         allowed_live = any(path.is_relative_to(root) for root in _live_cache_roots)
-    if marker.is_file() or (selected and not allowed_live):
+        cache_only = any(path.is_relative_to(root) for root in _replay_cache_roots)
+    if selected == "legacy" and not cache_only:
+        return
+    if cache_only or marker.is_file() or (selected and not allowed_live):
         raise DataReleaseError(
             f"Historical data release requires cache {cache_path}; it is missing or incompatible. "
             "Rebuild the release with current producers in a clean data directory; "
@@ -242,6 +278,7 @@ def seal_inputs(*, raw_dir="data/raw", splits_dir="data/splits", repo_root=".") 
     splits alongside newly refreshed raw caches must never silently bless them.
     """
     raw, splits, root = Path(raw_dir), Path(splits_dir), Path(repo_root)
+    verify_historical_loader_inputs(raw)
     files = _input_files(raw, splits)
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -524,6 +561,9 @@ def prewarm_training_dependencies() -> None:
     from src.scripts.build_evaluation_reference import write_reference
     from src.shared.evaluation_cohorts import REFERENCE_FILENAME
 
+    # Check the exact dependencies that produced the baked splits before any
+    # later producer can mask an earlier optional-source failure by retrying it.
+    verify_historical_loader_inputs(CACHE_DIR, SEASONS)
     load_player_id_bridge(CACHE_DIR)
     load_team_week_stats(SEASONS)
     scoring_events = load_dst_scoring_events(SEASONS)

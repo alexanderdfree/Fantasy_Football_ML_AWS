@@ -18,6 +18,10 @@
   raw/split releases, pin fleets and record provenance, gate incompatible
   rollouts, and build live overlays without mutating sealed history. Record
   unavailable 2012 snap coverage instead of fabricating observations.
+- **Review corrections:** Apply the same slot-relative receiver depths to
+  archived and live ESPN payloads, including per-athlete slot identifiers.
+  Reject incomplete historical loader caches before publication, and include
+  D/ST scoring and kicker backfill inputs in serving-cache invalidation.
 - **Evidence:** Full-source D/ST reconciliation corrected exactly 441 games
   (+2,070 aggregate points; maximum 12 points/game), retaining other raw
   targets including points_allowed and yards_allowed. Identity replay left
