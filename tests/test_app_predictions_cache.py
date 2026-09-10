@@ -191,8 +191,10 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
         core.app_pkg._cache["splits"] = dict.fromkeys(positions, (None, None, None))
 
     def apply(train, val, test, pos, results):
-        calls.append(pos)
-        results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
+        # Mirror production: pandas writes need a lock even for disjoint rows.
+        with core.app_pkg._results_write_lock:
+            calls.append(pos)
+            results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
 
     monkeypatch.setattr(core, "_load_splits_locked", load_splits)
     monkeypatch.setattr(core, "_apply_position_models", apply)

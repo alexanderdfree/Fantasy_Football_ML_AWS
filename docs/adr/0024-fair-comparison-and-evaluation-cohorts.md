@@ -149,7 +149,7 @@ to the corrected primary metric without rerunning their evaluation.
 ## Changelog
 
 - 2026-09-10 — Apply matched component scoring and compatible position groups to
-  Timeline; replace hindsight-selected winners with per-model records (PR pending).
+  Timeline; replace hindsight-selected winners with per-model records (PR #1573).
 
 - 2026-09-10 — Establish matched full-score comparison and versioned pregame
   top-24 reporting across all benchmark paths (PR pending).
