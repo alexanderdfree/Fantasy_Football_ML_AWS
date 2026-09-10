@@ -89,7 +89,7 @@ def build_implied_team_total_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
 
     Only requires ``home_team``, ``away_team``, ``spread_line``, ``total_line``
     in the input — kept minimal so callers using stripped-down schedule frames
-    (the autouse fake schedules in ``tests/test_feature_leakage.py``) work
+    (the autouse synthetic schedules in ``tests/conftest.py``) work
     without enrichment.
     """
     sched = schedules[

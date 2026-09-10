@@ -801,8 +801,8 @@ def build_opp_defense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # finds rows for relocated franchises in their pre-relocation seasons.
     # Mirrors _build_team_schedule_lookup / build_implied_team_total_lookup
     # in src.shared.weather_features. Without this, def_pts_allowed for a
-    # team like OAK in 2017–2019 silently fills with 0 because the schedule
-    # already uses "LV" while the player frame still carries "OAK".
+    # team like LV in 2017–2019 silently fills with 0 because the schedule
+    # still carries "OAK" while the player frame already uses "LV".
     schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
     schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
     away_pts = schedules_reg[["season", "week", "away_team", "home_score"]].copy()
@@ -944,7 +944,8 @@ def build_opp_offense_per_game_df(df: pd.DataFrame) -> pd.DataFrame:
     # Normalize historical team codes (OAK→LV, SD→LAC, STL→LA) — mirror of the
     # def-side normalization in build_opp_defense_per_game_df. Without it,
     # off_pts_scored for relocated franchises in pre-relocation seasons
-    # silently fills with 0 because the schedule already uses the new code.
+    # silently fills with 0 because the schedule still carries legacy codes
+    # while the player frame already uses the modern codes.
     schedules_reg["home_team"] = schedules_reg["home_team"].replace(TEAM_CODE_NORMALIZATION)
     schedules_reg["away_team"] = schedules_reg["away_team"].replace(TEAM_CODE_NORMALIZATION)
     home_pts = schedules_reg[["season", "week", "home_team", "home_score"]].copy()
