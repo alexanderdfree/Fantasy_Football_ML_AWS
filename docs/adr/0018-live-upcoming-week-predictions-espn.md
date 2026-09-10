@@ -27,7 +27,7 @@ Availability is separate from model improvement. This extension does not retune 
 
 ## Changelog
 
-- **2026-09-10** — Review hardening: carry intervening archived years into the fixed feature-consumer caches, verify neutral venue IDs and both physical flags, and report opportunity availability only when completed player-games are present. (PR #1545.)
+- **2026-09-10** — Review hardening: carry intervening archived years into the fixed feature-consumer caches, verify neutral venue IDs and both physical flags, and report opportunity availability only when completed player-games are present. Preserve current-calendar odds when ESPN omits them, keep unknown roofs imputed, and avoid synthetic healthy statuses for unresolved player aliases. (PR #1545.)
 
 
 - **2026-09-10** — ESPN load/scoring completeness is carried on the results frame; incomplete frames remain usable in memory but are not persisted/uploaded, preventing a transient source outage from becoming a permanent all-null schema-8 cache. Complete existing snapshots are preserved and later cold boots retry the feed. (PR #1539)

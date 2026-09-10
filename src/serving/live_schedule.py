@@ -149,7 +149,8 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
     def enrich(row):
         row = row.copy()
         for col in ("spread_line", "total_line"):
-            row[col] = row[f"{col}_live"]
+            if pd.notna(row[f"{col}_live"]):
+                row[col] = row[f"{col}_live"]
         # Scores for scheduled games are unknown. Never accept accidental
         # prior-season/backfilled scores as observations of the upcoming game.
         row["home_score"] = np.nan
@@ -171,6 +172,8 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
                 # home stadium (2026 Rams at Melbourne). ESPN knows the venue.
                 if row.get("neutral_site") and "indoor" in detail:
                     row["roof"] = "dome" if detail["indoor"] else "outdoors"
+                elif detail.get("indoor") is False:
+                    row["roof"] = "outdoors"
             except Exception as exc:  # network boundary; retain known schedule metadata
                 print(f"[live_schedule] venue {venue_id} unavailable: {exc!r}")
                 if row.get("neutral_site"):
@@ -179,6 +182,11 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
         if covered:
             row["temp"], row["wind"] = 65.0, 0.0
             row["_weather_status"] = "covered_venue"
+        elif row["roof"] not in ("outdoors", "open"):
+            # A retractable stadium's indoor flag does not say whether its
+            # roof will be open. Do not feed outdoor forecasts into that gap.
+            row["temp"], row["wind"] = np.nan, np.nan
+            row["_weather_status"] = "unknown_roof"
         else:
             try:
                 forecast = _venue_forecast(venue, row["kickoff"])
@@ -204,7 +212,7 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
                 "game_id": str(row["game_id"]),
                 "venue": (row.get("venue") or {}).get("fullName"),
                 "kickoff": row.get("kickoff"),
-                "roof": row["roof"],
+                "roof": row["roof"] if isinstance(row["roof"], str) else "unknown",
                 "weather": {"covered_venue": "indoor", "forecast": "forecast"}.get(
                     row["_weather_status"], "unavailable"
                 ),

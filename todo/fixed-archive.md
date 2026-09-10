@@ -65,13 +65,14 @@ Frozen archive of resolved issues, split out of [TODO.md](../TODO.md) (2026-05-3
 - **File(s):** `src/serving/practice_reports.py`, `src/serving/live_sources.py`, `src/serving/upcoming_week.py`, `src/serving/core.py`, `tests/test_practice_reports.py` (PR pending).
 - **What:** Four teams in the primary report suppressed the all-or-nothing fallback; Sleeper's practice field mapped no players. Known limited participants such as Flowers and Odunze consequently received full-practice values.
 - **Fix:** Read official current-week NFL tables, join by canonical team/name/position, and combine coverage per team. Official reports supersede older fallback values; unpublished/unknown reports use the fitted training mean and expose coverage metadata.
+- **Review follow-up (#1545):** An unmatched official name can be a roster alias (Andrew/Drew Ogletree). Preserve an ID-matched fallback or unknown for that unresolved team/position group; do not overwrite it with synthetic full participation.
 - **Lesson:** A nonempty feed is not league-wide coverage, and an unknown report is not a healthy player. Normalize historical team-directory aliases before matching current nicknames.
 
 ### [FIXED] Live venue fields were neutralized and implied totals reversed
 - **File(s):** `src/serving/live_schedule.py`, `src/serving/espn_live.py`, `src/shared/weather_features.py`, `src/k/data.py`, `tests/test_live_schedule.py`, `tests/shared/test_weather_features.py` (issues #1519/#1529; PR pending).
 - **What:** ESPN-only schedule rows dropped venue/rest/weather fields, making all live inputs outdoor, 65F, windless, and seven days rested. Shared/K formulas assigned the favored team the underdog's implied points.
 - **Fix:** Join live lines to the current calendar, verify neutral-site surfaces/roof, and supply kickoff forecasts with source coverage. Use home=(total+spread)/2 for nflverse's positive-home-favorite spread and the inverse for away. Validate the actual downstream feature merge and rebaseline the changed model inputs.
-- **Review follow-up (#1545):** Neutral games require an authoritative venue ID plus boolean grass/indoor details; successful but incomplete source responses cannot preserve a nominal home-stadium default.
+- **Review follow-up (#1545):** Neutral games require an authoritative venue ID plus boolean grass/indoor details; successful but incomplete source responses cannot preserve a nominal home-stadium default. Unknown retractable-roof states retain imputation and JSON-safe source disclosure. Missing ESPN lines keep non-null current-calendar odds.
 - **Lesson:** Reusing feature-building code does not establish source parity; verify event identity, source sign conventions, and the values after the last merge.
 
 ### [FIXED] Machine-specific Codex catalog path prevented session startup on macOS

@@ -1,5 +1,7 @@
 """Live schedule enrichment must reach the actual model feature merge."""
 
+import json
+
 import pandas as pd
 import pytest
 
@@ -134,3 +136,26 @@ def test_neutral_venue_requires_complete_authoritative_details(monkeypatch, venu
     monkeypatch.setattr(live.espn_live, "_get_json", lambda url: detail)
     with pytest.raises(ValueError, match="Cannot verify a neutral"):
         live.enrich_schedule_rows(slate, schedules)
+
+
+def test_missing_live_lines_keep_current_calendar_lines(monkeypatch):
+    slate, schedules = sample()
+    slate[["spread_line", "total_line"]] = float("nan")
+    monkeypatch.setattr(live.espn_live, "_get_json", lambda url: {"grass": True, "indoor": True})
+    enriched, _ = live.enrich_schedule_rows(slate, schedules)
+    assert enriched.spread_line.tolist() == [2.5]
+    assert enriched.total_line.tolist() == [47.5]
+
+
+def test_unknown_retractable_roof_does_not_use_outdoor_forecast(monkeypatch):
+    slate, schedules = sample()
+    schedules["roof"] = float("nan")
+    slate["neutral_site"] = False
+    monkeypatch.setattr(live.espn_live, "_get_json", lambda url: {"grass": False, "indoor": True})
+    monkeypatch.setattr(live, "_venue_forecast", lambda *args: pytest.fail("unknown roof"))
+    enriched, metadata = live.enrich_schedule_rows(slate, schedules)
+    assert enriched[["temp", "wind"]].isna().all().all()
+    assert metadata["coverage"] == {"unknown_roof": 1}
+    assert metadata["by_game"][0]["weather"] == "unavailable"
+    assert metadata["by_game"][0]["roof"] == "unknown"
+    json.dumps(metadata, allow_nan=False)  # API clients require valid JSON

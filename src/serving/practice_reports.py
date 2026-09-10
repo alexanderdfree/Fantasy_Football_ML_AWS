@@ -163,26 +163,40 @@ def fetch_practice_report(season: int, week: int, roster: pd.DataFrame) -> Pract
         )
         official_teams = {names[name] for name in official.covered if name in names}
         lookup = {}
+        reported = {}
+        unknown = set()
+        unresolved_groups = set()
         for row in roster.to_dict("records"):
             pid, team = str(row["player_id"]), row["recent_team"]
             key = (team, row["position"], _name(row["espn_name"]))
             lookup.setdefault(key, set()).add(pid)
-            if team in official_teams:
-                values[pid] = 2.0  # absent from a PUBLISHED injury report
         for row in official.records:
             key = (names.get(row["team_name"]), row["position"], _name(row["name"]))
             matches = lookup.get(key, set())
             if len(matches) != 1:
-                for pid in matches:
-                    values.pop(pid, None)
+                unknown.update(matches)
+                unresolved_groups.add(key[:2])
                 if row["position"] in {"QB", "RB", "WR", "TE"}:
                     unmatched.append(row["name"])
                 continue
             pid = next(iter(matches))
             if row["practice_status"] is None:
-                values.pop(pid, None)  # an unknown spelling is not a healthy report
+                unknown.add(pid)  # an unknown status is not a healthy report
             else:
-                values[pid] = row["practice_status"]
+                reported[pid] = row["practice_status"]
+        for row in roster.to_dict("records"):
+            pid = str(row["player_id"])
+            if pid in unknown:
+                values.pop(pid, None)
+            elif pid in reported:
+                values[pid] = reported[pid]
+            elif (
+                row["recent_team"] in official_teams
+                and (row["recent_team"], row["position"]) not in unresolved_groups
+            ):
+                values[pid] = 2.0  # demonstrably absent from a published report
+            # An unmatched name may be a roster alias (Andrew vs Drew). Keep
+            # an ID-matched fallback, or unknown, until that group is resolved.
         covered.update(official_teams)
     except Exception as exc:
         errors.append(f"NFL.com: {exc!r}")

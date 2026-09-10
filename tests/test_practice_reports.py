@@ -149,3 +149,32 @@ def test_year_selector_cannot_validate_a_different_week():
     with pytest.raises(ValueError, match="different season/week"):
         pr.parse_practice_report(html, 2026, 1)
     assert pr.parse_practice_report(html, 2026, 2).covered == {"Ravens"}
+
+
+@pytest.mark.parametrize("has_fallback", [True, False])
+def test_unmatched_alias_keeps_known_status_or_unknown(roster, monkeypatch, has_fallback):
+    roster.loc[0, "espn_name"] = "Drew Ogletree"
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Andrew Ogletree"), s, w),
+    )
+    fallback = pd.DataFrame(
+        {
+            "season": [2026],
+            "week": [1],
+            "team": ["BAL"],
+            "gsis_id": ["a"],
+            "practice_status": ["Limited Participation in Practice"],
+        }
+    )
+    monkeypatch.setattr(
+        pr.nfl_source, "injuries", lambda s: fallback if has_fallback else fallback.iloc[:0]
+    )
+    result = pr.fetch_practice_report(2026, 1, roster)
+    if has_fallback:
+        assert result.values["a"] == 1.0
+    else:
+        assert "a" not in result.values
+    assert "b" not in result.values  # cannot establish who the unmatched report describes
+    assert result.metadata["unmatched_report_names"] == ["Andrew Ogletree"]
