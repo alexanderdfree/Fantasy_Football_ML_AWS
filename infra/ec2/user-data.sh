@@ -94,6 +94,9 @@ set -euo pipefail
 POS="\$1"
 SEED="\${2:-42}"
 IMAGE="${IMAGE}"
+if [ -n "\${FF_TRAIN_GIT_SHA:-}" ]; then
+  IMAGE="\${IMAGE%:*}:\$FF_TRAIN_GIT_SHA"
+fi
 _t_total=\$SECONDS
 
 exec 200>/var/lock/ff-train.lock
@@ -109,7 +112,7 @@ date -Iseconds > /opt/ff/logs/last-activity
 _t_pull=\$SECONDS
 REMOTE_DIGEST=\$(aws ecr describe-images \\
   --repository-name ff-training \\
-  --image-ids imageTag=latest \\
+  --image-ids imageTag="\${FF_TRAIN_GIT_SHA:-latest}" \\
   --region ${REGION} \\
   --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "")
 LOCAL_DIGEST=\$(docker image inspect --format='{{index .RepoDigests 0}}' "\$IMAGE" 2>/dev/null | awk -F@ '{print \$2}' || echo "")

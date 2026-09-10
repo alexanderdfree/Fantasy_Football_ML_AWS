@@ -117,7 +117,7 @@ def test_refresh_position_bootstrap_records_etag_without_download(env_bucket, fa
 
     assert new_etag == '"v1"'
     assert did_refresh is False
-    assert fake_s3.head_calls == ["models/QB/manifest.json"]
+    assert fake_s3.head_calls == ["models/QB/releases/manifest.json", "models/QB/manifest.json"]
     assert fake_s3.get_calls == []
     # Sentinel was NOT created on bootstrap.
     assert not (fake_root / "src" / "qb" / "outputs" / ".refreshed_at").exists()

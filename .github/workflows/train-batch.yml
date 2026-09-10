@@ -582,7 +582,7 @@ jobs:
             # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "${model_prefix}/$POS/manifest.json" \
+              --key "${model_prefix}/$POS/releases/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')

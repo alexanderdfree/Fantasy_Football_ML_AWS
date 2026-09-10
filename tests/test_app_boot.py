@@ -310,6 +310,65 @@ def boot_env(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+class TestSharedInitializationHealth:
+    @pytest.mark.parametrize("failure", ["missing_split", "k", "dst"])
+    def test_failure_is_unhealthy_until_real_loader_succeeds(self, boot_env, monkeypatch, failure):
+        """Real boot/API path distinguishes unattempted, failed and recovered.
+
+        Only external K/DST inputs and model inference are stubbed. The missing
+        split case fails the real parquet read, then retries the restored file.
+        """
+        app_mod = boot_env["app"]
+        monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(boot_env["tmp_path"] / "cache"))
+        monkeypatch.setattr(core, "_compute_models_fingerprint", lambda: ("fixture", []))
+        monkeypatch.setattr(core, "_persist_cache_to_disk", lambda: None)
+        monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: 0.0)
+        monkeypatch.setattr(core, "_apply_position_models", lambda *args: None)
+
+        split = boot_env["tmp_path"] / "data/splits/train.parquet"
+        if failure == "missing_split":
+            split_bytes = split.read_bytes()
+            split.unlink()
+        else:
+            loader_name = f"_load_{failure}_splits"
+            original_loader = getattr(core, loader_name)
+
+            def fail_load():
+                raise RuntimeError("private/path/credentials must never appear in health")
+
+            monkeypatch.setattr(core, loader_name, fail_load)
+
+        with app_mod.app.test_client() as client:
+            cold_health = client.get("/health")
+            assert cold_health.status_code == 200
+            assert cold_health.get_json() == {"status": "ok"}
+            assert client.get("/api/predictions").status_code == 500
+            unhealthy = client.get("/health")
+            assert unhealthy.status_code == 503
+            assert unhealthy.get_json() == {
+                "status": "unhealthy",
+                "base_load_error": "Shared data initialization failed",
+                "position_load_errors": {},
+            }
+            assert not app_mod._cache.get("base_loaded")
+
+            if failure == "missing_split":
+                split.write_bytes(split_bytes)
+            else:
+                monkeypatch.setattr(core, loader_name, original_loader)
+
+            predictions = client.get("/api/predictions")
+            assert predictions.status_code == 200
+            assert {row["position"] for row in predictions.get_json()["players"]} == set(
+                core._ALL_POSITIONS
+            )
+            assert app_mod._cache["base_loaded"] is True
+            assert "base_load_error" not in app_mod._cache
+            recovered_health = client.get("/health")
+            assert recovered_health.status_code == 200
+            assert recovered_health.get_json() == {"status": "ok"}
+
+
 class TestLoadBaseDataLocked:
     """End-to-end exercise of ``_load_base_data_locked`` with on-disk parquets."""
 

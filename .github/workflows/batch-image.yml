@@ -172,6 +172,7 @@ jobs:
             --platform linux/amd64 \
             --provenance=false \
             --file src/batch/Dockerfile.train \
+            --build-arg TRAIN_GIT_SHA="$IMAGE_TAG" \
             $PULL_THROUGH_ARG \
             --cache-from type=gha \
             --cache-from type=local,src=/tmp/.buildx-cache \

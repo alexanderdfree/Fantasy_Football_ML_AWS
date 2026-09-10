@@ -52,6 +52,8 @@ env:
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service
   TASK_FAMILY: fantasy-predictor
+  S3_BUCKET: ff-predictor-training
+  UV_INDEX_STRATEGY: unsafe-best-match
   # Public serving URL for the post-deploy cache-warm probe (plain HTTPS GET
   # to /warm; see the final step). Fresh tasks hydrate the S3 cache at boot
   # when models are unchanged — this just warms any worker that raced traffic.
@@ -130,6 +132,30 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      # A new cache protocol/schema must be available before fresh tasks boot.
+      # Build on CI when needed; a valid existing generation skips inference.
+      # This is a required gate: a cache miss must not move expensive six-position
+      # feature building and inference into both serving workers during rollout.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: "requirements*.txt"
+
+      - name: Install cache builder dependencies
+        run: uv pip install --system -r requirements-dev.txt
+
+      - name: Prepare verified serving cache before rollout
+        timeout-minutes: 30
+        env:
+          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
+          FF_MODEL_S3_PREFIX: models
+          FF_DEVICE: cpu
+        run: python -m src.scripts.build_serving_cache --reuse-valid
 
       - name: Pull current task definition
         # Start from the live task def (preserves the real ARNs / env / secrets /

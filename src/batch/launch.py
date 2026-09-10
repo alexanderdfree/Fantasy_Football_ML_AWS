@@ -9,7 +9,11 @@ Usage:
     python src/batch/launch.py --force-upload          # skip ETag dedup
     python src/batch/launch.py --skip-upload           # assume S3 current (CI)
 
-Config (environment variables, all optional):
+Source identity (required except for --dry-run):
+    FF_TRAIN_GIT_SHA    Full SHA of the selected training image; the launcher
+                       registers its ancestry before submitting jobs.
+
+Other configuration (environment variables, optional):
     FF_S3_BUCKET        (default: ff-predictor-training)
     FF_JOB_QUEUE        (default: ff-training-queue)
     FF_JOB_QUEUE_CPU    (optional)                          CPU split queue
@@ -543,7 +547,7 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
 def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
     """Download model artifacts from S3 back to local position dirs.
 
-    Resolves the per-position artifact via ``models/{POS}/manifest.json`` rather
+    Resolves the per-position artifact via ``models/{POS}/releases/manifest.json`` rather
     than the legacy ``models/{POS}/model.tar.gz`` mirror, which was removed in
     the parallel-train-batch race fix (two concurrent runs writing the same
     legacy key were last-write-wins). Walks ``stable → current → previous``,
@@ -576,7 +580,7 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
             continue
         if manifest is None:
             print(
-                f"[{pos}] No manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/manifest.json, skipping"
+                f"[{pos}] No manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/releases/manifest.json, skipping"
             )
             continue
 
@@ -803,6 +807,16 @@ def main():
     # Shared boto3 clients — boto3 clients are thread-safe, no need per-thread.
     s3_client = boto3.client("s3", region_name=AWS_REGION)
     batch_client = boto3.client("batch", region_name=AWS_REGION)
+
+    # Register the pinned image's immutable ancestry before any job can publish.
+    from src.shared.artifact_publication import register_source
+
+    register_source(
+        s3_client,
+        S3_BUCKET,
+        os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
+        TRAIN_GIT_SHA or "",
+    )
 
     if args.skip_upload:
         print("Skipping data upload (--skip-upload); assuming S3 splits are current.\n")

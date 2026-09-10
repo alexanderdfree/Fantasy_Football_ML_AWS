@@ -168,6 +168,21 @@ jobs:
             rm -f "$tmp"
             echo "ff-train patched with FF_TRAIN_GIT_SHA passthrough"
           fi
+          # Existing warm hosts must select the requested immutable image tag.
+          if ! grep -q 'IMAGE%:\*' /usr/local/bin/ff-train; then
+            tmp=$(mktemp)
+            awk '
+              { print }
+              /^IMAGE=/ {
+                print "if [ -n \"${FF_TRAIN_GIT_SHA:-}\" ]; then"
+                print "  IMAGE=\"${IMAGE%:*}:$FF_TRAIN_GIT_SHA\""
+                print "fi"
+              }
+            ' /usr/local/bin/ff-train > "$tmp"
+            sed -i 's/imageTag=latest/imageTag="${FF_TRAIN_GIT_SHA:-latest}"/' "$tmp"
+            install -m 755 "$tmp" /usr/local/bin/ff-train
+            rm -f "$tmp"
+          fi
           BASH
           PARAMS=$(jq -n --arg s "$SCRIPT" '{commands: [$s]}')
           CMD_ID=$(aws ssm send-command \
@@ -242,6 +257,7 @@ jobs:
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
+          python -m src.scripts.register_training_source --sha "$FF_TRAIN_GIT_SHA" --bucket "$S3_BUCKET"
           case "$SEED" in
             ""|*[!0-9]*)
               echo "Invalid seed: $SEED" >&2
@@ -348,7 +364,7 @@ jobs:
             # f65bcbe + be56b0d); checking it would trip STALE on every run.
             META=$(aws s3api head-object \
               --bucket "$S3_BUCKET" \
-              --key "${model_prefix}/$POS/manifest.json" \
+              --key "${model_prefix}/$POS/releases/manifest.json" \
               --region "$AWS_REGION" 2>/dev/null || echo '{}')
             LM=$(echo "$META" | jq -r '.LastModified // empty')
             SZ=$(echo "$META" | jq -r '.ContentLength // 0')

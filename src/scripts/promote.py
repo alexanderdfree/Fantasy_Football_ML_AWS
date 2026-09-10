@@ -1,28 +1,21 @@
-"""Manual rollback: rewrite ``models/{POS}/manifest.json`` to point ``current``
-at any entry from ``history[]``.
+"""Roll back a retained model through the protected v3 publication protocol.
 
-Part A (PR #104) introduced automatic ``current → previous`` fallback in
-``src.shared.model_sync._sync_one`` — that covers a single bad ship. This script
-is the escape hatch for the "two consecutive bad ships" case documented in
-#104: both ``current`` and ``previous`` broken, but an older entry in
-``history[]`` is still good. Operator picks one, script atomically promotes
-it via a new manifest.json put.
+Copy an entry from history[] into a fresh releases/history/ key, then conditionally
+advance both stable and current in models/{POS}/releases/manifest.json. Preserve
+the source high-water mark so queued jobs cannot undo the operator's rollback.
+A legacy position must complete a source-registered v3 publication first.
 
 Usage:
     python -m src.scripts.promote --position WR --list
-    python -m src.scripts.promote --position WR --to models/WR/history/...sha7/model.tar.gz
+    python -m src.scripts.promote --position WR --to models/WR/releases/history/.../model.tar.gz
     python -m src.scripts.promote --position WR --to ... --dry-run
-
-All state lives in ``src.shared.model_sync``'s manifest helpers — producer
-(``src/batch/train.py``), consumer (``src/shared/model_sync.py``), and this operator
-tool all share one schema. If you're editing the manifest shape, search for
-call sites before landing.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -31,10 +24,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from src.shared.artifact_publication import references, snapshot  # noqa: E402
 from src.shared.model_sync import (  # noqa: E402
+    HISTORY_KEEP_N,
     MANIFEST_SCHEMA_VERSION,
     load_manifest,
     manifest_key,
+    new_history_key,
     write_manifest,
 )
 
@@ -72,7 +68,7 @@ def _parse_version_from_key(target_key: str) -> tuple[str, str]:
     """Pull ``uploaded_at`` + ``sha7`` out of a history key path.
 
     Keys are produced by ``src.shared.model_sync.new_history_key`` and have the
-    shape ``{prefix}/{POS}/history/{ts}-{sha7}/model.tar.gz`` — the dir name
+    shape ``{prefix}/{POS}/releases/history/{ts}-{uuid}-{sha7}/model.tar.gz`` — the dir name
     before the filename is the only sha7 source we have post-facto (we can't
     recompute it without re-downloading the tarball).
 
@@ -108,6 +104,11 @@ def _parse_version_from_key(target_key: str) -> tuple[str, str]:
             f"Empty ts or sha7 in version dir of {target_key!r}: "
             f"got ts={uploaded_at!r} sha7={sha7!r}."
         )
+    # V3 adds a uniqueness token before the content hash. It is not part of
+    # the upload timestamp and should not accumulate across manual rollbacks.
+    timestamp, separator, token = uploaded_at.rpartition("-")
+    if separator and re.fullmatch(r"[0-9a-f]{32}", token):
+        uploaded_at = timestamp
     return uploaded_at, sha7
 
 
@@ -151,16 +152,20 @@ def build_promotion_manifest(
         raise
 
     uploaded_at, sha7 = _parse_version_from_key(target_key)
+    entry = {
+        "key": target_key,
+        "sha7": sha7,
+        "bytes": head["ContentLength"],
+        "uploaded_at": uploaded_at,
+    }
     return {
         "schema_version": old_manifest.get("schema_version", MANIFEST_SCHEMA_VERSION),
-        "current": {
-            "key": target_key,
-            "sha7": sha7,
-            "bytes": head["ContentLength"],
-            "uploaded_at": uploaded_at,
-        },
+        "current": entry,
+        "stable": entry,
         "previous": old_manifest.get("current"),
         "history": history,
+        "publication_source": old_manifest.get("publication_source"),
+        "promotion_mode": "rollback",
     }
 
 
@@ -173,53 +178,54 @@ def promote(
     *,
     dry_run: bool = False,
 ) -> dict:
-    """Promote ``target_key`` to ``current`` for ``position``. Returns the
-    new manifest dict (whether or not it was actually written).
+    """Copy a retained artifact and CAS both serving pointers to the fresh key.
 
-    On success, writes the new ``manifest.json`` only — the legacy
-    ``{prefix}/{POS}/model.tar.gz`` mirror is no longer maintained (removed
-    in the parallel-train-batch race fix; see PR #282). All consumers
-    (serving, ``benchmark.py``) read the manifest. A dry-run returns the
-    computed manifest without touching S3.
-
-    A ``ClientError`` from ``write_manifest`` is translated to
-    ``PromotionError`` so ``main()`` can render a human-friendly error
-    instead of a raw boto3 stack trace. The pre-write steps
-    (``load_manifest``, ``build_promotion_manifest``) already raise
-    ``PromotionError`` on their own failure modes, so the manifest is
-    either fully written or fully untouched — no partial state to
-    clean up.
+    Preserve the source high-water mark and retry conflicts only while the target
+    remains retained. A dry run computes the manifest without writing or copying.
+    A failed conditional update leaves the active pointer untouched; its orphaned
+    copy is safe to retain for offline cleanup.
     """
     from botocore.exceptions import ClientError
 
-    old = load_manifest(s3_client, bucket, prefix, position)
-    if old is None:
-        raise PromotionError(
-            f"No manifest at s3://{bucket}/{manifest_key(prefix, position)} — "
-            f"nothing to promote from. Either the bucket is pre-migration "
-            f"(run a training job first) or the prefix is wrong."
-        )
-    new = build_promotion_manifest(old, target_key, bucket, s3_client)
-    if dry_run:
+    for _ in range(12):
+        old, etag = snapshot(s3_client, bucket, prefix, position)
+        if old is None:
+            raise PromotionError(
+                f"No manifest at s3://{bucket}/{manifest_key(prefix, position)}; "
+                "run a source-registered training publication to migrate legacy artifacts first."
+            )
+        new = build_promotion_manifest(old, target_key, bucket, s3_client)
+        if not old.get("publication_source"):
+            raise PromotionError(
+                "Manifest lacks verified publication source; migrate before rollback"
+            )
+        entry = new["current"]
+        copied_key = new_history_key(prefix, position, entry["uploaded_at"], entry["sha7"])
+        new["current"] = new["stable"] = {**entry, "key": copied_key, "rollback_of": target_key}
+        new["history"] = [copied_key, *new["history"]][:HISTORY_KEEP_N]
+        new["retired"] = sorted(references(old) - references(new))
+        if dry_run:
+            return new
+        try:
+            data = s3_client.get_object(Bucket=bucket, Key=target_key)["Body"].read()
+            s3_client.put_object(Bucket=bucket, Key=copied_key, Body=data, IfNoneMatch="*")
+            write_manifest(s3_client, bucket, prefix, position, new, etag=etag)
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "?")
+            if code in ("PreconditionFailed", "ConditionalRequestConflict", "409", "412"):
+                continue
+            raise PromotionError(
+                f"Failed to write new manifest: [{code}] {e!s}; safe to retry"
+            ) from e
         return new
-    try:
-        write_manifest(s3_client, bucket, prefix, position, new)
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "?")
-        raise PromotionError(
-            f"Failed to write new manifest to s3://{bucket}/"
-            f"{manifest_key(prefix, position)}: [{code}] {e!s}. "
-            f"The old manifest is still in place; safe to retry."
-        ) from e
-    return new
+    raise PromotionError("Concurrent publication prevented rollback; safe to retry")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Manual rollback: rewrite models/{POS}/manifest.json to point "
-            "'current' at any entry from history[]. See docstring in "
-            "scripts/promote.py for the when/why."
+            "Manual rollback: copy a retained releases/history/ artifact and conditionally "
+            "advance stable and current in models/{POS}/releases/manifest.json."
         )
     )
     parser.add_argument("--position", required=True, choices=_POSITIONS)
@@ -235,7 +241,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--list", action="store_true", help="List history[] entries and exit.")
-    group.add_argument("--to", metavar="KEY", help="Promote this history/ key to 'current'.")
+    group.add_argument(
+        "--to",
+        metavar="KEY",
+        help="Copy this retained history key and promote it to stable and current.",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -268,7 +278,8 @@ def main(argv: list[str] | None = None) -> int:
         # demoted entry off it directly instead of re-fetching from S3.
         if (new.get("previous") or {}).get("key"):
             old_cur_key = new["previous"]["key"]
-        print(f"Promoted {args.position}: current → {args.to}")
+        print(f"Promoted {args.position}: stable and current → {new['current']['key']}")
+        print(f"  rollback source: {args.to}")
         print(f"  previous now: {old_cur_key}")
         return 0
     except PromotionError as e:

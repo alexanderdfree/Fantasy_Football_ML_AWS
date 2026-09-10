@@ -33,14 +33,9 @@ import pandas as pd
 import torch
 
 from src.shared.artifact_gc import prune as _gc_prune
+from src.shared.artifact_publication import PublicationSuperseded, load_source, publish_artifact
 from src.shared.core_pool import ENV_ADDR, ENV_POS, lease_cores, start_coordinator
-from src.shared.model_sync import (
-    build_manifest,
-    load_manifest,
-    manifest_key,
-    new_history_key,
-    write_manifest,
-)
+from src.shared.model_sync import manifest_key, new_history_key
 from src.shared.platform_detect import detect_platform
 from src.shared.registry import (
     ALL_POSITIONS,
@@ -346,31 +341,15 @@ def _try_smoke_test(position: str, model_dir: str) -> bool:
     return True
 
 
-def upload_artifacts(s3_bucket, position, model_dir):
-    """Tar, upload to a versioned history key, validate, smoke-test, atomically
-    promote the manifest.
+def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
+    """Upload immutable v3 bytes, validate/smoke, and conditionally promote.
 
-    Order (each step raises on failure unless noted):
-      1. Structural check of ``model_dir`` (fast-fail before S3 round-trips).
-      2. Build tarball, hash it, pick timestamped + sha7 history key.
-      3. Upload to ``history/{ts}-{sha7}/model.tar.gz``.
-      4. Re-download + validate (reopenable, expected files present).
-      5. Run load+predict smoke test on the local ``model_dir`` (non-fatal —
-         only gates whether the new manifest's ``stable`` pointer advances).
-      6. Read old ``manifest.json`` (None on first run).
-      7. Write new ``manifest.json`` with ``current=new, previous=old.current``
-         and ``stable`` advanced iff smoke test passed — **this write is the
-         atomic promotion**. Any earlier raise leaves the old manifest in
-         place and the site keeps serving the previous good artifact.
-      8. Best-effort retention prune (failure is non-fatal). The artifact
-         pointed to by ``stable`` is exempted from pruning.
-
-    Note: the legacy ``models/{POS}/model.tar.gz`` mirror is no longer written
-    here. Two parallel train-batch runs writing the same legacy key were
-    last-write-wins; the manifest's atomic single-PUT promotion is the only
-    artifact pointer needed. Consumers — serving via
-    ``src.shared.model_sync._sync_one`` and CI benchmark aggregation via
-    ``src.batch.benchmark.download_metrics`` — both read the manifest now.
+    The source record must match the image's baked revision. Publication rejects
+    older source ancestry and retries ETag conflicts against the latest pointer.
+    During migration, retained legacy bytes are copied outside the old GC prefix.
+    Failed smoke preserves stable; initial seeding requires a passing smoke.
+    Returns the committed manifest, or None when a newer publisher/seed wins.
+    Retention only deletes physical keys retired by this successful publication.
     """
     if not os.path.isdir(model_dir):
         raise RuntimeError(
@@ -391,6 +370,7 @@ def upload_artifacts(s3_bucket, position, model_dir):
     # Mirrors src.shared.model_sync's consumer-side env read so producer/consumer
     # paths can't drift. Default "models" matches the legacy layout.
     s3_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
+    source = load_source(s3, s3_bucket, s3_prefix, os.environ.get("FF_TRAIN_GIT_SHA", ""))
 
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
         tmp_path = tmp.name
@@ -415,16 +395,28 @@ def upload_artifacts(s3_bucket, position, model_dir):
 
         smoke_passed = _try_smoke_test(position, model_dir)
 
-        old_manifest = load_manifest(s3, s3_bucket, s3_prefix, position)
-        new_manifest = build_manifest(
+        new_manifest = publish_artifact(
+            s3,
+            s3_bucket,
+            s3_prefix,
+            position,
             new_key=new_key,
             sha7=sha7,
             bytes_=tar_bytes,
             uploaded_at=ts,
-            old_manifest=old_manifest,
             smoke_passed=smoke_passed,
+            source=source,
+            initialize_only=initialize_only,
         )
-        write_manifest(s3, s3_bucket, s3_prefix, position, new_manifest)
+        if new_manifest is None:
+            if not initialize_only:
+                raise PublicationSuperseded(
+                    f"{position}: artifact retained without promotion because a newer source "
+                    "or explicit rollback won. Do not retry this source; skipping benchmark "
+                    "aggregation prevents relabeling the active model's metrics."
+                )
+            print("Artifact retained without promotion: existing seed/training publication won.")
+            return None
         print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
 
         try:
@@ -432,11 +424,12 @@ def upload_artifacts(s3_bucket, position, model_dir):
             if deleted:
                 print(f"Pruned {len(deleted)} old history entries.")
         except Exception as e:
-            # Retention failure is recoverable — next successful run will
-            # re-prune. Don't let it mask the upload success.
+            # Retention failure leaves extra immutable bytes, never a broken
+            # pointer. Offline cleanup can retry this recorded retirement set.
             print(f"WARNING: retention prune failed (non-fatal): {e!r}")
 
         print("Artifact upload complete.")
+        return new_manifest
     finally:
         os.unlink(tmp_path)
 

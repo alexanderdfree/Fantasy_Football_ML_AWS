@@ -148,13 +148,13 @@ def api_snapshot():
     The frontend hydrates its first paint from this (frontend/src/App.jsx), so
     this route MUST NOT call ``_ensure_metrics`` / load models — that is the whole
     point: instant first paint with zero compute on the request path. Missing
-    file -> 404, and the frontend falls back to ``/api/predictions``. The file is
-    produced off the request path by ``_write_snapshot_json`` (the compute +
-    hydrate paths, both driven by the post_fork warm thread) and synced from S3
-    at boot as an auxiliary cache file.
+    or invalid generation -> 404, and the frontend falls back to
+    ``/api/predictions``. The snapshot is committed with predictions and metrics
+    off the request path, then synced from S3 as one verified bundle. This route
+    performs checksum/fingerprint validation but never loads a model.
     """
-    path = os.path.join(core._PREDICTIONS_CACHE_DIR, core._SNAPSHOT_JSON)
-    if not os.path.isfile(path):
+    path = core._snapshot_path()
+    if path is None:
         return jsonify({"error": "snapshot not available"}), 404
     resp = send_file(path, mimetype="application/json", conditional=True)
     # Snapshot content changes on retrain; send_file stamps a size/mtime ETag,
@@ -702,8 +702,8 @@ def api_benchmark_history():
 def health():
     """Liveness probe for ALB + ECS.
 
-    Three return shapes, matched on the joint state of ``positions_loaded``
-    and ``position_load_errors``:
+    Three return shapes, matched on the joint state of ``positions_loaded``,
+    ``position_load_errors`` and shared ``base_load_error``:
 
     - **200 ``{"status": "ok"}``** — happy path. Either steady state (every
       position loaded, no errors) OR cold-start before any load attempt
@@ -718,9 +718,8 @@ def health():
       already returns 200 + ``degraded_positions`` for this exact state —
       ``/health`` must agree, otherwise ALB recycles a still-serving task.
     - **503 ``{"status": "unhealthy", ...}``** — we have affirmatively
-      failed: ``position_load_errors`` is non-empty AND no position is
-      loaded (every attempt failed). ALB rotates us out; ECS replaces the
-      task.
+      failed: shared initialization or position errors exist AND no position
+      is loaded. ALB rotates us out; ECS replaces the task.
 
     Why no "503 when empty everything": that would 503 the ~30 s cold-start
     window before pre-warm completes (interval=10s × unhealthy_threshold=3
@@ -733,23 +732,24 @@ def health():
     to 503, recycling a task that was still serving five of six positions
     cleanly (alexfree.me, 2026-05-21 12:16 UTC, ~60 s ALB 5xx window).
     """
-    loaded = app_pkg._cache.get("positions_loaded") or set()
-    errors = app_pkg._cache.get("position_load_errors") or {}
-    if errors and not loaded:
-        return jsonify(
-            {
-                "status": "unhealthy",
-                "position_load_errors": errors,
-            }
-        ), 503
-    if errors:
-        return jsonify(
-            {
-                "status": "degraded",
-                "positions_loaded": sorted(loaded),
-                "position_load_errors": errors,
-            }
-        ), 200
+    loaded = set(app_pkg._cache.get("positions_loaded") or ())
+    # Actual exception details remain in the cache/logs for operators. Public
+    # health probes must not expose paths, configuration or library internals.
+    errors = {
+        key: "Position or model initialization failed"
+        for key in list(app_pkg._cache.get("position_load_errors") or {})
+    }
+    base_error = bool(app_pkg._cache.get("base_load_error"))
+    if errors or base_error:
+        payload = {
+            "status": "degraded" if loaded else "unhealthy",
+            "position_load_errors": errors,
+        }
+        if loaded:
+            payload["positions_loaded"] = sorted(loaded)
+        if base_error:
+            payload["base_load_error"] = "Shared data initialization failed"
+        return jsonify(payload), 200 if loaded else 503
     return jsonify({"status": "ok"})
 
 

@@ -1,60 +1,39 @@
-"""Retention for versioned artifacts under ``{prefix}/{POS}/history/``.
+"""Delete only immutable keys retired by a successful v3 publication CAS.
 
-Invoked best-effort by ``src/batch/train.py::upload_artifacts`` after the new
-``manifest.json`` is written. A prune failure does not fail the training run
-— retention is cleanup, not correctness. Training is flock-serialized on the
-EC2 host so concurrent producers can't race on the same position.
+Never sweep a shared prefix: its unreferenced objects may belong to a publisher
+still validating an upload. Delayed cleanup is safe because publication and
+explicit rollback always use fresh physical keys, never retired keys.
 """
 
-from __future__ import annotations
-
+from src.shared.artifact_publication import references
 from src.shared.model_sync import HISTORY_KEEP_N, history_prefix
 
 
-def prune(
-    s3_client,
-    bucket: str,
-    prefix: str,
-    pos: str,
-    manifest: dict,
-    keep_n: int = HISTORY_KEEP_N,
-) -> list[str]:
-    """Delete keys under ``history_prefix(prefix, pos)`` that are NOT in the
-    manifest's keep set: {current.key, stable.key, previous.key, *history[:keep_n]}.
+def prune(s3_client, bucket, prefix, pos, manifest, keep_n=HISTORY_KEEP_N) -> list[str]:
+    """Delete this committed manifest's retirement set, never concurrent uploads.
 
-    Source of truth for "what exists" is the S3 listing (not the manifest),
-    so orphan keys from abandoned uploads also get swept up. Returns the list
-    of keys that were deleted. Idempotent on retry — a re-run with the same
-    manifest deletes nothing new.
-
-    ``stable`` is exempted regardless of its history-list position so the
-    last-known-good artifact survives even after ``keep_n`` newer (possibly
-    smoke-failing) uploads have rolled into the top of ``history``. This is
-    the conservation guarantee the consumer's stable-first fallback depends on.
+    ``keep_n`` remains accepted for callers; history retention is decided during
+    publication. Legacy manifests confer no deletion authority. Abandoned uploads
+    require offline coordinated cleanup and are intentionally preserved here.
     """
-    keep: set[str] = set()
-    for label in ("current", "stable", "previous"):
-        entry = manifest.get(label)
-        if entry and entry.get("key"):
-            keep.add(entry["key"])
-    for k in (manifest.get("history") or [])[:keep_n]:
-        keep.add(k)
-
-    paginator = s3_client.get_paginator("list_objects_v2")
-    to_delete: list[str] = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=history_prefix(prefix, pos)):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            if key not in keep:
-                to_delete.append(key)
-
-    # S3 delete_objects handles batches of up to 1000 keys per call.
-    deleted: list[str] = []
-    for i in range(0, len(to_delete), 1000):
-        chunk = to_delete[i : i + 1000]
-        s3_client.delete_objects(
-            Bucket=bucket,
-            Delete={"Objects": [{"Key": k} for k in chunk], "Quiet": True},
+    if manifest.get("schema_version") != 3:
+        return []
+    protected = references(manifest)
+    candidates = sorted(
+        {
+            key
+            for key in manifest.get("retired", [])
+            if key.startswith(history_prefix(prefix, pos)) and key not in protected
+        }
+    )
+    deleted = []
+    for start in range(0, len(candidates), 1000):
+        keys = candidates[start : start + 1000]
+        result = s3_client.delete_objects(
+            Bucket=bucket, Delete={"Objects": [{"Key": key} for key in keys], "Quiet": True}
         )
-        deleted.extend(chunk)
+        errors = {entry["Key"] for entry in (result or {}).get("Errors", [])}
+        deleted.extend(key for key in keys if key not in errors)
+        if errors:
+            raise RuntimeError(f"Artifact retention failed for {len(errors)} objects")
     return deleted
