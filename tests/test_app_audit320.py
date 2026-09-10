@@ -344,10 +344,13 @@ class TestAllPositionsSentinelRecheck:
 
 
 class TestEnsureMetricsNoHydrateOnSentinelAdvance:
-    def test_sentinel_advance_skips_hydrate(self, monkeypatch):
+    def test_sentinel_advance_skips_hydrate(self, monkeypatch, tmp_path):
         import src.serving.app as app_mod
 
         app_mod._cache.clear()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(core, "_ensure_base_data", lambda: None)
+        monkeypatch.setattr(core, "_compute_models_fingerprint", lambda: ("current-inputs", []))
         # Pretend an aggregate is cached and a position's sentinel advanced.
         app_mod._cache["metrics_by_format"] = {"ppr": "STALE"}
         app_mod._cache["positions_loaded"] = {"QB"}
