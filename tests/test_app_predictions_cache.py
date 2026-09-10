@@ -192,7 +192,10 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
 
     def apply(train, val, test, pos, results):
         calls.append(pos)
-        results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
+        # Match the real model writer: even disjoint pandas row assignments
+        # can lose updates when six loader threads copy the same backing block.
+        with core.app_pkg._results_write_lock:
+            results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
 
     monkeypatch.setattr(core, "_load_splits_locked", load_splits)
     monkeypatch.setattr(core, "_apply_position_models", apply)
