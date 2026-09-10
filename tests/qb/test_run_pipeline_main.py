@@ -50,7 +50,7 @@ def test_main_default_invokes_run_pipeline(monkeypatch):
     assert "targets" in calls[0]["cfg"]
     # ``seed`` travels as the trailing positional arg (matches the sibling
     # ``test_run_qb_pipeline_function_passes_through`` contract). The
-    # __main__ block hard-codes seed=42 when --seed is not passed.
+    # CLI passes no seed, so ``run()`` uses its default of 42.
     assert calls[0]["args"][-1] == 42
 
 

@@ -26,6 +26,7 @@ from src.shared.neural_net import MultiHeadNet
 from src.shared.training import MultiHeadTrainer, MultiTargetLoss, make_dataloaders
 from src.wr.config import POSITION_CONFIG
 
+LGBM_OBJECTIVE = POSITION_CONFIG.lgbm_objective
 LOSS_WEIGHTS = POSITION_CONFIG.loss_weights
 HUBER_DELTAS = POSITION_CONFIG.huber_deltas
 TARGETS = POSITION_CONFIG.targets
@@ -135,7 +136,7 @@ def test_all_models_beat_season_average_baseline():
         colsample_bytree=1.0,
         reg_lambda=0.0,
         reg_alpha=0.0,
-        objective="huber",
+        objective=LGBM_OBJECTIVE,
         seed=42,
     )
     lgbm.fit(X_train, y_train)
@@ -172,7 +173,7 @@ def test_lightgbm_within_tolerance_of_ridge():
         colsample_bytree=1.0,
         reg_lambda=0.0,
         reg_alpha=0.0,
-        objective="regression",
+        objective=LGBM_OBJECTIVE,
         seed=42,
     )
     lgbm.fit(X_train, y_train)
@@ -213,7 +214,7 @@ def test_nn_mae_within_30pct_of_lightgbm():
         colsample_bytree=1.0,
         reg_lambda=0.0,
         reg_alpha=0.0,
-        objective="regression",
+        objective=LGBM_OBJECTIVE,
         seed=42,
     )
     lgbm.fit(X_train, y_train)

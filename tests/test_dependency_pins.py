@@ -26,6 +26,9 @@ This module:
   * Asserts the Dockerfile base image is pinned (not ``latest``) and that the
     Batch requirements pin ``torch`` explicitly behind the CUDA extra index.
 
+  * Keeps the development/GPU Ruff pins aligned and verifies that lint CI
+    installs the development pin, including after a future version bump.
+
 L-B9 in code_review_findings.md notes "three sources of Python pins (root,
 Batch, and base-image torch). No automated parity check." This test is
 that check.
@@ -33,10 +36,14 @@ that check.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.unit
 
@@ -45,6 +52,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 REQUIREMENTS_TXT = REPO_ROOT / "requirements.txt"
 BATCH_REQUIREMENTS_TXT = REPO_ROOT / "src" / "batch" / "requirements.txt"
 DOCKERFILE_TRAIN = REPO_ROOT / "src" / "batch" / "Dockerfile.train"
+DEV_REQUIREMENTS_TXT = REPO_ROOT / "requirements-dev.txt"
+GPU_REQUIREMENTS_TXT = REPO_ROOT / "requirements-gpu.txt"
+TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "tests.yml"
 
 
 # ``foo==1.2.3``, ``foo>=1.0,<2.0``, ``foo``, etc. The package name is the
@@ -90,6 +100,38 @@ def test_shared_packages_have_identical_pins():
         "Pin drift between requirements.txt and src/batch/requirements.txt:\n"
         + "\n".join(f"  {pkg}: root={top!r} vs batch={batch!r}" for pkg, top, batch in diffs)
     )
+
+
+def test_development_and_gpu_ruff_pins_match():
+    dev = _parse_requirements(DEV_REQUIREMENTS_TXT)
+    gpu = _parse_requirements(GPU_REQUIREMENTS_TXT)
+    assert dev["ruff"] == gpu["ruff"]
+
+
+@pytest.mark.parametrize("future_pin", [False, True])
+@pytest.mark.skipif(shutil.which("bash") is None, reason="Workflow shell contract requires Bash")
+def test_lint_workflow_uses_development_ruff_pin(tmp_path: Path, future_pin: bool):
+    """Run the actual install step with a stub uv; a version bump must flow through."""
+    workflow = yaml.safe_load(TEST_WORKFLOW.read_text())
+    step = next(s for s in workflow["jobs"]["lint"]["steps"] if s.get("name") == "Install Ruff")
+    dev_requirement = "ruff" + _parse_requirements(DEV_REQUIREMENTS_TXT)["ruff"]
+    requirement = "ruff==99.0.0" if future_pin else dev_requirement
+    (tmp_path / "requirements-dev.txt").write_text(f"{requirement}  # formatter pin\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+    fake_uv.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "-c", step["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.splitlines() == ["pip", "install", "--system", requirement]
 
 
 def test_dockerfile_base_image_is_pinned():

@@ -6,8 +6,11 @@
 
 Rewrite the serving dashboard frontend (formerly a single 2,290-line vanilla-JS
 `app.js`) as React function components under `src/serving/frontend/`, adopting
-the Fantasy Football Predictor design system (tokens, OLED night mode, and its
-React component primitives under `frontend/src/ds/`). The bundle is built by
+the Fantasy Football Predictor design system's tokens and OLED night mode. Its
+React component kit is retained under `frontend/src/ds/`; the live views currently
+import only `DropdownMenu` from that kit and use app-specific components for the
+other controls (see the [kit README](../../src/serving/frontend/src/ds/README.md)).
+The bundle is built by
 esbuild (`npm run build` in `src/serving/frontend/`) and **committed at the old
 path `src/serving/static/js/app.js`** — the serving runtime, Dockerfile, and
 deploy pipeline remain Node-free.
@@ -59,8 +62,7 @@ front:
   system kit's own loading mode): prototyping-grade — per-page-load transpile
   cost, no tree-shaking, unmaintainable at ~2,500 lines of views.
 - **CSS-tokens-only retrofit keeping vanilla JS**: rejected by the owner in
-  favor of the full rewrite (the design system's React primitives power the
-  upcoming filter-bar/timeline features).
+  favor of the full React rewrite, including the filter-bar and timeline views.
 
 ## Consequences
 
@@ -80,6 +82,8 @@ front:
 
 ## Changelog
 
+- 2026-09-10 · Clarify which design-system primitives are live and document the
+  dormant kit without changing component adoption or runtime behavior.
 - 2026-09-10 · Upgrade React/React DOM to 19.3.0, esbuild to 0.28.2, and
   vendored Chart.js to 4.5.1; rebuild the committed bundle. The automatic JSX
   transform already satisfies React 19's requirement.

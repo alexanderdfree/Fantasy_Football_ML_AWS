@@ -1,8 +1,8 @@
 # Proposed ADR — Warm single-GPU MPS-packed training ("Option B")
 
-**Status:** Proposed (pre-build). Promote to `docs/adr/0023-warm-mps-packed-training.md`
-(next free number; 0022 is the current max) **only after the benchmark gate below is
-green**. Lives in `todo/` (not `docs/adr/`) until then so it doesn't fire `deploy.yml`
+**Status:** Proposed (pre-build). Promote using the next free
+`docs/adr/00NN-warm-mps-packed-training.md` number **only after the benchmark gate
+below is green**. Lives in `todo/` (not `docs/adr/`) until then so it doesn't fire `deploy.yml`
 or publish an undecided proposal to the in-app wiki. `[docs-only]`.
 
 This is the AWS/warm cousin of Lever B in
@@ -13,7 +13,7 @@ the WSL2/Windows 5080 that Lever B targets).
 
 ## Context
 
-- **Current production (verified live 2026-06-07):** push-driven training is the Spot
+- **Production baseline (observed 2026-06-07):** push-driven training was the Spot
   fan-out ([ADR-0013](../docs/adr/0013-spot-fan-out-via-aws-batch.md),
   [batch_design.md](../docs/batch_design.md)) — **six separate Spot hosts, one position
   each, single process per host** (`src/batch/train.py --mode=train` → `run_fn(...)`).
@@ -21,11 +21,12 @@ the WSL2/Windows 5080 that Lever B targets).
   (`--mode=tune` → `src/tuning/tune_nn`, `--parallel-backend mps --n-jobs 3`), where it
   packs *concurrent Optuna trials of one position* onto that position's GPU — never the
   six positions together.
-  - ⚠️ Live-state caveat found during this verification: the `ff-gpu-spot` CE is still
-    `g4dn.xlarge` (T4, sm_75), **not** the `g6.xlarge` (L4, sm_89) the docs claim. On the
-    T4, CUDA graphs are off (sm_80+ gate) so prod NN training is already eager. This
-    proposal assumes the intended **L4** target; the gate must be measured on whatever
-    hardware is actually live.
+  - **Subsequent fleet updates:** ADR-0013 records the `ff-gpu-spot` migration from
+    `g4dn.xlarge` to `g6.xlarge` on 2026-06-07 and diversification to
+    `g6.xlarge` (L4, sm_89) + `g5.xlarge` (A10G, sm_86) on 2026-06-22. Both support
+    the sm_80+ CUDA-graph path. These recorded updates supersede the earlier T4
+    observation. This proposal still targets **L4**: verify the live fleet and
+    measure the gate on that hardware.
 - **The lever is launch overhead, not compute** ([gpu_launch_bound_levers.md](gpu_launch_bound_levers.md)):
   the attention NN is a ~69K-param model firing hundreds of thousands of microsecond
   kernels; the GPU sits **~80% idle** between launches (measured on the 5080). That idle
@@ -41,8 +42,9 @@ the WSL2/Windows 5080 that Lever B targets).
   that share it. The missing piece is an orchestrator that packs the **six positions**
   (heterogeneous models/data) rather than trials of one.
 
-So "Option B" = take the warm-EC2 path, swap T4→L4, and replace the sequential loop with
-an MPS-packed parallel run — **started/stopped per run, not always-on.**
+So "Option B" = take the warm-EC2 path, use a larger L4 host, and replace the
+sequential loop with an MPS-packed parallel run — **started/stopped per run,
+not always-on.**
 
 ## Decision (proposed)
 

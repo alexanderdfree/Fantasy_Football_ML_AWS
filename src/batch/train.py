@@ -1252,9 +1252,9 @@ def main():
             test_df = _read_parquet_cached(os.path.join(data_dir, "test.parquet"))
             print(f"Loaded data: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
         if args.ablation == "rb-gate":
-            # Ablation runs the pipeline 3x with config overrides and prints
-            # a decision table. No S3 artifact upload — this is a diagnostic
-            # run, not a shipping build.
+            # Ablation runs the six ablate_rb_gate.VARIANTS with config
+            # overrides and prints a decision table. No S3 artifact upload —
+            # this is a diagnostic run, not a shipping build.
             with _timed("run_ablation", store=phase_seconds):
                 _run_rb_gate_ablation(train_df, val_df, test_df, seed=args.seed)
             print(f"[timing] total={time.monotonic() - _t_total:.1f}", flush=True)
