@@ -46,6 +46,7 @@ NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
 
 NFLCOM_DEFAULT_WEEKS = tuple(range(1, 19))  # NFL regular season is 18 weeks since 2021.
 _CACHE_VERSION = "v1"
+_FETCH_COMPLETE_ATTR = "nflcom_fetch_complete_v1"
 
 # Network defensiveness: 404 is expected (late-season weeks) and not retried.
 # Other transient failures (5xx, ECONNRESET, DNS blips) are retried once after
@@ -269,6 +270,10 @@ def _is_404(err: Exception) -> bool:
     return isinstance(err, HTTPError) and getattr(err, "code", None) == 404
 
 
+class _ProjectionFetchUnavailable(RuntimeError):
+    """A transient source failure exhausted retries; coverage is unknown."""
+
+
 def _read_one_projection(
     year: int,
     week: int,
@@ -280,7 +285,7 @@ def _read_one_projection(
 ) -> pd.DataFrame | None:
     """Fetch one (year, week, position) CSV from upstream.
 
-    Returns ``None`` on 404 / persistent connection errors / empty file. Logs a
+    Returns ``None`` on 404 / empty file. Logs a
     warning so operators see late-season weeks dropping out rather than silently
     shrinking the frame.
 
@@ -289,6 +294,7 @@ def _read_one_projection(
     for a week that doesn't exist yet).
 
     ``reader`` injectable for tests — pass a stub to avoid network.
+    Exhausted transient errors raise so callers do not cache partial coverage.
     """
     url = _projection_url(year, week, position)
     last_err: Exception | None = None
@@ -313,7 +319,7 @@ def _read_one_projection(
                 f"  WARN nflcom: skip {position} {year} W{week} "
                 f"({type(e).__name__} after {max_retries} retry)"
             )
-            return None
+            raise _ProjectionFetchUnavailable(f"{position} {year} W{week}: {e}") from e
         except pd.errors.EmptyDataError:
             print(f"  WARN nflcom: skip {position} {year} W{week} (empty CSV)")
             return None
@@ -329,6 +335,15 @@ def _read_one_projection(
     # the type-checker.
     if last_err is not None:
         return None
+    return None
+
+
+def _read_complete_cache(path: str) -> pd.DataFrame | None:
+    """Old caches cannot prove that every fetch finished without an outage."""
+    if os.path.exists(path):
+        cached = pd.read_parquet(path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+            return cached
     return None
 
 
@@ -422,8 +437,10 @@ def load_nflcom_projections(
     cache_path = (
         f"{cache_dir}/nflcom_projections_{_CACHE_VERSION}_{seasons_sig}_{weeks_sig}.parquet"
     )
-    if os.path.exists(cache_path) and not force_refresh:
-        return pd.read_parquet(cache_path)
+    if not force_refresh:
+        cached = _read_complete_cache(cache_path)
+        if cached is not None:
+            return cached
 
     # Parallelize the (year, week, position) fetch fan-out. Each task is one
     # HTTP GET, so I/O-bound — threads beat sequential by ~5-10x for typical
@@ -435,6 +452,7 @@ def load_nflcom_projections(
         for position in NFLCOM_POSITIONS
     ]
     parts: list[pd.DataFrame] = []
+    transient_failures = []
     with ThreadPoolExecutor(max_workers=_MAX_FETCH_WORKERS) as executor:
         futures = {
             executor.submit(_read_one_projection, year, week, position, reader=reader): (
@@ -446,7 +464,11 @@ def load_nflcom_projections(
         }
         for future in as_completed(futures):
             year, week, position = futures[future]
-            raw = future.result()
+            try:
+                raw = future.result()
+            except _ProjectionFetchUnavailable:
+                transient_failures.append((year, week, position))
+                continue
             if raw is None:
                 continue
             parts.append(_normalize_one_position(raw, position))
@@ -461,7 +483,11 @@ def load_nflcom_projections(
     # Sort for deterministic cache contents (parallel fetch returns rows in
     # nondeterministic order); makes diffs across re-fetches stable.
     df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
-    atomic_write_parquet(df, cache_path)
+    df.attrs[_FETCH_COMPLETE_ATTR] = not transient_failures
+    if not transient_failures:
+        atomic_write_parquet(df, cache_path)
+    else:
+        print(f"  WARN nflcom: {len(transient_failures)} transient fetch failures; not caching")
     return df
 
 
@@ -574,16 +600,22 @@ def load_nflcom_with_gsis_id(
     )
     # ``rosters`` is the one input not captured by the cache key (seasons +
     # version + match-rate). A caller-supplied override must bypass the cache
-    # read so its result isn't shadowed by a default-rosters cache; with the
+    # read or write, so it cannot shadow or replace a default-rosters cache; with the
     # default (``rosters is None``) the rosters are derived from ``seasons``, so
-    # the key is complete and the cache hit is correct. Read-only guard — the
-    # write below is left unconditional. (#439)
-    if os.path.exists(cache_path) and not force_refresh and rosters is None:
-        return pd.read_parquet(cache_path)
+    # the key is complete and the cache hit is correct. (#439)
+    default_rosters = rosters is None
+    if not force_refresh and rosters is None:
+        cached = _read_complete_cache(cache_path)
+        # The filename rounds the requested threshold to a percent. Enforce
+        # its exact value before reuse so nearby stricter requests cannot
+        # inherit a result that would fail the cold-path match-rate check.
+        if cached is not None and cached["player_id"].notna().mean() >= min_match_rate:
+            return cached
 
     proj = load_nflcom_projections(
         seasons, weeks=weeks, cache_dir=cache_dir, force_refresh=force_refresh, reader=reader
     )
+    fetch_complete = proj.attrs.get(_FETCH_COMPLETE_ATTR) is True
 
     if rosters is None:
         rosters = nfl_source.rosters(list(seasons))
@@ -660,5 +692,7 @@ def load_nflcom_with_gsis_id(
         )
 
     primary = primary.drop(columns=["norm_name"])
-    atomic_write_parquet(primary, cache_path)
+    primary.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete and default_rosters:
+        atomic_write_parquet(primary, cache_path)
     return primary

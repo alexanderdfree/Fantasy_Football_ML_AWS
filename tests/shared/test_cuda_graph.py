@@ -19,6 +19,8 @@ todo/gpu_launch_bound_levers.md (Lever A).
 
 from __future__ import annotations
 
+import contextlib
+
 import numpy as np
 import pytest
 import torch
@@ -529,6 +531,89 @@ def test_optimizer_is_fused_capturable():
 # ---------------------------------------------------------------------------
 # _maybe_graph_full_opt() — gate (onecycle exclusion + capture-fail fallback)
 # ---------------------------------------------------------------------------
+def _check_full_step_build_reset(monkeypatch, device, fail_after):
+    """Exercise real updates, with only scheduling stubbed for the CPU proof."""
+    torch.manual_seed(7)
+    model = nn.Sequential(nn.BatchNorm1d(2), nn.Linear(2, 1)).to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=0.01,
+        foreach=False,
+        fused=device.type == "cuda",
+        capturable=device.type == "cuda",
+    )
+    inputs = torch.tensor([[1.0, 2.0], [3.0, 7.0], [8.0, 5.0], [4.0, 3.0]], device=device)
+    snapshot = {name: value.detach().clone() for name, value in model.state_dict().items()}
+    graph_step = _GraphedFullStep(
+        lambda indices: model(inputs[indices]).square().mean(),
+        model,
+        optimizer,
+        4,
+        device,
+        contextlib.nullcontext,
+    )
+    if device.type == "cpu":
+
+        class Stream:
+            def wait_stream(self, other):
+                pass
+
+        stream = Stream()
+        monkeypatch.setattr(torch.cuda, "Stream", lambda: stream)
+        monkeypatch.setattr(torch.cuda, "current_stream", lambda: stream)
+        monkeypatch.setattr(torch.cuda, "stream", lambda _: contextlib.nullcontext())
+        monkeypatch.setattr(torch.cuda, "CUDAGraph", object)
+        monkeypatch.setattr(torch.cuda, "graph", lambda _: contextlib.nullcontext())
+
+    run_body = graph_step._run_body
+    calls = 0
+
+    def update_then_fail():
+        nonlocal calls
+        run_body()
+        calls += 1
+        if calls == fail_after:
+            raise RuntimeError("injected after optimizer update")
+
+    monkeypatch.setattr(graph_step, "_run_body", update_then_fail)
+    if fail_after is None:
+        graph_step.build()
+        assert calls == 5
+        assert graph_step._graph is not None
+    else:
+        with pytest.raises(RuntimeError, match="injected after optimizer update"):
+            graph_step.build()
+        assert calls == fail_after
+        assert graph_step._graph is None
+    for name, value in model.state_dict().items():
+        torch.testing.assert_close(value, snapshot[name], rtol=0, atol=0)
+    assert optimizer.state  # The real priming updates allocated Adam state.
+    for state in optimizer.state.values():
+        for name in ("step", "exp_avg", "exp_avg_sq"):
+            assert torch.count_nonzero(state[name]).item() == 0
+    if fail_after is not None:
+        assert graph_step._baked_lr_tensors == []
+        assert optimizer.param_groups[0]["lr"] == 0.01
+        assert isinstance(optimizer.param_groups[0]["lr"], float)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "fail_after", [1, 3, 5, None], ids=["prime", "warmup", "capture", "success"]
+)
+def test_full_step_build_resets_real_cpu_updates(monkeypatch, fail_after):
+    _check_full_step_build_reset(monkeypatch, torch.device("cpu"), fail_after)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires actual CUDA capture")
+@pytest.mark.parametrize(
+    "fail_after", [1, 3, 5, None], ids=["prime", "warmup", "capture", "success"]
+)
+def test_full_step_build_resets_cuda_updates(monkeypatch, fail_after):
+    _check_full_step_build_reset(monkeypatch, torch.device("cuda"), fail_after)
+
+
 def _fake_cuda_resident_trainer(monkeypatch, *, scheduler_per_batch):
     """A bare trainer with a CUDA-TYPED device, A2 engaged, a CPU-resident train
     loader, and a fused+capturable mock optimizer — enough to exercise the A3

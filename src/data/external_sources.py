@@ -140,6 +140,22 @@ def _coerce_merge_keys(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _read_external_cache(
+    path: str, required: tuple[str, ...], keep: list[str]
+) -> pd.DataFrame | None:
+    """Ignore malformed cached source data so the next fetch can repair it."""
+    if not os.path.exists(path):
+        return None
+    try:
+        if _cached_parquet_has_columns(path, required):
+            cached = _coerce_merge_keys(pd.read_parquet(path))[keep]
+            if not cached.empty:
+                return cached
+    except Exception as e:
+        print(f"WARNING: invalid external-source cache at {path} ({e}); refetching")
+    return None
+
+
 def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFrame:
     """Per-(player_id, season, week) ff_opportunity expected-stat columns.
 
@@ -154,19 +170,20 @@ def load_ff_opportunity(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.Da
     # left-joins this frame on (player_id, season, week), so a cache missing or
     # renaming a merge key must bust — a value-blind column gate can't see a value
     # change, but a changed key SET must invalidate. (#1435)
-    if os.path.exists(path) and _cached_parquet_has_columns(path, tuple(keep)):
-        return _coerce_merge_keys(pd.read_parquet(path))
+    cached = _read_external_cache(path, tuple(keep), keep)
+    if cached is not None:
+        return cached
     try:
         df = nfl_source.ff_opportunity(list(seasons))
+        cols = [c for c in keep if c in df.columns]
+        # One row per player-game so the downstream left-merge cannot fan out.
+        out = df[cols].drop_duplicates(subset=["player_id", "season", "week"], keep="first")
+        out = _coerce_merge_keys(out)
     except Exception as e:
-        print(f"WARNING: ff_opportunity fetch failed ({e}); skipping")
+        print(f"WARNING: ff_opportunity fetch/normalization failed ({e}); skipping")
         return pd.DataFrame(columns=keep)
-    cols = [c for c in keep if c in df.columns]
-    # One row per player-game (defensive against duplicate source rows so the
-    # downstream left-merge can't fan out).
-    out = df[cols].drop_duplicates(subset=["player_id", "season", "week"], keep="first")
-    out = _coerce_merge_keys(out)
-    atomic_write_parquet(out, path)
+    if not out.empty:
+        atomic_write_parquet(out, path)
     return out
 
 
@@ -248,19 +265,21 @@ def load_qbr_weekly(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFr
     # Gate on the full merge-ready schema (keys + features), not just the feature
     # tuple, so a cache missing/renaming a (player_id, season, week) merge key
     # busts rather than KeyError-ing the loader join. (#1435)
-    if os.path.exists(path) and _cached_parquet_has_columns(path, tuple(keep)):
-        return _coerce_merge_keys(pd.read_parquet(path))
+    cached = _read_external_cache(path, tuple(keep), keep)
+    if cached is not None:
+        return cached
     try:
         raw = _fetch_qbr_weekly_raw(seasons)
         ids = nfl_source.player_ids()
+        out = _coerce_merge_keys(bridge_qbr_to_gsis(raw, ids))
     except Exception as e:
         # Supplementary QB-only signal: a fetch failure degrades to "no QBR"
         # (loader leaves the columns NaN) rather than crashing the shared
         # load_raw_data pull for all six positions.
-        print(f"WARNING: QBR fetch failed ({e}); skipping")
+        print(f"WARNING: QBR fetch/normalization failed ({e}); skipping")
         return pd.DataFrame(columns=keep)
-    out = _coerce_merge_keys(bridge_qbr_to_gsis(raw, ids))
-    atomic_write_parquet(out, path)
+    if not out.empty:
+        atomic_write_parquet(out, path)
     return out
 
 
@@ -371,22 +390,21 @@ def load_contracts(seasons: list[int], cache_dir: str = CACHE_DIR) -> pd.DataFra
     # winner reaches the baked splits instead of the value-blind gate perpetuating
     # the old row-order-dependent pick.
     required = (*keep, _CONTRACT_TIEBREAK_SENTINEL)
-    if os.path.exists(path) and _cached_parquet_has_columns(path, required):
-        # Project the sentinel back out: it is a cache-version marker only, so the
-        # merge-ready frame the loader consumes keeps the stable (keys + features)
-        # schema regardless of the cache generation.
-        return _coerce_merge_keys(pd.read_parquet(path))[keep]
+    cached = _read_external_cache(path, required, keep)
+    if cached is not None:
+        return cached
     try:
         raw = nfl_source.contracts()
+        out = _coerce_merge_keys(derive_active_contracts(raw, list(seasons)))
     except Exception as e:
         # Supplementary signal: degrade to "no contract" (loader fills 0)
         # rather than crashing the shared load_raw_data pull.
-        print(f"WARNING: contracts fetch failed ({e}); skipping")
+        print(f"WARNING: contracts fetch/normalization failed ({e}); skipping")
         return pd.DataFrame(columns=keep)
-    out = _coerce_merge_keys(derive_active_contracts(raw, list(seasons)))
     # Stamp the sentinel only into the cached copy so old caches bust; the frame
     # returned to the loader stays sentinel-free (stable schema).
     to_cache = out.copy()
     to_cache[_CONTRACT_TIEBREAK_SENTINEL] = True
-    atomic_write_parquet(to_cache, path)
+    if not out.empty:
+        atomic_write_parquet(to_cache, path)
     return out

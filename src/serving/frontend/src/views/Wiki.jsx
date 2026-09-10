@@ -7,6 +7,7 @@
  * intra-wiki link clicks don't pile up history entries. */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchJSON } from "../api.js";
+import { createLatestRequest } from "../lib/latestRequest.js";
 
 const WIKI_DEFAULT_SLUG = "architecture";
 let wikiIndexCache = null; // fetched once from /api/wiki/index
@@ -40,38 +41,36 @@ export function WikiView({ scoring, search, theme, onPlayer, activateView }) {
     // it stays on the previous page while a new one loads or errors).
     const [activeSlug, setActiveSlug] = useState(() => wikiCurrentSlug);
     const contentRef = useRef(null);
-    const mountedRef = useRef(true);
+    const latestRequest = useRef(null);
+    if (!latestRequest.current) latestRequest.current = createLatestRequest();
 
     useEffect(() => {
-        mountedRef.current = true;
-        return () => { mountedRef.current = false; };
+        return () => latestRequest.current.cancel();
     }, []);
 
-    const loadWikiPage = useCallback(async (slug, anchor = null) => {
-        let html = wikiPageCache.get(slug);
-        if (!html) {
-            setPage({ status: "loading", slug, html: null, anchor: null, message: null });
-            try {
+    const loadWikiPage = useCallback((slug, anchor = null) => {
+        return latestRequest.current.run(async () => {
+            let html = wikiPageCache.get(slug);
+            if (!html) {
+                setPage({ status: "loading", slug, html: null, anchor: null, message: null });
                 const data = await fetchJSON(`/api/wiki/${encodeURIComponent(slug)}`);
                 if (data.error) throw new Error(data.error);
                 wikiPageCache.set(slug, data.html);
                 html = data.html;
-            } catch (e) {
-                console.error("Failed to load wiki page:", e);
-                if (mountedRef.current) {
-                    setPage({ status: "error", slug, html: null, anchor: null, message: e.message });
-                }
-                return;
             }
-        }
-        if (!mountedRef.current) return;
-        wikiCurrentSlug = slug;
-        setActiveSlug(slug);
-        setPage({ status: "ready", slug, html, anchor, message: null });
-        const newHash = anchor ? `#wiki:${slug}:${anchor}` : `#wiki:${slug}`;
-        if (location.hash !== newHash) {
-            history.replaceState(null, "", newHash);
-        }
+            return html;
+        }, (html) => {
+            wikiCurrentSlug = slug;
+            setActiveSlug(slug);
+            setPage({ status: "ready", slug, html, anchor, message: null });
+            const newHash = anchor ? `#wiki:${slug}:${anchor}` : `#wiki:${slug}`;
+            if (location.hash !== newHash) {
+                history.replaceState(null, "", newHash);
+            }
+        }, (e) => {
+            console.error("Failed to load wiki page:", e);
+            setPage({ status: "error", slug, html: null, anchor: null, message: e.message });
+        });
     }, []);
 
     // On mount: ensure the index is loaded (once, module-cached), then resolve

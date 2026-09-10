@@ -6,7 +6,7 @@
  * control is measured to compute the fit; editing the Filters checklist
  * switches to manual picks. A control that leaves the bar has its state reset
  * (via onResetFilter) so it can't invisibly constrain the table. */
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useFilterFit } from "../hooks/useFilterFit.js";
 
 export const AGE_BUCKETS = [
@@ -27,12 +27,17 @@ export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFil
     // null → auto-fit (show what the row can hold); an array → manual picks.
     const [manual, setManual] = useState(null);
     const visible = manual || keys.slice(0, fit);
+    const previousKeys = useRef(keys);
+    const keySignature = keys.join("|");
 
     useEffect(() => {
-        if (manual) return;
-        keys.slice(fit).forEach(onResetFilter);
+        // A new data slice can remove Age/Class entirely (e.g. DST). Reset
+        // their values even in manual mode so a hidden filter cannot reject it.
+        previousKeys.current.filter((key) => !keys.includes(key)).forEach(onResetFilter);
+        previousKeys.current = keys;
+        if (!manual) keys.slice(fit).forEach(onResetFilter);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fit, manual]);
+    }, [fit, manual, keySignature]);
 
     const onFiltersChange = (next) => {
         const removed = visible.filter((k) => !next.includes(k));

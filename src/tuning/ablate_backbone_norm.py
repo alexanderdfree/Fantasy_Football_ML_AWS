@@ -421,14 +421,10 @@ def main(argv: list[str] | None = None) -> None:
     results = run_grid(jobs, max_workers=max_workers, log_dir=args.log_dir, progress=True)
 
     # Collect targets from the first position's config (for the per-target table).
-    targets: list[str] = []
-    if positions:
-        import contextlib
-
-        with contextlib.suppress(Exception):
-            targets = list(get_config(positions[0]).get("targets", []))
-
-    print_summary(results, targets)
+    for position in positions:
+        targets = list(get_config(position).get("targets", []))
+        print(f"\n{position} backbone normalization results")
+        print_summary([r for r in results if r.position == position], targets)
 
     if not args.no_history:
         write_history(

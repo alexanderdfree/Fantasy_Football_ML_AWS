@@ -11,10 +11,60 @@ mismatch. The site went 503 until someone added the missing line.
 """
 
 import importlib
+from dataclasses import replace
 
 import pytest
 
 from src.shared.registry import ALL_POSITIONS, INFERENCE_REGISTRY
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pos", ALL_POSITIONS)
+def test_attention_checkpoint_loads_with_head_width_override(pos, monkeypatch):
+    from src.shared.neural_net import (
+        MultiHeadNetWithHistory,
+        MultiHeadNetWithNestedHistory,
+        build_multihead_net_with_history,
+        build_multihead_net_with_nested_history,
+    )
+    from src.shared.position_pipeline import build_pipeline_config
+
+    module = importlib.import_module(f"src.{pos.lower()}.config")
+    pc = replace(
+        module.POSITION_CONFIG,
+        nn_head_hidden_overrides={module.POSITION_CONFIG.targets[0]: 7},
+    )
+    monkeypatch.setattr(module, "POSITION_CONFIG", pc)
+    cfg = build_pipeline_config(pos, pc)
+    spec = INFERENCE_REGISTRY[pos]
+    if pos == "K":
+        trained = build_multihead_net_with_nested_history(
+            cfg,
+            static_dim=3,
+            kick_dim=len(pc.attn_kick_stats),
+            max_games=pc.attn_max_games,
+            targets=pc.targets,
+            game_dim=len(pc.attn_history_stats),
+        )
+        served = MultiHeadNetWithNestedHistory(
+            static_dim=3,
+            kick_dim=len(pc.attn_kick_stats),
+            target_names=pc.targets,
+            **spec["attn_nn_kwargs_static"],
+        )
+    else:
+        dims = dict(
+            static_dim=3,
+            game_dim=len(pc.attn_history_stats),
+            opp_game_dim=len(pc.opp_attn_history_stats) or None,
+        )
+        trained = build_multihead_net_with_history(cfg, targets=pc.targets, **dims)
+        served = MultiHeadNetWithHistory(
+            target_names=pc.targets,
+            **dims,
+            **spec["attn_nn_kwargs_static"],
+        )
+    served.load_state_dict(trained.state_dict())
 
 
 @pytest.mark.unit

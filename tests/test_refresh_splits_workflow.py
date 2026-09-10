@@ -26,6 +26,7 @@ catches it.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import re
 from pathlib import Path
 
@@ -70,6 +71,17 @@ def test_workflow_yaml_parses():
     assert isinstance(triggers, dict)
     assert "workflow_dispatch" in triggers
     assert "push" in triggers
+
+
+@pytest.mark.parametrize("path", ["src/config.py", "src/data/split.py", "src/features/engineer.py"])
+def test_split_producer_inputs_trigger_refresh(path):
+    """A season or feature change must refresh the parquets used by retraining."""
+    from src.scripts.scope_positions import compute_positions
+
+    doc = _load_workflow()
+    paths = doc.get("on", doc.get(True))["push"]["paths"]
+    assert compute_positions([path])
+    assert any(fnmatch.fnmatchcase(path, pattern) for pattern in paths)
 
 
 def test_upload_to_s3_step_exists():

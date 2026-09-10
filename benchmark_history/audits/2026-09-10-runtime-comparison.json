@@ -1,0 +1,88 @@
+{
+  "baseline_history": "2026-09-10T12-58-00_2054fe86.json",
+  "fixed_history": "2026-09-10T13-58-19_92be2873.json",
+  "regime": "CPU eager; production POSITION_CONFIG; frozen raw/split inputs; seed 42",
+  "comparisons": {
+    "QB": {
+      "prepared_inputs_bit_identical": true,
+      "split_rows": {
+        "train": 5799,
+        "val": 664,
+        "test": 676
+      },
+      "neural_weights_bit_identical": true,
+      "point_prediction_max_delta": {
+        "ridge": 0.0,
+        "lgbm": 0.0
+      }
+    },
+    "RB": {
+      "prepared_inputs_bit_identical": true,
+      "split_rows": {
+        "train": 17021,
+        "val": 1603,
+        "test": 1643
+      },
+      "neural_weights_bit_identical": true,
+      "point_prediction_max_delta": {
+        "ridge": 0.0,
+        "lgbm": 0.0
+      }
+    },
+    "WR": {
+      "prepared_inputs_bit_identical": true,
+      "split_rows": {
+        "train": 25344,
+        "val": 2452,
+        "test": 2498
+      },
+      "neural_weights_bit_identical": true,
+      "point_prediction_max_delta": {
+        "ridge": 0.0,
+        "lgbm": 0.0
+      }
+    },
+    "TE": {
+      "prepared_inputs_bit_identical": true,
+      "split_rows": {
+        "train": 12377,
+        "val": 1232,
+        "test": 1281
+      },
+      "neural_weights_bit_identical": true,
+      "point_prediction_max_delta": {
+        "ridge": 0.0,
+        "lgbm": 0.0
+      }
+    },
+    "K": {
+      "prepared_inputs_bit_identical": true,
+      "split_rows": {
+        "train": 4520,
+        "val": 545,
+        "test": 543
+      },
+      "neural_weights_bit_identical": true,
+      "point_prediction_max_delta": {
+        "ridge": 0.0,
+        "lgbm": 0.0
+      }
+    }
+  },
+  "code_fingerprints": {
+    "baseline": {
+      "QB": "c64375d1ac38e31de0d051c799a46f96d7f0cc92bdfc6e7e8ca1a05e787fc85a",
+      "RB": "8cb1bd3a699a8639490c6df3a11badc1038254ce1d6dd3c0e518b47e036573f2",
+      "WR": "a3b7977c3ae48d6ed6b208efa4c6a78a31f3ddf82754f2631759d7406c1872e9",
+      "TE": "ca90004f1b7bcab1b949a3cda7c77b6c4178f445feabcfd74f21746e5d689055",
+      "K": "33d9695c8c9c9a327b26a7822184b1cf450d0fd5825e499b3454e9fd9bfc9b2a"
+    },
+    "fixed": {
+      "QB": "4c6a448134ce2209b6bfbfc688649b4cfa247395d3e85a3a735c787d8492f930",
+      "RB": "592a1796c029266272d909e8ce3b318edcdc081406b60df09783e94d43360b67",
+      "WR": "564a6a88b7d125769468343dc13349a7eeba2cfb62cc74201c0649fca2440d19",
+      "TE": "fba3c6a7be680448b3a5ffa9ca44ad2010e7103b17a194de9c83f58b40fe2af2",
+      "K": "212d5b338f6ac0114f43be2ca07119eb5e368f1e5d2be48c24d32857bd1bb06b"
+    }
+  }
+}

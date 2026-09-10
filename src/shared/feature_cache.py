@@ -11,7 +11,8 @@ Cache layout::
     .cache/features/<position>/<key>.pkl
 
 ``key`` is a deterministic SHA-256 digest of ``(position, df content hashes,
-cfg fingerprint)``. Any data or config change invalidates automatically.
+cfg fingerprint, feature-source content, runtime lookup content)``. Data,
+configuration and feature implementation changes invalidate the cache automatically.
 
 In-process LRU sits in front of the disk cache so the second hit within a
 single process skips the parquet read too. Set
@@ -32,6 +33,7 @@ from pathlib import Path
 import pandas as pd
 
 CACHE_ROOT = Path(".cache") / "features"
+_SOURCE_ROOT = Path(__file__).resolve().parents[1]
 _LRU_SIZE = 8
 _lru_lock = threading.Lock()
 _lru: dict[str, tuple] = {}
@@ -88,6 +90,9 @@ def _config_fingerprint(cfg: dict) -> dict:
         "filter_fn": _fn_name(cfg["filter_fn"]),
         "compute_targets_fn": _fn_name(cfg["compute_targets_fn"]),
         "get_feature_columns_fn": _fn_name(cfg["get_feature_columns_fn"]),
+        # Feature-screen closures share a qualname while selecting different
+        # columns. Cache the effective ordered projection, not only its name.
+        "feature_columns": list(cfg["get_feature_columns_fn"]()),
         "add_features_fn": _fn_name(cfg["add_features_fn"]),
         "fill_nans_fn": _fn_name(cfg["fill_nans_fn"]),
         "specific_features": list(cfg.get("specific_features") or []),
@@ -100,6 +105,44 @@ def _config_fingerprint(cfg: dict) -> dict:
         "opp_attn_history_stats": list(cfg.get("opp_attn_history_stats") or []),
         "opp_attn_kind": cfg.get("opp_attn_kind", "defense"),
     }
+
+
+def _source_fingerprint(position: str) -> str:
+    """Hash feature-producing source content, including newly added modules.
+
+    Resolve from this package so isolated runners and images without Git use
+    the same inputs. File timestamps cannot establish implementation identity.
+    """
+    paths = {_SOURCE_ROOT / "config.py", _SOURCE_ROOT / "__init__.py"}
+    for directory in (position.lower(), "shared", "data", "features"):
+        paths.update((_SOURCE_ROOT / directory).rglob("*.py"))
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        if path.is_file():
+            digest.update(str(path.relative_to(_SOURCE_ROOT)).encode())
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _runtime_input_fingerprint(frames: tuple[pd.DataFrame | None, ...]) -> dict:
+    """Fingerprint the canonical lookup tables actually merged into features.
+
+    These loaders also honor in-process overrides used by live/diagnostic
+    callers. Pre-merged frames already carry their lookup values in their own
+    content hash, matching the merge helpers' sentinel-column short-circuits.
+    """
+    from src.shared import team_box_score, weather_features
+
+    frames = tuple(frame for frame in frames if frame is not None)
+    inputs = {}
+    if any("_schedule_merged" not in frame for frame in frames):
+        inputs["schedule"] = _df_fingerprint(
+            weather_features._build_team_schedule_lookup(weather_features._load_schedules())
+        )
+    if any("_team_box_score_merged" not in frame for frame in frames):
+        inputs["team_box_score"] = _df_fingerprint(team_box_score._build_team_box_score_lookup())
+    return inputs
 
 
 def cache_key(
@@ -116,6 +159,8 @@ def cache_key(
         "val": _df_fingerprint(val_df),
         "test": _df_fingerprint(test_df),
         "config": _config_fingerprint(cfg),
+        "implementation": _source_fingerprint(position),
+        "runtime_inputs": _runtime_input_fingerprint((train_df, val_df, test_df)),
     }
     encoded = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:16]
@@ -183,10 +228,18 @@ def load_or_compute(
 
     print(f"  [feature_cache] miss {position}/{key} — computing features...")
     value = compute_fn()
+    try:
+        inputs_unchanged = cache_key(position, train_df, val_df, test_df, cfg) == key
+    except Exception as exc:
+        print(f"  [feature_cache] cannot verify {position} inputs ({exc!r}); not caching")
+        return value
+    if not inputs_unchanged:
+        print(f"  [feature_cache] inputs changed during {position} preparation; not caching")
+        return value
 
-    disk_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = disk_path.with_suffix(".pkl.tmp")
     try:
+        disk_path.parent.mkdir(parents=True, exist_ok=True)
         with open(tmp_path, "wb") as f:
             pickle.dump(value, f, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp_path, disk_path)

@@ -12,14 +12,110 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.data import external_sources
 from src.data.external_sources import (
     CONTRACT_FEATURE_COLUMNS,
+    FF_OPP_FEATURE_COLUMNS,
     QBR_FEATURE_COLUMNS,
     _cached_parquet_has_columns,
     _seasons_cache_signature,
     bridge_qbr_to_gsis,
     derive_active_contracts,
 )
+
+
+def _external_source_case(source):
+    if source == "ff_opportunity":
+        raw = pd.DataFrame(
+            [
+                {
+                    "player_id": "00-A",
+                    "season": "2024",
+                    "week": 1.0,
+                    **dict.fromkeys(FF_OPP_FEATURE_COLUMNS, 3.0),
+                }
+            ]
+        )
+        return external_sources.load_ff_opportunity, raw, "week", "ff_opportunity_2024_2024.parquet"
+    if source == "qbr_weekly":
+        raw = pd.DataFrame(
+            [
+                {
+                    "player_id": 100,
+                    "season": 2024,
+                    "season_type": "Regular",
+                    "week_num": 1,
+                    "qbr_total": 70.0,
+                    "pts_added": 5.0,
+                }
+            ]
+        )
+        return external_sources.load_qbr_weekly, raw, "season", "qbr_weekly_v2_2024_2024.parquet"
+    raw = pd.DataFrame(
+        [
+            {
+                "gsis_id": "00-A",
+                "year_signed": 2022,
+                "years": 4.0,
+                "guaranteed": 10.0,
+                "apy_cap_pct": 0.08,
+            }
+        ]
+    )
+    return external_sources.load_contracts, raw, "year_signed", "contracts_2024_2024.parquet"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source", ["ff_opportunity", "qbr_weekly", "contracts"])
+@pytest.mark.parametrize("malformation", ["missing_key", "bad_key_value"])
+def test_external_normalization_failure_degrades_and_recovers(
+    tmp_path, monkeypatch, source, malformation
+):
+    loader, healthy, key, filename = _external_source_case(source)
+    bad = (
+        healthy.drop(columns=key)
+        if malformation == "missing_key"
+        else healthy.assign(**{key: "bad-key"})
+    )
+    monkeypatch.setattr(external_sources.nfl_source, source, lambda *a: bad.copy())
+    monkeypatch.setattr(
+        external_sources.nfl_source,
+        "player_ids",
+        lambda: pd.DataFrame({"espn_id": [100], "gsis_id": ["00-A"]}),
+    )
+    degraded = loader([2024], cache_dir=str(tmp_path))
+    assert degraded.empty
+    assert {"player_id", "season"}.issubset(degraded)
+    assert not (tmp_path / filename).exists()
+
+    monkeypatch.setattr(external_sources.nfl_source, source, lambda *a: healthy.copy())
+    recovered = loader([2024], cache_dir=str(tmp_path))
+    assert recovered["player_id"].tolist() == ["00-A"]
+    assert recovered["season"].tolist() == [2024]
+    assert (tmp_path / filename).exists()
+    monkeypatch.setattr(
+        external_sources.nfl_source, source, lambda *a: pytest.fail("warm cache should be usable")
+    )
+    pd.testing.assert_frame_equal(loader([2024], cache_dir=str(tmp_path)), recovered)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("source", ["ff_opportunity", "qbr_weekly", "contracts"])
+@pytest.mark.parametrize("cache_error", ["bad_key_value", "empty"])
+def test_external_malformed_cache_refetches(tmp_path, monkeypatch, source, cache_error):
+    loader, healthy, _key, filename = _external_source_case(source)
+    monkeypatch.setattr(external_sources.nfl_source, source, lambda *a: healthy.copy())
+    monkeypatch.setattr(
+        external_sources.nfl_source,
+        "player_ids",
+        lambda: pd.DataFrame({"espn_id": [100], "gsis_id": ["00-A"]}),
+    )
+    expected = loader([2024], cache_dir=str(tmp_path))
+    path = tmp_path / filename
+    cached = pd.read_parquet(path)
+    cached = cached.iloc[:0] if cache_error == "empty" else cached.assign(season="bad-key")
+    cached.to_parquet(path)
+    pd.testing.assert_frame_equal(loader([2024], cache_dir=str(tmp_path)), expected)
 
 
 @pytest.mark.unit

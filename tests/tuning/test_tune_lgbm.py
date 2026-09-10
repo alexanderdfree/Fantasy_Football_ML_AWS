@@ -196,7 +196,8 @@ def test_maybe_local_core_pool_disabled_preserves_thread_guard(monkeypatch):
         assert os.environ["LGBM_N_JOBS"] == "1"
 
 
-def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
+@pytest.mark.parametrize("objective", ["huber", "fair", "regression"])
+def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch, objective):
     calls = []
 
     @contextlib.contextmanager
@@ -209,7 +210,14 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
             self.seed = seed
             self.n_jobs = n_jobs
             self.tuned = params.get("num_leaves") == 99
-            calls.append({"seed": seed, "n_jobs": n_jobs, "tuned": self.tuned})
+            calls.append(
+                {
+                    "seed": seed,
+                    "n_jobs": n_jobs,
+                    "tuned": self.tuned,
+                    "objective": params.get("objective"),
+                }
+            )
 
         def fit(self, X_train, y_train_dict, X_val, y_val_dict, feature_names=None):
             return None
@@ -257,13 +265,11 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
 
     cfg = {
         "targets": ["points"],
-        "lgbm_objective": "huber",
+        "lgbm_objective": objective,
         "lgbm_num_leaves": 31,
         "aggregate_fn": lambda preds: preds["points"],
     }
-    result = tune_lgbm._run_comparison(
-        "QB", cfg, {"num_leaves": 99, "objective": "huber"}, seeds=(1, 2)
-    )
+    result = tune_lgbm._run_comparison("QB", cfg, {"num_leaves": 99}, seeds=(1, 2))
 
     assert result["seeds"] == [1, 2]
     assert [row["seed"] for row in result["per_seed"]] == [1, 2]
@@ -278,6 +284,7 @@ def test_multiseed_comparison_returns_per_seed_and_aggregate(monkeypatch):
     assert result["per_seed"][0]["old_metrics"]["total"]["unit"] == "pts"
     assert result["aggregate"]["old_ranking"]["hit_rate"]["mean"] == pytest.approx(101.5)
     assert all(call["n_jobs"] == 5 for call in calls)
+    assert all(call["objective"] == objective for call in calls)
 
 
 @pytest.mark.parametrize("logical,expected", [(32, 16), (16, 16), (8, 8), (4, 4), (1, 1)])

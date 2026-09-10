@@ -198,7 +198,7 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    ```
    Both should return `["ENABLED","VALID"]`.
 
-2. **Smoke test** (single CPU-only position, ~2–3 min on Spot):
+2. **Single-position training check** (K includes neural networks and publishes model artifacts):
    ```
    AWS_REGION=us-east-1 python -m src.batch.launch --positions K --seed 42
    ```
@@ -261,10 +261,12 @@ T4 in D12), not cost — absolute annual delta is ~$25.
 bash infra/batch/teardown.sh
 ```
 
-Disables and deletes JQ → CE → SG → IAM roles + profile. Preserves the ECR
-repository, the pull-through cache rule, the log group, and service-linked
-roles (`AWSServiceRoleForBatch`, `AWSServiceRoleForEC2Spot`). Remove those
-manually if you want a complete wipe.
+Disables and deletes both GPU and CPU job queues and compute environments,
+deregisters their job definitions, then removes the Batch security group,
+instance profile, and Batch-specific roles. Preserves the shared
+`ecsTaskExecutionRole` used by serving, the ECR repository, the pull-through
+cache rule, the log group, and service-linked roles
+(`AWSServiceRoleForBatch`, `AWSServiceRoleForEC2Spot`).
 
 ## What lives where
 

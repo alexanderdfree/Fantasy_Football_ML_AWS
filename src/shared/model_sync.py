@@ -30,6 +30,7 @@ import json
 import os
 import shutil
 import tarfile
+import tempfile
 import threading
 import time
 import uuid
@@ -155,14 +156,25 @@ def build_manifest(
 
 
 def _extract_tarball(data: bytes, dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    dest_resolved = dest.resolve()
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-        for member in tar.getmembers():
-            target = (dest / member.name).resolve()
-            if dest_resolved not in target.parents and target != dest_resolved:
-                raise RuntimeError(f"Tarball escape attempt: {member.name}")
-        tar.extractall(dest, filter="data")
+    # Extraction can fail after writing some members (for example, when the
+    # data filter rejects a later symlink). Stage each candidate separately so
+    # the fallback cannot inherit weights or sidecars from a rejected archive.
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{dest.name}-", dir=dest.parent) as tmp:
+        staged = Path(tmp) / "models"
+        staged.mkdir()
+        staged_resolved = staged.resolve()
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            for member in tar.getmembers():
+                target = (staged / member.name).resolve()
+                if staged_resolved not in target.parents and target != staged_resolved:
+                    raise RuntimeError(f"Tarball escape attempt: {member.name}")
+            tar.extractall(staged, filter="data")
+        # Boot-time downloads may replace an existing tree; in-flight refresh
+        # passes models.new and performs its live swap only after this returns.
+        if dest.exists():
+            shutil.rmtree(dest)
+        os.replace(staged, dest)
 
 
 def _try_key(s3_client, bucket: str, key: str, dest: Path) -> dict:

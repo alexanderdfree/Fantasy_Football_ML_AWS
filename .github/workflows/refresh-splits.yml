@@ -54,6 +54,7 @@ on:
     # same scoping.
     #
     paths:
+      - "src/config.py"
       - "src/qb/config.py"
       - "src/rb/config.py"
       - "src/wr/config.py"

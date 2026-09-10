@@ -59,6 +59,7 @@ from src.shared.artifact_integrity import (
     read_scaler_meta,
     unwrap_state_dict,
 )
+from src.shared.comparison_scoring import ACTUAL_BASIS, score_actual_components
 from src.shared.feature_build import build_position_features, scale_and_clip
 from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
 from src.shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
@@ -224,6 +225,8 @@ def build_test_df_from_artifacts(
         pos_train, pos_val, pos_test, reg, feature_cols, full_train=full_train
     )
     pos_test = pos_test.copy()
+    pos_test["fantasy_points"] = score_actual_components(pos_test, pos, scoring_format)
+    pos_test.attrs.update(actual_basis=ACTUAL_BASIS, scoring_format=scoring_format)
     X_test = pos_test[feature_cols].values.astype(np.float32)
     total_fn = _make_total_fn(pos, targets, reg, scoring_format)
 
@@ -558,17 +561,22 @@ def _main(argv: list[str] | None = None) -> None:
         sync_models_from_s3()
 
     from src.analysis.cohort_analysis import _load_splits
+    from src.analysis.position_data import load_position_frames
 
-    train_df, val_df, test_df = _load_splits()
+    ordinary_splits = None
     for pos in (p.upper() for p in args.positions):
+        if pos in ("K", "DST"):
+            frames = load_position_frames(pos)
+        else:
+            if ordinary_splits is None:
+                ordinary_splits = _load_splits()
+            frames = ordinary_splits
         # resolve_model_dir raises loudly when a position has NO artifacts; in a
         # multi-position sweep that should skip that position, not abort the rest
         # (e.g. a local run produced only QB/RB/WR/TE). The raise stays the loud
         # contract for library callers; the CLI logs it and continues.
         try:
-            df = build_test_df_from_artifacts(
-                pos, train_df, val_df, test_df, scoring_format=args.scoring_format
-            )
+            df = build_test_df_from_artifacts(pos, *frames, scoring_format=args.scoring_format)
         except FileNotFoundError as e:
             print(f"[artifact_eval] {pos}: {e} — skipping this position.")
             continue

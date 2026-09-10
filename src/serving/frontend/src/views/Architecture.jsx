@@ -176,11 +176,11 @@ export function ArchitectureView(props) {
             <div className="section-header">Training Loop</div>
             <ul className="arch-bullets">
                 <li><strong>Optimizer:</strong> <code>AdamW</code> with per-position LR and weight decay.</li>
-                <li><strong>Loss:</strong> <code>MultiTargetLoss</code> — per-target Huber or Poisson NLL (DST's four rare counts) + optional BCE on the TD gate logit.</li>
+                <li><strong>Loss:</strong> <code>MultiTargetLoss</code> — per-target MSE, Poisson NLL, or hurdle negative-binomial loss, plus BCE for gated targets.</li>
                 <li><strong>Scaling:</strong> <code>StandardScaler</code> fit on train, applied and clipped to <code>[-4, 4]</code>.</li>
                 <li><strong>Gradient clipping:</strong> <code>clip_grad_norm_(max_norm=1.0)</code> each step.</li>
                 <li><strong>Schedulers:</strong> <code>CosineAnnealingWarmRestarts</code>, <code>OneCycleLR</code>, or <code>ReduceLROnPlateau</code> (per-position).</li>
-                <li><strong>Early stopping:</strong> tracks <code>val_mae_total</code>; restores the best <code>state_dict</code> when patience expires.</li>
+                <li><strong>Early stopping:</strong> tracks loss-weighted per-target validation MAE; restores the best <code>state_dict</code> when patience expires.</li>
                 <li><strong>Data split:</strong> Train 2013–2023, Val 2024, Test 2025 (2012 loaded for prior-season context only; Kickers: 2015+ only, post-PAT rule change).</li>
                 <li><strong>Artifacts:</strong> <code>{"{pos}_multihead_nn.pt"}</code>, <code>{"{pos}_attention_nn.pt"}</code>, <code>nn_scaler.pkl</code>, Ridge/LightGBM models — tarred and uploaded to S3.</li>
             </ul>

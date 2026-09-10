@@ -563,7 +563,7 @@ def run_for_position(
     from src.shared.registry import get_runner
 
     seed_everything(seed)
-    result = get_runner(position)()
+    result = get_runner(position)(seed=seed)
     if "test_df" not in result:
         raise KeyError(
             f"{position} pipeline result has no 'test_df'; cannot bootstrap predictions."

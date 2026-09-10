@@ -9,7 +9,12 @@ actor APIClient {
     private let decoder = JSONDecoder()
     private let base: URL
 
-    init(base: URL = AppConfig.baseURL) {
+    init(base: URL = AppConfig.baseURL, session: URLSession? = nil) {
+        self.base = base
+        if let session {
+            self.session = session
+            return
+        }
         let cfg = URLSessionConfiguration.default
         cfg.requestCachePolicy = .useProtocolCachePolicy
         cfg.urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 128 * 1024 * 1024)
@@ -17,7 +22,6 @@ actor APIClient {
         cfg.timeoutIntervalForResource = 60
         cfg.waitsForConnectivity = false
         self.session = URLSession(configuration: cfg)
-        self.base = base
     }
 
     /// GET + JSON-decode. Throws `APIError` (incl. `.http(404)` / `.http(503)`

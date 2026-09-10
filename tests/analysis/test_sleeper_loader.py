@@ -200,3 +200,44 @@ def test_cache_round_trip(tmp_path) -> None:
 
     df2 = mod.load_sleeper_projections([2024], cache_dir=str(tmp_path), weeks=[1], reader=_boom)
     pd.testing.assert_frame_equal(df1, df2)
+
+
+@pytest.mark.parametrize(
+    ("first_seasons", "second_seasons"),
+    [([2023, 2025], [2023, 2024, 2025]), ([2023, 2024, 2025], [2023, 2025])],
+)
+def test_cache_distinguishes_full_season_sets(tmp_path, first_seasons, second_seasons):
+    mod.load_sleeper_projections(
+        first_seasons, cache_dir=str(tmp_path), weeks=[1], reader=_fake_reader
+    )
+    second = mod.load_sleeper_projections(
+        second_seasons, cache_dir=str(tmp_path), weeks=[1], reader=_fake_reader
+    )
+    assert set(second["season"]) == set(second_seasons)
+
+    def no_fetch(url):
+        raise AssertionError("permuted season set should reuse the same cache")
+
+    cached = mod.load_sleeper_projections(
+        [*reversed(second_seasons), second_seasons[0]],
+        cache_dir=str(tmp_path),
+        weeks=[1],
+        reader=no_fetch,
+    )
+    pd.testing.assert_frame_equal(second, cached)
+
+
+def test_cache_does_not_reuse_ambiguous_legacy_season_key(tmp_path):
+    from src.serving import expert_sources
+
+    poisoned = pd.DataFrame({"season": [2023, 2024, 2025]})
+    positions = "-".join(sorted(mod.SLEEPER_FETCH_POSITIONS))
+    legacy = (
+        tmp_path
+        / f"sleeper_projections_{expert_sources._CACHE_VERSION}_2023_2025_w1-1_{positions}.parquet"
+    )
+    poisoned.to_parquet(legacy)
+    actual = mod.load_sleeper_projections(
+        [2023, 2025], cache_dir=str(tmp_path), weeks=[1], reader=_fake_reader
+    )
+    assert set(actual["season"]) == {2023, 2025}

@@ -99,12 +99,13 @@ def chart_rank1_qb(depth: pd.DataFrame, week_shift: int = 0) -> pd.DataFrame:
 
 def alignment_rates(starters: pd.DataFrame, chart: pd.DataFrame) -> dict:
     """Match-rates of chart rank-1 QB vs the actual starter, overall and at QB changes."""
-    m = starters.merge(chart, on=["team", "season", "week"], how="inner").sort_values(
-        ["team", "season", "week"]
-    )
-    g = m.groupby(["team", "season"])["starter_id"]
-    m["prev_starter"] = g.shift(1)
-    m["next_starter"] = g.shift(-1)
+    actual = starters.sort_values(["team", "season", "week"]).copy()
+    g = actual.groupby(["team", "season"])["starter_id"]
+    actual["prev_starter"] = g.shift(1)
+    actual["next_starter"] = g.shift(-1)
+    # Missing chart coverage must not erase known actual starts between the
+    # matched weeks, or a one-game replacement vanishes from the transition test.
+    m = actual.merge(chart, on=["team", "season", "week"], how="inner")
     valid = m.dropna(subset=["chart_qb_id", "starter_id"])
     tr = valid.dropna(subset=["prev_starter"])
     tr = tr[tr["starter_id"] != tr["prev_starter"]]

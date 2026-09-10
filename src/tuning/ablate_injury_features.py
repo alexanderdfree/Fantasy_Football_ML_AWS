@@ -259,6 +259,20 @@ def _subgroup_mae(result: AblationResult, subgroup_key: str, model: str) -> floa
     return sg["models"].get(model, {}).get("mae")
 
 
+def _paired_subgroup_deltas(rmap, pos, seeds, subgroup, model):
+    deltas = []
+    for seed in seeds:
+        baseline = rmap.get((pos, seed, VARIANT_WITH))
+        treatment = rmap.get((pos, seed, VARIANT_WITHOUT))
+        if baseline is None or treatment is None:
+            continue
+        before = _subgroup_mae(baseline, subgroup, model)
+        after = _subgroup_mae(treatment, subgroup, model)
+        if before is not None and after is not None:
+            deltas.append(after - before)
+    return deltas
+
+
 def _print_position_table(
     pos: str,
     results: list[AblationResult],
@@ -303,7 +317,7 @@ def _print_position_table(
                 v = _subgroup_mae(r_without, "global", model_name)
                 if v is not None:
                     without_maes.append(v)
-        deltas = [b - a for a, b in zip(with_maes, without_maes, strict=False)]
+        deltas = _paired_subgroup_deltas(rmap, pos, seeds, "global", model_name)
         print(
             f"    {model_name:14}{fmt_mean_std(with_maes):>18}"
             f"{fmt_mean_std(without_maes):>18}{fmt_mean_std(deltas):>18}"
@@ -330,7 +344,7 @@ def _print_position_table(
                 v = _subgroup_mae(r_without, sg_key, best)
                 if v is not None:
                     without_maes.append(v)
-        deltas = [b - a for a, b in zip(with_maes, without_maes, strict=False)]
+        deltas = _paired_subgroup_deltas(rmap, pos, seeds, sg_key, best)
         n = first_sg["n"]
         label = first_sg["label"][:28]
         flag = f"  [small-n<{SMALL_N}]" if n < SMALL_N else ""

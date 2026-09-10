@@ -118,7 +118,7 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
     ``game_dim`` flows from the length of ``attn_history_stats``: 0 = legacy
     nested-only path, >0 = per-game aggregates fed alongside the inner pool.
     """
-    return dict(
+    kwargs = dict(
         backbone_layers=list(pc.nn_backbone_layers),
         d_kick=pc.attn_kick_dim,
         d_model=pc.attn_d_model,
@@ -136,6 +136,9 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
         # served-kwargs requirement as the flat path (adds cond_proj when on).
         condition_queries_on_static=pc.attn_condition_queries_on_static,
     )
+    if pc.nn_head_hidden_overrides:
+        kwargs["head_hidden_overrides"] = dict(pc.nn_head_hidden_overrides)
+    return kwargs
 
 
 def _position_modules(pos: str):

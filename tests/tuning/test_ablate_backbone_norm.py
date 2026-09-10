@@ -333,6 +333,23 @@ def test_dry_run_does_not_train(monkeypatch, capsys):
     assert called == []
 
 
+def test_main_reports_each_position_separately(monkeypatch):
+    from dataclasses import replace
+
+    rows = [
+        replace(_result("bn", 42, 4.0, 4.0, 4.0), position="QB"),
+        _result("ln", 42, 3.0, 3.0, 3.0),
+    ]
+    monkeypatch.setattr(abn, "get_config", lambda pos: {"targets": [f"{pos}_target"]})
+    monkeypatch.setattr(abn, "run_grid", lambda *a, **k: rows)
+    calls = []
+    monkeypatch.setattr(
+        abn, "print_summary", lambda rs, ts: calls.append(([r.position for r in rs], ts))
+    )
+    abn.main(["--positions", "QB", "WR", "--seeds", "42", "--max-workers", "1", "--no-history"])
+    assert calls == [(["QB"], ["QB_target"]), (["WR"], ["WR_target"])]
+
+
 def test_main_error_exit_on_bad_variant():
     """An unknown variant name must cause a parser error (SystemExit)."""
     with pytest.raises(SystemExit):
