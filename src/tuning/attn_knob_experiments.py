@@ -316,7 +316,8 @@ def run_fanova(
         study_seed = sampler_seed + idx
         study = optuna.create_study(
             direction="minimize",
-            sampler=TPESampler(seed=study_seed),
+            # Optuna 5 enables both by default; preserve the existing study recipe.
+            sampler=TPESampler(seed=study_seed, multivariate=False, constant_liar=False),
             study_name=f"{position}-{seed}",
         )
 

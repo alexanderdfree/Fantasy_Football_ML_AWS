@@ -2,6 +2,11 @@
 
 **Status:** Accepted
 
+**Dependency compatibility (2026-09-10).** Optuna 5.0 enables multivariate TPE
+and constant-liar sampling by default. The NN, LightGBM, and attention-knob
+tuners explicitly retain `multivariate=False, constant_liar=False` so a
+dependency upgrade does not silently change the existing study recipe.
+
 **Decision.** Tune the attention-NN architecture + optimizer knobs with Optuna. Each Spot g6.xlarge runs one position's study (`n_jobs=1`); six positions fan out in parallel via the same Batch infrastructure D13 uses for training. The SQLite study DB round-trips to `s3://{bucket}/tune_nn/{pos}/study.db` on every trial completion and on `SIGTERM`, so a Spot reclaim resumes the search on Batch's retry instead of starting over. Loss-config (Huber δ, loss weights, `head_losses`, `gated_targets`) is **excluded** from the search; see Rejected.
 
 **Context.** The existing [src/tuning/tune_lgbm.py](../../src/tuning/tune_lgbm.py) runs Optuna for LightGBM on the warm-EC2 path (sequential, ~50 trials × ~5s each ≈ minutes per position). For the attention NN that doesn't compose: a single NN trial is 5–10× longer than an LGBM trial, and the warm path serializes positions. 30 trials × 6 positions × ~2 min/trial on one host ≈ 6 hours wall-clock per full retune; that's slow enough to break the "run it, eyeball it, iterate" loop the LGBM tuner enables. The attention NN was hand-tuned in lieu (edit `src/{pos}/config.py`, rerun `python -m src.{pos}.run_pipeline`, eyeball `benchmark_history/`), which the [ablate_rb_gate.py](../../src/tuning/ablate_rb_gate.py) pattern partially formalized for hand-picked variants.
@@ -33,6 +38,8 @@ The trial objective is `min(history["val_loss"])` from the attention NN training
 
 ## Changelog
 
+- **2026-09-10** — Upgrade Optuna to 5.0.0 while preserving the previous
+  TPE sampler settings explicitly at all three production construction sites.
 - **2026-07-04** — Rejected loss-config bullet era-scoped post-#870 (`2.0/δ` stated as at-decision-time; `1/δ` for the MSE yards heads since the Huber→MSE switch). Docs-only audit sweep (#1407, PR #1461).
 - **2026-06-11** — **Spot G+VT quota raised 24 → 64 vCPU** (ADR-0013 changelog has the infra detail). The "sized for six g6.xlarge exactly" framing above is now historical: the fleet can run up to 16 hosts, so a tune fan-out no longer starves a concurrent train run (or vice versa). The "Reconsider Ray Tune if the quota grows past one host per position" trigger is now formally met — but per-trial distribution is still launch-bound on host CPU, not quota (see [todo/gpu_launch_bound_levers.md](../../todo/gpu_launch_bound_levers.md)), so position-level fan-out remains the right shape; revisit only if per-position trial counts grow past what one host clears in a workday.
 - **2026-06-10** — Study storage namespace now keys off the trainer's *actual* CUDA-graph capture decision (`cuda_graph_enabled()` in [src/shared/utils.py](../../src/shared/utils.py)) instead of raw `FF_CUDA_GRAPH` env-truthiness, which the 2026-06-05 autodetect cutover (ADR-0017) demoted to a force-OFF override — post-cutover an unset env on sm_80+ trains graphed (was mislabeled eager, so PR #1120's `scheduler_v2_graph` namespace was never selected on the box it was built for) and `FF_CUDA_GRAPH=1` on a T4 trains eager (was mislabeled graphed). PR #1120 completed the backend×capture namespace matrix (`scheduler_v2`, `scheduler_v2_graph`, `scheduler_v2_mps`, `scheduler_v2_mps_graph`); this change makes `tune_nn.main()` select within it correctly and records the same decision in the run log + results provenance. The Batch launcher's submit-side prediction is unchanged — it injects `FF_CUDA_GRAPH` explicitly as the same bool, and the tune CEs are all sm_80+.

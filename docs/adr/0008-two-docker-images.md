@@ -24,5 +24,12 @@ The training Dockerfile ([src/batch/Dockerfile.train](../../src/batch/Dockerfile
 
 ## Changelog
 
+- **2026-09-10** — Align serving, local CPU/GPU, and Batch on Torch 2.14.0;
+  retain CUDA 13.0 for GPU wheels and update both images to uv 0.12.12.
+  The serving install now gives the CPU index priority over PyPI, matching
+  the local CPU requirements. NumPy 2.5.3 is resolvable with Numba 0.67.0
+  and llvmlite 0.49.0, so the old NumPy hold is removed. Torch 2.14 changes
+  clamp gradients at exact boundaries; training results require a new
+  baseline rather than an assumption of numerical identity.
 - **2026-06-30** — Training image bumped **cu126 → cu130** (`torch==2.12.0+cu126` → `2.12.1+cu130`, base → `nvidia/cuda:13.0.3-base-ubuntu24.04`) on the 2026-06-22 T4 retirement, matching the cross-platform cu130 standardization (ADR-0017). The 2026-06-07 conda→slim history below stands; this is a later wheel/base bump only. Deterministic Ridge MAE stays byte-identical; NN/attn rows rebaseline within single-seed noise.
 - **2026-06-07** — Training image base slimmed from the conda `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime` (~3.7 GB compressed) to `nvidia/cuda:12.6.3-base-ubuntu24.04` (~86 MB) + a pip `torch==2.12.0+cu126` wheel, to shrink the Spot cold-start image pull. The two-images decision is unchanged (the inference image is untouched); only the training base packaging changed. torch version is held identical, so deterministic Ridge MAE stays byte-identical and NN/attn rows rebaseline within single-seed noise. Full rationale + validation notes in [ADR-0013](0013-spot-fan-out-via-aws-batch.md)'s changelog and [docs/batch_design.md](../batch_design.md) §"Cold-start optimization" 2d.
