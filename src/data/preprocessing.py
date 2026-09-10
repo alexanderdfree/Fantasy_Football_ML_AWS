@@ -91,13 +91,26 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
     stat_cols = [
         # Skill-position raw stats (QB/RB/WR/TE)
         "passing_yards",
+        "passing_tds",
+        "interceptions",
+        "sacks",
         "rushing_yards",
+        "rushing_tds",
         "receiving_yards",
+        "receiving_tds",
         "receptions",
         "targets",
         "carries",
         "completions",
         "attempts",
+        # A sack/fumble or two-point-only game still proves appearance when
+        # snap coverage is absent. Use recorded events, never EPA/roster metadata.
+        "sack_fumbles_lost",
+        "rushing_fumbles_lost",
+        "receiving_fumbles_lost",
+        "passing_2pt_conversions",
+        "rushing_2pt_conversions",
+        "receiving_2pt_conversions",
         # K raw counts — see src/k/targets.py
         "fg_att",
         "pat_att",
