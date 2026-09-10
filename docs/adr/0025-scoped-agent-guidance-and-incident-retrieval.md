@@ -23,10 +23,17 @@ index path and headings remain for discoverability and fragment-link compatibili
 Incident bodies retain their evidence; only relative link destinations change when
 moved. Read matching records and treat their recipes as historical.
 
-Memory stores concise user preferences and scoped retrieval pointers. Operational
-settings are verified from current code/configuration and live state. Shared Codex
-configuration inherits model/reasoning/context defaults from the user/runtime;
-the repository does not pin a historical workstation profile.
+Global memory summaries store durable user preferences and a concise pointer per
+project. Project rules and implementation facts stay in their scoped sources;
+superseded memory prescriptions are removed through the provider's supported
+update mechanism. Operational settings come from effective project/user/runtime
+configuration and live state, including repository defaults introduced in PR #1548.
+
+Each detailed rule has one authoritative topic section. Other active guides link
+to that section; essential startup invariants remain in `AGENTS.md`. Group stop
+rules by subsystem, preserving conditions, exceptions and reopening criteria.
+Delete superseded recommendations from active plans, keeping dated measurements
+and decisions in their investigation or incident record.
 
 ## Consequences
 
@@ -57,4 +64,6 @@ the repository does not pin a historical workstation profile.
 ## Changelog
 
 - 2026-09-10: Split startup policy, provider references and incident retrieval;
-  retain evidence and add context budgets (PR pending).
+  retain evidence and add context budgets (PR #1546).
+- 2026-09-10: Remove superseded recommendations, narrow global memory to
+  preferences/pointers, and consolidate repeated rules by topic (PR #1553).

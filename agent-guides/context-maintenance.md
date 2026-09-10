@@ -12,12 +12,13 @@
   only that topic's relevant sections. Give a new topic a route in the index.
 - Architectural choices belong in their ADR, with an index/changelog update.
   Existing decisions should be amended rather than re-explained in several files.
-- Keep active status in TODO and its linked plan. Record each resolved incident
+- Keep only open work in TODO and its linked plan's recommendations. Delete
+  superseded recommendations when work ships or is rejected; retain the dated
+  results in the investigation or incident record. Record each resolved incident
   once under `todo/fixed-archive/`, indexed by its original/descriptive heading.
   Preserve File(s), What, Fix and Lesson plus dated evidence. Historical commands,
   paths and measurements may remain there, clearly labeled as historical.
 - Search indexes first; read matching incident records, not the whole archive.
-  A closed experiment must not remain recommended by an active TODO summary.
 
 ## Evidence and duplication
 
@@ -39,14 +40,14 @@ source when answering a current-state question; reconcile conflicting sources.
 
 ## Memory
 
-- Keep durable user preferences and concise retrieval pointers in memory. Scope
-  project-specific pointers to the project. Avoid duplicating entire agent guides,
-  resolved debugging narratives or configuration snapshots in a global summary.
+- Global summaries contain durable user preferences and one concise retrieval
+  pointer per project. Keep project implementation facts and debugging narratives
+  behind those pointers; the relevant guide owns the reusable rule. When a rule
+  changes, remove its superseded memory prescription instead of adding a second
+  competing copy. Preserve dated incident evidence outside reusable summaries.
 - Treat settings, model catalogs, quotas, paths and run metrics as dated recall.
   Never restore a historical value merely because it appears in memory. Verify
   the effective user/project/runtime layers before describing or changing it.
-- Preserve useful general habits: bounded output, production-faithful validation,
-  active-worktree edits, current remote-state checks and respect for user scope.
 - Follow the active provider's memory-write rules. Codex only writes an update
   note under `$CODEX_HOME/memories/extensions/ad_hoc/notes/` when explicitly
   authorized; generated indexes/summaries are not edited directly. An update note

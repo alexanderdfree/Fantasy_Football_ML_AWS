@@ -1,32 +1,72 @@
 # Platform policy
 
-Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies the shared entrypoint; current code/config and linked decisions supply operational state. Dated measurements describe their recorded regime, not a promise about today.
-
 ## Platform & hardware targets (autodetect, then optimize per-arch)
 
-Trained / tuned / benchmarked / tested across six environments. **Any platform-specific optimization must autodetect and branch with awareness of all of them — never hardcode for the box you're on.** Reuse the primitives below instead of ad-hoc `platform.system()` / `torch.cuda.is_available()` sniffing, and keep the "autodetect by default, env-var override" shape (`FF_DEVICE` / `LGBM_N_JOBS`) so CI/reproducibility runs can pin behaviour.
+Changes must account for every supported environment, using autodetection with
+explicit overrides rather than hardcoding the current machine. The decision and
+its measured history live in [ADR-0017](../docs/adr/0017-platform-autodetection-per-arch-optimization-policy.md).
+Use current code/configuration and live infrastructure for effective settings;
+this compatibility matrix does not establish today's deployment or quota.
 
-| Platform | OS | Device | GPU arch / sm | AMP dtype | torch wheel | CPU | Key gotcha |
-|---|---|---|---|---|---|---|---|
-| Apple Silicon MacBook | macOS (arm64) | CPU default · **MPS opt-in** | — | FP32 (no AMP) | `cpu` | M-series | MPS unproven for this small model; `FF_DEVICE=mps` to benchmark; CPU = CI-identical |
-| PC (RTX 5080) | Windows 11 | CUDA | Blackwell **sm_120** | FP32+TF32 def · FP16/BF16 opt-in | **cu130** | 9950X3D 16C/32T | `OPENBLAS_NUM_THREADS=1` **REQUIRED** (crash, not perf); `LGBM_N_JOBS=16` |
-| PC (RTX 5080) | WSL2 (Linux) | CUDA | Blackwell **sm_120** | FP32+TF32 def · FP16/BF16 opt-in | **cu130** | 9950X3D | no OPENBLAS crash; still cap BLAS for throughput; `scripts/wsl-env.sh` |
-| AWS g4dn.xlarge | Linux | CUDA | Turing **sm_75** (T4) | FP32 (FP16 opt-in; no TF32/BF16 on sm_75) | cu130 | 4 vCPU | **Retired** EC2 rollback (→ g6/L4, 2026-06-22); sm_75 code gates kept defensive (cu130 still ships sm_75 kernels) |
-| AWS g6.xlarge | Linux | CUDA | Ada **sm_89** (L4) | FP32+TF32 def · FP16/BF16 opt-in | cu130 | 4 vCPU | Batch primary Spot CE **and** the EC2 rollback host (g4dn/T4 retired 2026-06-22); BF16 measured-worse (#640) |
-| AWS g5.xlarge | Linux | CUDA | Ampere **sm_86** (A10G) | FP32+TF32 def · FP16/BF16 opt-in | cu130 | 4 vCPU | Second instance type in the **diversified** Batch GPU Spot CE (pooled with g6 via `SPOT_PRICE_CAPACITY_OPTIMIZED`); same job/container shape as g6 |
+| Environment | Capability / constraint |
+|---|---|
+| Apple Silicon macOS | CPU default; Apple MPS is opt-in |
+| Native Windows, RTX 5080 / sm_120 | `OPENBLAS_NUM_THREADS=1` is required for correctness; 9950X3D has 16 physical cores |
+| WSL2, RTX 5080 / sm_120 | Linux BLAS throughput limits; [wsl-env.sh](../scripts/wsl-env.sh) |
+| AWS g4dn / T4 / sm_75 | Retired rollback target; keep defensive FP16-only AMP support, no BF16/TF32 or graphs |
+| AWS g6 / L4 / sm_89 | Supports BF16/TF32 and CUDA graphs; check live Batch/rollback configuration |
+| AWS g5 / A10G / sm_86 | Supports BF16/TF32 and CUDA graphs; check live Batch fleet configuration |
 
-**Reuse these primitives — don't reinvent detection:**
-- **`detect_platform()`** ([src/shared/platform_detect.py](../src/shared/platform_detect.py)) — canonical capability report (`backend` cuda/mps/cpu, `gpu_name`, `compute_capability`, `sm`, `supports_bf16`, `os`, `is_wsl`, `cpu_count`, `recommended_cuda_wheel`). Reporting-only; branch new per-arch logic off this.
-- **`requested_device()` / `cuda_enabled()` / `mps_enabled()`** ([src/shared/utils.py](../src/shared/utils.py)) — device resolver: `FF_DEVICE` (`auto`/`cpu`/`cuda`/`mps`, set by `run_pipeline --device`) over detection, consumed by `_nn_device()` ([src/shared/pipeline.py](../src/shared/pipeline.py)). `auto` is CUDA-or-CPU and **never** MPS, so the default path stays byte-identical to CI.
-- **`_gpu_resident_device()` + `_autocast()`** ([src/shared/training.py](../src/shared/training.py)) — GPU-resident batcher and AMP are **CUDA-only by design**; off-CUDA (MPS/CPU) falls through to DataLoader + FP32.
-- **`amp_dtype()` / `requested_amp_dtype()`** (`FF_AMP_DTYPE`, [src/shared/utils.py](../src/shared/utils.py)) — FP32+TF32 (AMP off) default on every CUDA GPU; `None` off-CUDA. `FF_AMP_DTYPE=fp16` opts into FP16+GradScaler; `bf16` opts into BF16 **sm_80+ only** (degrades to FP16 on the T4); `fp32` is the explicit AMP-off (== the new default) (#640, flipped 2026-06-22).
-- **`_maybe_compile()` (`FF_COMPILE`) + TF32** ([src/shared/pipeline.py](../src/shared/pipeline.py)) — `torch.compile` is opt-in, sm_80+-gated (off by default after the T4 +32% regression, D12); TF32 for FP32 matmuls auto-enables on sm_80+. Both speed-only per-arch knobs (#641).
-- **`cuda_graph_enabled()` (`FF_CUDA_GRAPH`) + `_maybe_graph_model()`** ([src/shared/utils.py](../src/shared/utils.py), [src/shared/training.py](../src/shared/training.py)) — **autodetect-ON CUDA-graph capture of the NN's fwd+bwd for sm_80+** (g6/L4, g5/A10G, 5080) via `make_graphed_callables`; `FF_CUDA_GRAPH` is now a **force-off override** (`=0`/`false`/`off`), *not* the trigger (reversed from opt-in 2026-06-05, PR #874 follow-up). **~1.5-1.8× on the launch-bound GPU branch; per-step bitwise-exact and numerically inert on the FP32+TF32 default** (no GradScaler → graph-on/off differ only by the dropout-RNG warmup, seed-noise, Δ=0 with dropout zeroed — no rebaseline needed). It is NOT inert **only on the opt-in FP16 path** (`FF_AMP_DTYPE=fp16`), where FP16+GradScaler amplifies the multi-step trajectory ~0.5% worst-target — the owner-approved per-arch metric-path divergence that rebaselines graphed-vs-graphed (CPU/MPS and the T4 stay eager; K's nested trainer no-ops capture). `FF_CUDA_GRAPH=0` for a bit-comparable eager A/B. Root-cause + the LN/FP32/det-stop dead-ends in [todo/gpu_launch_bound_levers.md](../todo/gpu_launch_bound_levers.md) (Lever A); kept investigation knobs `FF_NN_NORM` (BN→LN, overlaps `src/tuning/ablate_backbone_norm.py`), `FF_FORCE_DROPOUT_ZERO`, `FF_NN_FIXED_EPOCHS`.
-- **CPU/thread knobs:** `_lgbm_n_jobs()` (`LGBM_N_JOBS`, [src/shared/models.py](../src/shared/models.py)), `_default_n_jobs()` ([src/tuning/tune_lgbm.py](../src/tuning/tune_lgbm.py)). Per-platform CPU/BLAS setup is in [SETUP.md](../SETUP.md) + [scripts/wsl-env.sh](../scripts/wsl-env.sh) — cross-reference, don't duplicate.
-- **Install:** per-platform torch wheels exist — [requirements-dev.txt](../requirements-dev.txt) (cpu), [requirements-gpu.txt](../requirements-gpu.txt) (cu130 / Blackwell sm_120), [src/batch/Dockerfile.train](../src/batch/Dockerfile.train) (cu130 / L4·A10G — covers sm_75→sm_120). Extend these; no ad-hoc pins.
+## Device and dtype policy
 
-**Platform stop-rules (decided — don't relitigate without new evidence):**
-- **The training metric path is deliberately NOT per-arch.** `amp_dtype()` is **AMP-off FP32+TF32 on *every* CUDA GPU** and pure FP32 off-CUDA — the FP32 family everywhere (CPU/CI and the T4 run pure FP32; sm_80+ adds numerically-neutral TF32 matmul acceleration), so CPU/CI and cross-GPU benchmarks stay comparable. This is the 2026-06-22 flip from the old FP16-autocast default: a measured-neutral A/B (QB/RB/WR/K/DST, n=8, graphs-off) showed FP32+TF32 matches FP16 on accuracy while FP16 autocast's per-op cast kernels cost more wall-time than TF32 saves on this launch-bound model. **FP16 is now opt-in** (`FF_AMP_DTYPE=fp16`, the prior default). BF16 is **also opt-in only** (`FF_AMP_DTYPE=bf16`, sm_80+) for two measured reasons: it hung the T4 (sm_75 has no BF16 Tensor Cores, #293 → #301) **and** a deterministic 5080 A/B showed it *regresses* high-magnitude heads (QB `passing_yards` +2.2–3.1%, #640). The **T4/g4dn is retired** as the EC2 rollback (→ g6/L4, 2026-06-22); its sm_75 gates remain defensive (FP16-only, no BF16/TF32, eager) and cu130 still ships sm_75 kernels. "Optimize per-arch" applies to speed knobs that don't change numerics — threads, DataLoader, GPU-resident batcher, wheels, TF32, opt-in `torch.compile` (#641) — **not** silently to the metric path. The **one deliberate metric-path exception is `FF_CUDA_GRAPH` on the opt-in FP16 path** (`FF_AMP_DTYPE=fp16`): autodetect-ON sm_80+, it rebaselines graphed-vs-graphed under FP16, but under the FP32+TF32 default it is per-step bit-exact / effectively inert (graph-on/off = dropout-RNG seed-noise only), so the default path stays comparable (ADR-0017). Re-proposing a per-arch *training-dtype default* needs a benchmark-comparability argument, not "the GPU supports it."
-- **MPS is opt-in, never the Mac default.** `detect_platform()` reports it and `FF_DEVICE=mps` runs it, but `auto` stays CUDA-or-CPU: no proven speedup for this small model, breaks CPU/CI byte-identity, risks silent op-fallback. Flip only after a Mac A/B (default vs `FF_DEVICE=mps`) justifies it.
-- **Windows `OPENBLAS_NUM_THREADS=1` is correctness, not perf** — without it the Ridge-PCA alpha CV segfaults (`0xC0000005`). Never drop it on **native** Windows; WSL2 / Linux / macOS need it only for throughput (`detect_platform().is_wsl` distinguishes them).
-- **Editing `src/shared/` fires a 6-position retrain** (path-based `detect` job). A numerically-inert refactor still triggers it — verify a claimed no-op through the effective inputs/configuration and implementation, using deterministic Ridge MAE as supporting evidence. The `training-skipped:` marker workflow was retired in PR #1542. Only entirely non-behavioral changes qualify for the documented `[docs-only]` opt-out; equal MAE alone does not establish that.
+- Default training uses the FP32 family: FP32 storage plus TF32 matmuls on
+  supported CUDA hardware, pure FP32 elsewhere. FP16+GradScaler and BF16 are
+  explicit `FF_AMP_DTYPE` opt-ins; BF16 requires sm_80+ and falls back to FP16 on
+  T4. Hardware support alone cannot justify changing a training-dtype default:
+  bring a benchmark-comparability argument. The measured FP16/BF16 history and
+  rejected defaults are retained in [ADR-0017](../docs/adr/0017-platform-autodetection-per-arch-optimization-policy.md).
+- Apple MPS is opt-in (`FF_DEVICE=mps`), never the `auto` default. It needs a Mac
+  default-vs-MPS A/B before promotion: no demonstrated speedup for this small
+  model, CPU/CI byte-identity loss and silent op-fallback remain the constraints.
+- Native Windows requires `OPENBLAS_NUM_THREADS=1`; removing it causes Ridge-PCA
+  alpha-CV `0xC0000005` crashes. WSL2/Linux/macOS thread caps are for throughput;
+  use `detect_platform().is_wsl` to distinguish Windows from WSL2.
+- Apply per-architecture speed changes without silently changing model numerics.
+  Execute changed GPU paths using [GPU validation](validation.md#gpu-and-batch-validation).
+  Shared paths can trigger six-position retraining; inspect
+  [scope_positions.py](../src/scripts/scope_positions.py). A no-op claim follows
+  [production validation](validation.md#production-path); only the
+  [docs-only contract](delivery.md#docs-only-exception) can exempt wholly
+  non-behavioral changes. The `training-skipped:` marker was retired in PR #1542.
+
+## CUDA graph comparability
+
+`cuda_graph_enabled()` autodetects ON for supported CUDA sm_80+;
+`FF_CUDA_GRAPH=0`/`false`/`off` disables capture for an eager comparison.
+The default FP32+TF32 regime was measured per-step bit-exact; graph-on/off can
+still differ through dropout-RNG warmup (zero dropout removed that difference).
+The **opt-in FP16+GradScaler regime is the owner-approved exception**: its
+multi-step trajectory drift requires graphed-vs-graphed rebaselining, not a
+comparison against eager history. CPU/MPS and T4 remain eager; K's nested trainer
+no-ops capture. Do not generalize this exception to arbitrary dtype changes.
+
+Capture variants, historical speed measurements, default promotions and the
+retained investigation knobs (`FF_NN_NORM`, `FF_FORCE_DROPOUT_ZERO`,
+`FF_NN_FIXED_EPOCHS`) are recorded in [the GPU investigation](../todo/gpu_launch_bound_levers.md)
+and [ADR-0017's changelog](../docs/adr/0017-platform-autodetection-per-arch-optimization-policy.md#changelog).
+Stacked/tuning regimes have separate [execution constraints](stop-rules.md#gpu-execution).
+
+## Primitives
+
+Reuse these entrypoints; inspect their implementation before stating defaults:
+
+| Concern | Canonical implementation |
+|---|---|
+| Capability report | [platform_detect.py](../src/shared/platform_detect.py): `detect_platform()` is reporting-only (`backend`, GPU name/capability/sm, BF16 support, OS/WSL, cores, recommended wheel) |
+| Device and dtype overrides | [utils.py](../src/shared/utils.py): `requested_device`, `cuda_enabled`, `mps_enabled`, `amp_dtype`, `requested_amp_dtype`; `FF_DEVICE` overrides detection, `auto` is CUDA-or-CPU |
+| Pipeline device / compile / TF32 | [pipeline.py](../src/shared/pipeline.py): `_nn_device`, `_maybe_compile`; `FF_COMPILE` is opt-in and sm_80+-gated (T4 regression in [ADR-0012](../docs/adr/0012-training-step-perf-composition.md)) |
+| Residency / AMP / graphs | [training.py](../src/shared/training.py): `_gpu_resident_device`, `_autocast`, `_maybe_graph_model`; residency and AMP are CUDA-only, MPS/CPU use DataLoader + FP32 |
+| CPU threads | [models.py](../src/shared/models.py): `_lgbm_n_jobs` / `LGBM_N_JOBS`; [tune_lgbm.py](../src/tuning/tune_lgbm.py): `_default_n_jobs` |
+| Wheel installation | [requirements-dev.txt](../requirements-dev.txt), [requirements-gpu.txt](../requirements-gpu.txt), [Dockerfile.train](../src/batch/Dockerfile.train); extend these, do not add ad-hoc pins |
+
+Per-platform installation and CPU/BLAS commands belong in [SETUP.md](../SETUP.md).

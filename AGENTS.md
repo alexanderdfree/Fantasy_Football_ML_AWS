@@ -25,17 +25,16 @@ sections before changing that subsystem. Do not load every linked document.
 | Task | Guidance to read |
 |---|---|
 | Locate a subsystem or add a position | [Project layout](agent-guides/project.md) |
-| Features, targets, losses or NN wiring | [Model contracts](agent-guides/modeling.md), relevant [stop rules](agent-guides/stop-rules.md) |
-| Investigate accuracy, data effects or a claimed invariant | [Validation](agent-guides/validation.md), [investigation](agent-guides/investigation.md) |
+| Features, targets, losses or NN wiring | [Model contracts](agent-guides/modeling.md), [modeling stop rules](agent-guides/stop-rules.md#modeling-and-features) |
+| Investigate accuracy, data effects or a claimed invariant | [Production validation](agent-guides/validation.md#production-path), [investigation](agent-guides/investigation.md) |
 | Run tests, trains, tunes, benchmarks or A/Bs | [Entry points](agent-guides/experiments.md), relevant [environment](agent-guides/environment.md) section; commands in [SETUP.md](SETUP.md) |
-| Device, dtype, performance or GPU changes | [Platform policy](agent-guides/platform.md), relevant [stop rules](agent-guides/stop-rules.md) |
-| CI, AWS, serving or artifact lifecycle | [Operations](agent-guides/operations.md); decision index in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Device, dtype, performance or GPU changes | [Device/dtype policy](agent-guides/platform.md#device-and-dtype-policy), [GPU stop rules](agent-guides/stop-rules.md#gpu-execution) |
+| CI, AWS, serving or artifact lifecycle | [Operations](agent-guides/operations.md), [CI/serving stop rules](agent-guides/stop-rules.md#ci-and-serving); [ADRs](docs/ARCHITECTURE.md) |
 | Edit, review, open or merge a PR | [Delivery](agent-guides/delivery.md); provider workflow in [CODEX.md](CODEX.md), [CLAUDE.md](CLAUDE.md) or [GEMINI.md](GEMINI.md) |
 | Existing plans or a previously fixed bug | Search [TODO.md](TODO.md) or [fixed-issue index](todo/fixed-archive.md), then open only matching entries |
 | Maintain instructions or memory | [Context maintenance](agent-guides/context-maintenance.md) |
 
-Human overview: [README.md](README.md). Read the overview or setup sections when
-needed; they are not a mandatory startup reading bundle.
+Human overview: [README.md](README.md); read only when needed.
 
 ## Invariants to preserve
 
@@ -47,7 +46,15 @@ needed; they are not a mandatory startup reading bundle.
   allowlist and fixtures. Attention has a separate static/history allowlist:
   static features are non-temporal; history tokens are raw per-game signals.
   Do not add rolling/ewma/windowed aggregates to either as redundant history.
-- **Evaluation cohorts (ADR-0024):** compare sources on full regular-season fantasy actuals and identical player-weeks. `weekly_reference_top24` uses the versioned archived pregame reference; `elite_top24` retains prior-season importance. Actual weekly leaders are for ranking, and actual seasonal leaders are retrospective. Never use a model's own top-N pool for cross-source MAE comparison, restore the static expert summary as live accuracy, or silently omit missing cohort data from serialized Batch/local results.
+- **Evaluation cohorts (ADR-0024):** compare identical regular-season player-weeks
+  using the same projected scoring components in forecasts and actuals; missing
+  components are unavailable, never a full-fantasy fallback. Use
+  `src/shared/comparison_scoring.py` and the [cohort rules](agent-guides/validation.md#evaluation-cohorts).
+  `weekly_reference_top24` uses the archived pregame reference; `elite_top24`
+  retains prior-season importance. Actual weekly leaders are for ranking;
+  seasonal leaders are retrospective. Never use a model's own top-N pool for
+  cross-source MAE, restore static expert summaries as live accuracy, or silently
+  omit unavailable cohort data from Batch/local results.
 - Preserve training/inference feature parity, per-head non-negativity and coupled
   loss scales/weights. Keep NN forward/loss/aggregation operations in `torch` so
   gradients survive. See the model contracts before changing any of these.
@@ -93,8 +100,3 @@ needed; they are not a mandatory startup reading bundle.
   temporary files, preserve the command's exit status, and return selected fields.
   Never dump session JSONL, minified bundles or full endpoint payloads into chat.
   Re-read truncated/garbled results in a smaller query before relying on them.
-
-Maintain the entrypoint and its topic routes according to
-[the context policy](agent-guides/context-maintenance.md). Preserve evidence and
-applicable constraints when consolidating; do not grow startup text with incident
-narratives or copies of settings that code can answer.

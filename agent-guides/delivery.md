@@ -1,43 +1,117 @@
 # Worktrees and delivery
 
-Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies the shared entrypoint; current code/config and linked decisions supply operational state. Dated measurements describe their recorded regime, not a promise about today.
-
 ## Worktree workflow
 
-This repo is regularly worked from agent worktrees (`.claude/worktrees/<name>` or `~/.codex/worktrees/<id>/<repo-basename>` — the Codex launcher derives the basename from the main checkout's, here `Fantasy_Football_ML_AWS`) where the parent holds `main`. Quirks for any agent:
+- Verify the active checkout and `git status` before editing. Resolve reported
+  relative or parent-absolute paths inside this worktree, then verify the edit
+  there. A clean status after an intended edit can mean the parent was changed.
+  Provider guard hooks are described in [CLAUDE.md](../CLAUDE.md) and
+  [CODEX.md](../CODEX.md).
+- Codex startup uses [scripts/codex-fresh-worktree.sh](../scripts/codex-fresh-worktree.sh).
+  A `SessionStart` hook can warn but cannot move cwd. The launcher reuses a clean
+  Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/<repo-basename>`
+  or creates `codex/session-<id>` from `origin/main`, links ignored `data/raw` and
+  `data/splits` from the main checkout, and starts Codex with `--cd` there. The
+  basename comes from the main checkout; do not hardcode a historical folder name.
+- Fetch `origin/main` and inspect its recent commits at planning time and again
+  before a PR. Check open PRs for overlap in shared files such as TODO, configs
+  and tuning code. A later merge or concurrent PR may supersede the planned fix
+  (#383/#516, #634 superseded #629).
+- Answer shipped-state and dead-link questions from `origin/main:<path>`, not
+  the worktree or parent's local `main`. The provider `post-pr-merge.sh` hooks
+  fast-forward the parent only when it is clean and on `main`; they skip WIP.
+- Verify checkout succeeded before rebasing; a branch held by another worktree
+  must be rebased there (`git -C <path>`) or from `--detach origin/<branch>`.
+  After resolving conflicts, check that **all conflict markers** are gone before
+  staging and `rebase --continue`.
 
-- **Codex startup should go through `scripts/codex-fresh-worktree.sh`.** A Codex `SessionStart` hook can warn but can't move the active cwd. The launcher reuses a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/<repo-basename>` (basename derived from the main checkout's), else creates a fresh `codex/session-<id>` worktree from `origin/main`, links ignored `data/raw`+`data/splits` from the main checkout, and starts Codex with `--cd` there.
-- **Edit files in the worktree, not the parent checkout.** Plan files and search tools often report repo-relative or *parent*-absolute paths (`/…/Fantasy_Football_ML_AWS/src/foo.py`); writing those verbatim silently edits the parent (`main`'s checkout), not this branch — `git status` stays clean and a benchmark re-run uses the *unchanged* code (MAE Δ=0.0000 is the late smell). Re-prefix to the active worktree path (Claude: `/…/.claude/worktrees/<name>/…`; Codex: `~/.codex/worktrees/<id>/<repo-basename>/…`), then `grep` the new symbol in the worktree file to confirm. Both agents have deterministic guard hooks for this (`CLAUDE.md`, `CODEX.md`).
-- **`gh pr merge --delete-branch` fails** in a worktree (it tries to `git checkout main`, which is held by the parent). Use `gh pr merge <N> --squash` then `git push origin --delete <branch>` separately. Local feature branch can stay.
-- **"Is X on `main`?" / dead-link checks** must read `origin/main:<path>` via `git fetch origin main --quiet && git show origin/main:<path>` — never `cat <path>` in the worktree, which lags `main`.
-- **The parent's local `main` is auto-fast-forwarded after each merge** by the `post-pr-merge.sh` hook (Claude) / [`.codex/hooks/post-pr-merge.sh`](../.codex/hooks/post-pr-merge.sh) (Codex), but **only** when the parent is on `main` and clean — it still lags if you've left the parent on a feature branch or dirty (the hook skips rather than clobber WIP). So the "read `origin/main`" rule above still holds: `origin/main` is the source of truth, not the parent's working tree.
+<a id="git-pr-ci-workflow"></a>
+<a id="git--pr--ci-workflow"></a>
+
+## PR and merge gates
+
+- Follow feature branch → appropriate local checks → pre-PR scope judge → PR →
+  current green CI/review → merge when authorized. Provider details live in
+  [CODEX.md](../CODEX.md), [CLAUDE.md](../CLAUDE.md) and [GEMINI.md](../GEMINI.md).
+  Preserve explicit owner approval gates, including `solve-issues` sign-off.
+  Do not use `--no-verify` (including on merge-resolution commits) or `--admin`.
+- Wait for current checks with `gh pr checks <N> --watch`; fix red/pending checks.
+  The sole documented silent-stop exception is [CI operations](operations.md#ci-training):
+  when `Run Tests` stops firing on rapid force-push, run `pytest` locally before
+  an otherwise-authorized merge. This is not a general CI bypass.
+- Run a gate separately from dependent mutations: never batch
+  `test && commit && push` or `merge && delete`. A masked merge failure followed
+  by branch deletion closed PR #622 and auto-closed #627. An authorized merge can
+  use `gh pr merge <N> --squash --auto` to wait on checks.
+- In worktrees, use `gh pr merge <N> --squash` without `--delete-branch` (the latter
+  tries to check out the parent's `main`). Verify **MERGED**, fetch, and inspect
+  the final squash content for the latest fix before separately deleting the
+  remote branch. The local feature branch can stay. A tracked file on disk is
+  not shipped until its change is merged.
+- For stacked PRs, verify the GitHub base retarget before deleting the merged
+  base, rebase to trigger CI after a base change, and give reviewers the explicit
+  `gh pr diff`.
+- Use `gh api --paginate` for a complete inventory (default pages missed findings
+  in #319). Match image tags / `head_sha` to PRs with the **full SHA**; the workflow
+  log's `HEAD is now at` identifies the executed revision.
+- For a suspected regression in commit X, search later `origin/main` commits for
+  a revert first (#189), then inspect **every** PR in `baseline..HEAD` rather
+  than selecting only the most thematic suspect.
+- Copilot review comments saying it encountered an error or rate limit are
+  infrastructure noise; do not address or reply to those comments.
 
 ## When making changes
-- **Open a PR, wait for green CI, then merge.** Push to a feature branch, `gh pr create`, then `gh pr checks <N> --watch` until green before `gh pr merge <N> --squash`. Don't merge with red/pending checks; fix the issue rather than `--admin`-bypass. Exception: the `Run Tests` silent-stop bug ([CI operations](operations.md)) — run `pytest` locally and merge.
-- **`[docs-only]` commit-subject opt-in for comment/docstring/import-reorder PRs.** When every change is non-behavioural (comment fix, docstring, `is*` typo, ruff I001 reorder) and you're 100% sure there's no metric/runtime impact, put `[docs-only]` in at least one commit **subject line** (the squash subject becomes the PR title, and squash bodies preserve constituent subjects as `* `-bullets — both count; commit *body* prose does not, consumers use a subject-line awk filter). Respected by: `tests.yml`'s `detect` (empty matrix; `tests-pass` green via `skipped`), `batch-image.yml`'s `check-docs-only` (skips `build-and-push`), `_detect-positions.yml` (empty `positions` → training skip), and the Claude/Codex pre-PR hooks (early-exit the gates). `lint` + `detect` still run. [deploy.yml](../.github/workflows/deploy.yml) is **not** tag-gated (its `paths:` filter on `docs/**`+`README.md`+wiki is the gate — docs render in the in-app wiki, so they need redeploy). Trust contract — CI can't verify it; the author owns correctness. Two traps: keep the literal tag out of your OWN subject/title when the PR *touches* docs-only machinery (else it skips its own matrix, #293), and serving display strings (dict values rendered into responses, e.g. `POSITION_INFO` "formula" fields) are behavioral — **not** docs-only even if no test asserts them.
-- Respect the **[Fixed archive](../todo/fixed-archive.md)** — it encodes the project's accumulated "already tried" knowledge.
-- **Update the ADR + decision log alongside non-trivial changes.**
-  - **ADR (per-decision files in [docs/adr/](../docs/adr)):** touching an existing decision? edit its `docs/adr/00NN-<slug>.md` (`Decision`/`Context`/`Chosen`/`Rejected`/`References`/`Consequence`) and append a dated line to its `## Changelog` (create if absent). New decision of similar weight? add `docs/adr/00NN-<slug>.md` (next free number) + a row in the index table in [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) (auto-registers in the wiki via the `docs/adr/*.md` glob). **Either way, add one terse line to [docs/adr/CHANGELOG.md](../docs/adr/CHANGELOG.md)** (`YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`). Superseding? flip the old file's `**Status:**` to superseded and add a new file — don't rewrite the original or re-monolith.
-  - **Decision log ([TODO.md](../TODO.md) Open list; Fixed archive at [todo/fixed-archive.md](../todo/fixed-archive.md)):** for non-trivial bug fixes, move the `Open` entry into [todo/fixed-archive.md](../todo/fixed-archive.md) using a file under `todo/fixed-archive/`, indexed from `todo/fixed-archive.md`, with `### [FIXED] Title` + **File(s)** (paths + commit SHA) / **What** / **Fix** / **Lesson**. If untracked, add a focused record when the fix is non-trivial.
-  - **Skip both** for truly trivial changes (typos, formatting, lockfile bumps, comment-only tweaks). For a non-trivial fix, retain its evidence once in a focused incident record. Check for an existing lesson before adding another; keep startup instructions within the [context budgets](context-maintenance.md).
-- Update tests and fixtures when you change feature lists or targets (archive has multiple entries where this was missed).
-- Don't add error handling, fallbacks, or validation for cases that can't happen. One exception: network/data-source boundaries are real and should be defensive.
-- **For NN/feature/loss/target changes, run the actual pipeline before merging.** `pytest -m unit` and CI don't catch metric regressions — run `python -m src.{pos}.run_pipeline` on the affected position and diff `benchmark_history/` vs the prior run. The K refactor regression and QB metrics-label bug both shipped on green tests without a pipeline run. **Applies to *investigating* a feature, not just merging** — see "Validation proxy must match production". For subgroup analysis, per-row preds are on `result["test_df"]` (`pred_{model}_total`) — slice those, don't reimplement.
-- **Large (>10-item) parallel cleanups: file-disjoint bundles, draft commits per bundle, one PR per risk tier** (safest → highest; the 113-finding remediation → 3 PRs #312/#314/#315 is canonical). **File-disjointness is for parallelism, not correctness** — it does NOT protect against an API-signature change in shared code a per-position bundle still calls (the 2026-05-21 Tier A `_train_nn` conflict); when a bundle changes a shared signature, grep every caller first. Operator-only CLIs (`diagnose_outliers.py`, `analyze_errors.py`, `audit_features.py`) need an import-smoke test so signature drift fails the unit shard, not PR review.
 
-### Git / PR / CI workflow
-- **Check `git log origin/main` at the START of planning AND again before the PR** (rebase is the backstop): the worktree base lags main; if a planned fix already shipped, pivot to the gap it left (#383/#516).
-- **Before driving a PR in a hot shared file** (TODO.md, configs, tune_nn.py), `gh pr list` for concurrent OPEN PRs — a parallel session can supersede yours (#634⊃#629). Distinct from the merged-on-main check.
-- **Regression on commit X?** `git log origin/main --grep=X` FIRST — a later PR may already have reverted it (#189).
-- **Attribute regressions by reading every PR in `git log baseline..HEAD`,** not the most thematic suspect — 2nd-order bugs co-occur.
-- **`gh api` paginates ~30/page** — "are these ALL the open X?" needs `--paginate` (#319 missed pages 2+).
-- **Match image-tag / `head_sha` → PR on the full SHA** (not 2 chars); the workflow log's "HEAD is now at" is ground truth.
-- **After `gh pr merge --squash`, verify the squash commit contains the latest fix** (`git show <sha> -- <file>`) — the repo can diverge from live.
-- **Never chain a destructive action past a gate.** Don't `test && commit && push` or `merge && delete` in one batch — a masked-exit merge failure + unconditional branch-delete CLOSED #622 and auto-closed #627. Run the gate alone, verify state==MERGED before deleting; prefer `gh pr merge --squash --auto`.
-- **After a conflict-resolution edit, `grep -c '<<<<<<<' <file>` must be 0** before `git add` + `rebase --continue` — an edit can silently fail and leave markers.
-- **Verify checkout landed before rebase.** `git checkout <branch>` fails silently if that branch is in another worktree, and a following `git rebase` runs on the WRONG branch — rebase a sibling in its worktree (`git -C <path>`) or `--detach origin/<branch>`.
-- **Stacked PRs:** verify the GH base retarget before deleting a merged base; rebase to fire CI on a base-swap; brief reviewers with an explicit `gh pr diff`.
-- **CI `Run Tests` can silently stop firing on rapid force-push** (GitHub Actions bug) — run `pytest` locally and `gh pr merge --squash`.
-- **A repo-tracked file isn't shipped until merged.** Check branch state vs origin/main, then commit → PR → merge; don't stop at file-on-disk.
-- **Don't `--no-verify`** (skip hooks) even on merge-resolution commits.
-- **Copilot "encountered an error / rate limit" review comments are infra noise** — don't address or reply.
+- NN/feature/loss/target changes require an actual affected-position pipeline
+  comparison before merge. Follow [production-path validation](validation.md#production-path)
+  and [subgroup/seed requirements](validation.md#metrics-and-subgroups); unit
+  tests and green CI do not establish metric neutrality. Update feature/target
+  fixtures with their configuration changes.
+- Large (>10-item) parallel cleanups use file-disjoint bundles, draft commits per
+  bundle and one PR per risk tier, safest first. File-disjointness prevents edit
+  collisions, not shared-API incompatibility: inspect every caller of a changed
+  signature, including operator CLIs, and import-smoke those CLIs. The
+  [113-finding remediation record](../todo/fixed-archive/fixed-code-review-remediation-110-of-113-findings-landed-across-3-file-disjo-b9c7951c.md)
+  records the pattern; the 2026-05-21 Tier A `_train_nn` conflict demonstrates its
+  caller-boundary limitation.
+- Do not add error handling, fallbacks or validation for impossible cases;
+  network/data-source boundaries are real and should be defensive.
+- Scope, pending design decisions and infeasible requests follow
+  [investigation gates](investigation.md#scope-and-pending-decisions).
+
+## Docs-only exception
+
+`[docs-only]` is a trust-based **commit-subject** opt-in only when every change is
+non-behavioral: comments, docstrings, formatting, `is*` typos or import reorder
+with no metric/runtime impact. A squash title or constituent subject retained as
+a `* ` bullet counts; commit-body prose does not (consumers use a subject-line
+awk filter). The author owns correctness; CI cannot establish it.
+
+The tag skips the `tests.yml` matrix (`tests-pass` accepts `skipped`),
+`batch-image.yml` build, `_detect-positions.yml` training and provider pre-PR
+hooks. Lint and detection still run. [deploy.yml](../.github/workflows/deploy.yml)
+uses path filters rather than this tag because wiki documents need deployment.
+Do not put the literal tag in a subject/title when changing the opt-out machinery
+(#293), and do not use it for rendered response strings such as `POSITION_INFO`
+formula values. Equal metrics are not evidence that a change is non-behavioral.
+
+## Decision and incident records
+
+Search the [fixed-issue index](../todo/fixed-archive.md) before repeating a tried
+approach. Keep each durable explanation in its canonical source; follow
+[context maintenance](context-maintenance.md#evidence-and-duplication) when
+removing duplication or superseded advice.
+
+- For a non-trivial architectural change, amend the relevant
+  [ADR](../docs/adr) and append its dated `## Changelog` entry. Add one terse line
+  to [the ADR changelog](../docs/adr/CHANGELOG.md):
+  `YYYY-MM-DD · summary · (PR #N) · → ADR-00NN`. A new decision needs the next free
+  number and an [architecture-index](../docs/ARCHITECTURE.md) row. A superseding
+  decision gets a new ADR and the old ADR's status becomes superseded; preserve
+  its history. ADR files register in the wiki through its glob.
+- For non-trivial fixes, resolve the TODO entry and record the incident once in
+  `todo/fixed-archive/`, indexed from `todo/fixed-archive.md`, with
+  `### [FIXED] Title`, **File(s)** (paths and commit SHA), **What**, **Fix** and
+  **Lesson**. Add a focused record for previously untracked fixes.
+- Truly trivial typos, formatting, lockfile bumps and comment-only edits need
+  neither an ADR change nor an incident. Do not duplicate an existing lesson.

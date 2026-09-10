@@ -1,29 +1,115 @@
 # Model investigation and validation
 
-Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies the shared entrypoint; current code/config and linked decisions supply operational state. Dated measurements describe their recorded regime, not a promise about today.
+<a id="ml-modeling-investigation-method"></a>
+<a id="ml-modeling--investigation-method"></a>
 
-### ML modeling & investigation method
-- **Validation proxy must match production.** A reduced/unregularized model (low-`n_estimators` LightGBM, bare Ridge) can give the **wrong sign** vs the tuned model — trust the real pipeline. Per-row subgroup preds are on `result["test_df"]` (`pred_{model}_total`); don't reimplement models.
-- **Single-seed NN overall-MAE is noise.** Judge a targeted NN fix by its subgroup metric's *direction* across ≥2 seeds (#596: seed-42 "beats LGBM" was flat at seed 123).
-- **Default 3 seeds for FP-MAE A/Bs (mean±std);** bump to 5–8 (`--seeds`) when the delta lands inside the seed band and the call hinges on it (backbone-norm flipped −0.022±0.019 → +0.007±0.034 = noise at 8 seeds). ~1.5 min/variant.
-- **Subgroup error = bias, not MAE.** Skewed FP targets give low-scoring slices (returners, role players) lower MAE regardless of quality — judge "worse on X" by bias. (MAE-delta on a *fixed* ablation slice is fine.)
-- **Ridge MAE is a diagnostic clue.** Matching deterministic Ridge MAE can suggest the intended data change did not reach training, but equal aggregate errors do not prove identical inputs. Check the actual frames, selected features, split/configuration and data fingerprints before claiming data identity or a no-op.
-- **An audit "metric-mover" can be inert — verify the activation precondition, not just the code smell.** A finding can be code-true but impact-nil: a guarded path may never fire (RB/WR/TE `min_games=1` makes the train min-games filter a no-op → #574/#531 was Δ0, latent) or the data may already be clean (nflverse PBP/weekly use modern team codes, so the #808 redzone `posteam` normalization renames nothing — *schedules*, *injuries*, and *rosters* carry legacy OAK/SD/STL, the real #728/#971 DST + #1269 inheritance cases; rosters 2012–2015 additionally use gamebook codes ARZ/BLT/CLV/HST/**SL** that even the shared relocation map misses). Check the actual data/config reality (the precondition) before benchmarking or shipping as a mover. audit-206: 2 of 3 high-sev "movers" were inert/false-positive.
-- **Analysis must match production NaN handling.** Feature stats (corr/VIF/cond) impute NaN→0 like `feature_build.py:110`, not `dropna` (which kept only ~52–59%, veteran-heavy, #594).
-- **Diagnostic data path must match the loader.** Reuse the loader's fetch/normalize, not a raw `nfl_source.*` shim that lags schema; "0 for season Y" is a schema red flag (#588→#592/#593).
-- **Verify a data effect with an A/B, not column profiling.** A test-constant / float-noise feature can map to ~−4σ post-scaler; offline split-build changes are invisible to a runtime code A/B.
-- **A/Bs & ablations go through the shared parallel harness, not bespoke loops.** The unit is `run(train,val,test,seed,config)` frame/config injection (filter or inject onto train/val, same seed, compare on `result["test_df"]`; read-only, no retrain) — note **frame injection is QB/RB/WR/TE-only; K/DST `run(seed,config)` build their own splits, so use a config mutator there (cfg-injection works for all six)** — but run it via the shared harness ([src/tuning/ab_harness.py](../src/tuning/ab_harness.py); design + caveats in [todo/ab_harness_priority.md](../todo/ab_harness_priority.md)), which: (1) **parallelizes** the position×variant×seed grid gated on `detect_platform()` — GPU-launch-bound fan-out on CUDA (5080: ~`-j6` sharing the one GPU, #670), 16-physical-core pool with capped BLAS on the 9950X3D (never SMT), `FF_AB_JOBS` override, CPU-considerate; reuse `parallel_train`/`core_pool`, don't hand-roll; (2) runs each cell **chdir+symlink-`data/`-isolated so it never clobbers served `{pos}/outputs`** (the hardcoded save path — see [tests/_pipeline_e2e_utils.py](../tests/_pipeline_e2e_utils.py)); (3) aggregates mean±std + Δ-vs-baseline with the Ridge-invariance data-identity assert. **Frame-injectors must be pre-kickoff/leakage-safe** (the sentinel won't catch a feature-side leak). Don't hand-roll sequential one-off ablations that run on CPU with the GPU idle and overwrite production artifacts (the 2026-06-08 role-inheritance A/B did all three). The older `ablate_*` scripts (`ablate_batch_lr`/`ablate_backbone_norm`/`ablate_attn_arch`) use the lower-level [src/tuning/ablation_runner.py](../src/tuning/ablation_runner.py) runner, which shares the **same `resolve_jobs` autodetect** (CUDA→6 / 9950X3D→16 physical cores / `FF_AB_JOBS` override) and the **same output-isolation** as `ab_harness` — its `--max-workers auto` now parallelizes on the CPU box too; pass `--max-workers 1` for a timing-clean ablation. The two stackable NN ablations also have stacked `ab_*` specs ([src/tuning/ab_attn_arch.py](../src/tuning/ab_attn_arch.py) / [src/tuning/ab_scheduler_type.py](../src/tuning/ab_scheduler_type.py)) for the GPU-default N=24 path — prefer those on CUDA; the `ablate_*` scripts stay the eager / per-target-table home. **Batch GPU path (ADR-0020):** the same spec runs unmodified on the Spot fleet — the production metric path (L4/sm_89, FP32+TF32 default — FP16 opt-in via `FF_AMP_DTYPE=fp16` — graphs autodetect-ON) — via [src/tuning/launch_ab.py](../src/tuning/launch_ab.py) or the `ab-batch.yml` dispatch; one Spot job per position rides the `--mode=tune` env dispatch (`FF_TUNE_AB_SPEC` → [src/tuning/ab_batch.py](../src/tuning/ab_batch.py)) with per-cell S3 checkpoint/resume under `ab_runs/{run_id}/`; for an unmerged branch, dispatch `batch-image.yml` on the branch first (non-main builds push only the SHA tag and register no job definitions; `launch_ab` clones `ff-ab-job` so production job-def names never see branch images).
-- **Check imputation-branch reachability before "fixing" it.** An upstream fillna/lag/dropna may kill the NaN first; NaN-count the column the fn receives on the real artifact — if 0, it's dead code (benign, Δ0 retrain) (#608→#609).
-- **Trust structural-equivalence.** A default-guarded new path inert on the non-prevailing device + one position byte-identical ⇒ redundant to run the others.
-- **Pipeline-hang phase misread:** `[timing] phase=X` + silence ≠ a hang in X+1 — CPU/GPU branches run concurrently; check matching CPU-branch logs first.
-- **Prove a guard FIRES (positive control) + read the right data stage.** Run the guard on the known-bad case first. Built splits drop no-snap rows, so "who was listed" comes from the `rosters` cache (incl. benched), not splits/weekly (#611).
-- **GPU-guarded code (`if torch.cuda.is_available()`) is invisible to CPU unit tests** — treat as untested; Batch dry-run before merge.
-- **Smoke ONE real Batch cell before fanning out a new A/B / feature-screen spec.** `--list` + `pytest -m unit` validate grid construction + the cfg/frame mutators against a synthetic cfg, NOT the real training pipeline (which can't run locally — macOS torch+lightgbm+sklearn libomp SIGSEGV). Spec-level degenerate arms surface only on the live fleet: the feature-screen fan-out shipped a Plackett-Burman all-drop arm (0-feature matrix → `StandardScaler` "Found array with 0 feature(s)") and arms dropping below `ridge_pca_components` (`PCA` crash) — all six jobs ended `FAILED` + RB came back degenerate, caught only post-hoc and fixed by a re-run (#1187→#1212). Dry-run, then a 1-seed/1-position `launch_ab`, confirm a cell JSON lands `ok:true`, THEN fan out.
-- **`launch_ab --env KEY=VAL` reaches the Batch *container*, not the local submitter.** An env-parametrized A/B spec (`ab_feature_subscreen` / `ab_feature_confirm`, which build their variants from env *at import*) needs the env set **locally too** — `launch_ab`'s own process imports the spec to size `--max-cells`, write the run manifest, and run its `--wait` collection. Run `FF_…=… python -m src.tuning.launch_ab … --env FF_…=…` (env in BOTH places). Without the local prefix the submitter resolves the *default*-parametrized grid; it only "looks right" when the default `(position, family)` happens to match and silently mismatches otherwise (most visibly for leave-one-out families, whose `drop_*` variant names diverge from the default Plackett-Burman `pb*`) — corrupting `--max-cells`, the manifest, and the `--wait` collection. The `feature_selection substage` / `confirm` subcommands already emit the prefix; verify a hand-edited raw `launch_ab` line with `--dry-run` (the variant list must match the intended spec, not RB/rolling).
-- **The attention NN is learned-query pooling (`AttentionPool`), NOT a transformer** — the `SelfAttentionBlock` encoder is gated off (`attn_self_layers=0`, set by no position). Verify the knob before describing it.
-- **Projection sources may include roster placeholders.** Unprojected placeholders (no stat line) scored 0.0 deflate expert MAE and can flip a conclusion — filter to genuine projections.
-- **Don't close over pipeline fns in a factory** — tests monkeypatch `src.{pos}.run_pipeline.run_pipeline`; define `run()` locally per position.
-- **Refactor LOC estimate:** a foundation PR (adds the abstraction) is LOC-positive; only the migration PR saves LOC — don't promise net drops from the foundation alone.
+## Production path
+
+- **Use the actual affected-position pipeline for NN/feature/loss/target changes,
+  including investigations.** Compare its `benchmark_history/` result with the
+  baseline; unit tests and CI do not establish metric neutrality. The K refactor
+  and QB metric-label regressions shipped on green tests without that comparison.
+  Reduced/unregularized proxies (low-tree LightGBM, bare Ridge) can give the wrong
+  sign. Use `result["test_df"]` (`pred_{model}_total`) for subgroup predictions.
+- Match the production loader's fetch/normalization, selected features,
+  `POSITION_CONFIG`, splits and NaN handling. Feature diagnostics must impute
+  NaN→0 as production does; `dropna` retained only ~52–59% of rows in #594 and
+  biased the sample toward veterans. A raw `nfl_source.*` shim can lag schemas:
+  “0 for season Y” was the warning in #588→#592/#593.
+- **Equal deterministic Ridge MAE is a clue, not proof of data identity.** Inspect
+  actual frames, selected features, split/configuration and fingerprints before
+  claiming a no-op. Verify data effects with an A/B: even a test-constant or
+  float-noise feature can map to ~−4σ after scaling, and offline split-build
+  changes are invisible to a runtime-only code A/B.
+- **Check activation preconditions before benchmarking or calling a finding a
+  metric mover.** RB/WR/TE `min_games=1` made the filter finding #574/#531 inert.
+  Likewise nflverse PBP/weekly already used modern team codes (#808); schedules,
+  injuries and rosters were the real legacy-code paths (#728/#971/#1269).
+  Rosters 2012–2015 also have ARZ/BLT/CLV/HST/SL gamebook codes beyond the shared
+  relocation map. Verify the data/configuration the branch actually receives.
+- Check imputation reachability at the function input: upstream fillna/lag/dropna
+  can remove every NaN before a proposed fix (#608→#609). **Run a positive control
+  on the known-bad case** before claiming a guard works. Choose the right stage:
+  built splits drop no-snap rows, while the `rosters` cache retains listed/benched
+  players (#611).
+- Structural-equivalence can bound extra testing: a default-guarded path inert
+  on the non-prevailing device plus one byte-identical position makes repeat runs
+  of that same inert path redundant. This does not replace checking all relevant
+  callers/configurations or executing changed GPU paths.
+
+## Metrics and subgroups
+
+- Single-seed NN overall MAE is noise. A targeted fix needs the subgroup metric's
+  direction across ≥2 seeds (#596's seed-42 win was flat at seed 123).
+- Default FP-MAE A/Bs use **3 seeds, mean±std**; increase to 5–8 when the conclusion
+  hinges on a delta inside the seed band. Backbone-norm went from
+  −0.022±0.019 to +0.007±0.034 at 8 seeds: noise, not a win.
+- Compare bias when judging errors across low-scoring subgroups; their lower MAE
+  may just reflect skewed targets. MAE deltas within a fixed ablation slice are
+  valid. Filter unprojected roster placeholders (no stat line), whose 0.0 scores
+  falsely improve expert MAE. Cross-source cohorts follow the section below.
+
+## A/B harness
+
+Use the [existing parallel entrypoints](experiments.md#running-code), not bespoke
+sequential loops. The shared [ab_harness](../src/tuning/ab_harness.py) accepts
+`run(train,val,test,seed,config)` frame/config injection. Frame injection supports
+QB/RB/WR/TE only; K/DST `run(seed,config)` build their own splits, so use config
+mutators there (config injection supports all six). Inject onto train/validation,
+compare the same seeds on `result["test_df"]`, and keep frame injectors pre-kickoff
+and leakage-safe: the Ridge-invariance sentinel cannot detect feature-side leaks
+or prove data identity. Post-run result slicing is read-only and needs no retrain.
+
+Both `ab_harness` and the older [ablation_runner](../src/tuning/ablation_runner.py)
+share `resolve_jobs` platform autodetection/`FF_AB_JOBS` and per-cell
+chdir+symlink-`data/` isolation, so hardcoded `{pos}/outputs` saves cannot overwrite
+served artifacts. Reuse `parallel_train`/`core_pool`; cap BLAS and use physical
+cores rather than SMT. Results aggregate mean±std and deltas against baseline.
+See [harness design](../todo/ab_harness_priority.md) and
+[isolation helpers](../tests/_pipeline_e2e_utils.py).
+
+Use `--max-workers 1` on legacy runners for timing-clean ablations. Choose eager
+versus stacked specs using [GPU execution stop rules](stop-rules.md#gpu-execution),
+which preserve K/DST fallbacks and the deliberately eager ablations. Never compare
+stacked and eager arms seed-by-seed. Production device/dtype/graph defaults come
+from [platform policy](platform.md#device-and-dtype-policy), not an old run label.
+
+## GPU and Batch validation
+
+- GPU-guarded code is untested by CPU unit tests. Exercise it on Batch before
+  merge. Before fanning out a new A/B or feature-screen spec, dry-run then execute
+  **one real 1-seed/1-position cell** and confirm its JSON has `ok:true`.
+  `--list` and synthetic unit checks only validate grid construction/mutators.
+  The #1187→#1212 fan-out failed all six jobs: an all-drop arm left zero features
+  for `StandardScaler`, while other arms fell below `ridge_pca_components`.
+  On the affected macOS torch/LightGBM/sklearn stack, libomp SIGSEGV prevented a
+  local pipeline substitute; a listed grid was not live-pipeline evidence.
+- The [Batch execution contract](../docs/adr/0020-batch-gpu-execution-path-for-ab-harness.md#decision)
+  covers `launch_ab`, `ab-batch.yml`, `FF_TUNE_AB_SPEC` dispatch and per-cell S3
+  checkpoint/resume. For unmerged code, build `batch-image.yml` on the branch
+  first; non-main images get only the SHA tag and `launch_ab` clones `ff-ab-job`
+  so production job-definition names never point to branch images.
+- **`launch_ab --env KEY=VAL` reaches the container, not the local submitter.**
+  Env-parametrized specs (`ab_feature_subscreen` / `ab_feature_confirm`) are
+  imported locally to size `--max-cells`, write manifests and collect `--wait`
+  results. Set the values in **both** places:
+  `FF_…=… python -m src.tuning.launch_ab … --env FF_…=…`.
+  Otherwise default `pb*` arms may silently replace intended `drop_*` arms and
+  corrupt submission/collection. `feature_selection substage` and `confirm`
+  already emit the prefix; verify hand-edited commands with `--dry-run` and the
+  intended variant list.
+
+## Investigation details
+
+- `[timing] phase=X` followed by silence does not locate a hang in X+1; CPU/GPU
+  branches run concurrently, so inspect matching CPU-branch logs first.
+- The attention NN uses learned-query pooling (`AttentionPool`); inspect
+  `attn_self_layers` before describing it as a transformer. The dormant
+  `SelfAttentionBlock` is not enabled by any production position configuration.
+- Do not close over pipeline functions in a factory: tests monkeypatch
+  `src.{pos}.run_pipeline.run_pipeline`; define `run()` locally per position.
+- An abstraction's foundation PR can add LOC; only its migration PR saves them.
+  Do not promise the foundation alone is a net reduction.
 
 ## Evaluation cohorts
 
