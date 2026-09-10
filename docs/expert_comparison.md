@@ -177,6 +177,8 @@ The refreshed **2025 expert-versus-actual** PPR summary has these ESPN results. 
 
 Regenerate the dashboard summary with `python -m src.analysis.build_comparison_summary`; run the paired comparison with `python -m src.analysis.analysis_expert_comparison`. Both include ESPN by default. The summary rebuild also refreshes other expert statistics and actual-based top-12/top-30 cohorts against current nflverse data. Model training inputs and weights are unaffected.
 
+An ESPN load/scoring failure leaves per-row values null in the current process, but the incomplete frame is not persisted or uploaded as a reusable prediction cache. The next cold boot can retry the feed; an already complete on-disk snapshot is preserved.
+
 ### Third expert: FFToday (the ≥2013 archive)
 
 **FFToday's free weekly projection archive** ([`src/analysis/fftoday_loader.py`](../src/analysis/fftoday_loader.py), wired into `analysis_expert_comparison`) is the panel's deep-history source: a genuine pre-kickoff archive back to **2010** with the correct historical slate (historical teams, since-retired players — unlike FantasyPros' current-roster-filtered history pages, see [todo/new-sources-research-2026-06.md](../todo/new-sources-research-2026-06.md)). Offense only (QB/RB/WR/TE; no K grid that maps to our targets, no DST), no fumble column (`fumbles_lost` scored as 0, a ~0.1 pt/game contributor), name-joined to `gsis_id` at **99.0%** over 2013–2025 (38,275 rows). ToS: redistribution-restricted — **internal benchmark only**, never a serving surface, never a feature.

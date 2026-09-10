@@ -316,6 +316,37 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
     )
 
 
+def test_espn_outage_cannot_publish_a_reusable_null_cache(
+    cache_dir, fingerprint_files, monkeypatch
+):
+    import src.serving.app as app_mod
+
+    uploads = []
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: uploads.append(True))
+    results = _fake_results()
+    results.attrs["espn_complete"] = False
+    app_mod._cache["results"] = results
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    core._persist_cache_to_disk()
+    assert not (cache_dir / "fingerprint.json").exists()
+    assert uploads == []
+    assert core._try_hydrate_from_disk() is False
+
+    # Once a retry succeeds, persistence/hydration resume. A later failed
+    # refresh must also leave this complete on-disk snapshot untouched.
+    results.attrs["espn_complete"] = True
+    core._persist_cache_to_disk()
+    before = (cache_dir / "predictions.parquet").read_bytes()
+    assert uploads == [True]
+    results.attrs["espn_complete"] = False
+    core._persist_cache_to_disk()
+    assert (cache_dir / "predictions.parquet").read_bytes() == before
+    assert uploads == [True]
+    app_mod._cache.clear()
+    assert core._try_hydrate_from_disk() is True
+    assert app_mod._cache["results"].attrs["espn_complete"] is True
+
+
 def test_hydrate_returns_false_on_fingerprint_mismatch(cache_dir, fingerprint_files, monkeypatch):
     import src.serving.app as app_mod
 

@@ -242,6 +242,7 @@ def _apply_expert_predictions(
     Expert feeds are an auxiliary UI comparison surface. Loader/projection failures
     leave stable NaN columns instead of breaking model serving.
     """
+    results.attrs["espn_complete"] = True
     for source in _EXPERT_PRED_PREFIXES:
         for fmt in _VALID_SCORING:
             results[_pred_col(source, fmt)] = np.nan
@@ -280,6 +281,7 @@ def _apply_expert_predictions(
         print(f"[experts] ESPN projections unavailable: {e!r}")
     if raw_espn is not None and (raw_espn.empty or "position" not in raw_espn.columns):
         raw_espn = None
+    results.attrs["espn_complete"] = raw_espn is not None
 
     for fmt in _VALID_SCORING:
         for pos in _ALL_POSITIONS:
@@ -289,6 +291,7 @@ def _apply_expert_predictions(
                     _assign_expert_totals(results, "espn", fmt, espn, "espn_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[experts] ESPN {pos}/{fmt} projection failed: {e!r}")
+                    results.attrs["espn_complete"] = False
             if raw_nflcom is not None and pos != "DST":
                 try:
                     nfl = project_nflcom_to_fantasy(raw_nflcom, pos, fmt)
@@ -1716,6 +1719,12 @@ def _persist_cache_to_disk():
     cross-process re-read needed.
     """
     if "results" not in app_pkg._cache or "metrics_by_format" not in app_pkg._cache:
+        return
+    # A temporary ESPN failure may serve nulls in this process, but must not
+    # publish a reusable all-null snapshot. A later boot then retries the feed
+    # instead of hydrating nulls forever under the same model fingerprint.
+    if app_pkg._cache["results"].attrs.get("espn_complete") is False:
+        print("[predcache] ESPN unavailable — not persisting or uploading incomplete results")
         return
     os.makedirs(_PREDICTIONS_CACHE_DIR, exist_ok=True)
     sha, files = _compute_models_fingerprint()

@@ -36,6 +36,7 @@ def test_espn_joins_all_formats_and_leaves_missing_players_null():
     assert rb.espn_pred_standard == 14
     assert pd.isna(results.iloc[1].espn_pred)
     assert pd.notna(results.iloc[2].espn_pred)
+    assert results.attrs["espn_complete"] is True
 
 
 def test_serving_core_does_not_import_analysis_package():
@@ -249,6 +250,7 @@ def test_apply_expert_predictions_loader_failure_leaves_stable_null_columns():
         results, nflcom_loader=_boom, rotowire_loader=_boom, espn_loader=_boom
     )
     assert results.espn_pred.isna().all()
+    assert results.attrs["espn_complete"] is False
 
     for source in ("nflcom", "rotowire"):
         for scoring in ("ppr", "half_ppr", "standard"):
