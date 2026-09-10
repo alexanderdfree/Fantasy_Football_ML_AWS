@@ -128,13 +128,15 @@ def _compute_features(df: pd.DataFrame) -> None:
         player_w, team_w, out=np.zeros_like(player_w), where=team_w > 0
     )
     # Leakage-safe rolling forms (rolling_agg shift=1) → whitelist (Ridge/LGBM/NN-static).
-    df["opportunity_index_L3"] = rolling_agg(
-        df, "game_opportunity_index", grp, window=3, agg="mean"
-    )
+    # Team-relative shares restart when the player joins a different team.
+    # Raw personal red-zone target volume retains its player-season window.
+    for source, target in (
+        ("game_opportunity_index", "opportunity_index_L3"),
+        ("redzone_target_share", "redzone_target_share_L3"),
+    ):
+        df_merged[source] = df[source].to_numpy()
+        df[target] = rolling_agg(df_merged, source, stint_grp, window=3, agg="mean").to_numpy()
     df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
-    df["redzone_target_share_L3"] = rolling_agg(
-        df, "redzone_target_share", grp, window=3, agg="mean"
-    )
     # Prior-season catch rate (S-1 → S), low-volume-guarded like src/rb/features.py.
     if {"prior_season_mean_receptions", "prior_season_mean_targets"} <= set(df.columns):
         catch_rate = safe_divide(

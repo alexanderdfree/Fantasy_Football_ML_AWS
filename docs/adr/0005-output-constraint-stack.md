@@ -17,8 +17,27 @@
 
 **Chosen rationale.** Each constraint was added in response to a specific observed failure, not as a precaution. This ADR captures them together because they form a *coherent* stack — remove any one and a specific failure mode returns. Choosing *which* hurdle family to use on which head is a per-position config call (see RB ablation in [todo/fixed-archive.md](../../todo/fixed-archive.md)).
 
+**Truncated-count expectation.** The hurdle likelihood parameterizes the
+underlying NB/Poisson law with raw mean `mu`. Its conditional positive mean is
+`mu / (1 - P0)`, where NB2 uses `P0 = (1 + alpha * mu)^(-1 / alpha)` and Poisson
+uses `P0 = exp(-mu)`. The reported marginal prediction multiplies this mean by
+`sigmoid(gate_logit)`. For example, NB2 `mu=1, alpha=1` has a positive mean of 2;
+a gate probability of 0.5 therefore predicts 1. Treating raw `mu` as the positive
+mean incorrectly predicts 0.5 even when the likelihood parameters fit exactly.
+
+The transformation uses torch `log1p`/`expm1` so small rates retain positive
+mass without subtracting nearly equal floating-point values. Raw `value_mu`
+and `value_log_alpha` remain the NLL inputs; a separate conditional-mean output
+feeds diagnostics. Loss-family metadata selects this conversion only for
+`hurdle_negbin` and `hurdle_poisson`. Ordinary gated Poisson retains `p * mu`,
+and the base MLP's existing Huber fallback is unchanged. This adds no parameter
+or tensor-shape changes: serving applies the same corrected expectation to
+existing checkpoints fitted by these likelihoods.
+
 **References.** [src/shared/neural_net.py:274-305](../../src/shared/neural_net.py) (`non_negative_targets` set + per-head clamp), [src/shared/training.py](../../src/shared/training.py) (`MultiTargetLoss` with Huber; `hurdle_negbin_value_loss` / `hurdle_poisson_value_loss` + their ZTNB/ZTP log-pmfs), [src/dst/config.py:174](../../src/dst/config.py) (`nn_non_negative_targets=set(_TARGETS)` — after the commit `cc0c627` migration all 10 raw DST heads are non-negative, so the set is simply the full target list; the `pts_allowed_bonus` head that used to warrant DST opting out of the global clamp is no longer a head — its negative values are produced downstream by the tier-lookup in `src/shared/aggregate_targets.py`), feature clipping in [src/shared/pipeline.py](../../src/shared/pipeline.py). The `GatedHead` is now parameterized over a list of gated targets (`RB` has three: `receptions`, `rushing_tds`, `receiving_tds`; `WR`/`TE` have two: `receptions`, `receiving_tds`; `QB`, `K`, and `DST` have none — see D2). See also [todo/fixed-archive.md](../../todo/fixed-archive.md) for each bug history.
 
 ## Changelog
+
+- **2026-09-10** — Repair the hurdle head's mean-parameter interpretation, with discrete first-moment, gradient, raw-likelihood, serving-reload and stacked-forward controls. Active reception heads are RB/WR/TE; the available hurdle-Poisson primitive gets the same mathematical correction without enabling it. (PR pending)
 
 - **2026-05-20** — D5 extended with `hurdle_poisson` loss family (zero-truncated Poisson on positives + BCE gate) as an available primitive alongside `hurdle_negbin`. RB sparse-count ablation (Variants D/E/Bf added to `src/tuning/ablate_rb_gate.py`) showed Variant E (hurdle_poisson on rushing_tds, receiving_tds, fumbles_lost) wins per-target MAE — count_sum 0.353 vs Ridge 0.369 — but regresses aggregate FP MAE +0.163 vs current Variant C. **Rejected for shipping**; primitive kept available for future use, current RB config unchanged.

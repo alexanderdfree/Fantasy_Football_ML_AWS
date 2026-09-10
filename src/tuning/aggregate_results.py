@@ -167,8 +167,8 @@ def main():
         "--search-space-version",
         default=os.environ.get("TUNE_NN_STORAGE_VERSION", SEARCH_SPACE_VERSION),
         help=(
-            "Storage namespace under tune_nn/ to aggregate. Batch MPS+graph tuning "
-            "passes scheduler_v2_mps_graph."
+            "Storage namespace under tune_nn/ to aggregate; explicit historical "
+            "names remain supported. Use --batch-cuda-graph to match current Batch defaults."
         ),
     )
     storage.add_argument(

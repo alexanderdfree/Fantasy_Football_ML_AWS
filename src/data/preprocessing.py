@@ -112,7 +112,8 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         "special_teams_tds",
     ]
     existing_stat_cols = [c for c in stat_cols if c in df.columns]
-    all_zero = df[existing_stat_cols].fillna(0).sum(axis=1) == 0
+    # Attempts and signed yards can cancel despite an observed play.
+    all_zero = df[existing_stat_cols].fillna(0).eq(0).all(axis=1)
     no_snaps = (
         df["snap_pct"].isna() if "snap_pct" in df.columns else pd.Series(True, index=df.index)
     )

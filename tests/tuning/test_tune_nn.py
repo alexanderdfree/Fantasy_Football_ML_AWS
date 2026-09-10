@@ -428,17 +428,17 @@ def test_trial_to_params_rejects_stale_scheduler_mismatch():
 
 
 def test_study_storage_is_versioned_for_scheduler_search_space():
-    assert tune_nn._study_name("RB") == "nn_scheduler_v2_rb"
-    assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v2_rb.db"
-    assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v2/rb"
+    assert tune_nn._study_name("RB") == "nn_scheduler_v3_rb"
+    assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v3_rb.db"
+    assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v3/rb"
 
 
 def test_mps_graph_storage_profile_is_separate_from_eager():
     version = tune_nn._resolve_search_space_version("mps", cuda_graph=True)
-    assert version == "scheduler_v2_mps_graph"
-    assert tune_nn._study_name("RB", version) == "nn_scheduler_v2_mps_graph_rb"
-    assert tune_nn._study_db_path("RB", version) == "tune_nn_scheduler_v2_mps_graph_rb.db"
-    assert tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v2_mps_graph/rb"
+    assert version == "scheduler_v3_mps_graph"
+    assert tune_nn._study_name("RB", version) == "nn_scheduler_v3_mps_graph_rb"
+    assert tune_nn._study_db_path("RB", version) == "tune_nn_scheduler_v3_mps_graph_rb.db"
+    assert tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v3_mps_graph/rb"
 
 
 def test_thread_graph_storage_profile_is_separate_from_eager():
@@ -446,10 +446,10 @@ def test_thread_graph_storage_profile_is_separate_from_eager():
     cutover) must not resume the eager local study — full 2x2 backend×graph
     namespace matrix."""
     assert tune_nn._resolve_search_space_version("thread", cuda_graph=True) == (
-        "scheduler_v2_graph"
+        "scheduler_v3_graph"
     )
-    assert tune_nn._resolve_search_space_version("thread", cuda_graph=False) == "scheduler_v2"
-    assert tune_nn._resolve_search_space_version("mps", cuda_graph=False) == "scheduler_v2_mps"
+    assert tune_nn._resolve_search_space_version("thread", cuda_graph=False) == "scheduler_v3"
+    assert tune_nn._resolve_search_space_version("mps", cuda_graph=False) == "scheduler_v3_mps"
 
 
 def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
@@ -459,22 +459,22 @@ def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
     provenance."""
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graph", True, False)
-    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps_graph", True, False)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v3_graph", True, False)
+    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v3_mps_graph", True, False)
 
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: True)
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graphfull", True, True)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v3_graphfull", True, True)
     assert tune_nn._resolve_storage_version("mps") == (
-        "scheduler_v2_mps_graphfull",
+        "scheduler_v3_mps_graphfull",
         True,
         True,
     )
 
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
     # full requires the base gate: full-true + graph-false -> eager namespace.
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2", False, True)
+    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v3", False, True)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps", False, False)
+    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v3_mps", False, False)
 
 
 def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch):
@@ -488,12 +488,12 @@ def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch)
     monkeypatch.setenv("FF_CUDA_GRAPH", "1")
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("mps")[0] == "scheduler_v2_mps"
+    assert tune_nn._resolve_storage_version("mps")[0] == "scheduler_v3_mps"
     # sm_80+ box + env unset: autodetect captures -> graph namespace.
     monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v2_graph"
+    assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v3_graph"
 
 
 def test_concurrent_thread_trials_force_eager(monkeypatch, capsys):
@@ -1072,11 +1072,11 @@ def test_graphfull_storage_profiles_compose_only_with_graph():
     full-step capture requires the base graph gate, so full-without-graph
     resolves to the plain namespace instead of an unreachable one."""
     rs = tune_nn._resolve_search_space_version
-    assert rs("mps", cuda_graph=True, full_graph=True) == "scheduler_v2_mps_graphfull"
-    assert rs("thread", cuda_graph=True, full_graph=True) == "scheduler_v2_graphfull"
-    assert rs("mps", cuda_graph=False, full_graph=True) == "scheduler_v2_mps"
-    assert rs("thread", cuda_graph=False, full_graph=True) == "scheduler_v2"
-    assert rs("mps", cuda_graph=True, full_graph=False) == "scheduler_v2_mps_graph"
+    assert rs("mps", cuda_graph=True, full_graph=True) == "scheduler_v3_mps_graphfull"
+    assert rs("thread", cuda_graph=True, full_graph=True) == "scheduler_v3_graphfull"
+    assert rs("mps", cuda_graph=False, full_graph=True) == "scheduler_v3_mps"
+    assert rs("thread", cuda_graph=False, full_graph=True) == "scheduler_v3"
+    assert rs("mps", cuda_graph=True, full_graph=False) == "scheduler_v3_mps_graph"
 
 
 # ---------------------------------------------------------------------------

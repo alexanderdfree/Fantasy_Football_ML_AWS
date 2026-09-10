@@ -1,6 +1,8 @@
 # ADR Changelog
 
 - 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR pending) · → ADR-0011, ADR-0014
+- 2026-09-10 · Correct truncated-count expectations and conditional diagnostics; weight validation losses by observations and separate the corrected tuning objective namespaces · (PR pending) · → ADR-0002, ADR-0005, ADR-0015
+- 2026-09-10 · Preserve played signed-stat rows, fit D/ST imputation within each fold, and isolate concurrent tuner capture and stacked study lookup · (PR pending) · → ADR-0001, ADR-0015
 
 - 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR #1554) · → ADR-0017
 - 2026-09-10 · Delete superseded recommendations and consolidate agent rules and memory retrieval pointers · (PR #1553) · → ADR-0025

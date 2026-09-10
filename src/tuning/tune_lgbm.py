@@ -242,9 +242,11 @@ def _prepare_cv_folds(pos, cfg):
         from src.config import TRAIN_SEASONS, VAL_SEASONS
         from src.dst.data import build_data
         from src.dst.features import compute_features
+        from src.dst.run_pipeline import with_fold_imputation
         from src.dst.targets import compute_targets
 
-        dst_df = build_data()
+        dst_df = build_data(impute_context=False)
+        cfg = with_fold_imputation(cfg)
         dst_df = compute_targets(dst_df)
         compute_features(dst_df)
         train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()

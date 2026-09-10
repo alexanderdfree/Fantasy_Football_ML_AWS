@@ -15,6 +15,9 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] Model expectations, fold preprocessing and tuning boundaries diverged
+[Read the incident record](fixed-archive/model-data-tuning-audit-2026-09.md).
+
 ### [FIXED] Input caches omitted implementation, lookup, selector and completion identity
 [Read the incident record](fixed-archive/runtime-data-cache-audit-2026-09.md).
 

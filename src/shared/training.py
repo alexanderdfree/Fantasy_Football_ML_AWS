@@ -1642,7 +1642,7 @@ class MultiHeadTrainer:
             # ``MultiTargetLoss._compute_loss_components`` (tensor-valued
             # components) instead of ``forward`` (float-valued).
             val_components_accum: dict[str, torch.Tensor] = {}
-            n_val_batches = 0
+            n_val_samples = 0
 
             with torch.no_grad():
                 if self._graphed_val is not None:
@@ -1653,14 +1653,16 @@ class MultiHeadTrainer:
                     # .item() syncs below).
                     gval = self._graphed_val
                     gval.replay()
-                    epoch_val_loss = epoch_val_loss + gval.loss_sum
+                    # The graph sums means of equally sized full batches.
+                    # Convert that prefix to a sample sum before adding its tail.
+                    epoch_val_loss = epoch_val_loss + gval.loss_sum * gval._bs
                     for k, acc in gval.comp_sums.items():
                         if k not in val_components_accum:
                             val_components_accum[k] = torch.zeros(
                                 (), device=self.device, dtype=torch.float32
                             )
-                        val_components_accum[k] = val_components_accum[k] + acc
-                    n_val_batches += gval.k
+                        val_components_accum[k] = val_components_accum[k] + acc * gval._bs
+                    n_val_samples += gval._n_fixed
                     for k in self.target_names:
                         all_preds[k].append(gval.pred_bufs[k])
                         all_targets[k].append(gval.target_prefix[k])
@@ -1672,14 +1674,17 @@ class MultiHeadTrainer:
                         preds, y_batch = self._forward_batch(batch)
                         loss, components = self.criterion._compute_loss_components(preds, y_batch)
 
-                    epoch_val_loss = epoch_val_loss + loss.detach().float()
+                    n_batch_samples = y_batch[self.target_names[0]].shape[0]
+                    epoch_val_loss = epoch_val_loss + loss.detach().float() * n_batch_samples
                     for k, v in components.items():
                         if k not in val_components_accum:
                             val_components_accum[k] = torch.zeros(
                                 (), device=self.device, dtype=torch.float32
                             )
-                        val_components_accum[k] = val_components_accum[k] + v.detach().float()
-                    n_val_batches += 1
+                        val_components_accum[k] = (
+                            val_components_accum[k] + v.detach().float() * n_batch_samples
+                        )
+                    n_val_samples += n_batch_samples
 
                     for k in self.target_names:
                         # Defer device→host transfer to one ``torch.cat(...)``
@@ -1690,9 +1695,9 @@ class MultiHeadTrainer:
                         all_targets[k].append(y_batch[k].detach())
 
             # Single end-of-epoch sync (forces accumulator off-GPU). Guard
-            # against ``n_val_batches == 0`` — same rationale as the train
-            # NaN guard above.
-            avg_val_loss = (epoch_val_loss / n_val_batches).item() if n_val_batches > 0 else 0.0
+            # against an empty loader. Weight each observation equally rather
+            # than giving a short final batch the weight of a full batch.
+            avg_val_loss = (epoch_val_loss / n_val_samples).item() if n_val_samples > 0 else 0.0
             history["val_loss"].append(avg_val_loss)
 
             if self.epoch_callback is not None:
@@ -1705,9 +1710,9 @@ class MultiHeadTrainer:
             # (was per-batch via ``.item()`` inside ``MultiTargetLoss.forward``).
             for t in self.target_names:
                 key = f"loss_{t}"
-                if key in val_components_accum and n_val_batches > 0:
+                if key in val_components_accum and n_val_samples > 0:
                     history[f"val_loss_{t}"].append(
-                        (val_components_accum[key] / n_val_batches).item()
+                        (val_components_accum[key] / n_val_samples).item()
                     )
                 else:
                     history[f"val_loss_{t}"].append(0.0)
@@ -1721,7 +1726,7 @@ class MultiHeadTrainer:
             # comparison as ``inf < float('inf')`` = False, silently disabling
             # the early-stop reset and the best-checkpoint save.
             for k in self.target_names:
-                if n_val_batches > 0:
+                if n_val_samples > 0:
                     y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
                     y_true_all = torch.cat(all_targets[k]).cpu().numpy()
                     history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
