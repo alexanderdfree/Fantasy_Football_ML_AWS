@@ -258,7 +258,7 @@ def fake_schedules():
                     "home_team": "KC",
                     "home_score": 24,
                     "away_score": 17,
-                    "spread_line": -3.0,
+                    "spread_line": 3.0,
                     "total_line": 47.0,
                     "roof": "outdoors",
                     "surface": "grass",

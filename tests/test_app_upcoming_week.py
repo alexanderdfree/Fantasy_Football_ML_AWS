@@ -182,9 +182,10 @@ def test_fill_current_week_context_carries_forward_and_defaults():
     # remaps it to the train-mean of real ranks — the neutral no-data value), not 3
     # (which would standardize as a real rank-3, a train/serve mismatch, #1270).
     assert rook["depth_chart_rank"] == -1.0
-    # Current-health columns default to active / full practice for everyone.
+    # Missing practice reports remain unknown until fitted-mean imputation.
     assert set(out["game_status"]) == {1.0}
-    assert set(out["practice_status"]) == {2.0}
+    assert out["practice_status"].isna().all()
+    assert out["_practice_status_missing"].all()
 
 
 @pytest.mark.unit
@@ -225,7 +226,7 @@ def test_fill_current_week_context_live_signals_win():
     assert vet["game_status"] == 0.5
     assert healthy["game_status"] == 1.0
     # practice_status is never filled from ESPN -> always the default.
-    assert set(out["practice_status"]) == {2.0}
+    assert out["practice_status"].isna().all()
 
 
 @pytest.mark.unit
@@ -281,8 +282,8 @@ def test_fill_current_week_context_practice_and_contracts():
     assert pd.isna(fresh["contract_apy_cap_pct"])
     # Live practice_status overrides the default; others stay healthy.
     assert vet["practice_status"] == 1.0
-    assert carryonly["practice_status"] == 2.0
-    assert fresh["practice_status"] == 2.0
+    assert pd.isna(carryonly["practice_status"])
+    assert pd.isna(fresh["practice_status"])
 
 
 @pytest.mark.unit
@@ -614,6 +615,7 @@ def test_run_upcoming_inference_passes_season_context_and_slices_week(monkeypatc
             "recent_team": ["SEA"] * 4,
             "season": [2026] * 4,
             "week": [1, 2, 3, 4],
+            "_is_upcoming": [False, False, False, True],
             "opponent_team": ["NE", "SF", "LA", "ARI"],
             "is_home": [1, 0, 1, 0],
         }
@@ -621,7 +623,7 @@ def test_run_upcoming_inference_passes_season_context_and_slices_week(monkeypatc
     roster = pd.DataFrame({"player_id": ["00-1"], "espn_name": ["A"], "espn_id": ["10"]})
     slate = pd.DataFrame({"recent_team": ["SEA"], "spread_line": [3.5], "total_line": [44.5]})
 
-    tiny = pd.DataFrame({"player_id": [], "season": [], "week": []})
+    tiny = pd.DataFrame({"player_id": ["old"], "season": [2024], "week": [1]})
     monkeypatch.setattr(upcoming_week.core, "_ensure_base_data", lambda: None)
     monkeypatch.setattr(upcoming_week.app_pkg, "_cache", {"splits": {"RB": (tiny, tiny, tiny)}})
 
@@ -748,17 +750,18 @@ def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
     roster = pd.DataFrame({"player_id": ["00-1"], "position": ["RB"], "recent_team": ["SEA"]})
     slate = pd.DataFrame({"recent_team": ["SEA"], "opponent_team": ["NE"], "is_home": [1]})
 
-    monkeypatch.setattr(upcoming_week, "_load_history", lambda: history)
+    monkeypatch.setattr(upcoming_week, "_load_history", lambda *args: history)
     monkeypatch.setattr(
         upcoming_week,
         "build_features",
         lambda combined, injuries_df=None, rosters_df=None: combined,
     )
 
-    out = upcoming_week.build_upcoming_week_frame(2026, 4, slate, roster)
+    out = upcoming_week.build_upcoming_week_frame(2026, 4, slate, roster, schedules=pd.DataFrame())
 
     ctx = out[out["week"] < 4]
-    # Completed current-season weeks only: no prior-season rows.
+    # Keep the held-out year too: downstream career/debut features need it.
+    assert len(out[out["season"].eq(2025)]) == 1
     assert sorted(ctx["week"]) == [1, 2, 3]
     assert set(ctx["season"]) == {2026}
     # Prior-week rows pass through untouched by the context fill.

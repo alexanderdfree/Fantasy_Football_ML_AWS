@@ -208,19 +208,52 @@ def contracts() -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_contracts())
 
 
-# nflreadpy 0.1.5 has no QBR loader, so QBR comes straight from the nflverse
-# espnscrapeR-data CSV — the same source nfl_data_py.import_qbr read. ESPN-id
-# keyed (bridged to gsis downstream via player_ids()).
+# nflreadpy 0.1.5 has no QBR loader. Follow nflreadr's maintained release;
+# espnscrapeR-data/master/data/qbr-nfl-weekly.csv stopped updating in 2023.
 _QBR_WEEKLY_URL = (
-    "https://raw.githubusercontent.com/nflverse/espnscrapeR-data/master/data/qbr-nfl-weekly.csv"
+    "https://github.com/nflverse/nflverse-data/releases/download/espn_data/qbr_week_level.parquet"
 )
 
 
+def _validated_qbr_games(qbr: pd.DataFrame, schedule: pd.DataFrame) -> pd.DataFrame:
+    """Keep regular-season QBR tied to a completed game in the stated season.
+
+    The maintained feed has published an entire prior season under the new
+    season label (2026 repeated all 540 2025 rows). Validate ESPN game identity
+    AND season/week; a recent file timestamp cannot detect that corruption.
+    """
+    required = {"season", "game_id", "game_week", "season_type"}
+    sched_required = {"season", "week", "espn", "game_type", "home_score", "away_score", "gameday"}
+    if not required.issubset(qbr) or not sched_required.issubset(schedule):
+        raise ValueError(
+            "QBR game validation requires season/week/game IDs and completed schedules"
+        )
+    regular = qbr["season_type"].astype(str).str.lower().isin(["regular", "reg"])
+    q = qbr.loc[regular].copy()
+    played = schedule.loc[
+        schedule["game_type"].eq("REG")
+        & schedule["home_score"].notna()
+        & schedule["away_score"].notna()
+        & pd.to_datetime(schedule["gameday"], errors="coerce", utc=True).le(pd.Timestamp.now("UTC"))
+    ].copy()
+    qkeys = pd.MultiIndex.from_arrays(
+        [pd.to_numeric(q[c], errors="coerce") for c in ("season", "game_week", "game_id")]
+    )
+    skeys = pd.MultiIndex.from_arrays(
+        [pd.to_numeric(played[c], errors="coerce") for c in ("season", "week", "espn")]
+    ).dropna()
+    valid = qkeys.isin(skeys)
+    if not valid.all():
+        print(f"WARNING: rejected {int((~valid).sum())} QBR rows without a matching completed game")
+    return q.loc[valid].copy()
+
+
 def qbr_weekly(seasons: list[int]) -> pd.DataFrame:
-    """Weekly ESPN QBR from the nflverse espnscrapeR-data CSV, filtered to the
-    requested season range. Read with pandas directly (not nflreadpy — it has
-    no QBR loader); already pandas, so no Polars conversion needed."""
-    df = pd.read_csv(_QBR_WEEKLY_URL)
-    if seasons and "season" in df.columns:
-        df = df[df["season"].between(min(seasons), max(seasons))]
-    return df
+    """Maintained weekly QBR, validated against completed regular-season games."""
+    seasons = _native_int_seasons(seasons)
+    df = pd.read_parquet(_QBR_WEEKLY_URL)
+    if seasons:
+        df = df[df["season"].isin(seasons)]
+    if df.empty:
+        return df
+    return _validated_qbr_games(df, schedules(seasons or df["season"].unique().tolist()))

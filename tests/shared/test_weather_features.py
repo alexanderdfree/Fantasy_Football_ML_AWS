@@ -44,7 +44,7 @@ def test_build_team_schedule_lookup_negates_away_spread_line():
             "week": [1],
             "home_team": ["KC"],
             "away_team": ["BUF"],
-            "spread_line": [-3.0],  # home (KC) favored by 3
+            "spread_line": [3.0],  # nflverse: home (KC) favored by 3
             "total_line": [47.0],
             "roof": ["outdoors"],
             "surface": ["grass"],
@@ -59,11 +59,10 @@ def test_build_team_schedule_lookup_negates_away_spread_line():
     kc = lookup[lookup["recent_team"] == "KC"].iloc[0]
     buf = lookup[lookup["recent_team"] == "BUF"].iloc[0]
     # Home keeps the raw home-perspective sign; away is negated to own-team.
-    assert kc["spread_line"] == -3.0
-    assert buf["spread_line"] == 3.0
-    # implied_team_total stays sign-aware (unchanged by this fix).
-    assert kc["implied_team_total"] == pytest.approx(25.0)  # (47 - (-3)) / 2
-    assert buf["implied_team_total"] == pytest.approx(22.0)  # (47 + (-3)) / 2
+    assert kc["spread_line"] == 3.0
+    assert buf["spread_line"] == -3.0
+    assert kc["implied_team_total"] == pytest.approx(25.0)  # (47 + 3) / 2
+    assert buf["implied_team_total"] == pytest.approx(22.0)  # (47 - 3) / 2
 
 
 @pytest.mark.unit
@@ -97,10 +96,10 @@ class TestMergeScheduleFeatures:
     @patch("src.shared.weather_features._load_schedules")
     def test_implied_totals_math(self, mock_load, fake_schedules, player_df_factory):
         mock_load.return_value = fake_schedules
-        # KC is home team with spread_line=-3.0, total_line=47.0
+        # KC is home team with spread_line=3.0, total_line=47.0
         df = player_df_factory("KC", n_weeks=1)
         result = merge_schedule_features(df)
-        # implied_team_total = (47 - (-3)) / 2 = 25.0
+        # implied_team_total = (47 + 3) / 2 = 25.0
         assert pytest.approx(result["implied_team_total"].iloc[0], abs=0.1) == 25.0
         # implied_opp_total = 47 - 25 = 22.0
         assert pytest.approx(result["implied_opp_total"].iloc[0], abs=0.1) == 22.0

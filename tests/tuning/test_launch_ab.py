@@ -90,7 +90,8 @@ def test_resolve_job_definition_reuses_matching_revision():
     batch.register_job_definition.assert_not_called()
 
 
-def test_submit_ab_job_shape():
+@pytest.mark.parametrize("data_prefix", [None, "data/validation/live-data-fix"])
+def test_submit_ab_job_shape(data_prefix):
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "job-1"}
 
@@ -106,6 +107,7 @@ def test_submit_ab_job_shape():
         cuda_graph="false",
         attempt_timeout=3600,
         batch_client=batch,
+        **({"data_prefix": data_prefix} if data_prefix else {}),
     )
 
     assert (pos, job_id) == ("RB", "job-1")
@@ -128,7 +130,7 @@ def test_submit_ab_job_shape():
     assert env["FF_CUDA_GRAPH"] == "0"
     # S3 data bootstrap for _ensure_data_from_s3 inside the container.
     assert env["S3_BUCKET"] == launch_ab.S3_BUCKET
-    assert env["S3_DATA_PREFIX"] == "data"
+    assert env["S3_DATA_PREFIX"] == (data_prefix or "data")
 
 
 def test_submit_ab_job_auto_graph_forwards_nothing():

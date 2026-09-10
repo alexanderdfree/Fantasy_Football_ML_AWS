@@ -178,6 +178,7 @@ def submit_ab_job(
     image_sha: str,
     seeds: list[int] | None,
     only: list[str] | None,
+    data_prefix: str = "data",
     cuda_graph: str = "auto",
     feature_cache: bool = False,
     stacked: bool = False,
@@ -202,7 +203,7 @@ def submit_ab_job(
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     environment = [
         {"name": "S3_BUCKET", "value": S3_BUCKET},
-        {"name": "S3_DATA_PREFIX", "value": "data"},
+        {"name": "S3_DATA_PREFIX", "value": data_prefix},
         {"name": "FF_DEVICE", "value": "cuda"},
         {"name": ENV_SPEC, "value": spec_dotted},
         {"name": ENV_RUN_ID, "value": run_id},
@@ -322,6 +323,7 @@ def _print_plan(spec, *, args, run_id: str, image_sha: str, cells: int) -> None:
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:        {AWS_REGION}")
     print(f"  bucket:        {S3_BUCKET}")
+    print(f"  data prefix:   {args.data_prefix}")
     print(f"  queue:         {JOB_QUEUE}")
     print(
         f"  job def:       {AB_JOB_DEFINITION} (cloned from {JOB_DEFINITION}, image ff-training:{image_sha})"
@@ -349,6 +351,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--spec", required=True, help="Dotted A/B spec module (e.g. src.tuning.ab_example)"
     )
     p.add_argument("--positions", nargs="+", help="Override the spec's POSITIONS")
+    p.add_argument(
+        "--data-prefix",
+        default="data",
+        help="S3 prefix containing train/val/test.parquet; use a separate prefix for data-change validation",
+    )
     p.add_argument("--seeds", type=int, nargs="+", help="Override the spec's SEEDS")
     p.add_argument("--only", nargs="+", help="Run only these variant names (baseline always kept)")
     p.add_argument(
@@ -552,6 +559,7 @@ def main() -> None:
                 image_sha=image_sha,
                 seeds=args.seeds,
                 only=args.only,
+                data_prefix=args.data_prefix,
                 cuda_graph=args.cuda_graph,
                 feature_cache=args.feature_cache,
                 stacked=args.stacked_seeds,
@@ -585,6 +593,7 @@ def main() -> None:
             "variants": list(spec.variants),
             "baseline": spec.baseline,
             "image_sha": image_sha,
+            "data_prefix": args.data_prefix,
             "job_definition": job_definition,
             "cuda_graph": args.cuda_graph,
             "extra_env": extra_env or None,

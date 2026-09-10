@@ -137,6 +137,7 @@ tests: [tests/tuning/test_ab_batch.py](../../tests/tuning/test_ab_batch.py),
 ## Changelog
 
 - **2026-09-10** — Consolidated local eager jobs, A/B cells, and stacked groups onto `src/tuning/_execution.py`: one grid executor with a fresh spawned process per parallel unit and shared output isolation. `ablation_runner.py` retains the eager job/report compatibility interface, including per-target tables, timing-clean serial execution, and primed-cache access. Batch entrypoints retain their env/result contracts and reuse checkpoint/provenance helpers; no production training recipe or stacked default changes.
+- **2026-09-10** — The launcher accepts `--data-prefix` (default `data`) and records it in the run manifest. Data-source corrections can now benchmark isolated train/validation/test objects before publishing production splits; raw caches retain the existing production source. (PR pending.)
 
 - **2026-06-11** — Initial decision: per-position Spot jobs via the
   `--mode=tune` env dispatch, per-cell S3 checkpoint/resume, `ff-ab-job`

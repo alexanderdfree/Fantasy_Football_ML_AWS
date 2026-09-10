@@ -538,6 +538,8 @@ def test_fetch_slate_handles_missing_odds(monkeypatch):
             "is_scheduled": True,
         },
     ]
+    for game in games:
+        game.update(kickoff="2026-10-11T17:00Z", venue={}, neutral_site=False, forecast_temp=None)
     monkeypatch.setattr(espn_live, "fetch_games", lambda season, week: games)
 
     team_rows, sched_rows = espn_live.fetch_slate(2026, 5)

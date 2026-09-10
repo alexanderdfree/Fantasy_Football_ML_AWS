@@ -262,10 +262,12 @@ def _parse_scoreboard_games(payload: dict) -> list[dict]:
                 "home_team_id": str(home["team"].get("id")) if home["team"].get("id") else None,
                 "away_team_id": str(away["team"].get("id")) if away["team"].get("id") else None,
                 "is_scheduled": status == "STATUS_SCHEDULED",
-                "kickoff": ev.get("date"),
+                "kickoff": comp.get("date") or ev.get("date"),
                 "venue_name": venue.get("fullName"),
                 "venue_indoor": venue.get("indoor"),
                 "neutral_site": bool(comp.get("neutralSite")),
+                "venue": venue,
+                "forecast_temp": (ev.get("weather") or {}).get("temperature"),
                 # ESPN spread is negative = home favored; flip to nflverse sign.
                 "spread_line": (-espn_spread if espn_spread is not None else None),
                 "total_line": total_line,
@@ -477,6 +479,8 @@ def fetch_slate(season: int, week: int) -> tuple[pd.DataFrame, pd.DataFrame]:
                 "venue_name": g.get("venue_name"),
                 "venue_indoor": g.get("venue_indoor"),
                 "neutral_site": g.get("neutral_site", False),
+                "venue": g.get("venue", {}),
+                "forecast_temp": g.get("forecast_temp"),
             }
         )
         for side, team, opp in (

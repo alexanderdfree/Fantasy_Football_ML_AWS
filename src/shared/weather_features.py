@@ -80,8 +80,8 @@ def build_implied_team_total_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
 
     Single source of truth for the implied-total formula — ``spread_line`` is
     from the home perspective, so the home team's implied total is
-    ``(total_line - spread_line) / 2`` and the away team's is
-    ``(total_line + spread_line) / 2``. Both ``merge_schedule_features`` (full
+    ``(total_line + spread_line) / 2`` and the away team's is
+    ``(total_line - spread_line) / 2``. Both ``merge_schedule_features`` (full
     weather merge, downstream of ``_build_team_schedule_lookup``) and
     ``src.features.engineer._build_defense_matchup_features`` (the tests' direct
     ``build_features`` path, without the wider weather merge) consume this
@@ -98,9 +98,9 @@ def build_implied_team_total_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     sched["home_team"] = sched["home_team"].replace(TEAM_CODE_NORMALIZATION)
     sched["away_team"] = sched["away_team"].replace(TEAM_CODE_NORMALIZATION)
 
-    # spread_line is from home perspective (negative = home favored).
-    home_total = (sched["total_line"] - sched["spread_line"]) / 2
-    away_total = (sched["total_line"] + sched["spread_line"]) / 2
+    # nflverse's positive spread means the home team is favored.
+    home_total = (sched["total_line"] + sched["spread_line"]) / 2
+    away_total = (sched["total_line"] - sched["spread_line"]) / 2
 
     home = pd.DataFrame(
         {
@@ -148,8 +148,8 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     home["is_home_sched"] = 1
     home["team_rest"] = home["home_rest"]
     home["opp_rest"] = home["away_rest"]
-    # spread_line is from home perspective (negative = home favored)
-    home["implied_team_total"] = (home["total_line"] - home["spread_line"]) / 2
+    # nflverse's positive spread means the home team is favored.
+    home["implied_team_total"] = (home["total_line"] + home["spread_line"]) / 2
 
     # Away team rows
     away = sched.copy()
@@ -157,7 +157,7 @@ def _build_team_schedule_lookup(schedules: pd.DataFrame) -> pd.DataFrame:
     away["is_home_sched"] = 0
     away["team_rest"] = away["away_rest"]
     away["opp_rest"] = away["home_rest"]
-    away["implied_team_total"] = (away["total_line"] + away["spread_line"]) / 2
+    away["implied_team_total"] = (away["total_line"] - away["spread_line"]) / 2
     # nflverse ``spread_line`` is from the HOME team's perspective. Negate it for
     # away rows so the merged-back value means "this team is favored by N" on
     # both home and away rows — matching the sign-aware ``implied_team_total``
