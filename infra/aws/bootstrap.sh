@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stand up the full ECS/ALB/ACM stack for alexfree.me.
+# Stand up the full ECS/ALB/ACM stack for fantasy.alexfree.me.
 # Reconciles roles and resources; reruns register a task definition and deploy it.
 #
 # Prereqs (run before this script):
@@ -31,8 +31,8 @@ TG_NAME="fantasy-tg"
 ALB_SG_NAME="fantasy-alb-sg"
 ECS_SG_NAME="fantasy-ecs-sg"
 S3_BUCKET="ff-predictor-training"
-DOMAIN="alexfree.me"
-DOMAIN_WWW="www.alexfree.me"
+DOMAIN="fantasy.alexfree.me"
+DNS_ZONE="alexfree.me"
 IMAGE_TAG="${IMAGE_TAG:-bootstrap}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -204,15 +204,14 @@ fi
 out TG_ARN "$TG_ARN"
 
 # ---------------------------------------------------------------------------
-# Step 7: ACM cert for alexfree.me (+ www) — DNS validation
+# Step 7: ACM cert for the application subdomain — DNS validation
 # ---------------------------------------------------------------------------
 CERT_ARN=$(aws acm list-certificates --region "$REGION" \
   --query "CertificateSummaryList[?DomainName==\`$DOMAIN\`].CertificateArn | [0]" --output text)
 if [ "$CERT_ARN" = "None" ] || [ -z "$CERT_ARN" ]; then
-  log "Requesting ACM cert for $DOMAIN + $DOMAIN_WWW..."
+  log "Requesting ACM cert for $DOMAIN..."
   CERT_ARN=$(aws acm request-certificate --region "$REGION" \
     --domain-name "$DOMAIN" \
-    --subject-alternative-names "$DOMAIN_WWW" \
     --validation-method DNS \
     --query CertificateArn --output text)
   sleep 5
@@ -233,10 +232,11 @@ done
 echo ""
 echo "======================================================================"
 echo "ACM requires DNS validation. Add these records in Namecheap"
-echo "(Domain List -> $DOMAIN -> Manage -> Advanced DNS). For each CNAME,"
-echo "Namecheap auto-appends \".$DOMAIN\" — paste only the short host."
+echo "(Domain List -> $DNS_ZONE -> Manage -> Advanced DNS). For each CNAME,"
+echo "Namecheap auto-appends \".$DNS_ZONE\" — paste the short host shown below."
 echo "----------------------------------------------------------------------"
-echo "$RECORDS" | jq -r '.[] | "  Host:  \(.Name)\n  Value: \(.Value)\n  Type:  \(.Type)\n"'
+echo "$RECORDS" | jq -r --arg zone "$DNS_ZONE" \
+  '.[] | "  Host:  \(.Name | rtrimstr(".") | rtrimstr("." + $zone))\n  Value: \(.Value)\n  Type:  \(.Type)\n"'
 echo "======================================================================"
 read -r -p "Press ENTER once the records are in Namecheap... "
 
@@ -263,6 +263,10 @@ if [ "$HTTPS_ARN" = "None" ] || [ -z "$HTTPS_ARN" ]; then
     --certificates "CertificateArn=$CERT_ARN" \
     --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06 \
     --default-actions "Type=forward,TargetGroupArn=$TG_ARN" >/dev/null
+else
+  log "Updating HTTPS listener certificate for $DOMAIN..."
+  aws elbv2 modify-listener --region "$REGION" --listener-arn "$HTTPS_ARN" \
+    --certificates "CertificateArn=$CERT_ARN" >/dev/null
 fi
 
 HTTP_ARN=$(aws elbv2 describe-listeners --region "$REGION" --load-balancer-arn "$ALB_ARN" \
@@ -331,10 +335,8 @@ echo "DONE. Resource IDs saved to $OUT_FILE"
 echo "----------------------------------------------------------------------"
 echo "ALB DNS:   $ALB_DNS"
 echo ""
-echo "Next: add these records in Namecheap Advanced DNS for $DOMAIN:"
-echo "  ALIAS  @    -> $ALB_DNS"
-echo "  CNAME  www  -> $ALB_DNS"
-echo "Then remove any A record pointing to 192.64.119.87 (Namecheap parking)."
+echo "Next: add this record in Namecheap Advanced DNS for $DNS_ZONE:"
+echo "  CNAME  ${DOMAIN%.$DNS_ZONE}  -> $ALB_DNS"
 echo ""
 echo "Smoke test (works now without DNS, will warn on cert):"
 echo "  curl -I http://$ALB_DNS/health"

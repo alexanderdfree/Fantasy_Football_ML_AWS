@@ -61,20 +61,16 @@ FFTODAY_POS_IDS: dict[str, int] = {"QB": 10, "RB": 20, "WR": 30, "TE": 40}
 FFTODAY_POSITIONS: tuple[str, ...] = tuple(FFTODAY_POS_IDS)
 
 FFTODAY_DEFAULT_WEEKS = tuple(range(1, 19))
-# v2: cache keys disambiguate non-contiguous season lists (v1 keyed on min/max
-# only, so a sampled [2013, 2019, 2024] pull silently satisfied a later
-# [2013..2024] request — wrong data, no error).
+# Payload version. Exact season/week signatures below also isolate the older
+# min/max/count cache names, which did not identify every requested value.
 _CACHE_VERSION = "v2"
 
 
 def _seasons_sig(seasons: list[int]) -> str:
-    """Cache-key fragment for a season list; non-contiguous lists get a count
-    suffix so they can't collide with the full range (mirrors ``weeks_sig``)."""
-    uniq = sorted(set(seasons))
-    lo, hi = uniq[0], uniq[-1]
-    if uniq == list(range(lo, hi + 1)):
-        return f"{lo}_{hi}"
-    return f"{lo}_{hi}-n{len(uniq)}"
+    """Canonical cache-key fragment containing every requested season."""
+    # The prefix also isolates caches written with the ambiguous min/max/count
+    # recipe, which cannot establish the membership of a sparse request.
+    return "s" + "-".join(str(s) for s in sorted(set(seasons)))
 
 
 _MIN_SEASON = 2010  # FFToday weekly-projection archive floor.
@@ -253,21 +249,21 @@ def load_fftoday_projections(
 ) -> pd.DataFrame:
     """Fetch + cache FFToday weekly projections for one or more seasons.
 
-    Cache: ``{cache_dir}/fftoday_projections_{ver}_{min}_{max}_{weeks}.parquet``.
+    Cache keys contain the complete canonical season and week sets.
     """
     if not seasons:
         raise ValueError("seasons must be a non-empty list of ints")
+    seasons = sorted({int(season) for season in seasons})
     bad = [s for s in seasons if s < _MIN_SEASON]
     if bad:
         raise ValueError(f"FFToday archive starts at {_MIN_SEASON}; got {sorted(bad)}")
-    weeks_to_try = tuple(weeks) if weeks is not None else FFTODAY_DEFAULT_WEEKS
-    os.makedirs(cache_dir, exist_ok=True)
-    lo, hi = min(weeks_to_try), max(weeks_to_try)
-    weeks_sig = (
-        f"w{lo}-{hi}"
-        if list(weeks_to_try) == list(range(lo, hi + 1))
-        else f"w{lo}-{hi}-{len(set(weeks_to_try))}"
+    weeks_to_try = (
+        sorted({int(week) for week in weeks}) if weeks is not None else FFTODAY_DEFAULT_WEEKS
     )
+    if not weeks_to_try:
+        raise ValueError("weeks must be non-empty")
+    os.makedirs(cache_dir, exist_ok=True)
+    weeks_sig = "w" + "-".join(map(str, weeks_to_try))
     cache_path = (
         f"{cache_dir}/fftoday_projections_{_CACHE_VERSION}"
         f"_{_seasons_sig(seasons)}_{weeks_sig}.parquet"
@@ -322,6 +318,7 @@ def load_fftoday_with_gsis_id(
     """
     if not seasons:
         raise ValueError("seasons must be a non-empty list of ints")
+    seasons = sorted({int(season) for season in seasons})
     os.makedirs(cache_dir, exist_ok=True)
     rate_sig = f"mr{int(round(min_match_rate * 100))}"
     cache_path = (

@@ -232,9 +232,12 @@ def load_sleeper_projections(
     weeks_to_try = tuple(weeks) if weeks is not None else SLEEPER_DEFAULT_WEEKS
     os.makedirs(cache_dir, exist_ok=True)
     pos_sig = "-".join(sorted(positions))
+    # Encode every requested season, with a new namespace so ambiguous legacy
+    # min/max caches cannot satisfy a sparse-season request.
+    season_sig = "s" + "-".join(map(str, seasons))
     cache_path = (
         f"{cache_dir}/sleeper_projections_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{_weeks_signature(weeks_to_try)}_{pos_sig}.parquet"
+        f"_{season_sig}_{_weeks_signature(weeks_to_try)}_{pos_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
         return pd.read_parquet(cache_path)

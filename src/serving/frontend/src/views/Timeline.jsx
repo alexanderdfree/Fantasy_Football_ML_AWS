@@ -187,9 +187,9 @@ export function TimelineView({ scoring, theme }) {
                 <div>
                     <div className="callout-title">Changelog &amp; Timeline</div>
                     <div className="callout-desc">
-                        Every week, the season's completed games become new ground truth and all four models plus the
-                        two expert baselines are re-scored. This is the running log — the accuracy trend, the
-                        head-to-head weekly record, and the release changelog behind each step down in error.
+                        Completed regular-season games are scored on the stats the models and experts both project.
+                        Every available source uses the same player-weeks; missing forecasts reduce the common sample.
+                        Follow the accuracy trend, weekly record, and model release changelog below.
                     </div>
                 </div>
             </div>
@@ -290,13 +290,14 @@ export function TimelineView({ scoring, theme }) {
 
                     <div className="section-header">Weekly Benchmark Log</div>
                     <div className="results-info">
-                        {`${weekly.length} weeks benchmarked · lower MAE is better · green edge means our best model beat both experts`}
+                        {`${weekly.length} weeks · common rows / regular-season rows · lower MAE is better · green edge means our best model beat both experts`}
                     </div>
                     <div className="table-container">
                         <table id="timeline-table">
                             <thead>
                                 <tr>
                                     <SortableTh label="Wk" sortKey="week" className="col-week" sort={sort.key} order={sort.order} onSort={onSort} />
+                                    <SortableTh label="Common rows" sortKey="n" sort={sort.key} order={sort.order} onSort={onSort} />
                                     <th>Best Model</th>
                                     <SortableTh label="Ridge" sortKey="ridge" className="col-pred ridge-col" sort={sort.key} order={sort.order} onSort={onSort} />
                                     <SortableTh label="NN" sortKey="nn" className="col-pred nn-col" sort={sort.key} order={sort.order} onSort={onSort} />
@@ -311,6 +312,9 @@ export function TimelineView({ scoring, theme }) {
                                 {sortedWeekly.map((w) => (
                                     <tr key={w.week}>
                                         <td className="col-week"><strong>{w.week}</strong></td>
+                                        <td title="Player-weeks with matching actual stats and forecasts from every available source">
+                                            {`${w.n} / ${w.cohort_n ?? w.n}`}
+                                        </td>
                                         <td>{w.winner ? winnerTag(w.winner) : "--"}</td>
                                         {MODELS.map((m) => (
                                             <td key={m} className="col-pred">{modelCell(w, m)}</td>

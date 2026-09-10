@@ -27,6 +27,21 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] Input caches omitted implementation, lookup, selector and completion identity
+[Read the incident record](fixed-archive/runtime-data-cache-audit-2026-09.md).
+
+### [FIXED] Web and iOS clients retained stale responses, filters and comparison claims
+[Read the incident record](fixed-archive/runtime-client-audit-2026-09.md).
+
+### [FIXED] Experiments lost seeds, native frames, matched controls and scoring identity
+[Read the incident record](fixed-archive/runtime-experiment-audit-2026-09.md).
+
+### [FIXED] Workflow inputs, tuning namespaces and infrastructure ownership diverged
+[Read the incident record](fixed-archive/runtime-workflow-audit-2026-09.md).
+
+### [FIXED] Failed CUDA optimizer capture retained warmup updates
+[Read the incident record](fixed-archive/runtime-cuda-rollback-2026-09.md).
+
 ### [FIXED] macOS tests and benchmarks crashed with multiple OpenMP runtimes
 [Read the incident record](fixed-archive/macos-openmp-runtime-conflict.md).
 

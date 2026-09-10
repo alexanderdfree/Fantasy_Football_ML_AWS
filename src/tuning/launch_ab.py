@@ -361,7 +361,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="S3 prefix containing train/val/test.parquet; use a separate prefix for data-change validation",
     )
     p.add_argument("--seeds", type=int, nargs="+", help="Override the spec's SEEDS")
-    p.add_argument("--only", nargs="+", help="Run only these variant names (baseline always kept)")
+    p.add_argument(
+        "--only",
+        nargs="+",
+        action="extend",
+        help="Run only these variant names (baseline always kept); repeat --only=NAME for names starting with '-'.",
+    )
     p.add_argument(
         "--image-sha",
         default=None,

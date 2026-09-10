@@ -75,7 +75,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import numpy as np
 import torch
 
-ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
+from src.tuning.tune_nn_storage import (
+    DEFAULT_STACKED_SEEDS,
+    ENSEMBLE_POSITIONS,
+)
+from src.tuning.tune_nn_storage import (
+    stacked_default_seed_list as stacked_default_seed_list,
+)
+
 _CLIP_MAX_NORM = 1.0  # mirrors the hardcoded clip_grad_norm_(1.0) in MultiHeadTrainer
 _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * epoch
 
@@ -83,7 +90,6 @@ _EPOCH_SEED_STRIDE = 9973  # prime; shared-batch-order reseed = base + stride * 
 # 24 is the measured per-seed optimum on the L4 (2026-06-11, jobs b12a4b6a/
 # 330a698a): ~1.0 s/seed, ~14x the eager per-seed cost, flat-region top before
 # the (24, 50] bandwidth knee. CPU/RAM are width-invariant; ~0.10 GiB VRAM/seed.
-DEFAULT_STACKED_SEEDS = 24
 
 
 def resolve_default_stacked_seeds(explicit: int | str | None = None) -> int:
@@ -104,11 +110,6 @@ def resolve_default_stacked_seeds(explicit: int | str | None = None) -> int:
     from src.shared.utils import cuda_enabled
 
     return DEFAULT_STACKED_SEEDS if cuda_enabled() else 0
-
-
-def stacked_default_seed_list(n: int = DEFAULT_STACKED_SEEDS) -> list[int]:
-    """The canonical ``n``-seed list (42..42+n) the default stacked grid uses."""
-    return list(range(42, 42 + n))
 
 
 _ENSEMBLE_ENV_KEYS = (
@@ -144,8 +145,8 @@ def ensemble_env(fixed_epochs: int):
     exact env-leak shape that bit the #1138 test suite.
     """
     previous = {k: os.environ.get(k) for k in _ENSEMBLE_ENV_KEYS}
-    apply_ensemble_env(fixed_epochs)
     try:
+        apply_ensemble_env(fixed_epochs)
         yield
     finally:
         for k, v in previous.items():

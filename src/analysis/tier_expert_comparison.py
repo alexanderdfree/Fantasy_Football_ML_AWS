@@ -44,6 +44,7 @@ from src.analysis.cohort_analysis import (
     label_scoring_tier_rows,
     player_prior_season_fp,
 )
+from src.analysis.position_data import load_position_frames
 from src.config import TEST_SEASONS
 
 DEFAULT_POSITIONS = ["QB", "RB", "WR", "TE"]
@@ -151,6 +152,9 @@ def main(argv: list[str] | None = None) -> None:
             expert_raws[src.name] = None
 
     for pos in positions:
+        frames = (
+            load_position_frames(pos) if pos in ("K", "DST") else (train_df, val_df, test_df_all)
+        )
         if args.from_artifacts:
             print(f"\nScoring {pos} from saved artifacts ...", flush=True)
             from src.analysis.artifact_eval import build_test_df_from_artifacts
@@ -158,7 +162,7 @@ def main(argv: list[str] | None = None) -> None:
             # A position with no artifacts raises loudly; skip it and keep going so
             # one missing position doesn't abort the whole multi-position comparison.
             try:
-                test_df = build_test_df_from_artifacts(pos, train_df, val_df, test_df_all)
+                test_df = build_test_df_from_artifacts(pos, *frames)
             except FileNotFoundError as e:
                 print(f"  ! {pos}: {e} — skipping.")
                 continue
@@ -167,7 +171,10 @@ def main(argv: list[str] | None = None) -> None:
             result = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run()
             test_df = result["test_df"]
         test_df = test_df[test_df["season"].astype(int).isin(eval_set)]
-        compare_position(pos, test_df, prior_fp, experts, expert_raws, tier_topn=args.tier_topn)
+        position_prior = player_prior_season_fp(list(frames)) if pos in ("K", "DST") else prior_fp
+        compare_position(
+            pos, test_df, position_prior, experts, expert_raws, tier_topn=args.tier_topn
+        )
 
 
 if __name__ == "__main__":

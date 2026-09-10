@@ -203,7 +203,7 @@ _KEEP_BASE = ("player_id", "team", "season", "week", "fantasy_points")
 def run_position(pos: str, seed: int = 42, cache_dir: str | None = None) -> pd.DataFrame:
     """Run ``pos``'s pipeline with TabPFN enabled; return the slimmed ``test_df``.
 
-    Idempotent when ``cache_dir`` is set (a cached ``tdf_{pos}.parquet`` is reused),
+    Idempotent for a position/seed when ``cache_dir`` is set,
     so a crash/OOM mid-sweep resumes. ``train_tabpfn=True`` is injected into a copy
     of the position CONFIG, leaving the committed config untouched.
     """
@@ -211,19 +211,19 @@ def run_position(pos: str, seed: int = 42, cache_dir: str | None = None) -> pd.D
 
     if cache_dir:
         os.makedirs(cache_dir, exist_ok=True)
-        cached = os.path.join(cache_dir, f"tdf_{pos}.parquet")
+        cached = os.path.join(cache_dir, f"tdf_{pos}_seed{seed}.parquet")
         if os.path.exists(cached):
             return pd.read_parquet(cached)
     runner = importlib.import_module(f"src.{pos.lower()}.run_pipeline")
     cfg = dict(runner.CONFIG)
     cfg["train_tabpfn"] = True
-    # K/DST build their own splits (run(seed, config)); skill positions take frames
-    # that default to None -> the pipeline self-loads the held-out split.
-    result = runner.run(seed=seed, config=cfg) if pos in ("K", "DST") else runner.run(config=cfg)
+    # Every runner accepts seed/config; skill positions self-load their default
+    # frames, and K/DST build their native splits.
+    result = runner.run(seed=seed, config=cfg)
     df = result["test_df"]
     slim = df[[c for c in _KEEP_BASE if c in df.columns] + _present_pred_cols(df)].copy()
     if cache_dir:
-        slim.to_parquet(os.path.join(cache_dir, f"tdf_{pos}.parquet"), index=False)
+        slim.to_parquet(cached, index=False)
     return slim
 
 

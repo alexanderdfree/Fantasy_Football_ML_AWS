@@ -46,6 +46,7 @@ from src.analysis.cohort_analysis import (
 )
 from src.analysis.significance import diebold_mariano_test, paired_bootstrap_metric_ci
 from src.config import TEST_SEASONS
+from src.shared.comparison_scoring import ACTUAL_BASIS, score_actual_components, scoring_components
 from src.shared.evaluation import compute_metrics
 
 ACTUAL_COL = "fantasy_points"
@@ -390,8 +391,8 @@ def season_selection_rows(
             precision = len(hits) / len(pred_set) if pred_set else _nan()
             recall = len(hits) / len(actual_set) if actual_set else _nan()
             f1 = (
-                2.0 * precision * recall / (precision + recall)
-                if precision + recall > 0
+                2.0 * len(hits) / (len(pred_set) + len(actual_set))
+                if pred_set and actual_set
                 else _nan()
             )
             hit_ranks = season_actual[season_actual["player_id"].isin(hits)].dropna(
@@ -837,7 +838,7 @@ def model_source_frames(model_df: pd.DataFrame) -> list[tuple[SourceMeta, pd.Dat
         if col not in base.columns:
             continue
         meta = SourceMeta(name=name, label=label, kind="model", native_col=col)
-        out.append((meta, base.rename(columns={col: PRED_COL})))
+        out.append((meta, _finite_metric_frame(base.rename(columns={col: PRED_COL}))))
     return out
 
 
@@ -935,11 +936,19 @@ def load_position_predictions(
 def _fresh_model_predictions(
     position: str, eval_seasons: Sequence[int], scoring_format: str
 ) -> pd.DataFrame:
-    del eval_seasons, scoring_format
+    del eval_seasons
     result = importlib.import_module(f"src.{position.lower()}.run_pipeline").run()
     if "test_df" not in result:
         raise KeyError(f"{position} run() result has no 'test_df'")
-    return result["test_df"]
+    frame = result["test_df"].copy()
+    frame[ACTUAL_COL] = score_actual_components(frame, position, scoring_format)
+    for model, _, total in MODEL_SOURCES:
+        if total in frame:
+            frame[total] = score_actual_components(
+                frame, position, scoring_format, prefix=f"pred_{model}_"
+            )
+    frame.attrs.update(actual_basis=ACTUAL_BASIS, scoring_format=scoring_format)
+    return frame
 
 
 def _filter_eval_seasons(df: pd.DataFrame, eval_seasons: Sequence[int]) -> pd.DataFrame:
@@ -962,6 +971,8 @@ def build_position_report(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Compute all report rows for one position from one row-level substrate."""
     base_df = _normalise_keys(model_df)
+    base_df[ACTUAL_COL] = score_actual_components(base_df, position, scoring_format)
+    base_df = base_df[base_df[ACTUAL_COL].notna()].copy()
     if "position" not in base_df.columns:
         base_df["position"] = position
     model_frames = model_source_frames(base_df)
@@ -978,6 +989,7 @@ def build_position_report(
                 "source_label": meta.label,
                 "source_kind": meta.kind,
                 "model_or_expert": meta.kind,
+                "actual_basis": ACTUAL_BASIS,
                 **status,
             }
         )
@@ -991,8 +1003,14 @@ def build_position_report(
                 "source_label": meta.label,
                 "source_kind": meta.kind,
                 "model_or_expert": meta.kind,
-                "skipped": False,
+                "skipped": frame.empty,
                 "n_rows": int(len(frame)),
+                "actual_basis": ACTUAL_BASIS,
+                **(
+                    {"reason": "No finite shared-component actuals and predictions"}
+                    if frame.empty
+                    else {}
+                ),
             }
         )
 
@@ -1035,6 +1053,7 @@ def run_analysis(
     positions = tuple(p.upper() for p in positions)
 
     from src.analysis.cohort_analysis import _load_splits
+    from src.analysis.position_data import load_position_frames
 
     train_df, val_df, test_df = _load_splits()
     experts = build_expert_sources(nflcom_loader, sleeper_loader, local_experts)
@@ -1057,11 +1076,14 @@ def run_analysis(
     min_season = player_min_season([train_df, val_df, test_df])
 
     for position in positions:
+        frames = (
+            load_position_frames(position)
+            if position in ("K", "DST")
+            else (train_df, val_df, test_df)
+        )
         load = load_position_predictions(
             position,
-            train_df,
-            val_df,
-            test_df,
+            *frames,
             eval_seasons=eval_seasons,
             scoring_format=scoring_format,
             from_artifacts=from_artifacts,
@@ -1081,7 +1103,7 @@ def run_analysis(
             scoring_format=scoring_format,
             n_boot=n_boot,
             seed=seed,
-            min_season=min_season,
+            min_season=player_min_season(list(frames)) if position in ("K", "DST") else min_season,
         )
         metrics.extend(m_rows)
         player_misses.extend(p_rows)
@@ -1103,6 +1125,8 @@ def run_analysis(
         "positions": list(positions),
         "eval_seasons": list(eval_seasons),
         "scoring_format": scoring_format,
+        "actual_basis": ACTUAL_BASIS,
+        "scoring_components": {pos: list(scoring_components(pos)) for pos in positions},
         "from_artifacts": bool(from_artifacts),
         "validate": bool(validate),
         "n_boot": int(n_boot),

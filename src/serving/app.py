@@ -93,13 +93,20 @@ def handle_api_error(e):
         # counters). Their ``description`` is a safe, library-authored string,
         # unlike ``str(e)`` on an arbitrary exception.
         if isinstance(e, HTTPException):
-            return jsonify({"error": e.description}), e.code
+            response = e.get_response()
+            response.data = app.json.dumps({"error": e.description})
+            response.content_type = "application/json"
+            return response
         # Unexpected server-side bug: log the full traceback server-side but
         # never echo exception text to the client. str(e) on a Python exception
         # can leak filesystem paths, config values, or library internals
         # (CodeQL py/stack-trace-exposure).
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
+    if isinstance(e, HTTPException):
+        # Returning the exception preserves Flask's HTML status and headers.
+        # Raising it from this handler instead enters the 500 error path.
+        return e
     raise e
 
 

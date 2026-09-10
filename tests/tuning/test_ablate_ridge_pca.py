@@ -9,6 +9,7 @@ pytest.mark.unit — runs in the fast unit shard (no data/splits needed).
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from src.tuning import ablate_ridge_pca as abl
@@ -253,6 +254,90 @@ def test_summarize_results_skips_error_rows():
     summary = abl.summarize_results(results, variants=["none", "pca55"])
     # pca55 errored — val/test lists are empty, consistent_improver must be False
     assert summary["QB"]["variants"]["pca55"]["consistent_improver"] is False
+
+
+def test_ridge_summary_pairs_only_matching_seeds():
+    rows = [
+        _result("QB", 42, "none", 100.0, 100.0),
+        _result("QB", 43, "none", 2.0, 2.0),
+        _result("QB", 43, "pca55", 3.0, 3.0),
+    ]
+    summary = abl.summarize_results(rows, variants=["none", "pca55"])
+    treatment = summary["QB"]["variants"]["pca55"]
+    assert treatment["val_delta_vs_baseline"]["mean"] == pytest.approx(1.0)
+    assert treatment["test_delta_vs_baseline"]["mean"] == pytest.approx(1.0)
+    assert treatment["consistent_improver"] is False
+
+
+def test_ridge_table_preserves_observed_seed_std(capsys):
+    rows = [_result("QB", 42, "none", 1.0, 1.0), _result("QB", 43, "none", 3.0, 3.0)]
+    summary = abl.summarize_results(rows, variants=["none"])
+    abl.print_summary(summary, variants=["none"])
+    assert "2.0000±1.4142" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_ridge_job_uses_native_frames_and_preserves_holdouts_and_seed(monkeypatch, position):
+    from pathlib import Path
+
+    import src.analysis.position_data as position_data
+    import src.shared.pipeline as pipeline
+    from src.tuning.ablation_runner import AblationJob
+
+    train = pd.DataFrame({"season": [2023], "identity": ["train"]})
+    val = pd.DataFrame({"season": [2024], "identity": ["val"]})
+    test = pd.DataFrame({"season": [2025], "identity": ["test"]})
+    frames = {"train": train, "val": val, "test": test}
+
+    def history_builder(*args):
+        return None
+
+    native_cfg = {"attn_history_builder_fn": history_builder} if position == "K" else {}
+    native_calls = []
+
+    def native_loader(pos):
+        native_calls.append(pos)
+        return (train, val, test), native_cfg
+
+    monkeypatch.setattr(position_data, "prepare_native_ablation", native_loader)
+
+    def read_frame(path):
+        assert position not in ("K", "DST"), "native positions must not read shared skill splits"
+        return frames[Path(path).stem]
+
+    monkeypatch.setattr(abl.pd, "read_parquet", read_frame)
+    calls = []
+
+    def evaluate(*, train_df, val_df, test_df, seed, config):
+        calls.append((train_df, val_df, test_df, seed, config))
+        return {"ridge_metrics": {"total": {"mae": 1.0 if test_df is val else 2.0}}}
+
+    def native_pipeline(pos, cfg, **kwargs):
+        assert pos == position
+        return evaluate(**kwargs, config=cfg)
+
+    monkeypatch.setattr(pipeline, "run_pipeline", native_pipeline)
+
+    def runner(pos):
+        assert pos not in ("K", "DST"), "native public runner cannot accept supplied frames"
+        return evaluate
+
+    monkeypatch.setattr(abl, "get_runner", runner)
+    job = AblationJob(position, 17, "none", "baseline", abl._execute_ridge_pca_job, _base_cfg(), {})
+    result = abl._execute_ridge_pca_job(job)
+    assert result["metrics"]["val_mae"] == 1.0
+    assert result["metrics"]["test_mae"] == 2.0
+    assert len(calls) == 2
+    for index, (tr, va, te, seed, cfg) in enumerate(calls):
+        assert tr is train and va is val
+        assert te is (val if index == 0 else test)
+        assert seed == 17
+        assert cfg["train_ridge"] is True
+        assert cfg["train_base_nn"] is False
+        assert cfg["ridge_pca_components"] is None
+        if position == "K":
+            assert cfg["attn_history_builder_fn"] is history_builder
+    assert native_calls == ([position] if position in ("K", "DST") else [])
 
 
 def test_summarize_results_baseline_never_consistent_improver():

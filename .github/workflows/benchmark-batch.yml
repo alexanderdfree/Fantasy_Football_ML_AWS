@@ -88,6 +88,10 @@ jobs:
           INPUT_SHA: ${{ github.event.inputs.image_sha }}
         run: |
           SHA="${INPUT_SHA:-${GITHUB_SHA}}"
+          if [[ ! "$SHA" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            echo "Invalid image_sha (expected a 7-40 char hex git SHA)" >&2
+            exit 1
+          fi
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "prefix=experiments/benchmark/${SHA}/models" >> "$GITHUB_OUTPUT"
           echo "Experiment artifacts -> s3://${S3_BUCKET}/experiments/benchmark/${SHA}/models (NOT prod models/)"
@@ -119,7 +123,7 @@ jobs:
             echo "No prod revision for ${HEAD_SHA}; cloning ff-ab-job onto ff-training:${HEAD_SHA}"
             # resolve_job_definition logs "[ab] registered ..." to stdout before
             # returning the name:revision, so take only the final line.
-            JD=$(python -c "import boto3; from src.tuning.launch_ab import resolve_job_definition; print(resolve_job_definition('${HEAD_SHA}', boto3.client('batch', region_name='${AWS_REGION}')))" | tail -n1)
+            JD=$(python -c 'import os; import boto3; from src.tuning.launch_ab import resolve_job_definition; print(resolve_job_definition(os.environ["HEAD_SHA"], boto3.client("batch", region_name=os.environ["AWS_REGION"])))' | tail -n1)
             echo "Resolved job definition ${JD}"
             echo "job_def=${JD%%:*}" >> "$GITHUB_OUTPUT"
             echo "revision=${JD##*:}" >> "$GITHUB_OUTPUT"
@@ -151,6 +155,7 @@ jobs:
         env:
           POSITIONS: ${{ github.event.inputs.positions }}
           NOTE: ${{ github.event.inputs.note }}
+          HEAD_SHA: ${{ steps.ctx.outputs.sha }}
           FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
           # No FF_MODEL_S3_BUCKET -> benchmark.py does NOT mirror to the website
           # History tab; the artifact below is the only output.
@@ -159,7 +164,7 @@ jobs:
             --download-only \
             --positions $POSITIONS \
             --backend batch \
-            --git-hash "${{ steps.ctx.outputs.sha }}" \
+            --git-hash "$HEAD_SHA" \
             --note "$NOTE"
 
       - name: Upload benchmark results artifact

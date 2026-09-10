@@ -583,10 +583,10 @@ def api_model_architecture():
                 },
                 "training_loop": {
                     "optimizer": "AdamW",
-                    "loss": "MultiTargetLoss: per-target Huber or Poisson NLL + optional BCE on TD gate",
+                    "loss": "MultiTargetLoss: per-target MSE, Poisson NLL or hurdle negative-binomial loss + BCE for gated targets",
                     "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
                     "feature_scaling": "StandardScaler, clipped to [-4, 4]",
-                    "early_stopping": "Best loss-weighted val MAE restored on patience",
+                    "early_stopping": "Best loss-weighted per-target validation MAE restored on patience",
                     "checkpoint": "Best state_dict kept in memory, saved as .pt",
                 },
                 "positions": positions,

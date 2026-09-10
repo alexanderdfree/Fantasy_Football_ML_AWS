@@ -127,6 +127,45 @@ def test_cache_key_distinguishes_sampled_from_contiguous_seasons(tmp_path):
     assert set(full["season"]) == {2013, 2014, 2015}
 
 
+@pytest.mark.parametrize("dimension", ["season", "week"])
+def test_sparse_cache_key_preserves_interior_values(tmp_path, dimension):
+    first = [2013, 2014, 2016] if dimension == "season" else [1, 2, 4]
+    second = [2013, 2015, 2016] if dimension == "season" else [1, 3, 4]
+
+    def load(values, reader=_fake_reader):
+        return load_fftoday_projections(
+            values if dimension == "season" else [2013],
+            weeks=[1] if dimension == "season" else values,
+            cache_dir=str(tmp_path),
+            reader=reader,
+        )
+
+    load(first)
+    actual = load(second)
+    assert set(actual[dimension]) == set(second)
+
+    def no_fetch(url):
+        raise AssertionError("permuted duplicate input should use the canonical cache")
+
+    cached = load([*reversed(second), second[0]], no_fetch)
+    pd.testing.assert_frame_equal(actual, cached)
+
+
+def test_joined_cache_preserves_sparse_season_membership(tmp_path, monkeypatch):
+    from src.analysis import fftoday_loader
+
+    monkeypatch.setattr(
+        fftoday_loader.nfl_source,
+        "rosters",
+        lambda seasons: pd.concat(
+            [_rosters().assign(season=s) for s in seasons], ignore_index=True
+        ),
+    )
+    for seasons in ([2013, 2014, 2016], [2013, 2015, 2016]):
+        actual = load_fftoday_with_gsis_id(seasons, cache_dir=str(tmp_path), reader=_fake_reader)
+        assert set(actual["season"]) == set(seasons)
+
+
 def test_min_season_guard():
     with pytest.raises(ValueError, match="archive starts at"):
         load_fftoday_projections([2009], weeks=(1,), reader=_fake_reader)

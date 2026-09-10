@@ -7,6 +7,7 @@ from src.config import CACHE_DIR
 from src.config import SEASONS as GLOBAL_SEASONS
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
+from src.data.external_sources import _seasons_cache_signature
 from src.data.release import DataReleaseError, assert_source_fetch_allowed
 from src.k.config import POSITION_CONFIG
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
@@ -117,7 +118,8 @@ def reconstruct_kicker_weekly_from_pbp(
         # Empty-seasons guard (mirrors reconstruct_kicker_kicks_from_pbp) so the
         # seasons[0]/[-1] cache-path build below can't IndexError. (#409)
         return pd.DataFrame()
-    cache_path = f"{cache_dir}/kicker_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    seasons = sorted(set(int(s) for s in seasons))
+    cache_path = f"{cache_dir}/kicker_pbp_{_seasons_cache_signature(seasons)}.parquet"
     if os.path.exists(cache_path) and _cached_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
     assert_source_fetch_allowed(cache_path)
@@ -918,7 +920,8 @@ def reconstruct_kicker_kicks_from_pbp(
     if not seasons:
         return pd.DataFrame(columns=_KICKS_SCHEMA)
 
-    cache_path = f"{cache_dir}/kicker_kicks_pbp_{seasons[0]}_{seasons[-1]}.parquet"
+    seasons = sorted(set(int(s) for s in seasons))
+    cache_path = f"{cache_dir}/kicker_kicks_pbp_{_seasons_cache_signature(seasons)}.parquet"
     if pbp is None and os.path.exists(cache_path) and _cached_kick_pbp_is_current(cache_path):
         return pd.read_parquet(cache_path)
     if pbp is None:
@@ -996,17 +999,6 @@ def reconstruct_kicker_kicks_from_pbp(
             skipped_seasons.append(yr)
             continue
 
-    if not all_kicks:
-        return pd.DataFrame(columns=_KICKS_SCHEMA)
-
-    result = pd.concat(all_kicks, ignore_index=True)
-    result = result.dropna(subset=["player_id"]).reset_index(drop=True)
-    # Sort by (player_id, season, week, play_id) so downstream truncation by
-    # most-recent kicks within a game has well-defined semantics.
-    result = result.sort_values(
-        ["player_id", "season", "week", "play_id"], kind="stable"
-    ).reset_index(drop=True)
-
     if skipped_seasons:
         # FAIL LOUD on a partial kick history. Not caching the partial frame
         # (the prior guard) stops a poisoned cache from PERSISTING, but the
@@ -1026,6 +1018,16 @@ def reconstruct_kicker_kicks_from_pbp(
             f"Not caching the partial result; check nfl_source PBP availability / "
             f"schema and retry."
         )
+
+    if not all_kicks:
+        return pd.DataFrame(columns=_KICKS_SCHEMA)
+
+    result = pd.concat(all_kicks, ignore_index=True)
+    result = result.dropna(subset=["player_id"]).reset_index(drop=True)
+    # Keep deterministic within-game ordering for history truncation.
+    result = result.sort_values(
+        ["player_id", "season", "week", "play_id"], kind="stable"
+    ).reset_index(drop=True)
 
     if supplied_pbp is None:
         os.makedirs(cache_dir, exist_ok=True)

@@ -15,6 +15,26 @@ def _source(name: str = "model") -> mod.SourceMeta:
     return mod.SourceMeta(name=name, label=name.title(), kind="model", native_col="pred_total")
 
 
+@pytest.mark.parametrize(
+    "predictions, expected", [([10.0, 0.0], 1.0), ([0.0, 10.0], 0.0), (None, None)]
+)
+def test_season_selection_distinguishes_zero_hits_from_no_forecasts(predictions, expected):
+    base = pd.DataFrame(
+        {
+            "player_id": ["A", "B"],
+            "season": [2025, 2025],
+            "week": [1, 1],
+            "fantasy_points": [10.0, 0.0],
+        }
+    )
+    source = base.assign(pred_total=predictions or [0.0, 0.0])
+    if predictions is None:
+        source = source.iloc[:0]
+    metrics, _ = mod.season_selection_rows("WR", _source(), source, base, top_ns=(1,))
+    actual = metrics[0]["f1"]
+    assert pd.isna(actual) if expected is None else actual == expected
+
+
 def test_cohort_error_uses_actual_season_total_topn_players():
     df = pd.DataFrame(
         {

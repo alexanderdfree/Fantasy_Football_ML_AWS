@@ -19,7 +19,7 @@ struct BenchmarkHistory: Codable, Sendable {
         let lgbm: [Pill]
         let totalElapsedSec: Double?
 
-        var id: String { gitHash ?? timestamp ?? "\(prNumber ?? -1)" }
+        var id: String { "\(gitHash ?? "unknown")|\(timestamp ?? "unknown")|\(prNumber ?? -1)" }
 
         func pills(for model: PredictionModel) -> [Pill] {
             switch model {

@@ -7,6 +7,19 @@ and pulling in Optuna.
 
 SEARCH_SPACE_VERSION = "scheduler_v2"
 
+# Shared metadata stays importable on orchestration runners without torch.
+ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
+DEFAULT_STACKED_SEEDS = 24
+DEFAULT_CUDA_GRAPH = True
+DEFAULT_CUDA_GRAPH_FULL = True
+DEFAULT_PARALLEL_BACKEND = "auto"
+
+
+def stacked_default_seed_list(n: int = DEFAULT_STACKED_SEEDS) -> list[int]:
+    """The canonical ensemble seeds, available without importing the trainer."""
+    return list(range(42, 42 + n))
+
+
 # Root namespace for the attention game-history-branch tuner (``tune_nn
 # --scope history``). v2 (isolation) searches ONLY attn_max_seq_len + the
 # per-game token bundles and freezes the entire production recipe (sizing, lr,
@@ -73,6 +86,33 @@ def resolve_search_space_version(
 
 def s3_prefix(version: str = SEARCH_SPACE_VERSION) -> str:
     return f"tune_nn/{version}"
+
+
+def resolve_batch_storage_versions(
+    positions,
+    *,
+    parallel_backend: str = DEFAULT_PARALLEL_BACKEND,
+    cuda_graph: bool = DEFAULT_CUDA_GRAPH,
+    cuda_graph_full: bool = DEFAULT_CUDA_GRAPH_FULL,
+    stacked_seeds: int | None = None,
+    stacked_epochs: int = 30,
+    scope: str = "full",
+) -> dict[str, str]:
+    """Resolve launch_tune namespaces, including eager K/DST fallback jobs."""
+    width = DEFAULT_STACKED_SEEDS if stacked_seeds is None else stacked_seeds
+    backend = "mps" if parallel_backend == "auto" else parallel_backend
+    versions = {}
+    for pos in positions:
+        pos_width = width if pos.upper() in ENSEMBLE_POSITIONS else 0
+        stacked = pos_width >= 2
+        version = resolve_search_space_version(
+            backend,
+            cuda_graph=cuda_graph and not stacked,
+            full_graph=cuda_graph_full and not stacked,
+            root=SCOPE_ROOTS[scope],
+        )
+        versions[pos] = version + (f"_ens{pos_width}x{stacked_epochs}" if stacked else "")
+    return versions
 
 
 def study_name(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:

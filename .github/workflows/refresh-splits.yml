@@ -50,6 +50,7 @@ on:
     # Covers the complete raw/split/reference producer contract in
     # src.data.release.DATA_PRODUCER_PATHS; unrelated deploys reuse the snapshot.
     paths:
+      - "src/config.py"
       - "src/qb/config.py"
       - "src/rb/config.py"
       - "src/wr/config.py"

@@ -50,7 +50,8 @@ import os
 
 import pandas as pd
 
-from src.config import SPLITS_DIR, TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
+from src.analysis.position_data import load_position_frames as _build_frames
+from src.config import SPLITS_DIR
 from src.shared.registry import get_inference_spec
 from src.shared.team_box_score import merge_team_box_score_features
 from src.shared.weather_features import merge_schedule_features
@@ -72,39 +73,6 @@ def _rebuild_splits() -> None:
     df = build_features(preprocess(load_raw_data()))
     temporal_split(df)
     print(f"  splits written: {SPLITS_DIR}/")
-
-
-def _build_frames(pos: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load train/val/test frames exactly as each position's run() does."""
-    if pos in ("QB", "RB", "WR", "TE"):
-        return (
-            pd.read_parquet(f"{SPLITS_DIR}/train.parquet"),
-            pd.read_parquet(f"{SPLITS_DIR}/val.parquet"),
-            pd.read_parquet(f"{SPLITS_DIR}/test.parquet"),
-        )
-    if pos == "K":
-        from src.k.data import load_data, season_split
-        from src.k.features import compute_features
-        from src.k.targets import compute_targets
-
-        k = load_data()
-        k = compute_targets(k)
-        compute_features(k)
-        return season_split(k)
-    if pos == "DST":
-        from src.dst.data import build_data
-        from src.dst.features import compute_features
-        from src.dst.targets import compute_targets
-
-        d = build_data()
-        d = compute_targets(d)
-        compute_features(d)
-        return (
-            d[d["season"].isin(TRAIN_SEASONS)].copy(),
-            d[d["season"].isin(VAL_SEASONS)].copy(),
-            d[d["season"].isin(TEST_SEASONS)].copy(),
-        )
-    raise ValueError(f"Unknown position: {pos}")
 
 
 def _prep_preimpute(

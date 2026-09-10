@@ -9,6 +9,9 @@ rather than only at PR time.
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -84,3 +87,43 @@ def test_format_report_renders_both_sections():
     report = mod.format_report(a, b, top_n=5)
     assert "Section A" in report and "Section B" in report
     assert "WR" in report and "RotoWire" in report
+
+
+@pytest.mark.parametrize("position", mod.ALL_POSITIONS)
+def test_run_position_forwards_requested_seed(monkeypatch, position):
+    calls = []
+
+    def run(seed=42, config=None):
+        calls.append((seed, config))
+        return {"test_df": _synth_test_df()}
+
+    monkeypatch.setitem(
+        sys.modules, f"src.{position.lower()}.run_pipeline", SimpleNamespace(CONFIG={}, run=run)
+    )
+    mod.run_position(position, seed=7)
+    assert calls == [(7, {"train_tabpfn": True})]
+
+
+@pytest.mark.parametrize("position", ["QB", "K"])
+def test_resumable_cache_is_seed_specific(monkeypatch, tmp_path, position):
+    calls = []
+
+    def run(seed=42, config=None):
+        calls.append(seed)
+        frame = _synth_test_df()
+        frame["pred_tabpfn_total"] = float(seed)
+        return {"test_df": frame}
+
+    monkeypatch.setitem(
+        sys.modules, f"src.{position.lower()}.run_pipeline", SimpleNamespace(CONFIG={}, run=run)
+    )
+    legacy = _synth_test_df()
+    legacy["pred_tabpfn_total"] = -99.0
+    legacy.to_parquet(tmp_path / f"tdf_{position}.parquet")
+    first = mod.run_position(position, seed=7, cache_dir=str(tmp_path))
+    second = mod.run_position(position, seed=13, cache_dir=str(tmp_path))
+    resumed = mod.run_position(position, seed=7, cache_dir=str(tmp_path))
+    assert calls == [7, 13]
+    assert first["pred_tabpfn_total"].eq(7).all()
+    assert second["pred_tabpfn_total"].eq(13).all()
+    pd.testing.assert_frame_equal(first, resumed)
