@@ -21,6 +21,7 @@ case "$cmd" in *gh*) ;; *) exit 0 ;; esac
 if ! codex_command_invokes_gh_pr_merge "$cmd"; then
   exit 0
 fi
+codex_hook_succeeded "$input" || exit 0
 
 root="$(codex_project_root "$input" "$jq_bin")"
 # (1) fast-forward the parent's main; (2) promote the worktree's locally-built

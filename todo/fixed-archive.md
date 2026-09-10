@@ -195,6 +195,9 @@ The original headings remain here so existing fragment links still resolve.
 ### [FIXED] Codex PR hooks stopped matching raw quoted command text
 [Read the incident record](fixed-archive/fixed-codex-pr-hooks-stopped-matching-raw-quoted-command-text-40e5015f.md).
 
+### [FIXED] Codex hooks compared unresolved paths and treated failed PR commands as successful
+[Read the incident record](fixed-archive/codex-hook-path-and-result-validation-2026-09.md).
+
 ### [FIXED] LGBM Optuna tuning now uses leased core pooling and 3-seed trial scoring
 [Read the incident record](fixed-archive/fixed-lgbm-optuna-tuning-now-uses-leased-core-pooling-and-3-seed-trial-scori-1618e1d1.md).
 

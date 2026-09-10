@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Helpers for the Codex (.codex/) hooks.
 #
-# The provider-neutral core (gh-pr tokenizer, find_jq, main_worktree, abs_path,
+# The provider-neutral core (gh-pr tokenizer, find_jq, main_worktree,
 # tool_command) lives once in scripts/agent-hooks-lib.sh (audit P4); this file
 # sources it and re-exports those under the codex_* names the hooks/tests call,
 # then defines the genuinely Codex-specific bits (apply_patch path parsing,
@@ -15,7 +15,12 @@ _codex_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Codex name for the shared tool_command extractor.
 codex_find_jq() { agent_hooks_find_jq "$@"; }
 codex_main_worktree() { agent_hooks_main_worktree "$@"; }
-codex_abs_path() { agent_hooks_abs_path "$@"; }
+# Resolve symlinks and dot segments before comparing paths. Missing leaf files
+# are valid for Add File. The caller supplies the event cwd for relative paths.
+codex_abs_path() {
+  python3 -c 'import os, sys
+print(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])))' "$1" "$2"
+}
 codex_hook_command() { agent_hooks_tool_command "$@"; }
 codex_is_env_assignment() { agent_hooks_is_env_assignment "$@"; }
 codex_pr_subcommand_segment_matches() { agent_hooks_pr_subcommand_segment_matches "$@"; }
@@ -26,14 +31,14 @@ codex_command_invokes_gh_pr_merge() { agent_hooks_command_invokes_gh_pr_merge "$
 
 # --- Codex-specific helpers ---------------------------------------------------
 
-codex_project_root() {
+codex_project_cwd() {
   local input="$1"
   local jq_bin="$2"
-  local candidate="${CODEX_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-}}"
+  local candidate=""
 
-  if [ -z "$candidate" ] && [ -n "$jq_bin" ]; then
+  if [ -n "$jq_bin" ]; then
     candidate=$(printf '%s' "$input" | "$jq_bin" -r '.cwd // empty' 2>/dev/null || true)
-  elif [ -z "$candidate" ] && command -v python3 >/dev/null 2>&1; then
+  elif command -v python3 >/dev/null 2>&1; then
     candidate=$(printf '%s' "$input" | python3 -c 'import json, sys
 try:
     print(json.load(sys.stdin).get("cwd") or "")
@@ -41,10 +46,35 @@ except Exception:
     sys.exit(0)' 2>/dev/null || true)
   fi
   if [ -z "$candidate" ]; then
-    candidate="$PWD"
+    candidate="${CODEX_PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-$PWD}}"
   fi
+  printf '%s\n' "$candidate"
+}
 
+codex_project_root() {
+  local candidate
+  candidate="$(codex_project_cwd "$1" "$2")"
   git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "$candidate"
+}
+
+# Bash PostToolUse also fires on failure. Accept completed successful structured
+# outputs and the CLI's text envelope; unknown/pending outputs cannot authorize
+# follow-up writes. Inspect only the envelope, never the command stdout.
+codex_hook_succeeded() {
+  printf '%s' "$1" | python3 -c 'import json, re, sys
+try:
+    response = json.load(sys.stdin).get("tool_response")
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except ValueError:
+            envelope = re.split(r"(?m)^Output:\s*$", response, maxsplit=1)[0]
+            match = re.search(r"(?m)^(?:Process exited with code|Exit code:) ([0-9]+)\s*$", envelope)
+            response = {"exit_code": int(match.group(1))} if match else None
+    code = response.get("exit_code", response.get("exitCode")) if isinstance(response, dict) else None
+    sys.exit(0 if type(code) is int and code == 0 else 1)
+except (ValueError, TypeError, AttributeError):
+    sys.exit(1)'
 }
 
 # Best-effort fast-forward of the main/parent checkout's `main` branch to

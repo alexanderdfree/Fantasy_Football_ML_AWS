@@ -65,6 +65,8 @@ def _run_hook(
     cwd: Path,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if script in (".codex/hooks/post-pr-create.sh", ".codex/hooks/post-pr-merge.sh"):
+        payload = {"tool_response": {"exit_code": 0}, **payload}
     env = os.environ.copy()
     for key in (
         "CODEX_PROJECT_DIR",
@@ -378,6 +380,25 @@ def test_codex_hook_command_python3_fallback_without_jq():
     assert result.stdout.strip() == "gh pr create --fill"
 
 
+@pytest.mark.parametrize(
+    ("response", "success"),
+    [
+        ({"exit_code": 0}, True),
+        ({"exit_code": 1}, False),
+        ({"exit_code": None, "session_id": 42}, False),
+        ({"exit_code": False}, False),
+        (None, False),
+        ('{"exit_code": 0}', True),
+        ("Wall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n", True),
+        ("Wall time: 0.1 seconds\nProcess exited with code 1\nOutput:\nExit code: 0", False),
+        ("Output:\nProcess exited with code 0", False),
+    ],
+)
+def test_codex_hook_checks_actual_completion_status(response, success: bool):
+    result = _call_codex_lib('codex_hook_succeeded "$2"', json.dumps({"tool_response": response}))
+    assert (result.returncode == 0) is success
+
+
 @pytest.mark.skipif(not _jq_available(), reason="Codex hooks need jq to parse hook JSON")
 class TestCodexHooks:
     def test_guard_blocks_parent_checkout_file_path(self, git_worktree_pair: tuple[Path, Path]):
@@ -423,6 +444,95 @@ class TestCodexHooks:
 
         assert result.returncode == 0
         assert result.stderr == ""
+
+    @pytest.mark.parametrize(
+        "path_kind", ["relative", "absolute_dotdot", "symlink", "alias", "nested"]
+    )
+    @pytest.mark.parametrize("tool", ["file_path", "apply_patch_move"])
+    def test_guard_blocks_resolved_parent_paths(
+        self, git_worktree_pair: tuple[Path, Path], path_kind: str, tool: str
+    ):
+        main, worktree = git_worktree_pair
+        cwd = worktree
+        if path_kind == "relative":
+            target = "../main/new.py"
+        elif path_kind == "absolute_dotdot":
+            target = str(worktree / "../main/new.py")
+        elif path_kind == "symlink":
+            (worktree / "linked").symlink_to(main, target_is_directory=True)
+            target = "linked/new.py"
+        elif path_kind == "alias":
+            alias = worktree.parent / "parent-alias"
+            alias.symlink_to(main, target_is_directory=True)
+            target = str(alias / "new.py")
+        else:
+            cwd = worktree / "subdir"
+            cwd.mkdir()
+            target = "../../main/new.py"
+        tool_input = {"file_path": target}
+        if tool == "apply_patch_move":
+            tool_input = {
+                "command": f"*** Begin Patch\n*** Update File: old.py\n*** Move to: {target}\n*** End Patch\n"
+            }
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(cwd), "tool_input": tool_input},
+            cwd,
+        )
+        assert result.returncode == 2, result.stderr
+        assert "main checkout" in result.stderr
+
+    def test_guard_uses_event_cwd_over_inherited_parent_environment(
+        self, git_worktree_pair: tuple[Path, Path]
+    ):
+        main, worktree = git_worktree_pair
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(worktree), "tool_input": {"file_path": str(main / "new.py")}},
+            worktree,
+            {"CLAUDE_PROJECT_DIR": str(main)},
+        )
+        assert result.returncode == 2
+
+    def test_guard_allows_alias_into_own_worktree(self, git_worktree_pair: tuple[Path, Path]):
+        _, worktree = git_worktree_pair
+        alias = worktree.parent / "worktree-alias"
+        alias.symlink_to(worktree, target_is_directory=True)
+        result = _run_hook(
+            ".codex/hooks/guard-worktree-path.sh",
+            {"cwd": str(alias), "tool_input": {"file_path": str(alias / "new.py")}},
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize("escape", [False, True])
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_formatter_resolves_relative_paths_from_event_cwd(
+        self, git_worktree_pair: tuple[Path, Path], escape: bool, nested: bool
+    ):
+        main, worktree = git_worktree_pair
+        cwd = worktree / "subdir" if nested else worktree
+        cwd.mkdir(exist_ok=True)
+        (cwd / "local.py").write_text("x=1\n")
+        (main / "parent.py").write_text("x=1\n")
+        (cwd / "linked").symlink_to(main, target_is_directory=True)
+        ruff = worktree / ".venv/bin/ruff"
+        ruff.parent.mkdir(parents=True)
+        calls = worktree / "ruff-calls"
+        ruff.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$RUFF_CALLS"\n')
+        ruff.chmod(0o755)
+        path = "linked/parent.py" if escape else "local.py"
+        result = _run_hook(
+            ".codex/hooks/ruff-format.sh",
+            {"cwd": str(cwd), "tool_input": {"file_path": path}},
+            cwd,
+            {"RUFF_CALLS": str(calls)},
+        )
+        assert result.returncode == 0, result.stderr
+        if escape:
+            assert not calls.exists()
+        else:
+            assert str((cwd / "local.py").resolve()) in calls.read_text().splitlines()
 
     def test_session_start_emits_codex_context(self, git_worktree_pair: tuple[Path, Path]):
         _, worktree = git_worktree_pair
@@ -707,6 +817,38 @@ class TestCodexHooks:
                 capture_output=True,
             ).stdout.strip()
         )
+
+    @pytest.mark.parametrize("response", [{"exit_code": 1}, None, {"session_id": 42}])
+    def test_post_pr_merge_does_not_mutate_parent_after_failed_or_unknown_command(
+        self, merge_scenario_codex: tuple[Path, Path], response
+    ):
+        main, worktree = merge_scenario_codex
+        before = _head(main)
+        result = _run_hook(
+            ".codex/hooks/post-pr-merge.sh",
+            {
+                "cwd": str(worktree),
+                "tool_input": {"command": "gh pr merge 1 --squash"},
+                "tool_response": response,
+            },
+            worktree,
+        )
+        assert result.returncode == 0, result.stderr
+        assert _head(main) == before
+        assert result.stdout == ""
+
+    def test_post_pr_create_does_not_report_failed_creation(self):
+        result = _run_hook(
+            ".codex/hooks/post-pr-create.sh",
+            {
+                "cwd": str(PROJECT_ROOT),
+                "tool_input": {"command": "gh pr create --fill"},
+                "tool_response": {"exit_code": 1},
+            },
+            PROJECT_ROOT,
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
 
     def test_post_pr_merge_skips_dirty_parent(self, merge_scenario_codex: tuple[Path, Path]):
         main, worktree = merge_scenario_codex
