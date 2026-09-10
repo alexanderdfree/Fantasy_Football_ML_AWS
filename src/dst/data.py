@@ -462,6 +462,8 @@ def build_data(
     dst_df["player_name"] = dst_df["team"]
     dst_df["recent_team"] = dst_df["team"]
     dst_df["position"] = "DST"
+    # Every row comes from schedules_reg; retain that contract for shared CV folds.
+    dst_df["season_type"] = "REG"
 
     # Team logos from nflreadpy via the nfl_source shim.
     try:

@@ -1,0 +1,16 @@
+{
+  "prepared_inputs_bit_identical": true,
+  "neural_weights_bit_identical": true,
+  "point_prediction_max_delta": {
+    "ridge": 0.0,
+    "lgbm": 0.0
+  },
+  "split_rows": {
+    "train": 5726,
+    "val": 544,
+    "test": 544
+  },
+  "baseline_history": "2026-09-10T14-54-29_0f0fec55.json",
+  "fixed_history": "2026-09-10T14-54-30_0f0fec55.json",
+  "regime": "CPU eager seed42; identical frozen canonical inputs; LGBM_N_JOBS=2"
+}
