@@ -46,6 +46,10 @@ and decisions in their investigation or incident record.
   provider file and memory store. Provider-specific memory-write rules remain.
 - Old archive paths and empirical results stay as historical evidence. Current
   recommendations must reflect superseding decisions.
+- Skill and prompt metadata must parse with the types their loaders expect.
+  Shared workflows follow current provider capabilities and preserve the user's
+  revised scope and existing authorization; spawning a worker does not itself
+  establish checkout isolation or permission to mutate external state.
 
 ## Rejected alternatives
 
@@ -63,6 +67,8 @@ and decisions in their investigation or incident record.
 
 ## Changelog
 
+- 2026-09-10: Repair skill/prompt metadata and provider assumptions; preserve
+  scope review, explicit memory authorization, and verified merge evidence (PR #1558).
 - 2026-09-10: Split startup policy, provider references and incident retrieval;
   retain evidence and add context budgets (PR #1546).
 - 2026-09-10: Remove superseded recommendations, narrow global memory to

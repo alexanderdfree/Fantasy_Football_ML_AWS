@@ -1,6 +1,6 @@
 ---
 description: Continue after opening a PR with review, CI, and merge discipline
-argument-hint: [PR=<number>] [BASE=origin/main]
+argument-hint: '[PR=<number>] [BASE=origin/main]'
 ---
 
 Run the repo's Codex post-PR workflow.

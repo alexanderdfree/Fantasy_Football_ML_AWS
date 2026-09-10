@@ -99,7 +99,7 @@ This workflow runs in one of two modes, chosen after Phase 1 fetches the target 
 **Detecting the mode** (do this right after Phase 1's fetch): choose **Mode B** iff —
 
 1. a comment on the issue matches `/remediation .*complete/i`, or otherwise maps each finding to a PR # / LEAVE category; AND
-2. the cited fix PRs are merged to `main` (`git log origin/main --grep=<area/PR marker>`).
+2. the cited fix PRs have verified `MERGED` state and their full merge commit SHAs are ancestors of current `origin/main`. A matching subject/PR marker from `git log --grep` is a retrieval hint, not proof that the fix shipped.
 
 Otherwise run **Mode A**. A large SHA-drift (the issue's `@<sha>` is many commits behind `main`, per Phase 1 step 4) is a strong hint to look for a remediation comment *before* assuming the findings are still open.
 
@@ -114,7 +114,10 @@ Skip when:
 
 - The user is fixing one specific bug — use a normal flow, not this skill.
 - The target is a **non-audit** issue (a user-reported bug, a generic task issue) — use plain plan mode. (Finite *audit* issues — `#NNN split`, dated per-cycle, or consolidated — are **in scope**: run **Mode B**.)
-- The user has indicated PRs should not be opened in this session — skip Mode A. (Mode B's verify-then-close opens no PRs unless a gap is found, so it may still apply.)
+
+When the user excludes PR creation, retain the requested verification and any
+authorized local fixes; stop delivery at that boundary and report what remains.
+Do not discard the whole triage task merely because one delivery step is excluded.
 
 ## How to run
 
@@ -130,7 +133,7 @@ If the provider has an explicit plan mode, enter it first. Otherwise, produce th
          --jq '.[] | select(any(.labels[]; .name | test("^severity-(docs|low|medium|high)$")))'
      done | jq -s 'unique_by(.number) | sort_by(.number)'
      ```
-     The filter drops the closed `checkpoint` issues automatically (they carry no severity label) and yields the live finding set. Each kept issue is ONE finding.
+     The filter drops the closed `checkpoint` issues automatically (they carry no severity label). Each kept issue is ONE finding. The 400-entry limit is a page budget, not proof of a complete backlog: if either label query reaches the cap, paginate that label to exhaustion before classifying the set. Save full issue payloads locally and return selected fields with bounded previews; a failed fetch must not be treated as an empty backlog.
    - Explicit `/solve-issues <N>` → use `<N>` (one issue). If it carries a severity label it's a single per-finding issue; if it's a **legacy batch issue** (`[claude-audit] <date> — N findings` or `[codex-audit] <date> — N findings`) or a `#NNN split`, treat its body as multi-finding (see step 3's legacy fallback).
    - Explicit **range/list** `/solve-issues #A-B` or `#A,#B,…` → expand to the set and run per-issue.
 2. Fetch full body + comments for each target issue: `gh issue view <N> --json number,title,body,labels,comments`.
@@ -294,14 +297,14 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    git checkout -b audit-NNN/tier-X origin/main
    ```
    Use `audit-NNN/tier-X` only for an unsplit tier. If a tier is split by regress-risk, include the split key in the branch name, for example `audit-NNN/tier-C-low`, `audit-NNN/tier-C-medium`, or `audit-NNN/tier-C-high`, so each slice gets an isolated PR.
-2. **Spawn all bundle workers in parallel** using the provider worker mechanism described by the injected `WORKFLOW_SUBAGENTS` (each provider's wrapper supplies its own — e.g. Claude `Agent` workers in isolated worktrees, Codex subagents, or sequential tier-by-tier execution where no parallel worker exists). Each worker:
-   - Symlinks data dirs in its worktree (memory `feedback_worktree_data_symlink`): `main_root="$(dirname "$(git rev-parse --git-common-dir)")"; ln -sf "$main_root/data/"{splits,raw} data/` (portable — derives the parent checkout from git, no hardcoded path)
+2. **Allocate isolation before dispatching bundle workers.** Use the provider mechanism in `WORKFLOW_SUBAGENTS`, within its current concurrency limit. A Codex subagent can share the parent's checkout; spawning it does not create a worktree. For parallel implementation, first create a distinct worktree and branch per bundle, pass its absolute path, and require every edit and Git command to target that path. Workers must not switch or commit the staging checkout. If isolated worktrees are unavailable, execute bundles sequentially with the orchestrator as the sole commit owner. Each isolated worker:
+   - Prepares data paths according to `agent-guides/environment.md`, using the existing launcher/linking helpers where applicable. Inspect existing paths before adding data symlinks; never replace populated data or infer the main checkout from a possibly relative Git-common-dir path.
    - Applies its bundle's fixes
-   - For bundles whose max regress-risk is `high`: runs `python -m src.{pos}.run_pipeline` for the affected position(s) and diffs `benchmark_history/` (or `{pos}/outputs/`) against `origin/main` baseline
+   - For every NN/feature/loss/target change, and other bundles whose max regress-risk is `high`: runs the affected-position pipeline comparison required by `agent-guides/validation.md`, using the existing experiment harness, isolated outputs, and the relevant subgroup/multi-seed evidence. Risk labels do not waive that requirement.
    - Runs `pytest -m unit -q` + `ruff check . && ruff format --check .` (**foreground** — memory `feedback_background_pytest_terminates_agents`)
    - Commits to its worktree branch, **does NOT push, does NOT open a PR** (agent-guides/delivery.md "Large (>10-item) parallel cleanups")
    - Reports back: commit SHA, branch name, files modified, findings skipped + why, any cross-bundle test-contract gaps flagged
-3. **Verify worker output**: `git worktree list | grep agent-` should show one worktree per spawned worker (memory `feedback_agent_isolation_with_background` — async returns can lag). For any worker that did NOT report a commit SHA, take over the worktree directly (memory `feedback_take_over_interrupted_agent`).
+3. **Verify worker output** against the recorded absolute worktree path, branch, full commit SHA, and changed files. Do not identify worktrees by a guessed `agent-` substring. Before taking over an incomplete worker's checkout, confirm that worker has stopped; avoid concurrent edits or commits in the same checkout.
 4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (memory `feedback_verify_no_conflict_markers`).
 5. **Orchestrator-bridge commit (if any)** for cross-bundle test-contract gaps. Subject: `fix(audit-NNN, orchestrator, <tier>): <short summary>`.
 6. **Run the provider pre-PR gate** locally (`WORKFLOW_PRE_PR_GATE`; Codex uses `/prompts:pre-pr-gate`, not `.codex/hooks/pre-pr.sh` directly). If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — memory `feedback_surface_gate_friction`. Do not `--no-verify`.
@@ -316,7 +319,7 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - **Test plan** — pytest / ruff / benchmark checklist
    - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (memory `feedback_gpu_guarded_code_needs_gpu_test`)
 10. **Wait green CI** (`gh pr checks <N> --watch`) before opening the next tier's PR. This is the CI-load-light cadence — sequential PRs, not all three open at once.
-11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for `regress-risk-high` fixes — the benchmark deltas from the PR body, and ask for explicit approval through the provider's user-question mechanism. Only after the user approves: `gh pr merge <N> --squash`, then `git push origin --delete <branch>` separately. Never auto-merge a solve-issues PR on green CI alone; provider post-PR hooks preserve the same stop for `audit-*/tier-*` branches.
+11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for `regress-risk-high` fixes — the benchmark deltas from the PR body, and ask for explicit approval through the provider's user-question mechanism. Only after the user approves: run `gh pr merge <N> --squash`. Verify the PR is `MERGED` and the latest reviewed changes are in its squash commit before separately deleting the remote branch with `git push origin --delete <branch>`. Never auto-merge a solve-issues PR on green CI alone; provider post-PR hooks preserve the same stop for `audit-*/tier-*` branches.
 12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
 
 After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` or `[codex-audit]` cycle won't re-file the fixed/closed ones — producer dedupe spans **closed** issues from both labels too.

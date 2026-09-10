@@ -39,8 +39,9 @@ checkout of `main` at HEAD):
   is empty, audit in place. Otherwise create a temporary detached worktree at
   `origin/main` outside the repo (e.g. `git worktree add --detach
   <scratchpad>/audit-main origin/main`), run the entire audit with that directory as
-  the working root, and `git worktree remove` it afterward (best-effort;
-  `git worktree prune` on failure). The audited SHA in findings and the checkpoint
+  the working root, and `git worktree remove` that exact temporary checkout after
+  its workers have stopped. If removal fails, report and retain the path; do not
+  run repository-wide pruning as a fallback. The audited SHA in findings and the checkpoint
   is that HEAD. Never audit a dirty or diverged checkout.
 - For the fanout step, spawn Claude Agent subagents; let workers inherit the
   session's model (omit `model:`). Worker count, scope grouping, and batching are up

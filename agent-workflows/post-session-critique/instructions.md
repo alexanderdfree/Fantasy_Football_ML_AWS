@@ -23,7 +23,7 @@ cross-agent lessons belong in the relevant `agent-guides/` topic or ADR, reached
 ## Provider entrypoints
 
 - Claude wrapper: `.claude/skills/post-session-critique/SKILL.md`.
-- Codex wrapper: `.codex/prompts/post-session-critique.md`.
+- Codex wrapper: `.agents/skills/post-session-critique/SKILL.md`; `.codex/prompts/post-session-critique.md` is the legacy alias.
 - Gemini/Antigravity wrapper: `.agents/skills/post-session-critique/SKILL.md`.
 
 The wrappers stay discoverable at those paths. This file is the behavioral source
@@ -80,7 +80,7 @@ constraints, check duplicates, and keep memory as scoped recall.
 ## Memory write policy
 
 - Claude wrapper: memory-worthy notes may be written under the provider's Claude project memory and indexed there when the skill has already filtered for a worthwhile lesson.
-- Codex wrapper: write memory only when `WORKFLOW_WRITE_MEMORY=1`. Otherwise propose the memory text without writing it. Codex memory notes go under `$CODEX_HOME/memories/extensions/ad_hoc/notes/`, falling back to `~/.codex/memories/extensions/ad_hoc/notes/` when `CODEX_HOME` is unset, and must follow the active Codex memory rules.
+- Codex wrapper: set `WORKFLOW_WRITE_MEMORY=1` only from explicit user authorization to save memory in this session, expressed in plain language or with `WRITE_MEMORY=1`. Invoking a critique alone does not grant memory-write permission; an explicit no-write request keeps the value at 0. Otherwise propose the memory text without writing it. Codex memory notes go under `$CODEX_HOME/memories/extensions/ad_hoc/notes/`, falling back to `~/.codex/memories/extensions/ad_hoc/notes/` when `CODEX_HOME` is unset, and must follow the active Codex memory rules.
 - Gemini/Antigravity wrapper: memory is plain Markdown under `~/.gemini/` (project memory under `~/.gemini/tmp/<project>/memory/`); it is not authoritative. Propose the note and reserve durable shared lessons for the relevant topic guide or ADR.
 
 ## What to skip

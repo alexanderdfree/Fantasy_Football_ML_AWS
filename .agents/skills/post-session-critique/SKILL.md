@@ -17,7 +17,7 @@ Codex runtime values:
 - `WORKFLOW_SHARED_INSTRUCTIONS=agent-workflows/post-session-critique/instructions.md`
 - `WORKFLOW_AGENT_DOC=CODEX.md`
 - `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories/extensions/ad_hoc/notes/` with fallback to `~/.codex/memories/extensions/ad_hoc/notes/`
-- `WORKFLOW_WRITE_MEMORY=1 only when invoked with WRITE_MEMORY=1; otherwise propose memory text without writing`
+- `WORKFLOW_WRITE_MEMORY=1 only when the user explicitly authorized saving memory in this session (including WRITE_MEMORY=1); otherwise propose memory text without writing. An explicit no-write instruction keeps this at 0.`
 
 Gemini runtime values:
 

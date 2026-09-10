@@ -1,6 +1,6 @@
 ---
 description: Triage agent audit issues into tier-by-risk Codex PRs
-argument-hint: [ISSUES="<numbers or range>"] [DRY_RUN=1]
+argument-hint: '[ISSUES="<numbers or range>"] [DRY_RUN=1]'
 ---
 
 Run the repo's Codex solve-issues wrapper.

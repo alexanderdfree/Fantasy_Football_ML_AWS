@@ -1,6 +1,7 @@
 ---
 name: solve-issues
-description: Triage the open [claude-audit]/[codex-audit] GitHub issues (one finding per issue, labeled by severity + model regress-risk + area) and bundle the fixes into tier-by-risk PRs for user approval. Enters plan mode: verifies each finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and stop-rule-violating feature drift), closes LEAVE issues, and partitions FIX work into file-disjoint Tier A/B/C bundles. Also has a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. `/solve-issues #338-348`). Trigger with `/solve-issues` to clear the audit backlog; not for one-off bug fixes.
+description: >-
+  Triage the open [claude-audit]/[codex-audit] GitHub issues (one finding per issue, labeled by severity + model regress-risk + area) and bundle the fixes into tier-by-risk PRs for user approval. Enters plan mode: verifies each finding, classifies FIX vs LEAVE (skipping stale claims, false positives, and stop-rule-violating feature drift), closes LEAVE issues, and partitions FIX work into file-disjoint Tier A/B/C bundles. Also has a verify-then-close mode for an already-remediated backlog passed explicitly (e.g. `/solve-issues #338-348`). Trigger with `/solve-issues` to clear the audit backlog; not for one-off bug fixes.
 ---
 
 # Solve-issues wrapper
