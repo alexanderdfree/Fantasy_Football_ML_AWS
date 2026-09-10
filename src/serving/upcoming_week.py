@@ -331,10 +331,17 @@ def run_upcoming_inference(
     ``actual_*`` left null (no games played yet).
     """
     core._ensure_base_data()
+    special_frames = {}
     if special_teams is not None:
-        featurized = pd.concat(
-            [featurized, special_teams.kicker, special_teams.defense], ignore_index=True
-        )
+        # Keep the input schemas separate. K's presence-based merge sentinels
+        # must not appear as all-NaN columns in DST or skill-position frames.
+        featurized = featurized.reset_index(drop=True)
+        offset = len(featurized)
+        for pos, frame in (("K", special_teams.kicker), ("DST", special_teams.defense)):
+            frame = frame.copy()
+            frame.index = range(offset, offset + len(frame))
+            offset += len(frame)
+            special_frames[pos] = frame
 
     keep = [
         c
@@ -352,7 +359,17 @@ def run_upcoming_inference(
         )
         if c in featurized.columns
     ]
-    results = featurized[keep].copy()
+    results = pd.concat(
+        [
+            featurized[keep],
+            *[
+                frame.reindex(
+                    columns=list(dict.fromkeys([*keep, "player_display_name", "headshot_url"]))
+                )
+                for frame in special_frames.values()
+            ],
+        ],
+    ).copy()
 
     # Index-preserving display + matchup enrichment (.map keeps the index that
     # _apply_position_models writes against).
@@ -399,7 +416,7 @@ def run_upcoming_inference(
                 core._apply_position_models(
                     train,
                     val,
-                    featurized[featurized["position"] == pos],
+                    special_frames[pos],
                     pos,
                     results,
                     kick_history=special_teams.kicks,
@@ -692,7 +709,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     and ``_publish_artifact`` raises when a configured S3 upload fails (the
     fresh artifact is on disk but S3 — what serving reads — is still stale).
     """
-    detected = espn_live.next_unplayed_week(SEASONS[-1])
+    detected = espn_live.next_unplayed_week(max(SEASONS[-1], datetime.now(UTC).year - 1))
     if detected is None:
         _write_unavailable("offseason")
         return read_cached_artifact()
@@ -742,7 +759,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
 
     core._ensure_base_data()
     special = upcoming_special_teams.prepare_special_teams(
-        season, week, roster, sched_rows, app_pkg._cache["splits"], app_pkg._cache["k_kicks_df"]
+        season, week, roster, sched_rows, app_pkg._cache["k_kicks_df"]
     )
 
     sig = _input_signature(

@@ -66,7 +66,10 @@ def normalize_schedules(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_live_inputs(season: int, week: int, historical_weekly, historical_team) -> LiveInputs:
-    schedules = normalize_schedules(nfl_source.schedules([season]))
+    # Fill every year since the historical cache, including the previous
+    # season after a rollover; do not couple live coverage to retraining.
+    live_seasons = list(range(min(SEASONS[-1] + 1, season), season + 1))
+    schedules = normalize_schedules(nfl_source.schedules(live_seasons))
     prior = before_week(schedules, season, week)
     if prior[["home_score", "away_score"]].isna().any().any():
         raise RuntimeError("previous-week games are incomplete; refusing partial K/DST history")
@@ -79,11 +82,13 @@ def fetch_live_inputs(season: int, week: int, historical_weekly, historical_team
             historical_team.iloc[:0].copy(),
             pd.DataFrame(columns=nfl_source.PBP_KICKER_COLS),
         )
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        weekly_job = pool.submit(nfl_source.weekly_data, [season])
-        team_job = pool.submit(nfl_source.team_week_stats_release, season)
-        pbp_job = pool.submit(nfl_source.pbp_data, [season], nfl_source.PBP_KICKER_COLS)
-        weekly, teams, pbp = weekly_job.result(), team_job.result(), pbp_job.result()
+    completed_seasons = sorted(int(s) for s in prior["season"].unique())
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        weekly_job = pool.submit(nfl_source.weekly_data, completed_seasons)
+        team_jobs = [pool.submit(nfl_source.team_week_stats_release, s) for s in completed_seasons]
+        pbp_job = pool.submit(nfl_source.pbp_data, completed_seasons, nfl_source.PBP_KICKER_COLS)
+        weekly, pbp = weekly_job.result(), pbp_job.result()
+        teams = pd.concat([job.result() for job in team_jobs], ignore_index=True)
     values = []
     for name, frame, team_col in (
         ("weekly", weekly, "recent_team"),
@@ -105,6 +110,18 @@ def fetch_live_inputs(season: int, week: int, historical_weekly, historical_team
     missing_pbp = set(nfl_source.PBP_KICKER_COLS) - set(values[2].columns)
     if missing_pbp:
         raise RuntimeError(f"K PBP schema incomplete: {sorted(missing_pbp)}")
+    required_team = [
+        "def_tds",
+        "def_safeties",
+        "def_fumbles_forced",
+        "fumble_recovery_opp",
+        "fg_blocked",
+        "pat_blocked",
+        "passing_yards",
+        "rushing_yards",
+    ]
+    if values[1].reindex(columns=required_team).isna().any().any():
+        raise RuntimeError("team history has missing required defensive or offensive stats")
     return LiveInputs(schedules, *values)
 
 
@@ -170,7 +187,9 @@ def build_kicker_frame(history, current, roster, schedules, season, week) -> pd.
     history = before_week(history, season, week)
     current = before_week(current, season, week)
     # Replace the refreshed season, including stat corrections, not just append.
-    history = pd.concat([history[history["season"] != season], current], ignore_index=True)
+    history = pd.concat(
+        [history[~history["season"].isin(current["season"].unique())], current], ignore_index=True
+    )
     context = team_schedule(schedules)
     upcoming = context[(context["season"] == season) & (context["week"] == week)]
     skeleton = roster[roster["position"] == "K"].merge(
@@ -218,16 +237,15 @@ def build_defense_frame(weekly, team_stats, schedules, season, week) -> pd.DataF
     )
     frame = dst_targets.compute_targets(frame)
     dst_features.compute_features(frame)
-    # Preserve the fully built live context at inference; training splits keep
-    # their existing shared schedule-merge behavior.
-    frame["_schedule_merged"] = True
+    # Inference runs the same shared schedule merge as training, over the
+    # augmented schedule cache. K alone has its own schedule-merge sentinel.
     mask = (frame["season"] == season) & (frame["week"] == week)
     frame.loc[mask, [*DST_CONFIG.targets, "fantasy_points"]] = np.nan
     return frame
 
 
 def prepare_special_teams(
-    season, week, roster, espn_schedule, splits, historical_kicks
+    season, week, roster, espn_schedule, historical_kicks
 ) -> SpecialTeamsFrames:
     root = Path(CACHE_DIR)
     suffix = f"{SEASONS[0]}_{SEASONS[-1]}"
@@ -235,12 +253,16 @@ def prepare_special_teams(
     team_stats = load_team_week_stats(SEASONS, cache_dir=CACHE_DIR)
     old_schedule = normalize_schedules(pd.read_parquet(root / f"schedules_{suffix}.parquet"))
     live = fetch_live_inputs(season, week, weekly, team_stats)
+    refreshed_seasons = live.schedules["season"].unique()
     upcoming = merge_live_schedule(live.schedules, espn_schedule)
     upcoming, weather_status = forecast_weather.enrich_forecasts(upcoming)
     # Keep only completed history and the target slate. Later scheduled games
     # must not become zero-outcome rows in the defense builder.
     past_schedule = pd.concat(
-        [old_schedule[old_schedule["season"] != season], before_week(live.schedules, season, week)],
+        [
+            old_schedule[~old_schedule["season"].isin(refreshed_seasons)],
+            before_week(live.schedules, season, week),
+        ],
         ignore_index=True,
     )
     past_schedule = before_week(past_schedule, season, week)
@@ -251,31 +273,44 @@ def prepare_special_teams(
         if col not in schedules:
             schedules[col] = np.nan
     weekly = before_week(weekly, season, week)
-    weekly = pd.concat([weekly[weekly["season"] != season], live.weekly], ignore_index=True)
+    weekly = pd.concat(
+        [weekly[~weekly["season"].isin(refreshed_seasons)], live.weekly], ignore_index=True
+    )
     weekly = weekly[weekly["season_type"] == "REG"].copy()
     team_stats = before_week(team_stats, season, week)
     team_stats = pd.concat(
-        [team_stats[team_stats["season"] != season], live.team_stats], ignore_index=True
+        [team_stats[~team_stats["season"].isin(refreshed_seasons)], live.team_stats],
+        ignore_index=True,
     )
 
-    k_history = pd.concat(splits["K"], ignore_index=True)
+    # Use the unfiltered history: training splits remove low-game-count
+    # player-seasons, but those games still belong in a returning kicker's
+    # cross-season rollups.
+    k_history = k_data.load_data()
     k_current = k_history.iloc[:0].copy()
     if not live.weekly.empty:
         k_current = k_data.load_data(
-            seasons=[season], weekly=live.weekly, schedules=live.schedules, pbp=live.pbp
+            seasons=sorted(int(s) for s in live.weekly["season"].unique()),
+            weekly=live.weekly,
+            schedules=live.schedules,
+            pbp=live.pbp,
         )
     kicker = build_kicker_frame(k_history, k_current, roster, schedules, season, week)
     fresh_kicks = (
-        k_data.reconstruct_kicker_kicks_from_pbp([season], pbp=live.pbp)
+        k_data.reconstruct_kicker_kicks_from_pbp(
+            sorted(int(s) for s in live.pbp["season"].unique()), pbp=live.pbp
+        )
         if not live.pbp.empty
         else historical_kicks.iloc[:0].copy()
     )
-    # load_kicks adds home/away from actual weekly rows. Drop the old home field
-    # so its validated one-to-one merge cannot acquire suffix collisions.
+    # load_kicks adds home/away from actual weekly rows through its validated
+    # one-to-one merge, exactly as on the historical path.
     if not fresh_kicks.empty:
         fresh_kicks = k_data.load_kicks(kicker, kicks_df=fresh_kicks)
     kicks = before_week(historical_kicks, season, week)
-    kicks = pd.concat([kicks[kicks["season"] != season], fresh_kicks], ignore_index=True)
+    kicks = pd.concat(
+        [kicks[~kicks["season"].isin(refreshed_seasons)], fresh_kicks], ignore_index=True
+    )
     defense = build_defense_frame(weekly, team_stats, schedules, season, week)
     source_status = {
         "retrieved_at": datetime.now(UTC).isoformat(),

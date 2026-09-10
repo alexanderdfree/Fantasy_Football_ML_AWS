@@ -665,6 +665,8 @@ def test_special_teams_inference_receives_both_live_history_sources(monkeypatch)
         )
 
     k, dst = frame("K", "K1"), frame("DST", "SEA")
+    k["_schedule_merged"] = True
+    k["_team_box_score_merged"] = True
     kicks = pd.DataFrame({"season": [2026], "week": [1], "kick_distance": [51]})
     weekly = pd.DataFrame({"season": [2026], "week": [1], "passing_yards": [321]})
     bundle = SpecialTeamsFrames(k, dst, kicks, weekly, pd.DataFrame(), {}, "changed")
@@ -678,6 +680,9 @@ def test_special_teams_inference_receives_both_live_history_sources(monkeypatch)
         calls.append(pos)
         assert set(test.position) == {pos}  # both special filters are identities
         assert set(test.week) == {1, 2}
+        if pos == "DST":
+            assert "_schedule_merged" not in test
+            assert "_team_box_score_merged" not in test
         assert kwargs["kick_history"] is kicks
         assert kwargs["opponent_weekly"] is weekly
         results.loc[test.index, _pred_col("ridge", "ppr")] = 8.25
