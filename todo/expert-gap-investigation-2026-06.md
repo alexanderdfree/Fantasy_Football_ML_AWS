@@ -140,18 +140,23 @@ current-week starter-news feed (#1134), not a derivable feature.
 - (Transient harness glue + raw outputs — substrate parquets, per-angle results — live under the
   gitignored `scratchpad/`; the reusable pieces are the tracked files above.)
 
-## Open items (unchanged by this PR)
+## Shipped product follow-up
+
+- **Per-position best-ranker selection shipped in PR #1477:**
+  `upcomingProjection()` in
+  [NextWeek.jsx](../src/serving/frontend/src/views/NextWeek.jsx) prefers
+  `lgbm_pred → attn_nn_pred → nn_pred` for RB/WR; other positions retain
+  `attn_nn_pred → lgbm_pred → nn_pred`. This changes the default homepage order,
+  leaves the displayed model columns intact, and requires no retrain. It is
+  ADR-0003-compatible head selection and only a partial response to the ordering
+  gap below.
+
+## Open research items
+
 - **The ordering edge is RB + WR + TE** (not WR-only, §1a) and is **NOT calibration-fixable**. WR/TE need
   **player-level CB-matchup data** (#1210); RB may be partly closable from role/workload signal we already
   carry (the tractable research lever — see below). Recalibration and team-coverage proxies are both
   ruled out (§3/§4).
-- **Product lever (owner call, serving-only, no retrain):** the homepage ranking key
-  (`upcomingProjection()`, `src/serving/static/js/app.js:596-599`) globally prefers `attn_nn→lgbm→nn`;
-  for **RB/WR the LightGBM head ranks better**. Per-position best-ranker selection is
-  **ADR-0003-compatible** (head *selection*, not ensembling/stacking — there is no single "served head"
-  today: all four heads are computed per position and surfaced across the Comparison / Season-Leaders /
-  Model-Performance tabs, while the homepage shows NN / Attn NN / LightGBM and ranks by
-  `attn_nn→lgbm→nn`). Real but partial.
 - **RB research lever (no new data):** the RB ordering edge (iso +0.168) + bust-avoidance (+1.3pp top-24,
   4/4 seasons) concentrates in established-alpha RBs (D1, 4/4 positive) — unlike WR's external CB gap, part
   of RB bust risk may be forecastable from workload/role/game-script we already have. Investigate via

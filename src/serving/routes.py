@@ -1,4 +1,4 @@
-"""HTTP routes for the serving app — the 19 Flask handlers + their helpers.
+"""HTTP routes for the serving app — Flask handlers and their helpers.
 
 Extracted from ``app.py`` during the serving decomposition (increment 5). Uses the
 canonical Flask pattern: ``from src.serving.app import app`` for the ``@app.route``
@@ -133,8 +133,8 @@ def api_predictions():
             "players": rows,
             "total": len(rows),
             "scoring": scoring,
-            # Surfaced so the frontend can render a banner. See
-            # static/js/app.js::loadPredictions and _degraded_positions above.
+            # Banner rendering lives in frontend/src/views/SeasonLeaders.jsx;
+            # core._degraded_positions supplies the unavailable positions.
             "degraded_positions": core._degraded_positions(),
         }
     )
@@ -144,7 +144,7 @@ def api_predictions():
 def api_snapshot():
     """Serve the precomputed predictions snapshot straight off disk.
 
-    The frontend hydrates its first paint from this (static/js/app.js::init), so
+    The frontend hydrates its first paint from this (frontend/src/App.jsx), so
     this route MUST NOT call ``_ensure_metrics`` / load models — that is the whole
     point: instant first paint with zero compute on the request path. Missing
     file -> 404, and the frontend falls back to ``/api/predictions``. The file is
