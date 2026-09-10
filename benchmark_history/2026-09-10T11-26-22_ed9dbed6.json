@@ -1,7 +1,7 @@
 {
-  "run_id": "2026-09-10T11:20:54_ed3a87cd",
-  "timestamp": "2026-09-10T11:20:54",
-  "git_hash": "ed3a87cd",
+  "run_id": "2026-09-10T11:26:22_ed9dbed6",
+  "timestamp": "2026-09-10T11:26:22",
+  "git_hash": "ed9dbed6",
   "note": "",
   "positions": [
     "RB"
@@ -202,16 +202,16 @@
       },
       "lgbm_top12": 0.477,
       "phase_seconds": {
-        "prepare_data": 14.5,
-        "ridge_tune": 3.9,
-        "ridge_fit": 1.2,
-        "lgbm_train": 2.7,
-        "nn_train": 16.8,
-        "attn_nn_train": 27.6,
-        "train_models_total": 44.4,
-        "backtest": 0.2,
+        "prepare_data": 0.3,
+        "ridge_tune": 2.0,
+        "ridge_fit": 0.7,
+        "lgbm_train": 2.3,
+        "nn_train": 12.7,
+        "attn_nn_train": 25.3,
+        "train_models_total": 38.1,
+        "backtest": 0.3,
         "save_artifacts": 0.0,
-        "figures": 1.7
+        "figures": 2.2
       },
       "cohorts": {
         "week1": {
@@ -241,97 +241,133 @@
               "rmse": 4.6458,
               "bias": 0.6188
             }
-          }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "seasonal_actual_top24": {
           "n": 399,
           "models": {
             "Ridge": {
               "n": 399,
-              "mae": 7.2552,
-              "rmse": 9.5602,
-              "bias": -2.5212
+              "mae": 7.2447,
+              "rmse": 9.5386,
+              "bias": -2.5108
             },
             "NN": {
               "n": 399,
-              "mae": 6.6072,
-              "rmse": 8.8255,
-              "bias": -2.257
+              "mae": 6.5967,
+              "rmse": 8.8038,
+              "bias": -2.2465
             },
             "Attention NN": {
               "n": 399,
-              "mae": 6.5745,
-              "rmse": 8.8072,
-              "bias": -2.4532
+              "mae": 6.564,
+              "rmse": 8.781,
+              "bias": -2.4427
             },
             "LightGBM": {
               "n": 399,
-              "mae": 6.5692,
-              "rmse": 8.6945,
-              "bias": -1.6468
+              "mae": 6.5588,
+              "rmse": 8.675,
+              "bias": -1.6364
             }
           },
           "status": "available",
           "definition": "regular_season_total_actual_fantasy_points",
-          "cohort_hash": "45667e84062fc25ead70a7e4f6bc7ed4424fd0e6b89aff46fb0264d1baeaa258"
+          "cohort_hash": "ca6272cb2ec4260d139225baa8a326e571bc3a48d2ffa05a9413f090da805688",
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "returning": {
           "n": 227,
           "models": {
             "Ridge": {
               "n": 227,
-              "mae": 2.8397,
-              "rmse": 4.427,
-              "bias": -0.5426
+              "mae": 2.8357,
+              "rmse": 4.4247,
+              "bias": -0.5193
             },
             "NN": {
               "n": 227,
-              "mae": 2.9932,
-              "rmse": 4.3359,
-              "bias": 0.036
+              "mae": 2.9956,
+              "rmse": 4.3373,
+              "bias": 0.0592
             },
             "Attention NN": {
               "n": 227,
-              "mae": 2.7966,
-              "rmse": 4.3409,
-              "bias": -0.6286
+              "mae": 2.794,
+              "rmse": 4.3394,
+              "bias": -0.6053
             },
             "LightGBM": {
               "n": 227,
-              "mae": 3.1111,
-              "rmse": 4.4068,
-              "bias": 0.6375
+              "mae": 3.1212,
+              "rmse": 4.4129,
+              "bias": 0.6607
             }
-          }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "questionable": {
           "n": 58,
           "models": {
             "Ridge": {
               "n": 58,
-              "mae": 4.0622,
-              "rmse": 5.9825,
-              "bias": -1.9966
+              "mae": 3.9904,
+              "rmse": 5.7395,
+              "bias": -1.9249
             },
             "NN": {
               "n": 58,
-              "mae": 3.8362,
-              "rmse": 5.4275,
-              "bias": -1.0204
+              "mae": 3.7645,
+              "rmse": 5.1798,
+              "bias": -0.9487
             },
             "Attention NN": {
               "n": 58,
-              "mae": 4.1594,
-              "rmse": 6.0874,
-              "bias": -1.6525
+              "mae": 4.0877,
+              "rmse": 5.8204,
+              "bias": -1.5808
             },
             "LightGBM": {
               "n": 58,
-              "mae": 3.7691,
-              "rmse": 5.2321,
-              "bias": 0.2329
+              "mae": 3.6974,
+              "rmse": 5.0051,
+              "bias": 0.3046
             }
-          }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "inheritor": {
           "n": 103,
@@ -360,39 +396,57 @@
               "rmse": 7.3926,
               "bias": -0.1482
             }
-          }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "elite_top24": {
           "n": 347,
           "models": {
             "Ridge": {
               "n": 347,
-              "mae": 6.5665,
-              "rmse": 8.7513,
-              "bias": -0.9694
+              "mae": 6.5426,
+              "rmse": 8.7133,
+              "bias": -0.9455
             },
             "NN": {
               "n": 347,
-              "mae": 6.0311,
-              "rmse": 8.2262,
-              "bias": -0.7645
+              "mae": 6.0073,
+              "rmse": 8.1864,
+              "bias": -0.7406
             },
             "Attention NN": {
               "n": 347,
-              "mae": 6.0075,
-              "rmse": 8.2413,
-              "bias": -1.2285
+              "mae": 5.9837,
+              "rmse": 8.2001,
+              "bias": -1.2046
             },
             "LightGBM": {
               "n": 347,
-              "mae": 6.0724,
-              "rmse": 8.1997,
-              "bias": -0.3658
+              "mae": 6.0485,
+              "rmse": 8.1669,
+              "bias": -0.3419
             }
           },
           "status": "available",
-          "definition": "prior_season_mean_fantasy_points",
-          "cohort_hash": "6d0c4bb3bb1bbfd8ebd8ece59e531417fee0c729f0a04df07cec7e98039ccfde"
+          "definition": "prior_season_mean_shared_component_points",
+          "cohort_hash": "a9fe93b33ba7c35f6479725546468bb7908aac1f9a28532fa4c5523941f0407f",
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "weekly_reference_top24": {
           "n": null,
@@ -400,45 +454,63 @@
           "status": "unavailable",
           "reason": "reference_artifact_missing",
           "definition": "pregame_archived_expert_reference",
-          "cohort_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          "cohort_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         },
         "weekly_actual_top24": {
           "status": "available",
           "definition": "actual_weekly_leaders_ranking",
           "n": 1643,
-          "cohort_hash": "fe76de2cdad58bbe796995524df5033e75a2bd4c1abaea15567d2db7bfc091c0",
+          "cohort_hash": "f6ae37f8117a04fb96e816b77f9fb30c317f506796347499f338a563cfb187b9",
           "models": {
             "Ridge": {
               "n_weeks": 18,
               "hit_rate": 0.6181,
-              "points_captured": 358.6811,
-              "lineup_regret": 85.2733
+              "points_captured": 358.45,
+              "lineup_regret": 85.0444
             },
             "NN": {
               "n_weeks": 18,
               "hit_rate": 0.6227,
-              "points_captured": 361.9089,
-              "lineup_regret": 82.0456
+              "points_captured": 361.6778,
+              "lineup_regret": 81.8167
             },
             "Attention NN": {
               "n_weeks": 18,
               "hit_rate": 0.6181,
-              "points_captured": 358.7789,
-              "lineup_regret": 85.1756
+              "points_captured": 358.55,
+              "lineup_regret": 84.9444
             },
             "LightGBM": {
               "n_weeks": 18,
               "hit_rate": 0.6204,
-              "points_captured": 362.42,
-              "lineup_regret": 81.5344
+              "points_captured": 362.1889,
+              "lineup_regret": 81.3056
             }
-          }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "rushing_tds",
+            "receiving_tds",
+            "rushing_yards",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
         }
       },
-      "elapsed_sec": 63.0
+      "elapsed_sec": 44.4
     }
   ],
   "code_fingerprints": {
-    "RB": "39401e76512787075fb48de33cb479d03ee4d56e422eb7569878a653038a695e"
+    "RB": "6a177c4ce118a0474f5149b76ad21b653216e052a2f40d8ce36d5c2e355d59ea"
   }
 }
