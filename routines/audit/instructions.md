@@ -27,7 +27,7 @@ lenses. Each worker emits severity-labeled findings with verbatim evidence.
 
 The orchestrator verifies every cited line, dedupes against open and closed audit
 issues from all labels in `DEDUPE_AUDIT_LABELS`, drops anything already covered by
-AGENTS.md stop rules or the `todo/fixed-archive.md` fixed archive, consolidates
+agent-guides/stop-rules.md or the `todo/fixed-archive.md` fixed archive, consolidates
 partial/full duplicates within this run, and files one GitHub issue per surviving
 finding under `AUDIT_LABEL`. It also files one closed checkpoint issue under
 `AUDIT_LABEL` recording the audited SHA.
@@ -153,10 +153,11 @@ gh label create regress-risk-high --color D93F0B --description "Audit fix: model
 
 ## Step 1: Prep
 
-1. Read AGENTS.md stop rules verbatim. Hold them for worker prompts and final
-   verification.
-2. Run `grep "^### \[FIXED\]" todo/fixed-archive.md` and capture every title
-   line. Hold the list.
+1. Read the relevant rules in `agent-guides/stop-rules.md`. Keep scoped references
+   for workers and final verification.
+2. Run `rg "^### " todo/fixed-archive.md` to inventory all incident titles,
+   including rejected/investigated entries. Keep this compact inventory for
+   orchestrator dedupe; open matching records when evaluating a candidate.
 3. Build the dedupe pool from existing per-finding issues across all labels in
    `DEDUPE_AUDIT_LABELS`. Include open and closed issues carrying a severity
    label; this excludes checkpoint issues because they carry no severity label.
@@ -320,7 +321,11 @@ key/value reference that is not defined.
 When in doubt, drop the finding.
 
 STOP RULES:
-<inline AGENTS.md stop rules + every todo/fixed-archive.md FIXED title from Step 1>
+<include only scope-relevant stop-rule excerpts and their guide/ADR paths.
+Search todo/fixed-archive.md by the candidate symbols/issue keywords and open
+matching incident records before reporting. Do not inline the full archive or
+every title into each worker prompt; the orchestrator retains the full dedupe
+inventory and performs the final cross-check.>
 
 SELF-VERIFY every candidate before emitting it:
 1. Re-open the cited file at the cited line. Confirm evidence_quote is
@@ -367,8 +372,9 @@ For each new worker finding, the orchestrator re-verifies as a backstop:
 
 1. Read file at cited line. Confirm `evidence_quote` matches,
    whitespace-normalized. Drop on mismatch.
-2. Grep AGENTS.md and `todo/fixed-archive.md` for 2-3 distinctive title
-   keywords. Drop if matched.
+2. Search `agent-guides/stop-rules.md` and `todo/fixed-archive.md` for 2-3
+   distinctive title keywords, then open matching incident records. Drop if the
+   documented rule or resolved issue matches the candidate.
 3. Dedupe against `/tmp/known_issues.tsv` and `/tmp/known_files.tsv`: duplicate
    when an existing issue has the same area, same cited file, and at least two
    shared distinctive title keywords. The pool spans open and closed per-finding
@@ -500,7 +506,7 @@ write failed, print the unsent bodies to stdout.
 - Dedup spans open and closed severity-labeled issues across every label in
   `DEDUPE_AUDIT_LABELS` (`claude-audit codex-audit` today), so triaged-closed or
   fixed findings are not re-filed.
-- Never re-flag anything in AGENTS.md stop rules or `todo/fixed-archive.md`.
+- Never re-flag anything in agent-guides/stop-rules.md or `todo/fixed-archive.md`.
 - Never propose cross-position harmonization; that is feature engineering.
 - Never file design, tuning, or accuracy-judgment changes unless they are clear,
   non-controversial correctness bugs.

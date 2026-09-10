@@ -18,7 +18,7 @@ Bug classes guarded against:
 
 Excluded files (intentional historical records — do *not* lint):
 
-* ``TODO.md`` and ``todo/fixed-archive.md`` "Fixed archive" entries
+* ``TODO.md``, the fixed-issue index and its individual historical records
 """
 
 from __future__ import annotations
@@ -70,7 +70,9 @@ def _tracked_files() -> list[Path]:
             continue
         if Path(rel).suffix not in LINT_EXTENSIONS:
             continue
-        if rel in ARCHIVE_EXCLUSIONS:
+        # Incident records moved out of the index retain their original paths.
+        # Keep this exemption narrow; active agent guides still get linted.
+        if rel in ARCHIVE_EXCLUSIONS or rel.startswith("todo/fixed-archive/"):
             continue
         files.append(REPO_ROOT / rel)
     return files

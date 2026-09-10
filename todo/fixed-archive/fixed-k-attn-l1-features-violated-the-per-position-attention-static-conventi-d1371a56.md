@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] K `ATTN_L1_FEATURES` violated the per-position attention-static convention
+- **Files:** `src/k/config.py` (`ATTN_L1_FEATURES` block removed).
+- **What:** When the per-position `{POS}_ATTN_STATIC_FEATURES` allowlist landed in commit `2500ecc` (PR #140), every position was supposed to keep rolling/EWMA/trend features *out* of the attention NN's static channel — they're already represented in the game-history sequence and double-feeding leaks older-season signal past the attention window. K was the lone holdout: it kept a separate `ATTN_L1_FEATURES` block that pushed L1-rolling columns back into the static branch, on the theory the inner per-kick attention pool needed help. Subsequent measurement (PR #199) showed the inner pool was already learning those aggregates directly, making the L1 block redundant signal and a soft-leak risk.
+- **Fix:** Dropped `ATTN_L1_FEATURES` from K's config; K now matches the QB/RB/WR/TE/DST pattern of no rolling features in the attention static channel.
+- **Lesson:** When a cross-cutting convention lands across positions, audit *every* position's config for residue — not just the obviously-affected ones. Six configuration surfaces (D6 cross-cutting consequence) means six places to look, and a rollback to "one position is an exception" is exactly the kind of drift the convention was meant to prevent.

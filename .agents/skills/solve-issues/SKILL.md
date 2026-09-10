@@ -22,7 +22,7 @@ Codex runtime values:
 - `WORKFLOW_PRE_PR_GATE=/prompts:pre-pr-gate when installed; otherwise run the deterministic checks manually`
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=$pre-pr-judge or /prompts:pre-pr-judge`
 - `WORKFLOW_REVIEW_TOOL=scripts/codex-review-quiet.sh --base origin/main`
-- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus AGENTS.md for durable cross-agent lessons`
+- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus the relevant agent-guides topic or ADR for durable shared lessons`
 
 Gemini runtime values:
 
@@ -37,7 +37,7 @@ Gemini runtime values:
 - `WORKFLOW_PRE_PR_GATE=the wired .gemini BeforeTool hook (.gemini/hooks/pre-pr.sh on run_shell_command, delegating to the single-source .claude/hooks/pre-pr.sh) gates a top-level gh pr create; run the deterministic checks manually — ruff check . && ruff format --check . && pytest -m unit — only as a fallback when the hook is unavailable`
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=activate_skill(name="pre-pr-judge")`
 - `WORKFLOW_REVIEW_TOOL=the @gemini-cli /review PR workflow (.github/workflows/gemini-review.yml)`
-- `WORKFLOW_MEMORY_DESTINATION=Gemini Markdown memory, plus AGENTS.md for durable cross-agent lessons`
+- `WORKFLOW_MEMORY_DESTINATION=Gemini Markdown memory, plus the relevant agent-guides topic or ADR for durable shared lessons`
 
 Execution:
 

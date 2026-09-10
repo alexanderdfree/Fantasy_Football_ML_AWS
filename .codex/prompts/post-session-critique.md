@@ -1,5 +1,5 @@
 ---
-description: Capture a non-routine Codex session lesson for AGENTS.md or memory
+description: Propose a scoped guidance or authorized memory update after a non-routine session
 argument-hint: [WRITE_MEMORY=0|1]
 ---
 

@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] RB/TE team-share L3 rollings not stint-aware — mid-season trades mixed two teams' volume in the denominator (WR #674 class)
+- **File(s):** [../src/rb/features.py](../../src/rb/features.py) (`team_rb_carry/target_share_L3`) + [../src/te/features.py](../../src/te/features.py) (`team_te_target_share_L3`), audit issues #1192/#1193, 2026-07-01 solve-issues tier-C-medium PR.
+- **What:** The share rollings grouped on `['player_id','season']` only, so a traded player's 3-week rolling team denominator concatenated the OLD team's positional volume with the NEW team's for ~3 weeks post-trade — violating the documented invariant "team-relative SHARE features stay stint-aware (#666/#677)". WR fixed exactly this in #674; RB/TE never mirrored it. Positive-controlled: the buggy grouping yields share 0.75 where stint-aware yields 1.0 on the trade fixture.
+- **Fix:** Rebuilt `stint_id` locally (in-season `recent_team` change + cumsum, mirroring `src/wr/features.py:91-99`) and rolled player+team volume over `['player_id','season','stint_id']`. Runtime features → RB/TE retrain only.
+- **Lesson:** Same mirror-the-sibling failure mode as the catch-rate entry above — an invariant enforced in one position's file is not enforced anywhere else; grep every sibling `features.py` when a positional invariant lands.

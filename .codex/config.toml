@@ -1,11 +1,8 @@
 # Repo-level Codex defaults. Keep hook trust hashes, auth state, and
 # machine-specific model catalog paths in user configuration, not this file.
 service_tier = "fast"
-model = "gpt-5.5"
-model_context_window = 1000000
-model_auto_compact_token_limit = 700000
-model_reasoning_effort = "xhigh"
-plan_mode_reasoning_effort = "xhigh"
+# Model, reasoning and context/compaction defaults come from the user/runtime.
+# Do not pin a historical workstation profile in this shared project config.
 
 [features]
 fast_mode = true

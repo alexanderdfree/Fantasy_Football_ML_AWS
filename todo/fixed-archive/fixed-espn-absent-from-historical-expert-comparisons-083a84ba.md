@@ -1,0 +1,8 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] ESPN absent from historical expert comparisons
+- **File(s):** `src/serving/espn_projections.py`, `core.py`, `serialization.py`, `routes.py`, `frontend/src/views/Comparison.jsx`; `src/analysis/analysis_expert_comparison.py`, `build_comparison_summary.py`; committed `comparison_experts.json`.
+- **What:** ESPN was available only on Next Week. Historical comparisons omitted it even though its public API retains weekly raw projections from 2018 onward. Stock ESPN points do not exactly match this project's position-specific scoring, and 2023 Week 1 has an incomplete player pool.
+- **Fix:** Decode raw weekly projection entries, cache each season independently, bridge athlete IDs through nflverse and DST by franchise, exclude the known incomplete week and absent forecasts, and use the shared six-position scoring formulas. Add the source to paired analysis, dashboard metrics and per-row quartile bias; bump the serving cache schema to refresh pre-ESPN snapshots. Regenerate the 2025 summary against actuals.
+- **Lesson:** A year/week API selector is insufficient: check stat-source discriminators, full-season response filtering, player coverage and scoring. A missing rushing field does not invalidate a receiving-only RB forecast. Historical availability is not proof that values were frozen at kickoff.
+- **Review follow-up:** Track ESPN load/scoring completeness on the results frame and refuse to persist/upload incomplete results. Otherwise a transient outage becomes an all-null cache reused indefinitely under the unchanged model fingerprint. A later cold boot now retries; complete existing disk snapshots remain untouched.

@@ -44,7 +44,7 @@ time python -m src.wr.run_pipeline --device mps
 ```
 
 If MPS is meaningfully faster on your Mac, the default can be flipped later in the `auto` branch of
-[src/shared/utils.py](src/shared/utils.py). See [AGENTS.md](AGENTS.md)'s *Platform & hardware targets* for the
+[src/shared/utils.py](src/shared/utils.py). See [the platform guide](agent-guides/platform.md) for the
 full per-platform matrix and rationale.
 
 ## Windows 11 + NVIDIA GPU install (e.g. RTX 5080)
@@ -359,7 +359,7 @@ scripts/agent-memory-sync.sh all push --prune # mirror-delete, opt-in only
 - **Credentials:** needs AWS creds (env or `~/.aws/credentials`); it cleanly no-ops when the `aws` CLI or creds are absent, so it is safe in a hook.
 - **Full-auto hooks:** tracked Claude, Codex, and Gemini `SessionStart` hooks pull the respective agent memory. Tracked `Stop`/`SessionEnd` hooks push the local memory trees, so a cross-agent memory update made on a machine reaches every S3 prefix when those local stores exist.
 - **Fresh-machine seed:** `bash scripts/bootstrap-claude-wsl.sh --with-memory-sync` does an initial Claude pull while installing Claude global conveniences; `bash scripts/bootstrap-codex-local.sh --with-memory-sync` installs Codex prompt templates and does an initial Codex pull.
-- **Durable vs incidental:** this syncs incidental, machine-local recall across your boxes. **Durable, share-worthy project knowledge belongs in version-controlled [AGENTS.md](AGENTS.md)**, the cross-agent source of truth Claude Code, Codex, and Gemini all read.
+- **Durable vs incidental:** this syncs incidental, machine-local recall across your boxes. **Durable project knowledge belongs in the relevant [agent guide](agent-guides/README.md) or ADR**, reached through the shared [AGENTS.md](AGENTS.md) entrypoint. Keep memory as concise scoped recall; follow [context maintenance](agent-guides/context-maintenance.md).
 
 ## Bootstrap Codex local prompts (owner only)
 

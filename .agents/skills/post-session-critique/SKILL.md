@@ -1,6 +1,6 @@
 ---
 name: post-session-critique
-description: Reflect on the current Codex or Gemini session and propose AGENTS.md, provider-doc, or memory updates that would have prevented a wrong turn or sped up the right call. Use only after a non-routine session.
+description: Reflect on a non-routine Codex or Gemini session and propose a targeted update to existing project guidance, provider references, or authorized memory. Check duplicates and context budgets before adding a rule.
 ---
 
 # Post-session critique wrapper
@@ -26,8 +26,8 @@ Gemini runtime values:
 - `WORKFLOW_WRAPPER=.agents/skills/post-session-critique/SKILL.md`
 - `WORKFLOW_SHARED_INSTRUCTIONS=agent-workflows/post-session-critique/instructions.md`
 - `WORKFLOW_AGENT_DOC=GEMINI.md`
-- `WORKFLOW_MEMORY_DESTINATION=~/.gemini/tmp/<project>/memory/MEMORY.md (Gemini's Markdown memory; durable cross-agent lessons go to AGENTS.md)`
-- `WORKFLOW_WRITE_MEMORY=0 — Gemini memory is plain Markdown and not authoritative, so propose the memory text without auto-writing; reserve durable cross-agent lessons for AGENTS.md`
+- `WORKFLOW_MEMORY_DESTINATION=~/.gemini/tmp/<project>/memory/MEMORY.md (Gemini's Markdown memory; durable shared lessons go to the relevant agent-guides topic or ADR)`
+- `WORKFLOW_WRITE_MEMORY=0 — Gemini memory is plain Markdown and not authoritative, so propose the memory text without auto-writing; reserve durable shared lessons for the relevant agent-guides topic or ADR`
 
 Execution:
 

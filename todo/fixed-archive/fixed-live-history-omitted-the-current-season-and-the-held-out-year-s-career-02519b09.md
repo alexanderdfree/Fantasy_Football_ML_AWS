@@ -1,0 +1,8 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] Live history omitted the current season and the held-out year's career context
+- **File(s):** `src/serving/upcoming_week.py`, `src/serving/espn_live.py`, `tests/test_live_history.py`, `tests/test_app_upcoming_week.py` (PR pending).
+- **What:** The live loader stopped at 2025, and inference supplied only train/validation plus 2026 rows. Eight returning QBs received rookie_early=1; 86 RBs omitted 2025 carries (Jeanty 0 instead of 266). Later 2026 weeks would also have empty current-season attention histories.
+- **Fix:** Load completed live-season player and team data afresh without changing evaluation seasons; retain the held-out year for inference and exclude already-fitted years. Mark synthetic rows and serialize only scheduled games, avoiding duplicate observed/synthetic rows after an early-week game finishes.
+- **Review follow-up (#1545):** Republish intervening archived seasons into the fixed schedule/team cache paths at rollover, including a season opener with no live games. Opportunity coverage requires observed player-game rows, not just an existing parquet file.
+- **Lesson:** Preserving current-season rows is insufficient for features rebuilt across years; trace the complete train/validation/inference input union. Real season-opener validation also found PFR snaps and ff_opportunity not yet published for 2026. Late snaps use an explicitly empty disposable cache (retried next build); existing missing-data encodings remain, and the artifact reports unavailable supplementary sources. Completed player/team stats remain required.

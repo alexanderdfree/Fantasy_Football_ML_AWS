@@ -39,7 +39,7 @@ Claude wrapper (`.claude/skills/solve-issues/SKILL.md`):
 - `WORKFLOW_PRE_PR_GATE=.claude/hooks/pre-pr.sh`.
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=pre-pr-judge`.
 - `WORKFLOW_REVIEW_TOOL=/review`.
-- `WORKFLOW_MEMORY_DESTINATION=Claude project auto-memory, plus AGENTS.md for durable cross-agent lessons`.
+- `WORKFLOW_MEMORY_DESTINATION=Claude project auto-memory, plus the relevant agent-guides topic or ADR for durable shared lessons`.
 
 Codex wrapper (`.codex/prompts/solve-issues.md`):
 
@@ -52,7 +52,7 @@ Codex wrapper (`.codex/prompts/solve-issues.md`):
 - `WORKFLOW_PRE_PR_GATE=/prompts:pre-pr-gate`.
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=/prompts:pre-pr-judge`.
 - `WORKFLOW_REVIEW_TOOL=scripts/codex-review-quiet.sh --base origin/main`.
-- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus AGENTS.md for durable cross-agent lessons`.
+- `WORKFLOW_MEMORY_DESTINATION=$CODEX_HOME/memories, plus the relevant agent-guides topic or ADR for durable shared lessons`.
 
 Gemini/Antigravity wrapper (`.agents/skills/solve-issues/SKILL.md`):
 
@@ -63,7 +63,7 @@ Gemini/Antigravity wrapper (`.agents/skills/solve-issues/SKILL.md`):
 - `WORKFLOW_PRE_PR_GATE=the .gemini/ BeforeTool pre-PR hook when wired; otherwise run the checks manually — ruff check . && ruff format --check . && pytest -m unit`.
 - `WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT=activate_skill(name="pre-pr-judge")`.
 - `WORKFLOW_REVIEW_TOOL=the @gemini-cli /review PR workflow (.github/workflows/gemini-review.yml)`.
-- `WORKFLOW_MEMORY_DESTINATION=Gemini Markdown memory, plus AGENTS.md for durable cross-agent lessons`.
+- `WORKFLOW_MEMORY_DESTINATION=Gemini Markdown memory, plus the relevant agent-guides topic or ADR for durable shared lessons`.
 
 The wrappers stay discoverable at their existing paths. This file is the
 behavioral source of truth.
@@ -85,9 +85,9 @@ dropped when editing this file:
 
 # Solve audit-job issues
 
-The scheduled audit routines file **one GitHub issue per finding**, each labeled with the producer label (`claude-audit` or `codex-audit`) + one severity label (`severity-docs`/`severity-low`/`severity-medium`/`severity-high`) + one model regress-risk label (`regress-risk-docs`/`regress-risk-low`/`regress-risk-medium`/`regress-risk-high`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues across both labels are the live backlog; a closed `[claude-audit] checkpoint …` or `[codex-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [AGENTS.md](../../AGENTS.md) "Stop rules").
+The scheduled audit routines file **one GitHub issue per finding**, each labeled with the producer label (`claude-audit` or `codex-audit`) + one severity label (`severity-docs`/`severity-low`/`severity-medium`/`severity-high`) + one model regress-risk label (`regress-risk-docs`/`regress-risk-low`/`regress-risk-medium`/`regress-risk-high`) + an area label (`qb`/`shared`/`docs`/…). The open severity-labeled issues across both labels are the live backlog; a closed `[claude-audit] checkpoint …` or `[codex-audit] checkpoint …` issue per fire records the audited SHA (it is **not** a finding — it carries no severity label, so it never appears in the backlog query). A meaningful fraction of findings are real bugs; the rest are noise: stale claims, false positives, or suggestions that re-introduce reverted designs (rolling features into the attention static branch, training on `fantasy_points`, loss-config knobs in `tune_nn.py`, etc. — see [the stop-rule guide](../../agent-guides/stop-rules.md)).
 
-This shared workflow enters the provider's planning/approval phase, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (AGENTS.md "Large (>10-item) parallel cleanups" + provider memory lessons where available). It produces a verdict + bundle plan for user approval — **no branches cut, no workers spawned for code changes, until the user approves**.
+This shared workflow enters the provider's planning/approval phase, triages each open finding into **FIX** or **LEAVE** (with a category), then drafts the fix plan using the project's tier-by-risk PR consolidation pattern (agent-guides/delivery.md "Large (>10-item) parallel cleanups" + provider memory lessons where available). It produces a verdict + bundle plan for user approval — **no branches cut, no workers spawned for code changes, until the user approves**.
 
 ## Two modes
 
@@ -163,7 +163,7 @@ Worker brief (template — fill the `{...}` slots, send all workers in one paral
 >   files_touched_if_FIX: [list]
 >   ```
 >
-> **Verification rubric** — read [AGENTS.md](../../AGENTS.md) "Conventions that bite" and "Stop rules" before starting. Default verdict is **FIX**; only LEAVE with a category and reason.
+> **Verification rubric** — read the relevant [model contracts](../../agent-guides/modeling.md) and [stop rules](../../agent-guides/stop-rules.md) before starting. Default verdict is **FIX**; only LEAVE with a category and reason.
 >
 > **Blanket scope rule:** any finding that would change a design choice, feature selection, model architecture/hyperparameters, scoring, or otherwise move model accuracy as a matter of tuning or judgment (not fixing a defect) is **LEAVE** — `feature_drift` (cite the stop-rule if one applies; else note "design/tuning choice, not a defect"). **UNLESS IT IS A CLEAR, NON-CONTROVERSIAL CORRECTNESS BUG.**
 >
@@ -173,7 +173,7 @@ Worker brief (template — fill the `{...}` slots, send all workers in one paral
 > |---|---|
 > | `stale` | Cited `file:line` no longer matches the claim — code was already changed, or the file was deleted. |
 > | `false_positive` | Code is correct as-is; auditor misread intent (e.g. flagged a deliberate guard as a bug). |
-> | `feature_drift` | Suggestion violates project stop-rules: promoting rolling/L3/L5/L8/ewma/trend into `ATTN_STATIC_FEATURES`; training on `fantasy_points`; adding `HUBER_DELTAS`/`LOSS_WEIGHTS`/`head_losses`/`gated_targets` to `tune_nn.py`'s search space; adding a feature to one position's model that doesn't fit its targets; resurrecting reverted optimizations (shared-venv CI, `--preload` pre-warm). See [AGENTS.md](../../AGENTS.md) "Stop rules" for the canonical list. |
+> | `feature_drift` | Suggestion violates project stop-rules: promoting rolling/L3/L5/L8/ewma/trend into `ATTN_STATIC_FEATURES`; training on `fantasy_points`; adding `HUBER_DELTAS`/`LOSS_WEIGHTS`/`head_losses`/`gated_targets` to `tune_nn.py`'s search space; adding a feature to one position's model that doesn't fit its targets; resurrecting reverted optimizations (shared-venv CI, `--preload` pre-warm). See [the stop-rule guide](../../agent-guides/stop-rules.md) for the canonical list. |
 > | `out_of_scope` | Real concern but belongs in a separate effort (major refactor, infra change, new design). |
 > | `speculative` | "Could possibly cause" with no reproducible failure mode. |
 >
@@ -196,11 +196,11 @@ For each `UNCERTAIN` verdict:
 1. Read the cited code directly (orchestrator has full repo access).
 2. If still unresolved, batch all UNCERTAIN questions into **one** provider user-question prompt (max 4 questions). Do not spread questions across multiple turns.
 
-For each `LEAVE` verdict with `category: feature_drift`, cross-reference the cited stop-rule in [AGENTS.md](../../AGENTS.md) by section name in the rationale — this is the part the user reviews most carefully and a precise pointer beats prose.
+For each `LEAVE` verdict with `category: feature_drift`, cross-reference the cited rule in [the stop-rule guide](../../agent-guides/stop-rules.md) by section name in the rationale — this is the part the user reviews most carefully and a precise pointer beats prose.
 
 ### Phase 4 — Bundle FIX set into tier-by-risk PRs
 
-Apply the project's tier definitions (AGENTS.md "Large (>10-item) parallel cleanups" + memory `feedback_tier_by_risk_pr_consolidation`):
+Apply the project's tier definitions (agent-guides/delivery.md "Large (>10-item) parallel cleanups" + memory `feedback_tier_by_risk_pr_consolidation`):
 
 - **Tier A** — tests, docstrings, dead-symbol cleanup, operator tools (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`), CLI scripts under `src/scripts/`. **No production behavior change.**
 - **Tier B** — behavior-equivalent fixes: refactors, dedup, in-place → return, mechanical wiring, new validators. **May touch training-adjacent files; no MAE delta.**
@@ -219,7 +219,7 @@ Within each tier, partition findings into **file-disjoint bundles** (one worker 
 
 **PR count target: 2–3 PRs** (one per non-empty tier). If a tier must split, split and open PRs in regress-risk ascending order before using file area as the tiebreaker (for example, Tier C low/medium before Tier C high) — but **max 4 PRs total** to keep `tests.yml`'s 7-shard matrix CI load light. If a tier is empty after triage, skip it entirely.
 
-For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (AGENTS.md "File-disjointness is for parallelism, not correctness"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (memory `feedback_tier_by_risk_pr_consolidation` — orchestrator-bridge pattern).
+For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (agent-guides/delivery.md "File-disjointness is for parallelism, not correctness"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (memory `feedback_tier_by_risk_pr_consolidation` — orchestrator-bridge pattern).
 
 ### Phase 5 — Write the plan + exit
 
@@ -248,7 +248,7 @@ Spawn **one `WORKFLOW_SUBAGENTS` worker per area / per split issue**, all in one
 > Fetch `gh issue view <N> --json body,comments`. For each finding:
 >
 > - **claimed FIXED** → open the cited `file:line` and confirm the described bug is gone / the fix is present; quote 1–3 lines as evidence. Docs findings: confirm the doc now matches the code it describes (the stale claim is gone **and** the new text is accurate).
-> - **claimed LEAVE** → re-validate the category against current code (`false_positive` = genuinely correct as-is; `stale` = genuinely resolved elsewhere; `feature_drift` = the suggestion would violate an AGENTS.md stop-rule). **A LEAVE that is actually a real, unfixed bug is the critical thing to catch → flag it GAP.**
+> - **claimed LEAVE** → re-validate the category against current code (`false_positive` = genuinely correct as-is; `stale` = genuinely resolved elsewhere; `feature_drift` = the suggestion would violate an agent-guides/stop-rules.md rule). **A LEAVE that is actually a real, unfixed bug is the critical thing to catch → flag it GAP.**
 > - Behavioral / shared-code / infra claims: same depth as the Mode A rubric — run the most-targeted test **foreground only** (memory `feedback_background_pytest_terminates_agents`); grep every caller for `src/shared/*` claims (memory `feedback_grep_endpoint_when_changing_contract`); check all config layers for Batch/ECS claims (memory `feedback_layered_config_overrides`).
 >
 > Return one block per finding, **GAP-first then CONFIRMED**:
@@ -280,7 +280,7 @@ Write the plan with: (1) the **confirmation table**; (2) the **per-issue close l
 
 Once the user approves the plan:
 
-**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale` / `speculative`), label it `leave` and close it as **not planned** with a one-line reason (for `feature_drift`, cite the AGENTS.md stop-rule by section name). The `leave` label + `not planned` state distinguish a noise issue from a genuinely-fixed one (which closes `completed`), so each audit producer can compute a per-area real-vs-noise **yield** to weight its worker budgets ([shared audit instructions](../../routines/audit/instructions.md) Step 1):
+**First, retire the LEAVE issues.** For each finding triaged LEAVE (`false_positive` / `feature_drift` / `stale` / `speculative`), label it `leave` and close it as **not planned** with a one-line reason (for `feature_drift`, cite the agent-guides/stop-rules.md rule by section name). The `leave` label + `not planned` state distinguish a noise issue from a genuinely-fixed one (which closes `completed`), so each audit producer can compute a per-area real-vs-noise **yield** to weight its worker budgets ([shared audit instructions](../../routines/audit/instructions.md) Step 1):
 ```
 gh label create leave --color CCCCCC --description "Audit finding triaged as noise (false positive / stale / stop-rule drift)" 2>/dev/null || true
 gh issue edit <#> --add-label leave
@@ -299,14 +299,14 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - Applies its bundle's fixes
    - For bundles whose max regress-risk is `high`: runs `python -m src.{pos}.run_pipeline` for the affected position(s) and diffs `benchmark_history/` (or `{pos}/outputs/`) against `origin/main` baseline
    - Runs `pytest -m unit -q` + `ruff check . && ruff format --check .` (**foreground** — memory `feedback_background_pytest_terminates_agents`)
-   - Commits to its worktree branch, **does NOT push, does NOT open a PR** (AGENTS.md "Large (>10-item) parallel cleanups")
+   - Commits to its worktree branch, **does NOT push, does NOT open a PR** (agent-guides/delivery.md "Large (>10-item) parallel cleanups")
    - Reports back: commit SHA, branch name, files modified, findings skipped + why, any cross-bundle test-contract gaps flagged
 3. **Verify worker output**: `git worktree list | grep agent-` should show one worktree per spawned worker (memory `feedback_agent_isolation_with_background` — async returns can lag). For any worker that did NOT report a commit SHA, take over the worktree directly (memory `feedback_take_over_interrupted_agent`).
 4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (memory `feedback_verify_no_conflict_markers`).
 5. **Orchestrator-bridge commit (if any)** for cross-bundle test-contract gaps. Subject: `fix(audit-NNN, orchestrator, <tier>): <short summary>`.
 6. **Run the provider pre-PR gate** locally (`WORKFLOW_PRE_PR_GATE`; Codex uses `/prompts:pre-pr-gate`, not `.codex/hooks/pre-pr.sh` directly). If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — memory `feedback_surface_gate_friction`. Do not `--no-verify`.
 7. **Rebase** to ensure clean against `origin/main`: `git fetch origin main && git rebase origin/main` (memory `feedback_rebase_before_pre_pr_judge`).
-8. **Invoke the provider pre-pr judge entrypoint (`WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT`)** (mandatory — see [AGENTS.md](../../AGENTS.md) "When making changes").
+8. **Invoke the provider pre-pr judge entrypoint (`WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT`)** (mandatory — see [the delivery guide](../../agent-guides/delivery.md) "When making changes").
 9. **Open the tier PR** with body following the PR [#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325) / [#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326) structure:
    - **Summary** — tier name, max regress-risk, bundle count, finding count, cherry-pick method
    - **Closes** — `Closes #N` for every finding-issue fixed in this tier (so merge auto-closes them)
@@ -343,7 +343,7 @@ Once the verify-then-close plan is approved:
 
 ## What this catches that ad-hoc triage doesn't
 
-- **Feature-drift LEAVE category** encodes the project's stop-rules from AGENTS.md and auto-memory directly into the verification rubric. Audit suggestions that violate "no rolling into ATTN_STATIC_FEATURES" or "no training on fantasy_points" get caught at triage, not at PR review.
+- **Feature-drift LEAVE category** encodes the project's stop-rules from the scoped guide and its linked decision evidence directly into the verification rubric. Audit suggestions that violate "no rolling into ATTN_STATIC_FEATURES" or "no training on fantasy_points" get caught at triage, not at PR review.
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
 - **Plan-mode-first + merge sign-off** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships. And beyond plan approval, each tier PR stops for **explicit user merge sign-off** (the diff + any `regress-risk-high` benchmark deltas) — a solve-issues PR is never auto-merged on green CI alone (enforced by `post-pr-create.sh` for `audit-*/tier-*` branches).
 - **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (the code-review remediation rollup #312/#314/#315, audit-318 cycles) without conflict-driven rebundles.

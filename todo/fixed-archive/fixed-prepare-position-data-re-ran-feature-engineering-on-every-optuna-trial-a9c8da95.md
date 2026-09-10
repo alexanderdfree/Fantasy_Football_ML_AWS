@@ -1,0 +1,7 @@
+> Historical record. Validate current code, configuration and ADRs before applying the recorded fix.
+
+### [FIXED] `_prepare_position_data` re-ran feature engineering on every Optuna trial and CLI invocation
+- **Files:** `src/shared/feature_cache.py` (new), `src/shared/pipeline.py` (wraps `_prepare_position_data` with the cache). PR #200 (`349aa4a`).
+- **What:** `_prepare_position_data` is deterministic given `(position, train_df, val_df, test_df, cfg)` but was called N_folds × N_trials × N_positions times during Optuna and many times across CLI re-runs. The 8.6 s per call on RB was a real chunk of wall time, especially on local iteration loops.
+- **Fix:** New `src/shared/feature_cache.py` wraps the call with an in-memory LRU + parquet/pickle disk cache under `.cache/features/`, keyed on SHA-256 of DataFrame content hashes + relevant cfg keys. Verified: first RB run miss (prepare_data=8.6 s), second run disk hit (prepare_data=0.1 s, **86× faster**). All metrics bit-identical across runs. Bypass with `FF_FEATURE_CACHE_DISABLE=1` when the cache itself is suspect.
+- **Lesson:** A determinism check ("does this function produce the same output given the same input?") is the green light to memoize, but the key has to capture every input that varies. Content-hashing the DataFrames plus the relevant cfg subset is the safe key — hashing just the input paths or just `cfg` would silently return stale results when an upstream parquet rewrote.
