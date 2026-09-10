@@ -470,7 +470,10 @@ def _hardware_metadata() -> dict:
 
 def _extract_metrics(position, result):
     """Extract JSON-serializable benchmark metrics from pipeline result."""
+    from src.shared.evaluation_cohorts import build_cohorts
+
     metrics: dict = {"position": position}
+    metrics["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
 
     # Stamp the image's commit SHA into the per-position artifact. launch.py
     # forwards FF_TRAIN_GIT_SHA from train-batch.yml; benchmark.py reads each
@@ -881,6 +884,8 @@ def _merged_split_metrics(
     2026-06-11 until the pipeline-side ranking attach — is pinned by unit
     tests (tests/batch/test_train.py).
     """
+    from src.shared.evaluation_cohorts import build_cohorts, merge_cohorts
+
     metrics = {
         "position": position,
         "split_merged": True,
@@ -888,6 +893,10 @@ def _merged_split_metrics(
         "seed": nn_metrics.get("seed", cpu_metrics.get("seed")),
         "elapsed_sec": round(time.monotonic() - t_total, 1),
         "phase_seconds": dict(phase_seconds),
+        "cohorts": merge_cohorts(
+            nn_metrics.get("cohorts") or build_cohorts(position, None),
+            cpu_metrics.get("cohorts") or build_cohorts(position, None),
+        ),
     }
     for branch, branch_metrics in (("nn", nn_metrics), ("cpu", cpu_metrics)):
         for key, value in branch_metrics.items():

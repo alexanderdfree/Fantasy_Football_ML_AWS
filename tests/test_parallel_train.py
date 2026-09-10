@@ -340,7 +340,10 @@ def test_run_worker_single_split_calls_run_one_with_real_signature(tmp_path, mon
 
     assert rc == 0
     assert calls == ["RB"]
-    assert json.loads(out_path.read_text()) == {"position": "RB", "summarized": True}
+    recorded = json.loads(out_path.read_text())
+    assert recorded["position"] == "RB" and recorded["summarized"] is True
+    assert recorded["cohorts"]["elite_top24"]["status"] == "unavailable"
+    assert recorded["cohorts"]["elite_top24"]["n"] is None
 
 
 def test_record_and_sync_rolling_origin_marks_history(tmp_path, monkeypatch):

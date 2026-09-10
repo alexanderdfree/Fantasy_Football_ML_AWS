@@ -1,0 +1,84 @@
+"""Reference artifacts contain a complete pregame slate, never outcome-selected rows."""
+
+from types import SimpleNamespace
+
+import pandas as pd
+import pytest
+
+from src.scripts import build_evaluation_reference as builder
+from src.shared.evaluation_cohorts import REFERENCE_VERSION
+
+pytestmark = pytest.mark.unit
+
+
+def fake_sources(monkeypatch, nfl_rows, rw_rows):
+    skipped = frozenset({"QB", "RB", "TE", "K", "DST"})
+
+    def source(name, rows):
+        return SimpleNamespace(
+            name=name,
+            skipped=skipped,
+            load=lambda seasons: rows.copy(),
+            project=lambda raw, pos, scoring: raw.copy(),
+        )
+
+    monkeypatch.setattr(
+        "src.analysis.analysis_expert_comparison._build_experts",
+        lambda *args: [source("nflcom", nfl_rows), source("sleeper", rw_rows)],
+    )
+
+
+def rows():
+    return pd.DataFrame(
+        {
+            "player_id": ["b", "a", "c"],
+            "season": 2025,
+            "week": 1,
+            "expert_pred_total": [20.0, 20.0, 10.0],
+        }
+    )
+
+
+def test_reference_is_fixed_mean_and_ties_are_deterministic(monkeypatch):
+    nfl, rw = rows(), rows()
+    rw.loc[2, "expert_pred_total"] = 40
+    fake_sources(monkeypatch, nfl, rw)
+    ref = builder.build_reference([2025])
+    assert ref.player_id.tolist() == ["c", "a", "b"]
+    assert ref.reference_rank.tolist() == [1, 2, 3]
+    assert ref.reference_pred.tolist() == [25, 20, 20]
+    assert set(ref.reference_version) == {REFERENCE_VERSION}
+    assert set(ref.reference_source) == {"nflcom+rotowire"}
+    assert "fantasy_points" not in ref
+
+
+def test_missing_provider_does_not_change_reference_recipe(monkeypatch):
+    fake_sources(monkeypatch, rows(), rows().iloc[:2])
+    ref = builder.build_reference([2025])
+    assert set(ref.player_id) == {"a", "b"}
+
+
+def test_backfilled_nflcom_offense_seasons_cannot_enter_reference(monkeypatch):
+    data = pd.concat([rows(), rows().assign(season=2023)], ignore_index=True)
+    fake_sources(monkeypatch, data, data)
+    ref = builder.build_reference([2023, 2025])
+    assert set(ref.season) == {2025}
+
+
+def test_publication_preserves_other_seasons_and_rejects_empty_replacement(tmp_path, monkeypatch):
+    path = tmp_path / "reference.parquet"
+    old = rows().assign(season=2024, reference_version=REFERENCE_VERSION)
+    old.to_parquet(path)
+    monkeypatch.setattr(builder, "reference_path", lambda: path)
+    monkeypatch.setattr(
+        builder,
+        "build_reference",
+        lambda *a, **k: rows().assign(reference_version=REFERENCE_VERSION),
+    )
+    builder.write_reference([2025])
+    assert set(pd.read_parquet(path).season) == {2024, 2025}
+    before = path.read_bytes()
+    monkeypatch.setattr(builder, "build_reference", lambda *a, **k: pd.DataFrame())
+    with pytest.raises(ValueError, match="existing artifact retained"):
+        builder.write_reference([2025])
+    assert path.read_bytes() == before

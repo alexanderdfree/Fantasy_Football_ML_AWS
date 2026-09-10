@@ -74,6 +74,9 @@ def pipeline_run(request, tmp_path_factory):
 def test_pipeline_runs_without_exception(pipeline_run, position):
     """run_pipeline completes end-to-end; result dict contains expected keys."""
     result = pipeline_run["result"]
+    assert "cohorts" in result
+    assert "elite_top24" in result["cohorts"]
+    assert "weekly_reference_top24" in result["cohorts"]
     assert "ridge_metrics" in result
     assert "nn_metrics" in result
     assert "test_df" in result

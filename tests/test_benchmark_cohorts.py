@@ -46,7 +46,16 @@ def _frame(**overrides) -> pd.DataFrame:
 
 def test_block_masks_and_bias():
     block = _cohorts_block("QB", {"test_df": _frame()})
-    assert set(block) == {"week1", "returning", "questionable", "inheritor", "elite_top24"}
+    assert set(block) == {
+        "week1",
+        "returning",
+        "questionable",
+        "inheritor",
+        "elite_top24",
+        "weekly_reference_top24",
+        "seasonal_actual_top24",
+        "weekly_actual_top24",
+    }
     assert block["week1"]["n"] == 2
     assert block["returning"]["n"] == 2
     assert block["questionable"]["n"] == 2
@@ -89,13 +98,9 @@ def test_elite_top24_caps_at_24_players():
     assert block["elite_top24"]["n"] == 24
 
 
-def test_degenerate_results_return_none():
-    assert _cohorts_block("QB", {}) is None
-    assert _cohorts_block("QB", {"test_df": None}) is None
-    # No recognised prediction columns (e.g. a malformed result) -> None.
-    no_preds = _frame().drop(
-        columns=["pred_ridge_total", "pred_nn_total", "pred_attn_nn_total", "pred_lgbm_total"]
-    )
-    assert _cohorts_block("QB", {"test_df": no_preds}) is None
-    # Frame without the fantasy_points truth column -> None.
-    assert _cohorts_block("DST", {"test_df": _frame().drop(columns=["fantasy_points"])}) is None
+def test_degenerate_results_report_unavailable_instead_of_disappearing():
+    for result in ({}, {"test_df": None}, {"test_df": _frame().drop(columns="fantasy_points")}):
+        block = _cohorts_block("QB", result)
+        assert block["elite_top24"]["status"] == "unavailable"
+        assert block["elite_top24"]["n"] is None
+        assert block["elite_top24"]["reason"] == "held_out_rows_missing"

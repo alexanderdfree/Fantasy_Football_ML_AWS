@@ -1,4 +1,4 @@
-"""Comparison tab: our live model vs static expert projection sources.
+"""Comparison tab: all sources scored together on cached player-week forecasts.
 
 Pure functions over the cached per-row predictions ``DataFrame`` (passed in by
 the ``/api/comparison`` route) plus the committed expert-summary / interval JSON
@@ -20,17 +20,21 @@ from src.serving.serialization import (
     _pred_col,
 )
 from src.shared.evaluation import compute_metrics
+from src.shared.evaluation_cohorts import (
+    load_reference,
+    reference_selection,
+    regular_season_rows,
+    seasonal_top_mask,
+    weekly_ranking_metrics,
+)
 
 # ---------------------------------------------------------------------------
 # Comparison tab: our model vs expert projection sources
 # ---------------------------------------------------------------------------
 #
-# The expert (NFL.com / RotoWire / ESPN) numbers are static — generated offline by
-# ``src.analysis.build_comparison_summary`` and committed beside this file. Our
-# model's column is computed LIVE from the loaded models (same metrics path as
-# the Model Performance tab), so it auto-updates on every retrain. The committed
-# JSON also carries the top-30-per-position ``player_id`` sets so the live model
-# column is sliced on the *same* players the experts were scored on.
+# The committed JSON is retained for historical research and source metadata.
+# Runtime accuracy and cohort membership come exclusively from cached forecasts
+# and the separately versioned pregame reference, using full fantasy actuals.
 _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_experts.json")
 # Per-projection prediction intervals (80% floor–ceiling bands) for the expert
 # sources, generated offline by ``src.analysis.expert_intervals`` and committed
@@ -39,6 +43,101 @@ _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_e
 # was removed from the Comparison tab (#1349); the JSON + loader are kept so it can be
 # re-enabled.
 _EXPERT_INTERVALS_PATH = os.path.join(os.path.dirname(__file__), "expert_intervals.json")
+
+COMPARISON_SUBSETS = ("weekly_reference_top24", "all", "top30", "top12")
+COMPARISON_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
+
+
+def _shared_rows(frame, scoring, columns=None):
+    """One intersection for every available displayed source; zero is a forecast."""
+    actual = _actual_col(scoring)
+    columns = (
+        columns
+        if columns is not None
+        else {
+            prefix: _pred_col(prefix, scoring)
+            for prefix in _ROW_PRED_PREFIXES
+            if _pred_col(prefix, scoring) in frame
+            and np.isfinite(pd.to_numeric(frame[_pred_col(prefix, scoring)], errors="coerce")).any()
+        }
+    )
+    data = frame.copy()
+    for col in [actual, *columns.values()]:
+        data[col] = pd.to_numeric(data[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
+    common = data.dropna(subset=[actual, *columns.values()])
+    return common, columns
+
+
+def comparison_tables(results, scoring="ppr", *, reference=None):
+    """Full-fantasy, regular-season, same-player-week accuracy for every source.
+
+    Cohorts are selected before source coverage is applied. In particular, the
+    weekly reference already has ranks from the full pregame forecast pool.
+    """
+    subsets = {name: {} for name in COMPARISON_SUBSETS}
+    coverage = {name: {} for name in COMPARISON_SUBSETS}
+    quartiles = {}
+    rankings = {}
+    if reference is None:
+        reference = load_reference()
+    for pos in COMPARISON_POSITIONS:
+        empty = {source: None for source in _ROW_PRED_PREFIXES}
+        df = None if results is None else regular_season_rows(results[results["position"].eq(pos)])
+        if df is None or df.empty:
+            for name in COMPARISON_SUBSETS:
+                subsets[name][pos] = dict(empty)
+                coverage[name][pos] = {
+                    "status": "unavailable",
+                    "n": 0,
+                    "reason": "predictions_missing",
+                }
+            quartiles[pos] = None
+            rankings[pos] = {}
+            continue
+        df = df.copy()
+        df["player_id"] = df["player_id"].astype(str)
+        actual = _actual_col(scoring)
+        if actual != "fantasy_points":
+            df["fantasy_points"] = df[actual]
+        df = df[df[actual].notna()]
+        masks = {"all": pd.Series(True, index=df.index)}
+        masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
+        masks["weekly_reference_top24"], ref_meta = reference_selection(pos, df, reference, 24)
+        common_all, available_columns = _shared_rows(df, scoring)
+        quartiles[pos] = _quartile_bias_from_results(common_all, scoring, pos)
+        rankings[pos] = weekly_ranking_metrics(common_all, available_columns)
+        for name, mask in masks.items():
+            cohort = df[mask]
+            common, columns = _shared_rows(cohort, scoring, available_columns)
+            cells = dict(empty)
+            for prefix, col in columns.items():
+                if not common.empty:
+                    cells[prefix] = _accuracy_block(
+                        common[actual].to_numpy(), common[col].to_numpy()
+                    )
+            subsets[name][pos] = cells
+            coverage[name][pos] = {
+                "status": "available" if len(common) else "unavailable",
+                "n": int(len(common)),
+                "cohort_n": int(len(cohort)),
+                "sources": list(columns),
+                "source_n": {
+                    prefix: int(cohort[col].notna().sum()) for prefix, col in columns.items()
+                },
+            }
+            if name == "weekly_reference_top24":
+                coverage[name][pos].update(ref_meta)
+    return subsets, coverage, quartiles, rankings
+
+
+def _accuracy_block(actual, prediction):
+    metrics = compute_metrics(actual, prediction)
+    return {
+        "mae": round(float(metrics["mae"]), 4),
+        "rmse": round(float(metrics["rmse"]), 4),
+        "r2": round(float(metrics["r2"]), 4) if np.isfinite(metrics["r2"]) else None,
+        "n": int(len(actual)),
+    }
 
 
 def _load_comparison_experts():
@@ -198,7 +297,7 @@ def _quartile_bias_from_results(results, scoring, pos, n_q=4):
     Bins the position's test rows into ``n_q`` quartiles by **actual** fantasy
     points — Q1 = lowest scorers … Q4 = highest / boom weeks — rank-based so tied
     actuals never collapse a bin. For every prediction source (our four models
-    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus ``nflcom``/``rotowire``/``espn``,
+    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the two experts ``nflcom``/``rotowire``,
     i.e. ``_ROW_PRED_PREFIXES``) it reports per-quartile ``{n, mae, bias}`` where
     ``bias = mean(pred − actual)`` — **bias > 0 ⇒ over-predicts** (same residual
     convention as ``_model_reliabilities_from_results`` / ``expert_uncertainty``).
