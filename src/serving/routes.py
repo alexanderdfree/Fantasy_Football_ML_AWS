@@ -24,7 +24,7 @@ import src.serving.timeline as timeline
 import src.te.config as te_cfg
 import src.wr.config as wr_cfg
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
-from src.serving import benchmark_history, comparison, upcoming_week
+from src.serving import benchmark_history, comparison, upcoming_status, upcoming_week
 from src.serving.app import app
 from src.serving.metadata import _ALL_POSITIONS, POSITION_INFO
 from src.serving.serialization import (
@@ -174,11 +174,15 @@ def api_upcoming_week():
     carries ``{"available": false}`` and is served 200. The frontend filters
     scoring / position / search client-side, mirroring ``/api/snapshot``.
     """
-    path = upcoming_week._artifact_path()
-    if not os.path.isfile(path):
+    payload = upcoming_week.read_cached_artifact()
+    if not isinstance(payload, dict):
         return jsonify({"status": "warming"}), 503
-    resp = send_file(path, mimetype="application/json", conditional=True)
-    # Refreshed by the poller on line/roster/model changes; revalidate cheaply.
+    # Freshness ages even when the file/ETag does not change. Re-downloading an
+    # old S3 object must never make it fresh. Retain the last-good predictions
+    # with explicit status so clients can inspect them during an outage.
+    payload["freshness"] = upcoming_status.freshness(payload)
+    payload.setdefault("data_quality", upcoming_status.data_quality(payload.get("sources", {})))
+    resp = jsonify(payload)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 

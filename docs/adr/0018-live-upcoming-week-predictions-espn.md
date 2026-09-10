@@ -25,7 +25,19 @@ Weather uses the event's venue and UTC kickoff. A stadium gazetteer linked from 
 Availability is separate from model improvement. This extension does not retune weights, change feature whitelists, or claim an accuracy gain. A new opponent-starter or opportunity feature remains a separate measured A/B decision.
 
 
+## Freshness, availability and live metadata
+
+Publication requires structurally valid scoreboards and one successful ESPN injury snapshot for the requested season, no more than four hours old, covering every scheduled team. A missing events list or incomplete game is a source failure, not a verified empty slate. Out exclusions, opportunity vacancies and numeric game status derive from that same injury response. Missing team rosters, malformed injury identities/statuses or an unavailable injury response stop publication; they do not imply healthy players. Every published position must contain usable model predictions. Verified offseason transitions are published to S3 too, replacing the previous active slate.
+
+The read-only endpoint attaches a `freshness` object computed from the oldest of artifact generation, input retrieval and the injury source's own timestamp. Downloads never reset that age. Four hours is the stale threshold for the existing three-hour CI build cadence plus build/download headroom. Last-good predictions remain inspectable with a stale warning. The browser revalidates on mount, every five minutes, focus/visibility and manual Refresh; warming/errors retry after thirty seconds, retain last-good rows with warnings, and preserve the original generation time. This remains an off-container build; the endpoint does no feature building or source fetching.
+
+Supplementary history sources report observed/expected completed player-game coverage and distinguish unavailable, partial, available and not-needed data. Missing snaps/opportunity statistics retain the existing trained encoding and are disclosed via `data_quality`, never represented as newly observed zeros. Live QBR can recover missing cells from the same upstream ESPN QBR API, using named Total QBR/points-added fields, completed game/season/week validation and player-team-game identity. Valid archived cells retain precedence. No proxy statistic, new feature, historical cache rewrite or training-recipe change is introduced.
+
+Age/rookie metadata uses the fetched current-season weekly roster and actual game schedule. Season-matched ESPN roster DOB/debut/experience fields fill remaining display-only gaps; team-unit DST rows remain null. Historical metadata callers retain their cached source path. NFL.com community-archive projections are enabled by default only through the verified 2025 archive; operators may set `FF_UPCOMING_NFLCOM=1` after verifying current coverage. This is an availability policy, not a claim that the third-party archive is permanently discontinued. ESPN and RotoWire remain independently labeled live comparisons.
+
 ## Changelog
+
+- **2026-09-10** — Enforce scoreboard/injury/roster publication boundaries and publish offseason transitions; add read-time source/artifact freshness, browser revalidation, partial-history coverage, faithful live QBR recovery, season-bound player metadata and explicit NFL.com archive policy. Training features and recipes unchanged. (PR #1555.)
 
 - **2026-09-10** — Review hardening: carry intervening archived years into the fixed feature-consumer caches, verify neutral venue IDs and both physical flags, and report opportunity availability only when completed player-games are present. Preserve current-calendar odds when ESPN omits them, keep unknown roofs imputed, and avoid synthetic healthy statuses for unresolved player aliases. (PR #1545.)
 

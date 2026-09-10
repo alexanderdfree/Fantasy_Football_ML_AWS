@@ -156,6 +156,63 @@ def test_parse_roster_skips_inactive_groups_and_nonskill():
 
 
 @pytest.mark.unit
+def test_roster_metadata_reaches_fetch_result_with_source_season(monkeypatch):
+    payload = {
+        "season": {"year": 2026},
+        "athletes": [
+            {
+                "position": "offense",
+                "items": [
+                    {
+                        "id": "4686658",
+                        "displayName": "Mike Washington Jr.",
+                        "position": {"abbreviation": "RB"},
+                        "dateOfBirth": "2003-07-03T07:00Z",
+                        "experience": {"years": 0},
+                    },
+                    {
+                        "id": "3116136",
+                        "displayName": "Justin Jackson",
+                        "position": {"abbreviation": "RB"},
+                        "dateOfBirth": "1996-04-22T07:00Z",
+                        "debutYear": 2018,
+                        "experience": {"years": 6},
+                    },
+                ],
+            }
+        ],
+    }
+    monkeypatch.setattr(espn_live, "_get_json", lambda _url: payload)
+    monkeypatch.setattr(
+        espn_live, "espn_to_gsis_map", lambda: {"4686658": "WAS569019", "3116136": "00-0034440"}
+    )
+    frame = espn_live.fetch_active_rosters({"13": "LV"}).set_index("player_id")
+    assert frame.loc["WAS569019", "roster_birth_date"] == "2003-07-03T07:00Z"
+    assert frame.loc["WAS569019", "roster_experience_years"] == 0
+    assert frame.loc["WAS569019", "roster_season"] == 2026
+    assert frame.loc["00-0034440", "roster_debut_year"] == 2018
+    # Display metadata must not replace pipeline input fields.
+    assert not {"birth_date", "entry_year", "rookie_year", "season"}.intersection(frame.columns)
+
+
+@pytest.mark.unit
+def test_roster_missing_metadata_stays_unknown():
+    payload = {
+        "athletes": [
+            {
+                "position": "offense",
+                "items": [{"id": "1", "position": {"abbreviation": "WR"}, "age": 25}],
+            }
+        ]
+    }
+    player = espn_live._parse_roster_players(payload, team_code="SEA")[0]
+    assert player["roster_birth_date"] is None  # Never synthesize DOB from current age.
+    assert player["roster_experience_years"] is None
+    assert player["roster_debut_year"] is None
+    assert player["roster_season"] is None
+
+
+@pytest.mark.unit
 def test_parse_injuries_extracts_id_position_team():
     payload = {
         "injuries": [

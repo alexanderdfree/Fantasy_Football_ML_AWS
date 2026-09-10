@@ -396,6 +396,7 @@ jobs:
         run: |
           set -eu
           npm ci --prefix src/serving/frontend
+          node --test src/serving/frontend/tests/*.test.js
           npm run build --prefix src/serving/frontend
           if ! git diff --exit-code -- src/serving/static/js/app.js; then
             echo "::error::src/serving/static/js/app.js is stale — rebuild it (cd src/serving/frontend && npm ci && npm run build) and commit the bundle."

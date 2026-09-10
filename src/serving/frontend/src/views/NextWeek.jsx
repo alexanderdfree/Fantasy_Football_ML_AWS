@@ -6,8 +6,9 @@
  * FLEX), Team, Age, Class (Rookies), Min Proj. Pts, plus pinned Columns /
  * Filters menus. Age/Class appear only when the artifact rows carry `age`
  * (older artifacts degrade to the classic bar). */
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { fmt } from "../lib/format.js";
+import { upcomingWeekStore, projectionFreshnessNotice, projectionCoverageNotice } from "../lib/upcomingWeek.js";
 import { PillGroup, PosBadge, PlayerCell, SortableTh } from "../components/common.jsx";
 import { AutoFitFilterBar, AGE_BUCKETS, ageBucketFor } from "../components/FilterBar.jsx";
 import { TeamLabel, MatchupLabel } from "../components/TeamLabel.jsx";
@@ -36,8 +37,8 @@ const COLUMNS = [
     { key: "attn_nn_pred", label: "Attn NN", cls: "col-pred attn-nn-col", sort: "attn_nn_pred", defaultVisible: true },
     { key: "lgbm_pred", label: "LGBM", cls: "col-pred lgbm-col", sort: "lgbm_pred", defaultVisible: true },
     // Expert columns are feature-detected per source: each renders only when the
-    // artifact carries data for that source (NFL.com publishes in-season only, so
-    // it can be absent while RotoWire is live; older artifacts predate both fields).
+    // artifact carries data for that source; publication schedules and current
+    // coverage differ, and older artifacts predate these fields.
     { key: "nflcom_pred", label: "NFL.com", cls: "col-pred nflcom-col", sort: "nflcom_pred", defaultVisible: true, expert: true },
     { key: "rotowire_pred", label: "RotoWire", cls: "col-pred rotowire-col", sort: "rotowire_pred", defaultVisible: true, expert: true },
     { key: "espn_pred", label: "ESPN", cls: "col-pred espn-col", sort: "espn_pred", defaultVisible: true, expert: true },
@@ -68,9 +69,6 @@ function sortValue(p, key) {
     }
 }
 
-// Module-level cache so tab switches don't refetch a ready artifact.
-let cachedState = null; // { state, data }
-
 export function NextWeekView({ scoring, search, onPlayer }) {
     const [position, setPosition] = useState("ALL");
     const [team, setTeam] = useState("ALL");
@@ -78,38 +76,13 @@ export function NextWeekView({ scoring, search, onPlayer }) {
     const [rookieOnly, setRookieOnly] = useState(false);
     const [minPts, setMinPts] = useState("");
     const [hiddenCols, setHiddenCols] = useState(() => new Set());
-    const [{ state, data }, setUpcoming] = useState(cachedState || { state: "loading", data: null });
+    const { state, data, refreshing, problem, receivedAt } = useSyncExternalStore(
+        upcomingWeekStore.subscribe, upcomingWeekStore.getSnapshot,
+    );
     const [sort, setSort] = useState({ key: "rank", order: "desc" });
-
-    useEffect(() => {
-        if (cachedState && cachedState.state === "ready") return;
-        let cancelled = false;
-        (async () => {
-            try {
-                const resp = await fetch("/api/upcoming_week");
-                if (resp.status === 503) {
-                    if (!cancelled) setUpcoming({ state: "warming", data: null });
-                    return;
-                }
-                // Any other non-ok status (e.g. Flask's JSON 500 error handler)
-                // is a real failure, not an artifact — reject it here so it hits
-                // the catch and renders the error state, instead of parsing an
-                // error body as data (#1436).
-                if (!resp.ok) throw new Error(`API error: ${resp.status}`);
-                const payload = await resp.json();
-                if (!payload || payload.available === false) {
-                    if (!cancelled) setUpcoming({ state: "offseason", data: null });
-                    return;
-                }
-                cachedState = { state: "ready", data: payload };
-                if (!cancelled) setUpcoming(cachedState);
-            } catch (e) {
-                console.error("Failed to load upcoming week:", e);
-                if (!cancelled) setUpcoming({ state: "error", data: null });
-            }
-        })();
-        return () => { cancelled = true; };
-    }, []);
+    const freshnessNotice = projectionFreshnessNotice(data, receivedAt);
+    const coverageNotice = projectionCoverageNotice(data);
+    const generatedAt = Date.parse(data?.generated_at);
 
     const onSort = (key) => setSort((s) => (
         s.key === key ? { key, order: s.order === "desc" ? "asc" : "desc" } : { key, order: "desc" }
@@ -310,9 +283,9 @@ export function NextWeekView({ scoring, search, onPlayer }) {
 
     const message = {
         loading: "Loading next week's projections…",
-        warming: "Building this week's projections… check back in a minute.",
+        warming: "This week's projections are not ready yet. Retrying automatically…",
         offseason: "No upcoming games scheduled — live projections resume when the next slate is posted.",
-        error: "Failed to load next-week projections.",
+        error: "Failed to load next-week projections. Retrying automatically…",
     }[state];
 
     const renderCell = (col, p, i) => {
@@ -351,9 +324,24 @@ export function NextWeekView({ scoring, search, onPlayer }) {
                 </div>
             )}
 
+            {(problem || freshnessNotice || coverageNotice) && (
+                <div className="degraded-banner" role="status" aria-live="polite">
+                    {problem && <div>{problem}{state === "ready" && " Showing the last available projections."}</div>}
+                    {freshnessNotice && <div>{freshnessNotice}</div>}
+                    {coverageNotice && <div>{coverageNotice}</div>}
+                </div>
+            )}
+
             <div className="results-info">
                 <span id="homepage-count">
                     {state === "ready" ? `${rows.length.toLocaleString()} player${rows.length !== 1 ? "s" : ""}` : ""}
+                </span>
+                <span>
+                    {" · "}
+                    {Number.isFinite(generatedAt) && <>Projections generated {new Date(generatedAt).toLocaleString()} · </>}
+                    <button type="button" className="pill" onClick={upcomingWeekStore.refresh} disabled={refreshing}>
+                        {refreshing ? "Refreshing…" : "Refresh"}
+                    </button>
                 </span>
             </div>
 

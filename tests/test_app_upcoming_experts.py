@@ -86,6 +86,36 @@ class TestApplyUpcomingExperts:
 
 
 class TestFetchWrappers:
+    def test_unverified_current_nflcom_archive_is_not_requested(self, monkeypatch):
+        monkeypatch.delenv("FF_UPCOMING_NFLCOM", raising=False)
+
+        def forbidden(*args, **kwargs):
+            pytest.fail("Unverified live archive must not be fetched")
+
+        monkeypatch.setattr(uw, "load_nflcom_with_gsis_id", forbidden)
+        result = uw._fetch_upcoming_expert_frames(
+            2026, 1, rotowire_loader=lambda *a, **k: None, espn_loader=lambda *a, **k: None
+        )
+        assert result == (None, None, None)
+
+    @pytest.mark.parametrize("season,opt_in", [(2025, False), (2026, True)])
+    def test_historical_archive_and_verified_opt_in_remain_available(
+        self, monkeypatch, season, opt_in
+    ):
+        monkeypatch.setenv("FF_UPCOMING_NFLCOM", "true" if opt_in else "0")
+        seen = []
+
+        def loader(seasons, *, weeks, force_refresh):
+            seen.append((seasons, weeks, force_refresh))
+            return pd.DataFrame({"position": ["QB"]})
+
+        monkeypatch.setattr(uw, "load_nflcom_with_gsis_id", loader)
+        result = uw._fetch_upcoming_expert_frames(
+            season, 1, rotowire_loader=lambda *a, **k: None, espn_loader=lambda *a, **k: None
+        )
+        assert len(result[0]) == 1
+        assert seen == [([season], [1], True)]
+
     def test_loader_failure_degrades_to_none(self):
         def boom(*a, **k):
             raise RuntimeError("feed down")

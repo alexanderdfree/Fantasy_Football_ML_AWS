@@ -35,6 +35,7 @@ import src.serving.roster_meta as roster_meta
 from src.config import CACHE_DIR, SEASONS
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
+from src.data.external_sources import FF_OPP_FEATURE_COLUMNS
 from src.data.loader import load_raw_data, load_team_week_stats
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.data.preprocessing import preprocess
@@ -42,10 +43,12 @@ from src.features.engineer import build_features
 from src.serving import (
     core,
     espn_live,
+    live_qbr,
     live_schedule,
     live_sources,
     practice_reports,
     upcoming_special_teams,
+    upcoming_status,
 )
 from src.serving.expert_sources import load_sleeper_with_gsis_id
 from src.serving.serialization import (
@@ -75,6 +78,8 @@ _ENV_PREFIX = "FF_MODEL_S3_PREFIX"
 # How often the serving container re-pulls the artifact from S3 (a cheap GET);
 # 0 disables. Default 10 min so a fresh CI build shows up without a redeploy.
 _DOWNLOAD_INTERVAL_S = int(os.environ.get("FF_UPCOMING_SYNC_INTERVAL_S", "600"))
+# This is source coverage, separate from the fixed training/evaluation years.
+_NFLCOM_ARCHIVE_LAST_SEASON = 2025
 
 # Per-player, slowly-changing attributes that load_raw_data merges per game but
 # the synthetic upcoming rows lack (no current-week merge exists yet). They're
@@ -168,7 +173,17 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         & schedules["away_score"].notna()
     ]
     if played.empty:
-        return history.copy()
+        result = history.copy()
+        result.attrs["live_history_sources"] = {
+            "season": season,
+            "completed_games": 0,
+            "player_rows": 0,
+            "coverage": {
+                name: upcoming_status.coverage(0, 0)
+                for name in ("snap_counts", "ff_opportunity", "qbr")
+            },
+        }
+        return result
     keys = pd.concat(
         [
             played[["season", "week", side]].rename(columns={side: "recent_team"})
@@ -182,29 +197,26 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         # unknown snaps, which the existing loader/preprocessor already handle.
         # Never persist that empty response in the archive or substitute last
         # season's snaps. The next CI build retries the real source.
-        snap_status = "available"
         try:
             snaps = nfl_source.snap_counts([season])
         except Exception as exc:  # observed upstream 404 at the season opener
             print(f"[upcoming_week] live snap counts unavailable: {exc!r}")
             snaps = pd.DataFrame(columns=["pfr_player_id", "season", "week", "offense_pct"])
-            snap_status = "unavailable"
-        if snaps.empty:
-            snap_status = "unavailable"
         atomic_write_parquet(
             snaps, os.path.join(fresh_cache, f"snap_counts_{season}_{season}.parquet")
         )
         current = preprocess(load_raw_data([season], cache_dir=fresh_cache))
         current = current.merge(keys, on=["season", "week", "recent_team"], how="inner")
+        current, qbr_recovery = live_qbr.recover_qbr(current, schedules, season)
         opportunity_path = os.path.join(fresh_cache, f"ff_opportunity_{season}_{season}.parquet")
         opportunity_rows = 0
+        opportunity = pd.DataFrame()
         if os.path.isfile(opportunity_path):
             opportunity_keys = ["player_id", "season", "week"]
-            opportunity = pd.read_parquet(opportunity_path, columns=opportunity_keys)
+            opportunity = pd.read_parquet(opportunity_path)
             opportunity_rows = len(
                 opportunity.merge(current[opportunity_keys], on=opportunity_keys, how="inner")
             )
-        opportunity_status = "available" if opportunity_rows else "unavailable"
         actual = pd.MultiIndex.from_frame(current[["season", "week", "recent_team"]])
         missing = pd.MultiIndex.from_frame(keys).difference(actual)
         if len(missing):
@@ -228,19 +240,57 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         atomic_write_parquet(
             combined, os.path.join(CACHE_DIR, f"team_stats_{SEASONS[0]}_{SEASONS[-1]}.parquet")
         )
+    source_coverage = _history_source_coverage(current, opportunity)
     result = pd.concat([history, current], ignore_index=True)
     result.attrs["live_history_sources"] = {
         "season": season,
         "completed_games": len(played),
         "player_rows": len(current),
-        "snap_counts": snap_status,
-        "ff_opportunity": opportunity_status,
+        "snap_counts": source_coverage["snap_counts"]["status"],
+        "ff_opportunity": source_coverage["ff_opportunity"]["status"],
         "ff_opportunity_rows": opportunity_rows,
         "qbr_observed_rows": int(current["qbr_total"].notna().sum())
         if "qbr_total" in current
         else 0,
+        "coverage": source_coverage,
+        "qbr_recovery": qbr_recovery,
     }
     return result
+
+
+def _history_source_coverage(current: pd.DataFrame, opportunity: pd.DataFrame) -> dict:
+    """Count actual observations before the model's missing-value encoding.
+
+    Opportunity is expected only for players with pass/rush/receiving usage;
+    players with no opportunities do not require a modeled opportunity row.
+    QBR is expected for quarterbacks with passing attempts, not every player.
+    """
+    keys = ["player_id", "season", "week"]
+    skill = current
+    if "position" in current:
+        skill = current[current["position"].isin(espn_live.SKILL_POSITIONS)]
+    snap_rows = int(skill["snap_pct"].notna().sum()) if "snap_pct" in skill else 0
+    usage = [c for c in ("attempts", "carries", "targets") if c in skill]
+    expected_opp = skill.loc[skill[usage].fillna(0).gt(0).any(axis=1)] if usage else skill
+    observed_opp = 0
+    if not opportunity.empty and set([*keys, *FF_OPP_FEATURE_COLUMNS]).issubset(opportunity):
+        usable = opportunity.loc[
+            opportunity[list(FF_OPP_FEATURE_COLUMNS)].notna().all(axis=1), keys
+        ]
+        observed_opp = len(expected_opp[keys].merge(usable.drop_duplicates(keys), on=keys))
+    qbs = skill[skill["position"].eq("QB")] if "position" in skill else skill.iloc[:0]
+    if "attempts" in qbs:
+        qbs = qbs[qbs["attempts"].fillna(0).gt(0)]
+    observed_qbr = (
+        int(qbs[["qbr_total", "pts_added"]].notna().all(axis=1).sum())
+        if {"qbr_total", "pts_added"}.issubset(qbs)
+        else 0
+    )
+    return {
+        "snap_counts": upcoming_status.coverage(snap_rows, len(skill)),
+        "ff_opportunity": upcoming_status.coverage(observed_opp, len(expected_opp)),
+        "qbr": upcoming_status.coverage(observed_qbr, len(qbs)),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -577,6 +627,12 @@ _UPCOMING_EXPERTS = ("nflcom", "rotowire", "espn")
 _ESPN_RECEPTION_WEIGHT = {"ppr": 1.0, "half_ppr": 0.5, "standard": 0.0}
 
 
+def _nflcom_enabled(season: int) -> bool:
+    return season <= _NFLCOM_ARCHIVE_LAST_SEASON or os.environ.get(
+        "FF_UPCOMING_NFLCOM", ""
+    ).lower() in ("1", "true", "yes")
+
+
 def _fetch_upcoming_expert_frames(
     season: int, week: int, *, nflcom_loader=None, rotowire_loader=None, espn_loader=None
 ):
@@ -589,6 +645,7 @@ def _fetch_upcoming_expert_frames(
     degrades to None → its expert column stays null → the frontend renders
     "--" and hides that column (per-source gating).
     """
+    allow_nflcom = nflcom_loader is not None or _nflcom_enabled(season)
     if nflcom_loader is None:
         nflcom_loader = load_nflcom_with_gsis_id
     if rotowire_loader is None:
@@ -597,7 +654,8 @@ def _fetch_upcoming_expert_frames(
         espn_loader = espn_live.fetch_fantasy_projections
     raw_nflcom = None
     try:
-        raw_nflcom = nflcom_loader([season], weeks=[week], force_refresh=True)
+        if allow_nflcom:
+            raw_nflcom = nflcom_loader([season], weeks=[week], force_refresh=True)
     except Exception as e:  # noqa: BLE001 - expert data is optional
         print(f"[upcoming_week] NFL.com projections unavailable: {e!r}")
     if raw_nflcom is not None and (raw_nflcom.empty or "position" not in raw_nflcom.columns):
@@ -849,8 +907,13 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     nfl_season = now.year - (now.month < 3)
     detected = espn_live.next_unplayed_week(max(SEASONS[-1], nfl_season))
     if detected is None:
-        _write_unavailable("offseason")
-        return read_cached_artifact()
+        payload = {
+            "generated_at": now.isoformat(),
+            "available": False,
+            "reason": "offseason",
+        }
+        _publish_artifact(payload, "offseason")
+        return payload
     season, week = detected
 
     slate, sched_rows = espn_live.fetch_slate(season, week)
@@ -863,8 +926,16 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     if roster.empty:
         _write_unavailable("no_roster")
         return read_cached_artifact()
+    missing_roster_teams = set(slate["recent_team"]) - set(roster["recent_team"])
+    if missing_roster_teams:
+        raise RuntimeError(
+            f"Live roster is missing scheduled teams: {sorted(missing_roster_teams)}"
+        )
 
-    injuries_df = espn_live.fetch_injuries_df(season, week)
+    # Both Out exclusion and status values must use the SAME recent, complete
+    # snapshot. An outage leaves the last published artifact untouched.
+    injury_report = espn_live.fetch_injury_report(season, week, team_id_to_code)
+    injuries_df = injury_report.injuries
     # Weekly rosters (RES/INA reserve/inactive) size the inheritance vacancy
     # out-set the same way training's refresh-splits does (which passes both
     # injuries_df AND rosters_df). Must be rosters_weekly — the seasonal frame is
@@ -888,7 +959,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # ESPN sets depth_chart_rank + game_status; official NFL reports set
     # practice_status; nflverse OTC sets the current-season contract_* values.
     depth_chart_ranks = espn_live.fetch_depth_chart_ranks(season, team_id_to_code)
-    game_status_map = espn_live.fetch_injury_status_map(season, week)
+    game_status_map = injury_report.statuses
     practice_report = practice_reports.fetch_practice_report(season, week, roster)
     practice_status_map = practice_report.values
     contract_features = live_sources.fetch_contract_features(season)
@@ -942,24 +1013,56 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         schedules=schedule_context,
     )
     results = run_upcoming_inference(featurized, roster, slate, season, week, special_teams=special)
-    # Do not publish an apparently successful six-position artifact when either
-    # new path produced no usable models. The previous artifact stays intact.
-    for pos in ("K", "DST"):
+    # Require a usable prediction for every listed row in every position.
+    # Individual optional models may still degrade explicitly.
+    for pos in UPCOMING_POSITIONS:
         rows = results[results["position"] == pos]
         model_cols = [_pred_col(p, "ppr") for p in ("ridge", "nn", "attn_nn", "lgbm")]
         if rows.empty or not np.isfinite(rows[model_cols].to_numpy(dtype=float)).any(axis=1).all():
             raise RuntimeError(f"{pos} upcoming inference produced missing predictions")
     # Age-at-kickoff + rookie flag for the frontend's Age/Rookies filters
     # (same best-effort semantics as the season-leaders path).
-    results = roster_meta.attach_age_and_rookie(results)
+    results = roster_meta.attach_age_and_rookie(
+        results, rosters=rosters_df, schedules=schedule_context, live_roster=roster
+    )
     # Expert columns for the homepage (best-effort; nulls when a feed is down).
     _apply_upcoming_experts(results, raw_nflcom, raw_rotowire, raw_espn)
     payload = _build_artifact(season, week, results, source_status=special.source_status)
     payload["sources"] = {
+        "roster": {
+            "provider": "ESPN",
+            "status": "available",
+            "covered_teams": sorted(set(roster["recent_team"])),
+            "player_rows": len(roster),
+        },
+        "injuries": injury_report.metadata,
         "practice": practice_report.metadata,
         "weather": weather_metadata,
         "history": featurized.attrs.get("live_history_sources", {}),
+        "player_metadata": {
+            "missing_players": int(
+                (
+                    results["position"].ne("DST") & results[["age", "is_rookie"]].isna().any(axis=1)
+                ).sum()
+            ),
+        },
+        "experts": {
+            "nflcom": {
+                "status": "available"
+                if raw_nflcom is not None
+                else "unavailable"
+                if _nflcom_enabled(season)
+                else "historical_only",
+                "verified_archive_through_season": _NFLCOM_ARCHIVE_LAST_SEASON,
+            },
+            "rotowire": {"status": "available" if raw_rotowire is not None else "unavailable"},
+            "espn": {"status": "available" if raw_espn is not None else "unavailable"},
+        },
     }
+    payload["inputs_fetched_at"] = now.isoformat()
+    payload["code_revision"] = os.environ.get("GITHUB_SHA")
+    payload["input_signature"] = sig
+    payload["data_quality"] = upcoming_status.data_quality(payload["sources"])
     _publish_artifact(payload, sig)
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")
     return payload
@@ -1089,7 +1192,7 @@ def main() -> None:
     if artifact.get("available") is False:
         reason = artifact.get("reason", "unknown")
         if reason == "offseason":
-            print("[upcoming_week] verified offseason (nothing scheduled); S3 artifact left as-is")
+            print("[upcoming_week] verified offseason; unavailable artifact published")
             return
         raise SystemExit(
             f"[upcoming_week] FATAL: artifact unavailable (reason={reason}); nothing uploaded"
