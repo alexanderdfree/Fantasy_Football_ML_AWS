@@ -38,6 +38,15 @@ def alpha_grid(low: float, high: float, n: int = 15) -> list[float]:
     return [round(x, 4) for x in np.logspace(low, high, n)]
 
 
+def poisson_log_rate_targets(
+    head_losses: dict[str, str], poisson_targets=(), *, enabled: bool = True
+) -> set[str]:
+    """Resolve Poisson heads, including the legacy loss-family shorthand."""
+    if not enabled:
+        return set()
+    return {t for t, loss in head_losses.items() if loss == "poisson_nll"} | set(poisson_targets)
+
+
 DEFAULT_OPP_ATTN_MAX_SEQ_LEN: int = 17
 DEFAULT_ENET_L1_RATIOS: tuple[float, ...] = (0.3, 0.5, 0.7)
 
@@ -152,6 +161,9 @@ class PositionConfig:
     # identical to FP32). BF16 is opt-in via FF_AMP_DTYPE=bf16 (sm_80+ only;
     # refused on T4, which it hung in #293/#301).
     nn_use_amp: bool = True
+    # Ungated Poisson heads fit log-rates, avoiding the zero-gradient clamp.
+    # False retains the legacy parameterization for paired A/B validation.
+    nn_poisson_log_rate: bool = True
 
     # === Per-head loss families ===
     head_losses: dict[str, str] = field(default_factory=dict)
@@ -159,6 +171,10 @@ class PositionConfig:
     huber_deltas: dict[str, float] = field(default_factory=dict)
     poisson_targets: list[str] = field(default_factory=list)
     gated_targets: list[str] = field(default_factory=list)
+    # Persisted in each newly trained gated head; legacy checkpoints remain legacy.
+    nn_correct_ztnb_mean: bool = True
+    # Sparse continuous values must not become a binary flag after z-score clipping.
+    nn_magnitude_features: tuple[str, ...] = ()
 
     # === LR scheduler (cosine_warm_restarts | onecycle) ===
     scheduler_type: str = "cosine_warm_restarts"

@@ -663,7 +663,7 @@ def api_model_architecture():
                     "optimizer": "AdamW",
                     "loss": "MultiTargetLoss: per-target Huber or Poisson NLL + optional BCE on TD gate",
                     "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
-                    "feature_scaling": "StandardScaler, clipped to [-4, 4]",
+                    "feature_scaling": "Training-fitted feature scaling, bounded to [-4, 4]",
                     "early_stopping": "Best loss-weighted val MAE restored on patience",
                     "checkpoint": "Best state_dict kept in memory, saved as .pt",
                 },

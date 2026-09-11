@@ -15,6 +15,9 @@
 ### [FIXED] QB availability rewrite removed the intended historical role proxy
 [Read the incident record](fixed-archive/qb-role-reconstruction.md).
 
+### [FIXED] Inheritance magnitude collapsed and reception expectations omitted truncation
+[Read the incident record](fixed-archive/inheritance-reception-contracts-2026-09.md).
+
 ### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
 [Read the incident record](fixed-archive/upcoming-refresh-availability-2026-09.md).
 
@@ -59,6 +62,9 @@ The original headings remain here so existing fragment links still resolve.
 
 ### [FIXED] Post-PR hook revived a merge bypass and omitted deletion verification
 [Read the incident record](fixed-archive/fixed-post-pr-hook-merge-gates.md).
+
+### [FIXED] Sparse Poisson heads lost corrective gradients behind nonnegative clamps
+[Read the incident record](fixed-archive/fixed-poisson-log-rate-gradients.md).
 
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).
