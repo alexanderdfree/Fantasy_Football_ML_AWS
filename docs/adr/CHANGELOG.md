@@ -8,6 +8,8 @@
 
 - 2026-09-11 · Integrate maintenance with canonical snapshot publication, generation-aware readiness rollout and durable bounded recovery · (PR #1577) · → ADR-0028
 
+- 2026-09-10 · Start reproducible QB donor-history diagnostics with explicit input scope and provenance · (PR #1578) · → ADR-0029
+
 - 2026-09-10 · Remove repository Codex model, reasoning, and context pins; inherit personal defaults and session selections · (PR #1579) · → ADR-0025
 - 2026-09-10 · Remove ML dependencies from the serving image and move offline prediction builders and providers out of HTTP code · (PR #1566 follow-up) · → ADR-0027
 - 2026-09-10 · Restore historical QB role reconstruction and use pregame depth for upcoming availability · (PR pending) · → ADR-0004
