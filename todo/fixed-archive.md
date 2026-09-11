@@ -9,6 +9,9 @@
 ### [FIXED] Expert forecasts lost scoring components outside the model target list
 [Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
 
+### [FIXED] QB availability rewrite removed the intended historical role proxy
+[Read the incident record](fixed-archive/qb-role-reconstruction.md).
+
 ### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
 [Read the incident record](fixed-archive/upcoming-refresh-availability-2026-09.md).
 
