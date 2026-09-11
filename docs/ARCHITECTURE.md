@@ -109,6 +109,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D24 | [Shared comparison truth and pregame evaluation cohorts](adr/0024-fair-comparison-and-evaluation-cohorts.md) | Accepted |
 | D25 | [Scoped agent guidance and incident retrieval](adr/0025-scoped-agent-guidance-and-incident-retrieval.md) | Accepted |
 | D26 | [Coherent training-data releases and isolated live overlays](adr/0026-coherent-training-data-releases.md) | Accepted |
+| D29 | [Synthetic player-history diagnostics](adr/0029-synthetic-player-history-diagnostics.md) | Proposed |
 
 ## 4. Cross-Cutting Consequences
 
