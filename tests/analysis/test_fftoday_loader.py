@@ -203,5 +203,5 @@ def test_fftoday_registered_as_expert():
     ff = experts["fftoday"]
     assert ff.label == "FFToday"
     assert ff.skipped == frozenset({"K", "DST"})
-    # Reuses the generic raw-stat -> PPR projector.
-    assert ff.project is aec._project_sleeper_to_ppr
+    # Comparisons use the common projected components, not full display totals.
+    assert ff.project is aec._project_sleeper_comparison

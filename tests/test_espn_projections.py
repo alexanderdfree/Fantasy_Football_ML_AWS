@@ -43,13 +43,12 @@ def _joined(pos, stats):
 
 @pytest.mark.parametrize("fmt,rec_weight", [("ppr", 1), ("half_ppr", 0.5), ("standard", 0)])
 @pytest.mark.parametrize("pos", [2, 3, 4])
-def test_offense_uses_raw_stats_and_position_specific_scoring(fmt, rec_weight, pos):
+def test_offense_preserves_raw_stats_in_every_scoring_format(fmt, rec_weight, pos):
     frame = _joined(
         pos, {"24": 50, "25": 0.5, "42": 20, "43": 0.25, "53": 4, "41": 999, "72": 0.2, "62": 2}
     )
     result = mod.project_espn_to_fantasy(frame, mod._POS_MAP[pos], fmt)
-    # WR/TE have no rushing heads in this project's scoring contract.
-    expected = 2 + 1.5 - 0.4 + 4 * rec_weight + (8 if pos == 2 else 0)
+    expected = 2 + 1.5 - 0.4 + 4 * rec_weight + 8
     assert result.espn_pred_total.iloc[0] == pytest.approx(expected)
 
 
@@ -118,6 +117,28 @@ def test_receiving_only_running_back_is_a_genuine_projection():
     frame = _joined(2, {"42": 20, "53": 3})
     assert mod.project_espn_to_fantasy(frame, "RB", "ppr").espn_pred_total.iloc[0] == 5
     assert _joined(2, {"101": 0.1, "114": 20, "210": 1}).empty  # return-only placeholder
+
+
+@pytest.mark.parametrize(
+    "pos,stats,expected", [(3, {"24": 20, "25": 0.5}, 5), (1, {"42": 20, "53": 3}, 5)]
+)
+def test_projection_outside_modeled_heads_is_not_a_placeholder(pos, stats, expected):
+    frame = _joined(pos, stats)
+    assert (
+        mod.project_espn_to_fantasy(frame, mod._POS_MAP[pos], "ppr").espn_pred_total.iloc[0]
+        == expected
+    )
+
+
+def test_old_raw_cache_cannot_hide_rushing_only_receivers(tmp_path):
+    pd.DataFrame({"espn_id": ["stale"]}).to_parquet(tmp_path / "espn_projections_v1_2025.parquet")
+    raw = mod.load_espn_projections(
+        [2025],
+        str(tmp_path),
+        reader=lambda *a, **k: {"players": [_player(3, [_split({"24": 20, "25": 0.5})])]},
+    )
+    assert raw.iloc[0].rushing_yards == 20
+    assert (tmp_path / "espn_projections_v2_2025.parquet").exists()
 
 
 def test_excludes_entire_incomplete_week_and_old_week18():

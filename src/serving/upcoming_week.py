@@ -55,7 +55,7 @@ from src.serving import (
     upcoming_special_teams,
     upcoming_status,
 )
-from src.serving.expert_sources import load_sleeper_with_gsis_id
+from src.serving.expert_sources import EXPERT_SCORING_VERSION, load_sleeper_with_gsis_id
 from src.serving.live_build import (
     HISTORICAL_CACHE_ENV,
     historical_cache_dir,
@@ -927,7 +927,7 @@ def _input_signature(
     blob = (
         f"{season}|{week}|{model_fp}|{slate_part}|{roster_part}|"
         f"{depth_part}|{inj_part}|{prac_part}|{contract_part}|{rosters_part}|{expert_digest}|"
-        f"{special_teams_digest}|{schedule_digest}"
+        f"{special_teams_digest}|{schedule_digest}|expert_scoring={EXPERT_SCORING_VERSION}"
     )
     return hashlib.sha256(blob.encode()).hexdigest()
 

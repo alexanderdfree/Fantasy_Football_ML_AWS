@@ -14,7 +14,10 @@ from src.shared.aggregate_targets import (
     predictions_to_fantasy_points,
 )
 
-ACTUAL_BASIS = "shared_projected_components_v1"
+ACTUAL_BASIS = "shared_projected_components_v2"
+EXCLUDED_COMPONENTS = {
+    "DST": {"points_allowed": "Scoreboard, ESPN and RotoWire points-allowed definitions differ."}
+}
 # NFL.com publishes bucket-scored kicker totals, without the made-yardage and
 # miss projections required by our K heads. Those totals cannot enter this
 # comparison. ESPN supplies all four K components.
@@ -28,7 +31,7 @@ def scoring_components(position: str) -> tuple[str, ...]:
     if position == "K":
         return K_TARGETS
     if position == "DST":
-        return DST_TARGETS
+        return tuple(target for target in DST_TARGETS if target != "points_allowed")
     return tuple(POSITION_TARGET_MAP[position])
 
 
@@ -48,7 +51,45 @@ def score_actual_components(frame, position, scoring="ppr", *, prefix="") -> pd.
     valid = np.logical_and.reduce([np.isfinite(value) for value in values.values()])
     # Replace unknowns only during arithmetic (DST digitizes PA/YA); the result
     # is masked back to unknown so missing actuals cannot produce a real score.
-    total = predictions_to_fantasy_points(
-        position, {name: np.where(valid, value, 0) for name, value in values.items()}, scoring
-    )
+    scored = {name: np.where(valid, value, 0) for name, value in values.items()}
+    if position == "DST":
+        # 21 points is the zero-bonus PA tier. This removes the non-shared
+        # component from both sides without altering normal fantasy scoring.
+        scored["points_allowed"] = np.full(len(frame), 21.0)
+    total = predictions_to_fantasy_points(position, scored, scoring)
     return pd.Series(np.where(valid, total, np.nan), index=frame.index)
+
+
+def comparison_actuals(frame, position, scoring="ppr", *, prefix="") -> pd.Series:
+    """Use certified pre-imputation truth and preserve its missing-value mask."""
+    metadata = (frame.attrs.get("actual_projected_total_metadata_by_position") or {}).get(position)
+    metadata = metadata or frame.attrs.get("actual_projected_total_metadata") or {}
+    verified = (
+        "actual_projected_total" in frame
+        and isinstance(metadata, dict)
+        and metadata.get("basis") == "configured_target_aggregation_v1"
+        and set(metadata.get("targets") or ()) == set(scoring_components(position))
+    )
+    if verified:
+        observed = pd.to_numeric(frame["actual_projected_total"], errors="coerce")
+        valid = np.isfinite(observed)
+        if metadata.get("scoring_format") == scoring:
+            return observed.where(valid)
+    values = score_actual_components(frame, position, scoring, prefix=prefix)
+    return values.where(valid) if verified else values
+
+
+def comparison_model_totals(
+    frame: pd.DataFrame, position: str, scoring="ppr", *, rescore=False
+) -> pd.DataFrame:
+    """Rebuild DST comparison totals from raw heads, never rounded native totals.
+
+    Pipeline totals retain ordinary fantasy scoring. Other positions already
+    share that total's component set; DST comparison omits points allowed.
+    """
+    out = frame.copy()
+    if position == "DST" or rescore:
+        for column in frame:
+            if column.startswith("pred_") and column.endswith("_total"):
+                out[column] = score_actual_components(frame, position, scoring, prefix=column[:-5])
+    return out

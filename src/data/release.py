@@ -43,6 +43,7 @@ DATA_PRODUCER_PATHS = (
     "src/dst/config.py",
     "src/shared/comparison_scoring.py",
     "src/shared/evaluation_cohorts.py",
+    "src/shared/expert_eligibility.py",
     "src/scripts/build_evaluation_reference.py",
     "src/analysis/analysis_expert_comparison.py",
     "src/analysis/sleeper_loader.py",

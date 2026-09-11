@@ -127,6 +127,10 @@ def _model_df_dst() -> pd.DataFrame:
                     "points_allowed": 21.0,
                     "yards_allowed": 350.0,
                     "pred_attn_nn_total": actual + (0.5 if i % 2 else -0.7),
+                    **dict.fromkeys((f"pred_attn_nn_{t}" for t in mod.DST_TARGETS), 0.0),
+                    "pred_attn_nn_def_sacks": actual + (0.5 if i % 2 else -0.7) + 1.0,
+                    "pred_attn_nn_yards_allowed": 350.0,
+                    "pred_attn_nn_points_allowed": 21.0,
                 }
             )
     return pd.DataFrame(rows)

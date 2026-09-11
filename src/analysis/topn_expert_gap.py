@@ -7,6 +7,10 @@ This read-only analysis separates two questions that are easy to conflate:
 * selection accuracy: whether a forecaster selected/ranked the same weekly or
   season-total top-N players.
 
+All source tables use shared projected-component actuals and the same finite
+player-weeks. Seasonal accuracy cohorts are selected before forecast coverage;
+weekly selections are ranked on the common slate. Coverage is reported separately.
+
 The CLI prefers saved model artifacts, validates them with
 ``artifact_eval.validate_reconstruction()``, and falls back to a fresh position
 pipeline only when artifacts are missing or fail validation.
@@ -44,9 +48,21 @@ from src.analysis.cohort_analysis import (
     label_rookie_rows,
     player_min_season,
 )
+from src.analysis.comparison_frames import (
+    common_forecast_frames,
+    comparison_actuals,
+    position_frames,
+)
 from src.analysis.significance import diebold_mariano_test, paired_bootstrap_metric_ci
 from src.config import TEST_SEASONS
+from src.shared.comparison_scoring import (
+    ACTUAL_BASIS,
+    comparison_model_totals,
+    score_actual_components,
+    scoring_components,
+)
 from src.shared.evaluation import compute_metrics
+from src.shared.expert_eligibility import filter_eligible_forecasts
 
 ACTUAL_COL = "fantasy_points"
 PRED_COL = "pred_total"
@@ -219,8 +235,25 @@ def local_expert_source(spec: LocalExpertSpec) -> ExpertSource:
         if missing:
             raise KeyError(f"local expert projection file missing key columns {missing}")
         pred_col = _local_projection_col(df, spec.pred_col)
-        pred = pd.to_numeric(df[pred_col], errors="coerce")
-        valid_pred = pred.gt(0.0) & np.isfinite(pred)
+        if pos == "DST":
+            if not set(scoring_components(pos)).issubset(df):
+                unavailable = pd.DataFrame(columns=[*_KEY_COLS, _EXPERT_PRED_COL])
+                unavailable.attrs["unavailable_reason"] = (
+                    "Local DST totals require all nine shared raw components; "
+                    "native points-allowed scoring cannot be used."
+                )
+                return unavailable
+            pred = score_actual_components(df, pos)
+            valid_pred = np.isfinite(pred)
+        else:
+            pred = pd.to_numeric(df[pred_col], errors="coerce")
+            has_stat_line = pd.Series(False, index=df.index)
+            for target in scoring_components(pos):
+                for column in (f"pred_{target}", f"projected_{target}", f"{target}_projection"):
+                    if column in df and column != pred_col:
+                        values = pd.to_numeric(df[column], errors="coerce")
+                        has_stat_line |= np.isfinite(values) & values.ne(0)
+            valid_pred = np.isfinite(pred) & (pred.gt(0.0) | has_stat_line)
         df = df.loc[valid_pred].copy()
         if df.empty:
             return pd.DataFrame(columns=[*_KEY_COLS, _EXPERT_PRED_COL])
@@ -315,9 +348,6 @@ def actual_season_ranks(base_df: pd.DataFrame) -> pd.DataFrame:
 def _source_with_actual_ranks(source_df: pd.DataFrame, base_df: pd.DataFrame) -> pd.DataFrame:
     ranks = actual_season_ranks(base_df)
     out = _normalise_keys(source_df).merge(ranks, on=["season", "player_id"], how="left")
-    out["pred_week_rank"] = out.groupby(["season", "week"])[PRED_COL].rank(
-        method="first", ascending=False
-    )
     return out
 
 
@@ -390,8 +420,8 @@ def season_selection_rows(
             precision = len(hits) / len(pred_set) if pred_set else _nan()
             recall = len(hits) / len(actual_set) if actual_set else _nan()
             f1 = (
-                2.0 * precision * recall / (precision + recall)
-                if precision + recall > 0
+                2.0 * len(hits) / (len(pred_set) + len(actual_set))
+                if pred_set and actual_set
                 else _nan()
             )
             hit_ranks = season_actual[season_actual["player_id"].isin(hits)].dropna(
@@ -702,24 +732,13 @@ def slice_masks(
         except ValueError:
             pass
 
-    if "pred_week_rank" in ranked_df:
-        buckets = [
-            (ranked_df["pred_week_rank"].between(1, 12), "proj_1_12"),
-            (ranked_df["pred_week_rank"].between(13, 24), "proj_13_24"),
-            (ranked_df["pred_week_rank"].between(25, 30), "proj_25_30"),
-            (ranked_df["pred_week_rank"] > 30, "proj_outside_30"),
-        ]
-        for mask, name in buckets:
-            if mask.any():
-                masks.append(("projected_rank_bucket", name, mask))
-
     masks.extend(context_slice_masks(ranked_df))
 
     rank = ranked_df.get("actual_rank")
     if rank is not None:
         elite = rank <= 24
         if elite.any():
-            masks.append(("elite_top24", "elite_top24", elite))
+            masks.append(("seasonal_actual_top24", "seasonal_actual_top24", elite))
         if position == "RB":
             for lo, hi, name in ((1, 12, "rb1"), (13, 24, "rb2"), (25, 36, "flex")):
                 mask = rank.between(lo, hi)
@@ -856,8 +875,18 @@ def expert_source_frame(
     if raw_df is None:
         return meta, None, {"skipped": True, "reason": f"{label} projections unavailable"}
     projection = source.project(raw_df, position, scoring_format)
+    if projection is not None:
+        projection = filter_eligible_forecasts(projection, source.name, position)
     if projection is None or projection.empty:
-        return meta, None, {"skipped": True, "reason": f"no {label} projections for {position}"}
+        reason = projection.attrs.get("unavailable_reason") if projection is not None else None
+        return (
+            meta,
+            None,
+            {
+                "skipped": True,
+                "reason": reason or f"no {label} projections for {position}",
+            },
+        )
     joined = join_source_projection(base_df, projection, pred_col=_EXPERT_PRED_COL)
     if joined.empty:
         return (
@@ -935,11 +964,11 @@ def load_position_predictions(
 def _fresh_model_predictions(
     position: str, eval_seasons: Sequence[int], scoring_format: str
 ) -> pd.DataFrame:
-    del eval_seasons, scoring_format
+    del eval_seasons
     result = importlib.import_module(f"src.{position.lower()}.run_pipeline").run()
     if "test_df" not in result:
         raise KeyError(f"{position} run() result has no 'test_df'")
-    return result["test_df"]
+    return comparison_model_totals(result["test_df"], position, scoring_format, rescore=True)
 
 
 def _filter_eval_seasons(df: pd.DataFrame, eval_seasons: Sequence[int]) -> pd.DataFrame:
@@ -961,7 +990,7 @@ def build_position_report(
     min_season: pd.Series | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Compute all report rows for one position from one row-level substrate."""
-    base_df = _normalise_keys(model_df)
+    base_df = comparison_actuals(model_df, position, scoring_format)
     if "position" not in base_df.columns:
         base_df["position"] = position
     model_frames = model_source_frames(base_df)
@@ -1000,11 +1029,35 @@ def build_position_report(
     player_misses: list[dict[str, Any]] = []
     weekly_misses: list[dict[str, Any]] = []
     all_frames = [*model_frames, *expert_frames]
+    paired = common_forecast_frames([frame for _, frame in all_frames])
+    all_frames = [(meta, frame) for (meta, _), frame in zip(all_frames, paired, strict=True)]
+    model_frames = [(meta, frame) for meta, frame in all_frames if meta.kind == "model"]
+    expert_frames = [(meta, frame) for meta, frame in all_frames if meta.kind == "expert"]
+    common_base = next((frame for _, frame in all_frames if not frame.empty), base_df.iloc[:0])
+    source_available = {meta.name: not frame.empty for meta, frame in all_frames}
+    for row in coverage_rows:
+        row.update(
+            actual_basis=ACTUAL_BASIS,
+            scoring_components=list(scoring_components(position)),
+            sample_basis="shared_player_weeks",
+            n_common=int(len(common_base)),
+            actual_n=int(len(base_df)),
+            status="available" if source_available.get(row["source"], False) else "unavailable",
+        )
+        if base_df.empty:
+            row["reason"] = "shared_actual_components_missing_or_no_regular_season_rows"
+        elif not source_available.get(row["source"], False) and "reason" not in row:
+            row["reason"] = "no_common_finite_forecasts"
     for meta, frame in all_frames:
         metric_rows.extend(cohort_error_rows(position, meta, frame, base_df, min_season=min_season))
         metric_rows.extend(td_calibration_rows(position, meta, frame))
+        if frame.empty:
+            # Coverage already reports this source as unavailable. A missing
+            # shared slate is not a forecast that selected nobody: do not emit
+            # scored recall/regret or fabricated player misses against base_df.
+            continue
         season_rows, season_misses = season_selection_rows(position, meta, frame, base_df)
-        weekly_rows, week_misses = weekly_selection_rows(position, meta, frame, base_df)
+        weekly_rows, week_misses = weekly_selection_rows(position, meta, frame, common_base)
         metric_rows.extend(season_rows)
         metric_rows.extend(weekly_rows)
         player_misses.extend(season_misses)
@@ -1057,11 +1110,10 @@ def run_analysis(
     min_season = player_min_season([train_df, val_df, test_df])
 
     for position in positions:
+        frames = position_frames(position, (train_df, val_df, test_df))
         load = load_position_predictions(
             position,
-            train_df,
-            val_df,
-            test_df,
+            *frames,
             eval_seasons=eval_seasons,
             scoring_format=scoring_format,
             from_artifacts=from_artifacts,
@@ -1081,7 +1133,7 @@ def run_analysis(
             scoring_format=scoring_format,
             n_boot=n_boot,
             seed=seed,
-            min_season=min_season,
+            min_season=player_min_season(list(frames)) if position in {"K", "DST"} else min_season,
         )
         metrics.extend(m_rows)
         player_misses.extend(p_rows)
@@ -1103,6 +1155,9 @@ def run_analysis(
         "positions": list(positions),
         "eval_seasons": list(eval_seasons),
         "scoring_format": scoring_format,
+        "actual_basis": ACTUAL_BASIS,
+        "sample_basis": "shared_player_weeks",
+        "scoring_components": {pos: list(scoring_components(pos)) for pos in positions},
         "from_artifacts": bool(from_artifacts),
         "validate": bool(validate),
         "n_boot": int(n_boot),
@@ -1139,6 +1194,9 @@ def render_summary(metrics: pd.DataFrame, coverage: pd.DataFrame, report: dict[s
                         "source_label",
                         "source_kind",
                         "n_rows",
+                        "n_common",
+                        "actual_n",
+                        "status",
                         "skipped",
                         "reason",
                     )
@@ -1316,7 +1374,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Approved local projection snapshot to score as an expert source. "
             "The file must contain player_id, season, week, and a projection column; "
-            "optional raw TD projections use pred_*/projected_*/*_projection names."
+            "optional raw TD projections use pred_*/projected_*/*_projection names. "
+            "DST also requires the nine shared raw-stat columns so incompatible "
+            "native points-allowed totals can be rescored."
         ),
     )
     return parser.parse_args(argv)

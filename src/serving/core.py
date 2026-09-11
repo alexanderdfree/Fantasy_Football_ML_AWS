@@ -53,7 +53,9 @@ from src.features.engineer import (
 from src.serving.espn_projections import load_espn_with_gsis_id, project_espn_to_fantasy
 from src.serving.expert_sources import (
     load_sleeper_with_gsis_id,
+    project_expert_comparison,
     project_nflcom_to_fantasy,
+    score_offensive_projections,
 )
 from src.serving.metadata import _ALL_POSITIONS, _ALL_TARGETS, _APPENDED_POSITIONS
 from src.serving.serialization import (
@@ -78,6 +80,7 @@ from src.shared.artifact_integrity import (
     read_scaler_meta,
     unwrap_state_dict,
 )
+from src.shared.comparison_scoring import score_actual_components
 from src.shared.evaluation import compute_metrics
 from src.shared.feature_build import build_position_features, scale_and_clip
 from src.shared.model_sync import (
@@ -177,7 +180,11 @@ def _project_rotowire_to_fantasy(
     if pos_df.empty:
         return _empty_expert_frame(value_col)
 
-    targets = list(DST_TARGETS) if pos == "DST" else list(POSITION_TARGET_MAP.get(pos, {}))
+    if pos in POSITION_TARGET_MAP:
+        out = pos_df[_EXPERT_KEY_COLS].copy()
+        out[value_col] = score_offensive_projections(pos_df, scoring_format)
+        return out
+    targets = list(DST_TARGETS) if pos == "DST" else []
     if not targets:
         return _empty_expert_frame(value_col)
     pred_dict = {}
@@ -245,10 +252,12 @@ def _apply_expert_predictions(
     Expert feeds are an auxiliary UI comparison surface. Loader/projection failures
     leave stable NaN columns instead of breaking model serving.
     """
-    results.attrs["espn_complete"] = True
+    for source in _EXPERT_PRED_PREFIXES:
+        results.attrs[f"{source}_complete"] = True
     for source in _EXPERT_PRED_PREFIXES:
         for fmt in _VALID_SCORING:
             results[_pred_col(source, fmt)] = np.nan
+            results[_pred_col(f"{source}_comparison", fmt)] = np.nan
         results[f"{source}_pred"] = np.nan
 
     seasons = _historical_expert_seasons(results)
@@ -285,9 +294,38 @@ def _apply_expert_predictions(
     if raw_espn is not None and (raw_espn.empty or "position" not in raw_espn.columns):
         raw_espn = None
     results.attrs["espn_complete"] = raw_espn is not None
+    results.attrs["nflcom_complete"] = (
+        raw_nflcom is not None and raw_nflcom.attrs.get("nflcom_fetch_complete_v1") is not False
+    )
+    results.attrs["rotowire_complete"] = (
+        raw_rotowire is not None
+        and raw_rotowire.attrs.get("sleeper_fetch_complete_v1") is not False
+    )
+
+    for source, raw in (("rotowire", raw_rotowire), ("espn", raw_espn)):
+        results[_pred_col(source, "comparison")] = np.nan
+        if raw is not None and {*_EXPERT_KEY_COLS, "position"}.issubset(raw.columns):
+            dst = raw.loc[raw["position"].eq("DST") & raw["player_id"].notna()]
+            scored = dst[_EXPERT_KEY_COLS].copy()
+            scored["comparison_total"] = score_actual_components(dst, "DST")
+            _assign_expert_totals(results, source, "comparison", scored, "comparison_total")
 
     for fmt in _VALID_SCORING:
         for pos in _ALL_POSITIONS:
+            for source, raw in (
+                ("nflcom", raw_nflcom),
+                ("rotowire", raw_rotowire),
+                ("espn", raw_espn),
+            ):
+                if raw is not None:
+                    try:
+                        shared = project_expert_comparison(raw, pos, fmt, source=source)
+                        _assign_expert_totals(
+                            results, f"{source}_comparison", fmt, shared, "expert_pred_total"
+                        )
+                    except Exception as e:  # noqa: BLE001 - optional source boundary
+                        print(f"[experts] {source} {pos}/{fmt} comparison unavailable: {e!r}")
+                        results.attrs[f"{source}_complete"] = False
             if raw_espn is not None:
                 try:
                     espn = project_espn_to_fantasy(raw_espn, pos, fmt)
@@ -301,12 +339,14 @@ def _apply_expert_predictions(
                     _assign_expert_totals(results, "nflcom", fmt, nfl, "nflcom_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[experts] NFL.com {pos}/{fmt} projection failed: {e!r}")
+                    results.attrs["nflcom_complete"] = False
             if raw_rotowire is not None and pos != "K":
                 try:
                     rw = _project_rotowire_to_fantasy(raw_rotowire, pos, fmt)
                     _assign_expert_totals(results, "rotowire", fmt, rw, "rotowire_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[experts] RotoWire {pos}/{fmt} projection failed: {e!r}")
+                    results.attrs["rotowire_complete"] = False
 
     for source in _EXPERT_PRED_PREFIXES:
         results[f"{source}_pred"] = results[_pred_col(source, "ppr")]
@@ -745,6 +785,13 @@ def _apply_position_models(
             ("lgbm", lgbm_preds),
         )
         for prefix, preds in per_target_preds:
+            if pos == "DST":
+                col = _pred_col(prefix, "comparison")
+                results.loc[pos_index, col] = (
+                    np.round(score_actual_components(pd.DataFrame(preds), "DST").to_numpy(), 2)
+                    if preds is not None
+                    else np.nan
+                )
             for t in targets:
                 col = f"pred_{prefix}_{t}"
                 if preds is not None and t in preds:
@@ -1452,8 +1499,10 @@ _FINGERPRINT_JSON = "fingerprint.json"
 # v8 adds ESPN historical projections to every per-row scoring format. Old
 # snapshots must recompute or ESPN would remain null despite the new column.
 # v9 includes historical K/DST scoring sources and the coherent data release.
-# Older dependency manifests cannot certify a cache before these inputs arrive.
-_PREDICTIONS_CACHE_SCHEMA_VERSION = 9
+# v10 stores dedicated DST comparison totals, excluding non-shared PA semantics.
+# Old native totals and rounded drill-down heads cannot substitute for these.
+# v11 separates full offensive expert forecasts from shared-component totals.
+_PREDICTIONS_CACHE_SCHEMA_VERSION = 11
 # Optional browser snapshot, committed with its prediction/metric generation.
 # Its absence permits hydration and local regeneration from those same bytes.
 _SNAPSHOT_JSON = "snapshot.json"
@@ -1703,8 +1752,15 @@ def _persist_cache_to_disk():
     """
     if "results" not in app_pkg._cache or "metrics_by_format" not in app_pkg._cache:
         return
-    if app_pkg._cache["results"].attrs.get("espn_complete") is False:
-        print("[predcache] ESPN unavailable — not publishing incomplete results")
+    incomplete = [
+        source
+        for source in _EXPERT_PRED_PREFIXES
+        if app_pkg._cache["results"].attrs.get(f"{source}_complete") is False
+    ]
+    if incomplete:
+        print(
+            f"[predcache] Experts unavailable ({', '.join(incomplete)}) — not publishing incomplete results"
+        )
         return
     sha, input_files = _compute_models_fingerprint()
     expected = app_pkg._cache.get("prediction_inputs_fingerprint")

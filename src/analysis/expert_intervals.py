@@ -80,6 +80,7 @@ from src.analysis.build_comparison_summary import (
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.shared.expert_eligibility import eligible_forecast_rows
 
 POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 SCORING_FORMAT = "ppr"
@@ -464,6 +465,16 @@ def build_intervals(
                 source, raw[source], pos, offense_actuals, dst_actuals, panel_seasons[source]
             )
             block = _calibrate(source, pos, panel, eval_set, names[source])
+            # Projection eligibility runs before fitting; retain the excluded
+            # source seasons in the report even though they never reach panel.
+            source_rows = raw[source].loc[raw[source]["position"].eq(pos)]
+            excluded = source_rows.loc[
+                ~eligible_forecast_rows(source_rows, source, pos), "season"
+            ].dropna()
+            if len(excluded):
+                block.setdefault("excluded_seasons", {}).update(
+                    {int(season): "look-ahead" for season in excluded.unique()}
+                )
             intervals[source][pos] = block
             for season, why in block.get("excluded_seasons", {}).items():
                 if why == "look-ahead":

@@ -20,6 +20,7 @@ from src.shared.evaluation_cohorts import (
     reference_path,
     regular_season_rows,
 )
+from src.shared.expert_eligibility import NFLCOM_OFFENSE_MIN_SEASON, filter_eligible_forecasts
 
 
 def build_reference(
@@ -36,7 +37,7 @@ def build_reference(
     ]
     raw = {}
     for source in sources:
-        minimum = 2013 if source.name == "nflcom" else 2018
+        minimum = NFLCOM_OFFENSE_MIN_SEASON if source.name == "nflcom" else 2018
         supported = [season for season in seasons if season >= minimum]
         raw[source.name] = source.load(supported) if supported else None
     parts = []
@@ -53,7 +54,8 @@ def build_reference(
             # The hvpkod NFL.com offense archive backfills box scores before 2024.
             # RotoWire's usable archive begins in 2018. Never silently substitute
             # another reference recipe when one required source is unavailable.
-            first_season = 2024 if source.name == "nflcom" else 2018
+            frame = filter_eligible_forecasts(frame, source.name, pos)
+            first_season = NFLCOM_OFFENSE_MIN_SEASON if source.name == "nflcom" else 2018
             frame = frame[frame["season"].isin(seasons) & frame["season"].ge(first_season)].dropna(
                 subset=["expert_pred_total"]
             )

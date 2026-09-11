@@ -35,21 +35,23 @@ import pandas as pd
 
 from src.analysis.analysis_expert_comparison import (
     _EXPERT_PRED_COL,
-    _project_sleeper_to_ppr,
+    _project_espn_expert,
+    _project_nflcom_expert,
+    _project_sleeper_comparison,
 )
 from src.analysis.analysis_nflcom_baseline import (
     _actuals_for_position,
     _aggregate_actuals_to_ppr,
     _json_default,
     _load_actuals,
-    _project_nflcom_to_ppr,
 )
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.dst.data import build_data as build_dst_data
 from src.dst.targets import compute_targets as compute_dst_targets
-from src.serving.espn_projections import ESPN_NOTE, load_espn_with_gsis_id, project_espn_to_fantasy
+from src.serving.espn_projections import ESPN_NOTE, load_espn_with_gsis_id
+from src.shared.comparison_scoring import score_actual_components
 from src.shared.evaluation import compute_metrics
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
@@ -120,9 +122,8 @@ def _dst_actuals(eval_seasons: Sequence[int]) -> pd.DataFrame:
     raw = compute_dst_targets(build_dst_data())
     eval_set = {int(s) for s in eval_seasons}
     df = raw[raw["season"].astype(int).isin(eval_set)].copy()
-    out = df[["team", "season", "week", "fantasy_points"]].rename(
-        columns={"team": "player_id", "fantasy_points": "actual_pts"}
-    )
+    out = df[["team", "season", "week"]].rename(columns={"team": "player_id"})
+    out["actual_pts"] = score_actual_components(df, "DST").to_numpy()
     return out.reset_index(drop=True)
 
 
@@ -221,19 +222,19 @@ def build_summary(
         tier_id_sets = {"top12": set(ids12), "top30": set(ids30)}
 
         if pos in _NFLCOM_POSITIONS:
-            nfl_proj = _project_nflcom_to_ppr(nflcom_full, pos, SCORING_FORMAT)
-            nfl_blocks = _expert_subsets(actuals, nfl_proj, "nflcom_pred_total", tier_id_sets)
+            nfl_proj = _project_nflcom_expert(nflcom_full, pos, SCORING_FORMAT)
+            nfl_blocks = _expert_subsets(actuals, nfl_proj, _EXPERT_PRED_COL, tier_id_sets)
         else:
             nfl_blocks = dict(empty_blocks)
 
         if pos in _ROTOWIRE_POSITIONS:
-            rw_proj = _project_sleeper_to_ppr(sleeper_full, pos, SCORING_FORMAT)
+            rw_proj = _project_sleeper_comparison(sleeper_full, pos, SCORING_FORMAT)
             rw_blocks = _expert_subsets(actuals, rw_proj, _EXPERT_PRED_COL, tier_id_sets)
         else:
             rw_blocks = dict(empty_blocks)
 
-        espn_proj = project_espn_to_fantasy(espn_full, pos, SCORING_FORMAT)
-        espn_blocks = _expert_subsets(actuals, espn_proj, "espn_pred_total", tier_id_sets)
+        espn_proj = _project_espn_expert(espn_full, pos, SCORING_FORMAT)
+        espn_blocks = _expert_subsets(actuals, espn_proj, _EXPERT_PRED_COL, tier_id_sets)
         for subset in ("all", "top12", "top30"):
             subsets[subset][pos] = {
                 "nflcom": nfl_blocks[subset],

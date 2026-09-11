@@ -89,7 +89,7 @@ def test_empty_cohort_reports_n_zero():
     block = _cohorts_block("QB", {"test_df": _frame(game_status=1.0)})
     assert block["questionable"]["n"] == 0
     assert block["questionable"]["models"] == {}
-    assert block["questionable"]["actual_basis"] == "shared_projected_components_v1"
+    assert block["questionable"]["actual_basis"] == "shared_projected_components_v2"
 
 
 def test_elite_top24_caps_at_24_players():

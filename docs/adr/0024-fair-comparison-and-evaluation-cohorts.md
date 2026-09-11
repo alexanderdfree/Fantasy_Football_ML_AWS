@@ -21,7 +21,11 @@ calculate. This replaces the initial full-fantasy actual basis without restoring
 the old asymmetry between model and expert labels. Components are declared in
 `src/shared/comparison_scoring.py`: QB passing/rushing/turnovers; RB
 rushing/receiving/lost fumbles; WR/TE receiving/lost fumbles; K made-yardage, PATs
-and misses; DST the common defensive stats and PA/YA tiers. Missing actual
+and misses; DST the common defensive stats and yards-allowed tiers. Points
+allowed is excluded from every DST comparison forecast and actual: our model
+target uses scoreboard points, while ESPN and RotoWire use different definitions
+and disagree with one another in edge cases. Normal prediction totals and model
+targets retain their existing points-allowed scoring. Missing actual
 components make a row unavailable; they never fall back to full fantasy points.
 Source metadata may come from the historical JSON; its accuracy
 cells and stored player IDs are never a fallback for a missing live table.
@@ -44,13 +48,49 @@ missing rows never promote the next-ranked player. Ties use player ID, and
 seasons are ranked independently. Actual-week winners' negative bias is not a
 calibration target: selection on realized outcomes creates that pattern.
 
+## Timeline records
+
+The Timeline applies the same component truth to its `all` regular-season cohort.
+It separates offense (QB/RB/WR/TE, NFL.com and RotoWire), K (ESPN), and DST
+(RotoWire and ESPN). All four models and the group's required experts share one
+finite player-week intersection. The source set is fixed, including when a whole
+source or week is missing; an unavailable source never relaxes the comparison.
+The selected season is explicit. Missing position-weeks remain unavailable entries
+when that week exists elsewhere in the season's cached slate.
+
+Every model retains its own weekly errors, edges, and season record. A model's
+edge is the minimum of expert MAE minus its own MAE on the common rows. A positive
+edge requires beating every expert in the group. Unevaluable weeks are excluded
+from the win denominator, and ties are not wins. These decisions use unrounded
+errors; only display formatting rounds them. Season MAE pools player-week errors
+rather than averaging differently sized weekly means. No weekly winner or
+season-selected champion supplies an aggregate performance claim.
+
+The API reports the actual basis, components, source set, position scope, common
+sample size, pre-intersection coverage, and unavailable/excluded-source reasons.
+The web UI renders all four fixed model series, leaves gaps for unavailable weeks,
+and keys requests by scoring, group, and season. This is retrospective evaluation
+of the current cached forecasts, separate from the dated release changelog.
+Timeline schema v2 replaces the old winner/edge summary with per-model records;
+its web consumer and committed bundle ship together.
+
+Expert comparison totals must continue to use the declared component contract.
+Preserving additional raw expert stats or full-fantasy forecast totals for another
+view does not authorize grading those totals against restricted comparison truth.
+The cache stores full offensive forecasts in `<source>_pred_<format>` and
+shared-component totals in `<source>_comparison_pred_<format>`. DST comparisons
+use their dedicated format-independent `<source>_pred_comparison` columns for
+every model and expert. Missing comparison values never fall back to display
+forecasts. Cache schema 11 requires these separate fields. Timeline applies the
+same NFL.com eligibility rule as the other metric boundaries.
+
 ## Reference artifact
 
 `data/raw/weekly_evaluation_reference_v1.parquet` contains only player/week keys,
 position, pregame reference score/rank, source recipe, and generation metadata.
 The versioned recipe is the mean of archived NFL.com and RotoWire forecasts for
 QB/RB/WR/TE, ESPN for K, and RotoWire for DST. The current recipe is
-`shared_components_v2`; old recipe rows are preserved in the versioned parquet.
+`shared_components_v3`; old recipe rows are preserved in the versioned parquet.
 NFL.com K is excluded from matched comparisons because its native bucket total
 cannot represent our made-yardage and miss targets. ESPN supplies those targets. Both required offense sources
 must exist for a candidate; it never becomes a mean of whichever happens to be
@@ -60,6 +100,9 @@ Ranks are computed from the full published forecast pool, independently of
 actual outcomes and model forecasts. NFL.com offense before 2024 is excluded
 because the hvpkod archive backfilled actuals; RotoWire before 2018 is excluded.
 Unavailable seasons/weeks are explicit and never replaced with model rankings.
+The NFL.com cutoff is also enforced at projection and metric boundaries through
+`src/shared/expert_eligibility.py`, including cached and injected forecast totals.
+Raw archives remain readable for provenance diagnostics.
 
 `python -m src.scripts.build_evaluation_reference --seasons 2025 --upload`
 builds/publishes the artifact from the existing source loaders. The existing
@@ -73,6 +116,26 @@ replacements that lose archived player-week coverage are rejected before writing
 Other seasons and recipe versions remain intact.
 
 ## Serialization and validation
+
+The actual basis is `shared_projected_components_v2`. The serving cache schema
+is 10: it persists dedicated DST comparison totals computed before rounding raw
+heads for display. Native totals and old rounded heads are never a fallback.
+Missing dedicated totals make DST comparison unavailable until the cache is
+rebuilt. Reference recipe v3 ranks DST on this same nine-component sum. The
+training data-release builder and normal cache rebuild publish the migration.
+
+Offline top-N and tier reports use the same raw component truth and one finite
+player-week intersection across available sources. Seasonal cohorts and prior
+tiers are selected before forecast coverage; missing forecasts do not promote
+lower-ranked players. Source-specific predicted-rank buckets are not used for
+cross-source MAE. Actual season-leader slices are named `seasonal_actual_top24`,
+not the prior-season `elite_top24`. Weekly ranking evaluates each source's own selections
+on the common slate. Reports expose source coverage, common counts and missing
+component/forecast status. K/DST use their native frames for prior tier scores
+and artifact reconstruction, rather than offensive split placeholders.
+Local DST snapshots must include the nine shared raw components for rescoring;
+unqualified native totals are unavailable. Empty shared slates expose unavailable
+coverage without fabricated seasonal recall, regret or player misses.
 
 `src/shared/evaluation_cohorts.py` computes compact JSON-safe summaries while
 held-out rows still exist, including normal, split-branch, and CV pipeline
@@ -118,9 +181,24 @@ to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
 
+- 2026-09-11: Preserve certified pre-fill comparison truth, use finite paired
+  populations in offline reports, and keep incomplete provider fetches from
+  becoming reusable comparison caches (PR #1574 follow-up).
+
+- 2026-09-11 — Consolidate complete expert display forecasts with separate shared
+  comparison totals, DST Timeline scoring and current source eligibility; retain
+  the shared-components reference and require cache schema 11 (PR #1574).
+
+- 2026-09-10 — Apply matched component scoring and compatible position groups to
+  Timeline; replace hindsight-selected winners with per-model records (PR #1573).
+
 - 2026-09-10 — Establish matched full-score comparison and versioned pregame
   top-24 reporting across all benchmark paths (PR pending).
 
 - 2026-09-10 — Owner clarification: score only common projected components on
   both sides; version reference as shared_components_v2 with ESPN K, retain
   paired coverage and explicit scoring metadata (PR pending).
+
+- 2026-09-10 — Exclude non-shared DST points-allowed semantics, version comparison
+  truth/reference/cache, enforce NFL.com historical eligibility at every scoring
+  boundary, and pair offline top-N/tier reporting (PR pending).

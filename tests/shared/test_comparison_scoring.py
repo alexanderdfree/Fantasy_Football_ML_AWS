@@ -41,3 +41,31 @@ def test_missing_native_component_cannot_become_a_zero_or_tier_bonus(pos):
     assert np.isfinite(result.iloc[0])
     assert pd.isna(result.iloc[1])
     assert score_actual_components(raw.drop(columns=scoring_components(pos)[0]), pos).isna().all()
+
+
+def test_dst_excludes_points_allowed_symmetrically_but_preserves_yardage_tiers():
+    from src.shared.aggregate_targets import predictions_to_fantasy_points
+    from src.shared.comparison_scoring import comparison_model_totals
+
+    raw = pd.DataFrame({name: [0.0, 0.0] for name in scoring_components("DST")})
+    raw["def_sacks"] = 3.0
+    raw["yards_allowed"] = [349.9999, 350.0]
+    raw["points_allowed"] = [0.0, 44.0]
+    comparison = score_actual_components(raw, "DST")
+    assert comparison.tolist() == [3.0, 2.0]
+    assert score_actual_components(raw.drop(columns="points_allowed"), "DST").equals(comparison)
+    native = predictions_to_fantasy_points("DST", {c: raw[c].to_numpy() for c in raw})
+    assert native.tolist() == [13.0, -2.0]
+    frame = raw.copy()
+    frame["pred_ridge_total"] = native
+    for column in raw:
+        frame[f"pred_ridge_{column}"] = raw[column]
+    assert comparison_model_totals(frame, "DST").pred_ridge_total.tolist() == [3.0, 2.0]
+    assert frame.pred_ridge_total.tolist() == [13.0, -2.0]
+
+
+def test_dst_missing_raw_heads_cannot_reuse_a_native_model_total():
+    from src.shared.comparison_scoring import comparison_model_totals
+
+    frame = pd.DataFrame({"pred_ridge_total": [12.0]})
+    assert comparison_model_totals(frame, "DST").pred_ridge_total.isna().all()
