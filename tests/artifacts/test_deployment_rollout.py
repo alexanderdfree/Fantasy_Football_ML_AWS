@@ -15,6 +15,30 @@ pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_invocation_budget_is_read_after_remote_preparation(tmp_path):
+    aws = RolloutAWS(response_code=503)
+    observed = []
+
+    def remaining_budget():
+        # Preparation/update have consumed the available wait time. The
+        # reserved recovery interval must remain available for restoration.
+        observed.append(aws.current)
+        return 0
+
+    with pytest.raises(RuntimeError, match="did not become ready before timeout"):
+        deployment.deploy(
+            aws,
+            task_definition(),
+            cluster="cluster",
+            service="service",
+            state_path=tmp_path / "rollout.json",
+            timeout=remaining_budget,
+        )
+    assert observed == ["new-revision"]
+    assert aws.current == "old-revision"
+    assert aws.health == aws.original_health
+
+
 def task_definition():
     document = json.loads((ROOT / "infra/aws/task-definition.json").read_text())
     container = document["containerDefinitions"][0]
