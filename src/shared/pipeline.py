@@ -258,7 +258,7 @@ def _scale_xs(
     scaler = StandardScaler()
     scaler.fit(X_arrays[0])
     flag_range = (cfg or {}).get("nn_bounded_flag_range")
-    if flag_range:
+    if flag_range is not None:
         if feature_cols is None:
             raise ValueError(
                 "nn_bounded_flag_range is set but no column list reached _scale_xs; "
