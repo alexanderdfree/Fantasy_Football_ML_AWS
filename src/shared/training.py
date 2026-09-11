@@ -200,9 +200,10 @@ class MultiTargetLoss(nn.Module):
         for these heads. Pair with a per-target ``loss_weights`` of ``1/delta``
         (gradient-matched to the old ``2/delta`` Huber weighting at the
         characteristic error) so the head does not dominate the combined loss.
-      - ``"poisson_nll"`` — ``PoissonNLLLoss(log_input=False)``. Treats the head
-        output as the rate lambda directly; requires a non-negative clamp on
-        that head (``MultiHeadNet`` provides this via ``non_negative_targets``).
+      - ``"poisson_nll"`` — uses ``{name}_log_rate`` with ``log_input=True``
+        when an ungated log-rate head supplies it. This preserves corrective
+        gradients even for near-zero rates. Gated and legacy heads supply a
+        non-negative rate directly and retain ``log_input=False``.
       - ``"hurdle_negbin"`` — zero-truncated NB-2 NLL on positives only (value
         component). The gate component (BCE on ``y>0``) is added through the
         ``gated_targets`` mechanism. Requires the target's head to emit
@@ -321,6 +322,8 @@ class MultiTargetLoss(nn.Module):
                 loss = hurdle_negbin_value_loss(preds, targets, name)
             elif lt == "hurdle_poisson":
                 loss = hurdle_poisson_value_loss(preds, targets, name)
+            elif lt == "poisson_nll" and f"{name}_log_rate" in preds:
+                loss = F.poisson_nll_loss(preds[f"{name}_log_rate"], targets[name], log_input=True)
             else:
                 loss = self.loss_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss
@@ -376,6 +379,8 @@ class MultiTargetLoss(nn.Module):
                 loss = hurdle_negbin_value_loss_capturable(preds, targets, name)
             elif lt == "hurdle_poisson":
                 loss = hurdle_poisson_value_loss_capturable(preds, targets, name)
+            elif lt == "poisson_nll" and f"{name}_log_rate" in preds:
+                loss = F.poisson_nll_loss(preds[f"{name}_log_rate"], targets[name], log_input=True)
             else:
                 loss = self.loss_fns[name](preds[name], targets[name])
             combined = combined + self.loss_weights[name] * loss
@@ -408,6 +413,8 @@ class MultiTargetLoss(nn.Module):
                 loss = hurdle_negbin_value_loss_capturable(preds, targets, name)
             elif lt == "hurdle_poisson":
                 loss = hurdle_poisson_value_loss_capturable(preds, targets, name)
+            elif lt == "poisson_nll" and f"{name}_log_rate" in preds:
+                loss = F.poisson_nll_loss(preds[f"{name}_log_rate"], targets[name], log_input=True)
             else:
                 loss = self.loss_fns[name](preds[name], targets[name])
             per_target_losses[name] = loss
