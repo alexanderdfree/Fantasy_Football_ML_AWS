@@ -12,6 +12,8 @@
 - 2026-09-10 · Remove ML dependencies from the serving image and move offline prediction builders and providers out of HTTP code · (PR #1566 follow-up) · → ADR-0027
 - 2026-09-10 · Restore historical QB role reconstruction and use pregame depth for upcoming availability · (PR pending) · → ADR-0004
 
+- 2026-09-10 · Preserve sparse inheritance magnitude and correct truncated-NB reception expectations with artifact compatibility · (PR pending) · → ADR-0005
+
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
 - 2026-09-10 · Exclude non-shared DST points allowed, enforce NFL.com source eligibility, and pair offline comparison cohorts · (PR pending) · → ADR-0024
 - 2026-09-10 · Correct Timeline scoring and source populations, retain K/DST comparisons, and report fixed per-model records · (PR #1573) · → ADR-0024
@@ -31,6 +33,7 @@
 
 - 2026-09-10 · Delete superseded recommendations and consolidate agent rules and memory retrieval pointers · (PR #1553) · → ADR-0025
 - 2026-09-10 · Verify live injury/roster snapshots, publish availability transitions, expose freshness/coverage, recover upstream QBR and current player metadata, revalidate browser projections · (PR pending) · → ADR-0018
+- 2026-09-10 · Recover sparse Poisson head gradients with log-rate outputs/losses, training-mean initialization, and checkpointed legacy semantics · (PR pending) · → ADR-0005
 
 - 2026-09-10 · Scope agent guidance and preserve incident evidence through indexed retrieval; qualify metric-identity claims · (PR pending) · → ADR-0025, ADR-0017
 - 2026-09-10 · Repair skill/prompt loading and shared workflow scope, authorization, isolation, and merge checks · (PR #1558) · → ADR-0025

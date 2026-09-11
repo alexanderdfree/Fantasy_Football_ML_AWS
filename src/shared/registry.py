@@ -15,7 +15,7 @@ import importlib
 from functools import cache
 
 from src.shared.position import Position
-from src.shared.position_config import PositionConfig
+from src.shared.position_config import PositionConfig, poisson_log_rate_targets
 
 ALL_POSITIONS = Position.values()
 
@@ -62,6 +62,12 @@ def is_cpu_only(pos: str) -> bool:
 CPU_ONLY_POSITIONS = {p for p in ALL_POSITIONS if _position_config(p).cpu_only}
 
 
+def _log_rate_targets(pc: PositionConfig) -> set[str]:
+    return poisson_log_rate_targets(
+        pc.head_losses, pc.poisson_targets, enabled=pc.nn_poisson_log_rate
+    )
+
+
 # ---------------------------------------------------------------------------
 # Inference spec — used by app.py to apply position-specific models.
 # Lazy-loaded once per position; per-position modules are only imported when
@@ -77,6 +83,7 @@ def _flat_attn_kwargs_static(pc: PositionConfig) -> dict:
     """
     kwargs = dict(
         backbone_layers=list(pc.nn_backbone_layers),
+        log_rate_targets=_log_rate_targets(pc),
         d_model=pc.attn_d_model,
         n_attn_heads=pc.attn_n_heads,
         head_hidden=pc.nn_head_hidden,
@@ -90,6 +97,8 @@ def _flat_attn_kwargs_static(pc: PositionConfig) -> dict:
         gated=pc.attn_gated,
         gate_hidden=pc.attn_gate_hidden,
         gated_targets=list(pc.gated_targets) if pc.gated_targets else None,
+        head_losses=dict(pc.head_losses),
+        correct_ztnb_mean=pc.nn_correct_ztnb_mean,
         # Architecture knob (adds an nn.Parameter when on) — must be in the
         # served kwargs so app.py / smoke_test rebuild the matching state_dict.
         no_history_embedding=pc.attn_no_history_embedding,
@@ -120,6 +129,7 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
     """
     return dict(
         backbone_layers=list(pc.nn_backbone_layers),
+        log_rate_targets=_log_rate_targets(pc),
         d_kick=pc.attn_kick_dim,
         d_model=pc.attn_d_model,
         n_attn_heads=pc.attn_n_heads,
@@ -157,6 +167,7 @@ def _flat_nn_kwargs(pc: PositionConfig) -> dict:
     """
     kwargs = dict(
         backbone_layers=pc.nn_backbone_layers,
+        log_rate_targets=_log_rate_targets(pc),
         head_hidden=pc.nn_head_hidden,
         dropout=pc.nn_dropout,
         non_negative_targets=pc.nn_non_negative_targets,
