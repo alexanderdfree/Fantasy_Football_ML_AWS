@@ -393,3 +393,13 @@ def test_scale_xs_on_with_no_matching_column_raises():
     X_train, X_test, _ = _flag_arrays()
     with pytest.raises(ValueError, match="silent no-op"):
         _scale_xs(X_train, X_test, cfg={"nn_bounded_flag_range": 1.0}, feature_cols=["a", "b", "c"])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("flag_range", [0.0, -1.0, float("nan"), float("inf")])
+def test_scale_xs_rejects_invalid_configured_flag_ranges(flag_range):
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, cols = _flag_arrays()
+    with pytest.raises(ValueError, match="must be positive|exceeds FEATURE_CLIP"):
+        _scale_xs(X_train, X_test, cfg={"nn_bounded_flag_range": flag_range}, feature_cols=cols)
