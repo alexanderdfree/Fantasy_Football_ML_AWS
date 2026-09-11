@@ -27,7 +27,9 @@ Global memory summaries store durable user preferences and a concise pointer per
 project. Project rules and implementation facts stay in their scoped sources;
 superseded memory prescriptions are removed through the provider's supported
 update mechanism. Operational settings come from effective project/user/runtime
-configuration and live state, including repository defaults introduced in PR #1548.
+configuration and live state. Codex model, reasoning, context, and compaction
+settings follow personal defaults or explicit session selections; the repository
+does not pin them.
 
 Each detailed rule has one authoritative topic section. Other active guides link
 to that section; essential startup invariants remain in `AGENTS.md`. Group stop
@@ -67,6 +69,8 @@ and decisions in their investigation or incident record.
 
 ## Changelog
 
+- 2026-09-10: Remove repository model, reasoning, and context pins introduced by
+  PR #1548; inherit personal defaults and explicit session selections (PR #1579).
 - 2026-09-10: Repair skill/prompt metadata and provider assumptions; preserve
   scope review, explicit memory authorization, and verified merge evidence (PR #1558).
 - 2026-09-10: Split startup policy, provider references and incident retrieval;
