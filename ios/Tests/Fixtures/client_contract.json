@@ -829,7 +829,7 @@
     "training_loop": {
       "checkpoint": "Best state_dict kept in memory, saved as .pt",
       "early_stopping": "Best loss-weighted val MAE restored on patience",
-      "feature_scaling": "StandardScaler, clipped to [-4, 4]",
+      "feature_scaling": "Training-fitted feature scaling, bounded to [-4, 4]",
       "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
       "loss": "MultiTargetLoss: per-target Huber or Poisson NLL + optional BCE on TD gate",
       "optimizer": "AdamW"
