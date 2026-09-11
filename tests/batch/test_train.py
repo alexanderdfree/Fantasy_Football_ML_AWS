@@ -50,9 +50,8 @@ class _FakeS3Producer:
     ``upload_file`` (local → key), ``put_object`` (bytes → key), ``get_object``,
     ``list_objects_v2`` (via paginator), and ``delete_objects``.
 
-    The ``ops`` list records every mutating call in order so tests can assert
-    that the legacy mirror upload happens **after** the manifest put — the
-    atomic-promotion invariant documented in src/batch/train.py::upload_artifacts.
+    The ``ops`` list records writes so tests can verify output claiming precedes
+    promotion and protected publication never rewrites legacy objects.
     Missing keys raise ``ClientError`` with code ``NoSuchKey`` to mirror real
     boto3 semantics.
     """
@@ -60,15 +59,19 @@ class _FakeS3Producer:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
         self.ops: list[tuple[str, str]] = []
+        self.metadata: dict[str, dict] = {}
 
-    def upload_file(self, local_path, Bucket, Key):  # noqa: N803
+    def upload_file(self, local_path, Bucket, Key, ExtraArgs=None):  # noqa: N803
         with open(local_path, "rb") as f:
             self.objects[Key] = f.read()
         self.ops.append(("upload_file", Key))
+        self.metadata[Key] = (ExtraArgs or {}).get("Metadata", {})
 
-    def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
-        if (conditions.get("IfNoneMatch") == "*" and Key in self.objects) or (
-            conditions.get("IfMatch") and conditions["IfMatch"] != self._etag(Key)
+    def put_object(self, Bucket, Key, Body, ContentType=None, IfMatch=None, IfNoneMatch=None):  # noqa: N803
+        existing = self.objects.get(Key)
+        etag = None if existing is None else hashlib.sha256(existing).hexdigest()
+        if (IfMatch is not None and IfMatch != etag) or (
+            IfNoneMatch == "*" and existing is not None
         ):
             raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         if hasattr(Body, "read"):
@@ -79,10 +82,13 @@ class _FakeS3Producer:
     def get_object(self, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
             raise _nosuchkey_error(Key)
-        return {"Body": _FakeBody(self.objects[Key]), "ETag": self._etag(Key)}
+        return {
+            "Body": _FakeBody(self.objects[Key]),
+            "ETag": hashlib.sha256(self.objects[Key]).hexdigest(),
+        }
 
-    def _etag(self, key):
-        return '"' + hashlib.sha256(self.objects.get(key, b"")).hexdigest() + '"'
+    def download_file(self, Bucket, Key, Filename):
+        Path(Filename).write_bytes(self.get_object(Bucket, Key)["Body"].read())
 
     def get_paginator(self, op):
         assert op == "list_objects_v2"
@@ -94,7 +100,7 @@ class _FakeS3Producer:
             self.ops.append(("delete", obj["Key"]))
 
 
-def _write_fake_model_dir(d: Path, pos: str) -> None:
+def _write_fake_model_dir(d: Path, pos: str, *, metrics=None) -> None:
     """Populate ``d`` with the exact set of files the inference registry will
     expect for ``pos`` plus ``benchmark_metrics.json``. Keeps validation
     tests honest — if a future position adds a required file, the registry
@@ -107,7 +113,7 @@ def _write_fake_model_dir(d: Path, pos: str) -> None:
         reg["nn_file"]: b"fake-nn-weights",
         "nn_scaler.pkl": b"fake-scaler",
         "nn_scaler_meta.json": b"{}",
-        "benchmark_metrics.json": b'{"position":"' + pos.encode() + b'"}',
+        "benchmark_metrics.json": json.dumps({"position": pos, **(metrics or {})}).encode(),
     }
     if reg.get("train_attention_nn") and reg.get("attn_nn_file"):
         files[reg["attn_nn_file"]] = b"fake-attn-weights"
@@ -118,6 +124,86 @@ def _write_fake_model_dir(d: Path, pos: str) -> None:
     files["ridge_model.pkl"] = b"fake-ridge"
     for name, data in files.items():
         (d / name).write_bytes(data)
+
+
+def _publication_metrics(
+    store,
+    monkeypatch,
+    image_root,
+    *,
+    position="RB",
+    bucket="bucket",
+    run_id="run",
+    source_sha="d" * 40,
+    ancestors=(),
+):
+    """Model an authenticated image and real source/plan/intent/receipt contracts."""
+    from src.artifacts import publication, source
+    from src.data.release import producer_fingerprint
+    from src.orchestration.build_plan import create_plan
+    from src.scripts import wait_data_release
+    from tests.orchestration.test_build_plan import Batch as PlanBatch
+    from tests.orchestration.test_datasets import write_release
+
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
+    image = image_root / source_sha
+    image.mkdir(parents=True, exist_ok=True)
+    (image / ".training-source-sha").write_text(source_sha + "\n")
+    read_image = source.image_source_sha
+
+    def image_source(*, root=None):
+        return read_image(root=image if root is None else root)
+
+    monkeypatch.setattr(source, "image_source_sha", image_source)
+    monkeypatch.setattr(publication, "image_source_sha", image_source)
+    lineage = [source_sha, *ancestors]
+    store.objects[source.source_key("models", source_sha)] = json.dumps(
+        {"source_sha": source_sha, "source_order": len(lineage), "lineage": lineage}
+    ).encode()
+    producer_hashes = {"src/config.py": hashlib.sha256(b"fixture").hexdigest()}
+    monkeypatch.setattr(
+        wait_data_release, "producer_hashes_at_revision", lambda *_, **__: producer_hashes
+    )
+    source_id = producer_fingerprint(producer_hashes)
+    dataset_id = write_release(store, producer_hashes)
+
+    class Batch(PlanBatch):
+        def describe_job_definitions(self, **kwargs):
+            return {
+                "jobDefinitions": [
+                    {
+                        "revision": 1,
+                        "status": "ACTIVE",
+                        "jobDefinitionName": "train",
+                        "jobDefinitionArn": "arn:aws:batch:definition/train:1",
+                        "containerProperties": {"image": "registry/train:" + source_sha},
+                    }
+                ]
+            }
+
+    plan_id, plan = create_plan(
+        store,
+        Batch(),
+        bucket,
+        dataset_id=dataset_id,
+        source_id=source_id,
+        code_sha=source_sha,
+        gpu_definition="train",
+        positions=[position],
+        seed=42,
+        run_id=run_id,
+    )
+    return {
+        "position": position,
+        "git_sha": source_sha,
+        "dataset_id": dataset_id,
+        "data_release": dataset_id,
+        "data_format": "data-release-v1",
+        "build_plan_id": plan_id,
+        "image_id": "registry/train:" + source_sha,
+        "publication_intent": plan["intents"][position],
+        "publication_revision": plan["publication_revisions"][position],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +414,10 @@ class TestResolveNnLogEvery:
 
 
 class TestDownloadData:
-    @mock.patch.dict(os.environ, {"FF_DATA_RELEASE": "legacy"})
+    @pytest.fixture(autouse=True)
+    def explicit_legacy_download(self, monkeypatch):
+        monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+
     @mock.patch("src.batch.train.boto3.client")
     def test_downloads_three_parquet_files(self, mock_boto_client):
         from src.batch.train import download_data
@@ -346,7 +435,6 @@ class TestDownloadData:
         assert downloaded_keys == {"data/train.parquet", "data/val.parquet", "data/test.parquet"}
 
     @mock.patch("src.batch.train.boto3.client")
-    @mock.patch.dict(os.environ, {"FF_DATA_RELEASE": "legacy"})
     def test_creates_local_dir(self, mock_boto_client):
         from src.batch.train import download_data
 
@@ -412,26 +500,152 @@ class TestDownloadIfStale:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 class TestUploadArtifacts:
-    """upload_artifacts ships to ``models/{POS}/history/{ts}-{sha}/model.tar.gz``,
+    """upload_artifacts ships to protected v3 history with authenticated receipts,
     structurally validates the uploaded bytes, then atomically promotes via a
     manifest.json write. The legacy ``models/{POS}/model.tar.gz`` mirror was
     removed in Layer C of the parallel-train-batch race fix — see the
     docstring on upload_artifacts."""
 
-    @pytest.fixture(autouse=True)
-    def registered_source(self, monkeypatch):
-        monkeypatch.setattr(
-            "src.batch.train.load_source",
-            lambda *a: {
-                "source_sha": "a" * 40,
-                "source_order": 1,
-                "lineage": ["a" * 40],
-            },
+    def test_identified_upload_writes_exact_receipt_and_plan_ownership(self, monkeypatch, tmp_path):
+        from src.batch import train
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        monkeypatch.setattr(train, "_try_smoke_test", lambda *_: True)
+        metrics = _publication_metrics(fake, monkeypatch, tmp_path / "image")
+        _write_fake_model_dir(tmp_path, "RB", metrics=metrics)
+        train.upload_artifacts("bucket", "RB", str(tmp_path))
+        receipt_key = f"build-plans/{metrics['build_plan_id']}/artifacts/RB.json"
+        receipt = json.loads(fake.objects[receipt_key])
+        manifest = json.loads(fake.objects["models/releases/v3/RB/manifest.json"])
+        assert receipt["key"] == manifest["stable"]["key"]
+        assert receipt["dataset_id"] == metrics["dataset_id"]
+        assert receipt["publication_intent"] == metrics["publication_intent"]
+        assert "promoted" not in receipt
+        assert receipt["sha256"] == hashlib.sha256(fake.objects[receipt["key"]]).hexdigest()
+        assert fake.metadata[receipt["key"]] == {
+            "build-plan-id": metrics["build_plan_id"],
+            "publication-intent": hashlib.sha256(
+                json.dumps(receipt["publication_intent"], sort_keys=True).encode()
+            ).hexdigest(),
+        }
+        assert fake.ops.index(("put_object", receipt_key)) < fake.ops.index(
+            ("put_object", "models/releases/v3/RB/manifest.json")
         )
 
+    def test_held_collection_lock_aborts_before_upload(self, monkeypatch, tmp_path):
+        from src.artifacts.model_sync import ManifestLockedError
+        from src.batch import train
+
+        fake = _FakeS3Producer()
+        fake.objects["models/releases/v3/RB/manifest.json"] = b'{"gc_lock":{"owner":"operator"}}'
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        _write_fake_model_dir(tmp_path, "RB")
+        with pytest.raises(ManifestLockedError, match="lock is held"):
+            train.upload_artifacts("bucket", "RB", str(tmp_path))
+        assert fake.ops == []
+
+    @pytest.mark.parametrize("existing_manifest", [False, True])
+    def test_same_intent_concurrent_uploads_share_first_successful_canonical_output(
+        self, monkeypatch, tmp_path, existing_manifest
+    ):
+        from src.batch import train
+        from src.shared.model_sync import build_manifest
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        manifest_key = "models/releases/v3/RB/manifest.json"
+        old_key = "models/releases/v3/RB/history/old/model.tar.gz"
+        if existing_manifest:
+            old = build_manifest(old_key, "old", 3, "t0", smoke_passed=True)
+            fake.objects[manifest_key] = json.dumps(old).encode()
+            fake.objects[old_key] = b"old"
+
+        metrics = _publication_metrics(fake, monkeypatch, tmp_path / "image")
+        a, b = tmp_path / "a", tmp_path / "b"
+        for directory in (a, b):
+            directory.mkdir()
+            _write_fake_model_dir(directory, "RB", metrics={**metrics, "publisher": directory.name})
+
+        def smoke(pos, directory):
+            if directory == str(a):
+                # A has captured its generation and uploaded; B now completes
+                # an entire competing publication before A resumes its PUT.
+                train.upload_artifacts("bucket", pos, str(b))
+            return True
+
+        monkeypatch.setattr(train, "_try_smoke_test", smoke)
+        train.upload_artifacts("bucket", "RB", str(a))
+        live = json.loads(fake.objects[manifest_key])
+        uploads = [key for op, key in fake.ops if op == "upload_file"]
+        assert len(uploads) == 2
+        assert live["stable"]["key"] == uploads[1]
+        receipt = json.loads(
+            fake.objects[f"build-plans/{metrics['build_plan_id']}/artifacts/RB.json"]
+        )
+        assert receipt["key"] == live["stable"]["key"]
+        assert "promoted" not in receipt
+        assert all(key in fake.objects for key in uploads)
+        assert not any(op == "delete" for op, _ in fake.ops)
+        if existing_manifest:
+            assert live["previous_stable"]["key"] == old_key
+
+    @pytest.mark.parametrize("code", ["AccessDenied", "SlowDown", "InternalError"])
+    def test_manifest_read_error_aborts_before_upload(self, monkeypatch, tmp_path, code):
+        from src.batch import train
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        monkeypatch.setattr(
+            fake,
+            "get_object",
+            mock.Mock(side_effect=ClientError({"Error": {"Code": code}}, "GetObject")),
+        )
+        _write_fake_model_dir(tmp_path, "RB")
+        with pytest.raises(ClientError, match=code):
+            train.upload_artifacts("bucket", "RB", str(tmp_path))
+        assert fake.ops == []
+
+    def test_failed_first_smoke_cannot_be_served(self, monkeypatch, tmp_path):
+        from src.batch import train
+        from src.shared import model_sync
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        monkeypatch.setattr(train, "_try_smoke_test", lambda *_: False)
+        metrics = _publication_metrics(fake, monkeypatch, tmp_path / "image")
+        _write_fake_model_dir(tmp_path, "RB", metrics=metrics)
+        train.upload_artifacts("bucket", "RB", str(tmp_path))
+        assert f"build-plans/{metrics['build_plan_id']}/artifacts/RB.json" not in fake.objects
+        with pytest.raises(RuntimeError, match="all manifest entries failed"):
+            model_sync._sync_one(fake, "bucket", "models", "RB", tmp_path / "serving")
+
+    def test_failed_smoke_does_not_poison_successful_retry_for_same_intent(
+        self, monkeypatch, tmp_path
+    ):
+        from src.batch import train
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        monkeypatch.setattr(train, "_try_smoke_test", mock.Mock(side_effect=[False, True]))
+        metrics = _publication_metrics(fake, monkeypatch, tmp_path / "image")
+        _write_fake_model_dir(tmp_path, "RB", metrics=metrics)
+        key = f"build-plans/{metrics['build_plan_id']}/artifacts/RB.json"
+        train.upload_artifacts("bucket", "RB", str(tmp_path))
+        assert key not in fake.objects
+        train.upload_artifacts("bucket", "RB", str(tmp_path))
+        receipt = json.loads(fake.objects[key])
+        manifest = json.loads(fake.objects["models/releases/v3/RB/manifest.json"])
+        assert receipt["smoke_passed"] is True
+        assert receipt["key"] == manifest["stable"]["key"]
+        assert "promoted" not in receipt
+
     @mock.patch("src.batch.train.boto3.client")
-    def test_uploads_versioned_key_and_writes_manifest(self, mock_boto_client, tmp_path):
+    def test_uploads_versioned_key_and_writes_manifest(
+        self, mock_boto_client, tmp_path, monkeypatch
+    ):
         from src.batch.train import upload_artifacts
 
         fake_s3 = _FakeS3Producer()
@@ -439,18 +653,21 @@ class TestUploadArtifacts:
 
         d = tmp_path / "model"
         d.mkdir()
-        _write_fake_model_dir(d, "RB")
+        metrics = _publication_metrics(fake_s3, monkeypatch, tmp_path / "image", bucket="my-bucket")
+        _write_fake_model_dir(d, "RB", metrics=metrics)
 
         upload_artifacts("my-bucket", "RB", str(d))
 
         # Exactly one versioned history key was written.
-        history_keys = [k for k in fake_s3.objects if k.startswith("models/RB/releases/history/")]
+        history_keys = [
+            k for k in fake_s3.objects if k.startswith("models/releases/v3/RB/history/")
+        ]
         assert len(history_keys) == 1
         history_key = history_keys[0]
         assert history_key.endswith("/model.tar.gz")
 
         # Manifest is present and points current at the versioned key.
-        manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
+        manifest = json.loads(fake_s3.objects["models/releases/v3/RB/manifest.json"])
         assert manifest["schema_version"] == 3
         assert manifest["current"]["key"] == history_key
         assert manifest["previous"] is None  # first write
@@ -466,7 +683,9 @@ class TestUploadArtifacts:
         assert "models/RB/model.tar.gz" not in fake_s3.objects
 
     @mock.patch("src.batch.train.boto3.client")
-    def test_validation_rejects_missing_required_file(self, mock_boto_client, tmp_path):
+    def test_validation_rejects_missing_required_file(
+        self, mock_boto_client, tmp_path, monkeypatch
+    ):
         """Validation re-downloads the uploaded tarball and checks for
         required files. A missing nn_scaler.pkl must raise BEFORE the
         manifest write — otherwise a promoted bad artifact sticks."""
@@ -477,7 +696,8 @@ class TestUploadArtifacts:
 
         d = tmp_path / "model"
         d.mkdir()
-        _write_fake_model_dir(d, "RB")
+        metrics = _publication_metrics(fake_s3, monkeypatch, tmp_path / "image", bucket="my-bucket")
+        _write_fake_model_dir(d, "RB", metrics=metrics)
         # Remove a required file AFTER the dir was populated.
         (d / "nn_scaler.pkl").unlink()
 
@@ -485,12 +705,12 @@ class TestUploadArtifacts:
             upload_artifacts("my-bucket", "RB", str(d))
 
         # Manifest must NOT have been written — the promotion didn't happen.
-        assert "models/RB/releases/manifest.json" not in fake_s3.objects
+        assert "models/releases/v3/RB/manifest.json" not in fake_s3.objects
         # Legacy mirror must NOT have been overwritten.
         assert "models/RB/model.tar.gz" not in fake_s3.objects
 
     @mock.patch("src.batch.train.boto3.client")
-    def test_validation_detects_truncation(self, mock_boto_client, tmp_path):
+    def test_validation_detects_truncation(self, mock_boto_client, tmp_path, monkeypatch):
         """If the uploaded bytes get truncated (replication lag, network blip),
         validation's tarfile reopen fails and the manifest stays on the
         previous good pointer. We simulate by intercepting the first
@@ -500,7 +720,7 @@ class TestUploadArtifacts:
         fake_s3 = _FakeS3Producer()
         original_upload = fake_s3.upload_file
 
-        def truncated_upload(local_path, Bucket, Key):  # noqa: N803
+        def truncated_upload(local_path, Bucket, Key, ExtraArgs=None):  # noqa: N803
             with open(local_path, "rb") as f:
                 fake_s3.objects[Key] = f.read()[:32]  # deliberately truncated
             fake_s3.ops.append(("upload_file", Key))
@@ -510,7 +730,8 @@ class TestUploadArtifacts:
 
         d = tmp_path / "model"
         d.mkdir()
-        _write_fake_model_dir(d, "RB")
+        metrics = _publication_metrics(fake_s3, monkeypatch, tmp_path / "image", bucket="my-bucket")
+        _write_fake_model_dir(d, "RB", metrics=metrics)
 
         try:
             with pytest.raises((RuntimeError, tarfile.TarError, OSError, EOFError)):
@@ -518,10 +739,13 @@ class TestUploadArtifacts:
         finally:
             fake_s3.upload_file = original_upload  # type: ignore[method-assign]
 
-        assert "models/RB/releases/manifest.json" not in fake_s3.objects
+        assert "models/releases/v3/RB/manifest.json" not in fake_s3.objects
+        assert len([op for op in fake_s3.ops if op[0] == "upload_file"]) == 1
 
     @mock.patch("src.batch.train.boto3.client")
-    def test_second_upload_promotes_old_current_to_previous(self, mock_boto_client, tmp_path):
+    def test_new_training_intent_retains_previous_approved_output(
+        self, mock_boto_client, tmp_path, monkeypatch
+    ):
         """After two back-to-back uploads, manifest.previous must equal the
         first upload's current. This is the rollback path: if upload #2's
         artifact later fails to load, ``src.shared.model_sync._sync_one`` falls
@@ -533,19 +757,27 @@ class TestUploadArtifacts:
 
         d = tmp_path / "model"
         d.mkdir()
-        _write_fake_model_dir(d, "RB")
+        first = _publication_metrics(
+            fake_s3, monkeypatch, tmp_path / "image", bucket="my-bucket", run_id="first"
+        )
+        _write_fake_model_dir(d, "RB", metrics=first)
+        monkeypatch.setattr("src.batch.train._try_smoke_test", lambda *_: True)
 
         upload_artifacts("my-bucket", "RB", str(d))
-        first_manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
+        first_manifest = json.loads(fake_s3.objects["models/releases/v3/RB/manifest.json"])
         first_current_key = first_manifest["current"]["key"]
 
         # Second upload with slightly different bytes so sha7 differs.
-        (d / "benchmark_metrics.json").write_bytes(b'{"position":"RB","round":2}')
+        second = _publication_metrics(
+            fake_s3, monkeypatch, tmp_path / "image", bucket="my-bucket", run_id="second"
+        )
+        (d / "benchmark_metrics.json").write_text(json.dumps(second))
         upload_artifacts("my-bucket", "RB", str(d))
 
-        second_manifest = json.loads(fake_s3.objects["models/RB/releases/manifest.json"])
+        second_manifest = json.loads(fake_s3.objects["models/releases/v3/RB/manifest.json"])
         assert second_manifest["previous"] is not None
         assert second_manifest["previous"]["key"] == first_current_key
+        assert second_manifest["previous_stable"]["key"] == first_current_key
         assert second_manifest["current"]["key"] != first_current_key
         # Both versioned artifacts remain in S3 — the fallback has bytes to
         # serve from.
@@ -569,15 +801,75 @@ class TestUploadArtifacts:
 
         d = tmp_path / "model"
         d.mkdir()
-        _write_fake_model_dir(d, "RB")
+        metrics = _publication_metrics(fake_s3, monkeypatch, tmp_path / "image", bucket="my-bucket")
+        _write_fake_model_dir(d, "RB", metrics=metrics)
+        monkeypatch.setattr("src.batch.train._try_smoke_test", lambda *_: True)
         upload_artifacts("my-bucket", "RB", str(d))
 
         dest_root = tmp_path / "consumer_root"
         result = model_sync._sync_one(fake_s3, "my-bucket", "models", "RB", dest_root)
 
-        assert result["source"] == "current"
+        assert result["source"] == "stable"
         assert (dest_root / "src" / "rb" / "outputs" / "models" / "nn_scaler.pkl").is_file()
         assert (dest_root / "src" / "rb" / "outputs" / "models" / "rb_multihead_nn.pt").is_file()
+
+    def test_source_superseded_upload_keeps_own_receipt_without_replacing_newer_release(
+        self, monkeypatch, tmp_path
+    ):
+        from src.batch import train
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        older = _publication_metrics(
+            fake, monkeypatch, tmp_path / "images", run_id="older", source_sha="d" * 40
+        )
+        a, b = tmp_path / "older", tmp_path / "newer"
+        a.mkdir()
+        b.mkdir()
+        _write_fake_model_dir(a, "RB", metrics=older)
+        newer = {}
+
+        def smoke(position, directory):
+            if directory == str(a):
+                newer.update(
+                    _publication_metrics(
+                        fake,
+                        monkeypatch,
+                        tmp_path / "images",
+                        run_id="newer",
+                        source_sha="e" * 40,
+                        ancestors=("d" * 40,),
+                    )
+                )
+                _write_fake_model_dir(b, "RB", metrics=newer)
+                train.upload_artifacts("bucket", position, str(b))
+            return True
+
+        monkeypatch.setattr(train, "_try_smoke_test", smoke)
+        train.upload_artifacts("bucket", "RB", str(a))
+        uploads = [key for operation, key in fake.ops if operation == "upload_file"]
+        manifest = json.loads(fake.objects["models/releases/v3/RB/manifest.json"])
+        old_receipt = json.loads(
+            fake.objects[f"build-plans/{older['build_plan_id']}/artifacts/RB.json"]
+        )
+        new_receipt = json.loads(
+            fake.objects[f"build-plans/{newer['build_plan_id']}/artifacts/RB.json"]
+        )
+        assert old_receipt["key"] == uploads[0]
+        assert new_receipt["key"] == uploads[1] == manifest["stable"]["key"]
+        assert all(key in fake.objects for key in uploads)
+
+    def test_upload_authenticates_actual_baked_source(self, monkeypatch, tmp_path):
+        from src.batch import train
+
+        fake = _FakeS3Producer()
+        monkeypatch.setattr(train.boto3, "client", lambda *_: fake)
+        metrics = _publication_metrics(fake, monkeypatch, tmp_path / "image")
+        _write_fake_model_dir(tmp_path, "RB", metrics={**metrics, "git_sha": "e" * 40})
+        fake.ops.clear()
+        with pytest.raises(RuntimeError, match="actual image"):
+            train.upload_artifacts("bucket", "RB", str(tmp_path))
+        assert fake.ops == []
 
     def test_raises_on_empty_model_dir(self, tmp_path):
         from src.batch.train import upload_artifacts
@@ -1012,12 +1304,6 @@ class TestArtifactCopy:
 
 
 class TestMainIntegration:
-    @pytest.fixture(autouse=True)
-    def source_verified(self, monkeypatch):
-        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
-        monkeypatch.setattr("src.batch.train.load_source", lambda *a: {})
-        monkeypatch.setattr("src.batch.train.boto3.client", lambda *a, **k: object())
-
     @mock.patch("src.batch.train.sync_raw_data")
     @mock.patch("src.batch.train.upload_artifacts")
     @mock.patch("src.batch.train.shutil.copytree")
@@ -1035,6 +1321,12 @@ class TestMainIntegration:
     ):
         import pandas as pd
 
+        fake = _FakeS3Producer()
+        _publication_metrics(fake, monkeypatch, tmp_path / "image", bucket="test-bucket")
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "d" * 40)
+        monkeypatch.setattr("src.batch.train.boto3.client", lambda *_: fake)
+        monkeypatch.delenv("FF_BUILD_PLAN_ID", raising=False)
+        monkeypatch.delenv("FF_DATASET_ID", raising=False)
         monkeypatch.chdir(tmp_path)
         src_model_dir = tmp_path / "rb" / "outputs" / "models"
         src_model_dir.mkdir(parents=True)
@@ -1107,6 +1399,14 @@ class TestMainIntegration:
         REQUIRE_GPU. sync_raw_data() still runs for all positions — K/DST's
         self-contained loaders (and weather features) read from data/raw/.
         """
+        fake = _FakeS3Producer()
+        _publication_metrics(
+            fake, monkeypatch, tmp_path / "image", position="K", bucket="ff-predictor-training"
+        )
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "d" * 40)
+        monkeypatch.setattr("src.batch.train.boto3.client", lambda *_: fake)
+        monkeypatch.delenv("FF_BUILD_PLAN_ID", raising=False)
+        monkeypatch.delenv("FF_DATASET_ID", raising=False)
         monkeypatch.chdir(tmp_path)
         src_model_dir = tmp_path / "k" / "outputs" / "models"
         src_model_dir.mkdir(parents=True)

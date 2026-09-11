@@ -45,7 +45,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.data import nfl_source
-from src.data.nflcom_loader import schedule_team_code_normalization
+from src.data.identity import schedule_team_code_normalization
 
 _NORM = schedule_team_code_normalization()
 # Legacy depth schemas that might carry a capture-time (used only to report Check B's

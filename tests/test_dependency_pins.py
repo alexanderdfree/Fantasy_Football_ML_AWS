@@ -102,6 +102,24 @@ def test_shared_packages_have_identical_pins():
     )
 
 
+def test_serving_dependencies_are_a_consistent_ml_free_subset():
+    serving = _parse_requirements(REPO_ROOT / "requirements-serving.txt")
+    common = _parse_requirements(REQUIREMENTS_TXT)
+    assert serving.items() <= common.items()
+    assert not set(serving) & {
+        "torch",
+        "scikit-learn",
+        "lightgbm",
+        "scipy",
+        "matplotlib",
+        "joblib",
+        "mord",
+        "shap",
+        "nflreadpy",
+        "polars",
+    }
+
+
 def test_development_and_gpu_ruff_pins_match():
     dev = _parse_requirements(DEV_REQUIREMENTS_TXT)
     gpu = _parse_requirements(GPU_REQUIREMENTS_TXT)

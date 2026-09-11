@@ -15,29 +15,21 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def registered_source(monkeypatch):
-    monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
-    monkeypatch.setattr("src.batch.launch.validate_submission_source", lambda *a, **k: None)
-    monkeypatch.setattr("src.batch.launch.create_run", lambda *a, **k: "unit-run")
+def identified_training_request(monkeypatch):
+    from src.batch import launch
+    from tests.batch._submission_fixture import mock_submission_boundaries
 
-
-@pytest.fixture(autouse=True)
-def _legacy_data_for_launcher_stubs(monkeypatch):
-    # These orchestration-only fakes do not provide S3 manifests. Real release
-    # pinning and split-job propagation are covered by test_data_release.py.
-    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+    mock_submission_boundaries(monkeypatch, launch)
+    monkeypatch.delenv("FF_BUILD_PLAN_ID", raising=False)
+    monkeypatch.delenv("FF_DATASET_ID", raising=False)
+    monkeypatch.delenv("FF_REQUIRE_BUILD_PLAN", raising=False)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "unit-launch-request")
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
     from src.batch import launch
 
-    monkeypatch.setattr(
-        launch,
-        "resolve_launch_binding",
-        lambda *a, **k: {
-            "image_sha": "a" * 40,
-            "gpu_definition": "gpu:1",
-            "cpu_definition": "cpu:1",
-        },
-    )
-    monkeypatch.setattr(launch, "validate_local_publish", lambda *a: None)
+    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "1")
+    monkeypatch.setattr(launch, "register_submission_source", lambda *_: None)
+    monkeypatch.setattr(launch, "create_run", lambda *_, **__: "unit-history-run")
 
 
 @pytest.mark.unit
@@ -116,12 +108,11 @@ def _main_happy_stubs(monkeypatch):
         return {"s3": _FakeS3(), "batch": _FakeBatch()}[service]
 
     monkeypatch.setattr(lm.boto3, "client", _fake_boto_client)
-    monkeypatch.setattr(lm, "create_run", lambda *a, **kw: "unit-run")
 
     def _upload(bucket, s3_client=None, force=False):
         calls.append({"upload": bucket, "force": force})
 
-    def _submit(pos, seed, batch_client=None, **kwargs):
+    def _submit(pos, seed, batch_client=None, *, history_run_id=None, binding=None):
         calls.append({"submit": pos, "seed": seed})
         return pos, f"job-{pos}"
 
@@ -140,7 +131,7 @@ def _main_happy_stubs(monkeypatch):
     # Stub the benchmark_history auto-append so the wait path doesn't reach S3
     # in unit tests; record the call so tests can assert it fired for the
     # succeeded set.
-    def _append(positions, *, note=None, **metadata):
+    def _append(positions, *, note=None, run_id=None):
         calls.append({"append": list(positions), "note": note})
 
     monkeypatch.setattr(lm, "_append_benchmark_history", _append)
@@ -202,7 +193,7 @@ def test_main_failed_jobs_branch(monkeypatch, capsys):
     calls: list[dict] = []
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
     monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
-    monkeypatch.setattr(lm, "submit_job", lambda p, s, c, **kwargs: (p, f"j-{p}"))
+    monkeypatch.setattr(lm, "submit_job", lambda p, s, c, **kw: (p, f"j-{p}"))
 
     def _wait(job_ids, timeout_seconds=None, batch_client=None):
         out = {p: ("SUCCEEDED", 0) for p in job_ids}
@@ -243,7 +234,7 @@ def test_main_submit_exception_is_logged(monkeypatch, capsys):
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
     monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
 
-    def _bad_submit(pos, seed, batch_client=None, **kwargs):
+    def _bad_submit(pos, seed, batch_client=None, *, history_run_id=None, binding=None):
         if pos == "QB":
             raise RuntimeError("transient aws fault")
         return pos, f"j-{pos}"
@@ -287,7 +278,7 @@ def test_main_wait_timeout_override(monkeypatch, capsys):
 
     monkeypatch.setattr(lm.boto3, "client", lambda *a, **k: mock.MagicMock())
     monkeypatch.setattr(lm, "upload_data", lambda *a, **k: None)
-    monkeypatch.setattr(lm, "submit_job", lambda p, s, c, **kwargs: (p, f"j-{p}"))
+    monkeypatch.setattr(lm, "submit_job", lambda p, s, c, **kw: (p, f"j-{p}"))
     monkeypatch.setattr(lm, "download_artifacts", lambda *a, **k: None)
 
     captured_timeouts: list[int | None] = []
@@ -371,7 +362,9 @@ def test_main_auto_appends_history_for_succeeded(_main_happy_stubs, monkeypatch)
 
 @pytest.mark.unit
 def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
-    """The explicit history opt-out disables publication and local collection."""
+    """``--append-history false`` (what CI passes — train-batch.yml appends
+    separately via benchmark.py with the image SHA + PR number) must not
+    auto-append."""
     from src.batch import launch as lm
 
     monkeypatch.setattr(
@@ -380,132 +373,4 @@ def test_main_append_history_false_skips_append(_main_happy_stubs, monkeypatch):
     )
     lm.main()
 
-    assert not [c for c in _main_happy_stubs if "append" in c]
-
-
-@pytest.mark.unit
-def test_history_registration_binds_resolved_image_and_selected_data(
-    _main_happy_stubs, monkeypatch
-):
-    from src.batch import launch as lm
-
-    release_id = "d" * 64
-    events = []
-
-    def pin(_client, *, source_ref):
-        assert source_ref == "a" * 40
-        events.append("data-pinned")
-        monkeypatch.setenv("FF_DATA_RELEASE", release_id)
-        return release_id
-
-    def create(_client, _bucket, positions, **kwargs):
-        assert events == ["data-pinned"]
-        assert not [c for c in _main_happy_stubs if "submit" in c]
-        assert positions == ["QB"]
-        assert kwargs["git_sha"] == "a" * 40
-        assert kwargs["data_release"] == release_id
-        events.append("run-registered")
-        return "bound-run"
-
-    def submit(pos, seed, batch_client=None, *, binding, history_run_id):
-        assert events == ["data-pinned", "run-registered"]
-        assert binding["image_sha"] == "a" * 40
-        assert history_run_id == "bound-run"
-        return pos, "job"
-
-    monkeypatch.setattr(lm, "TRAIN_GIT_SHA", "b" * 40)
-    monkeypatch.setattr(lm, "pin_data_release", pin)
-    monkeypatch.setattr(lm, "create_run", create)
-    monkeypatch.setattr(lm, "submit_job", submit)
-    monkeypatch.setattr(
-        "sys.argv", ["launch", "--positions", "QB", "--skip-upload", "--wait", "false"]
-    )
-    lm.main()
-    assert events == ["data-pinned", "run-registered"]
-
-
-@pytest.mark.unit
-def test_bad_data_cannot_register_a_history_run(_main_happy_stubs, monkeypatch):
-    from src.batch import launch as lm
-
-    create = mock.Mock()
-    submit = mock.Mock()
-    monkeypatch.setattr(lm, "create_run", create)
-    monkeypatch.setattr(lm, "submit_job", submit)
-    monkeypatch.setattr(
-        lm, "pin_data_release", mock.Mock(side_effect=RuntimeError("data mismatch"))
-    )
-    monkeypatch.setattr("sys.argv", ["launch", "--positions", "QB", "--skip-upload"])
-    with pytest.raises(RuntimeError, match="data mismatch"):
-        lm.main()
-    create.assert_not_called()
-    submit.assert_not_called()
-
-
-@pytest.mark.unit
-def test_partial_success_collects_registered_positions_not_a_subset(_main_happy_stubs, monkeypatch):
-    from src.batch import launch as lm
-
-    monkeypatch.setattr(
-        lm, "wait_for_jobs", lambda *a, **kw: {"QB": ("SUCCEEDED", 1), "RB": ("FAILED", 2)}
-    )
-    collect = mock.Mock()
-    monkeypatch.setattr(lm, "_append_benchmark_history", collect)
-    monkeypatch.setattr("sys.argv", ["launch", "--positions", "QB", "RB"])
-    with pytest.raises(SystemExit) as error:
-        lm.main()
-    assert error.value.code == 1
-    collect.assert_called_once_with(
-        ["QB", "RB"],
-        note="Standalone Batch run",
-        git_hash="a" * 40,
-        run_id="unit-run",
-        data_release="legacy",
-    )
-
-
-@pytest.mark.unit
-def test_split_submission_forwards_binding_and_only_merge_publishes_history(monkeypatch):
-    from src.batch import launch as lm
-
-    batch = mock.Mock()
-    batch.submit_job.side_effect = [{"jobId": "nn"}, {"jobId": "cpu"}, {"jobId": "merge"}]
-    binding = {"image_sha": "a" * 40, "gpu_definition": "gpu:7", "cpu_definition": "cpu:8"}
-    monkeypatch.setenv("FF_DATA_RELEASE", "d" * 64)
-    monkeypatch.setattr(lm, "JOB_DEFINITION_CPU", "cpu")
-    monkeypatch.setattr(lm, "JOB_QUEUE_CPU", "cpu-queue")
-    lm._submit_split_for_position(
-        "QB", 42, "split-attempt-1", batch, binding, history_run_id="history-1"
-    )
-    calls = [call.kwargs for call in batch.submit_job.call_args_list]
-    assert [call["jobDefinition"] for call in calls] == ["gpu:7", "cpu:8", "cpu:8"]
-    for index, call in enumerate(calls):
-        env = {e["name"]: e["value"] for e in call["containerOverrides"]["environment"]}
-        assert env["FF_TRAIN_GIT_SHA"] == binding["image_sha"]
-        assert env["FF_DATA_RELEASE"] == "d" * 64
-        assert (env.get("FF_BENCHMARK_RUN_ID") == "history-1") is (index == 2)
-
-
-@pytest.mark.unit
-def test_ci_skips_local_collection_but_registers_completion_publication(
-    _main_happy_stubs, monkeypatch
-):
-    from src.batch import launch as lm
-
-    registered = []
-    monkeypatch.setattr(lm, "create_run", lambda *a, **kw: registered.append(kw) or "ci-run")
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "launch.py",
-            "--positions",
-            "QB",
-            "--history-run-id",
-            "ci-run",
-            "--collect-history",
-            "false",
-        ],
-    )
-    lm.main()
-    assert registered[0]["run_id"] == "ci-run"
     assert not [c for c in _main_happy_stubs if "append" in c]

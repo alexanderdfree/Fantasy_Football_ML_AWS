@@ -14,10 +14,14 @@ from src.data.release import DataReleaseError
 pytestmark = pytest.mark.unit
 IMAGE_A = "a" * 40
 CHECKOUT_B = "b" * 40
+RELEASE_A = "c" * 64
+RELEASE_B = "d" * 64
 LAUNCHERS = ("launch_tune", "launch_ablate_scheduler", "launch_ab", "launch_ablate")
 
 
 def configure(monkeypatch, name):
+    for name_ in ("FF_DATA_RELEASE", "FF_DATASET_ID", "FF_DATA_FORMAT"):
+        monkeypatch.delenv(name_, raising=False)
     module = importlib.import_module(f"src.tuning.{name}")
     batch, s3 = MagicMock(), MagicMock()
     batch.submit_job.return_value = {"jobId": "pinned-job"}
@@ -64,12 +68,12 @@ def test_actual_image_source_is_checked_then_frozen_binding_is_submitted(monkeyp
         assert kwargs["source_ref"] == IMAGE_A  # remote A, never the launcher checkout B
         batch.submit_job.assert_not_called()
         calls.append(kwargs)
-        monkeypatch.setenv("FF_DATA_RELEASE", "release-for-image-a")
+        monkeypatch.setenv("FF_DATA_RELEASE", RELEASE_A)
         # Another build can advance the mutable globals after compatibility was
         # checked. The already-resolved revision must still reach Batch.
         monkeypatch.setattr(module, "JOB_DEFINITION", "new-latest-job", raising=False)
         monkeypatch.setattr(module, "JOB_DEFINITION_REVISION", "99", raising=False)
-        return "release-for-image-a"
+        return RELEASE_A
 
     monkeypatch.setattr(module, "pin_data_release", pin)
     module.main()
@@ -81,13 +85,15 @@ def test_actual_image_source_is_checked_then_frozen_binding_is_submitted(monkeyp
     assert call["jobDefinition"] == definition
     env = {e["name"]: e["value"] for e in call["containerOverrides"]["environment"]}
     assert env["FF_TRAIN_GIT_SHA"] == IMAGE_A
-    assert env["FF_DATA_RELEASE"] == "release-for-image-a"
+    assert env["FF_DATA_RELEASE"] == RELEASE_A
+    assert env["FF_DATASET_ID"] == RELEASE_A
+    assert env["FF_DATA_FORMAT"] == "data-release-v1"
 
 
 @pytest.mark.parametrize("name", LAUNCHERS)
 def test_incompatible_explicit_data_pin_prevents_every_submission(monkeypatch, name):
     module, batch, _s3, _resolver, _definition = configure(monkeypatch, name)
-    monkeypatch.setenv("FF_DATA_RELEASE", "release-for-checkout-b")
+    monkeypatch.setenv("FF_DATA_RELEASE", RELEASE_B)
 
     def reject(_client, **kwargs):
         assert kwargs["source_ref"] == IMAGE_A

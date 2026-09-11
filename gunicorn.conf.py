@@ -54,8 +54,14 @@ def on_starting(server):
         sync_predictions_cache_from_s3,
     )
 
-    sync_data_from_s3()
-    sync_models_from_s3()
+    allow_inference = os.environ.get("FF_ALLOW_RUNTIME_INFERENCE", "1").lower() not in {
+        "0",
+        "false",
+        "off",
+    }
+    if allow_inference:
+        sync_data_from_s3()
+        sync_models_from_s3()
     sync_benchmark_history_from_s3()
     sync_predictions_cache_from_s3()
 
@@ -67,7 +73,7 @@ def on_starting(server):
         interval_s = int(os.environ.get("FF_MODEL_REFRESH_INTERVAL_S", _DEFAULT_REFRESH_INTERVAL_S))
     except ValueError:
         interval_s = _DEFAULT_REFRESH_INTERVAL_S
-    if interval_s > 0:
+    if interval_s > 0 and allow_inference:
         start_refresh_poller(interval_s)
         print(f"[model_sync] in-flight refresh poller started (interval={interval_s}s)")
     else:
@@ -109,14 +115,36 @@ def on_starting(server):
     except Exception as e:  # noqa: BLE001 — never block boot on the upcoming-week sync
         print(f"[upcoming_week] artifact sync setup failed: {e!r}")
 
+    def _snapshot_downloads():
+        stop = threading.Event()
+        while not stop.wait(30):
+            try:
+                sync_predictions_cache_from_s3()
+            except Exception as exc:
+                print(f"[snapshot] download failed; retaining current generation: {exc!r}")
+
+    threading.Thread(target=_snapshot_downloads, daemon=True, name="snapshot-download").start()
+
 
 def post_fork(server, worker):
-    def _warm():
-        try:
-            from src.serving import core as serving_core
+    stop = threading.Event()
+    worker.snapshot_stop = stop
 
-            serving_core._ensure_metrics()
-        except Exception as e:  # noqa: BLE001 — log + swallow; first user request will retry
-            worker.log.warning("pre-warm thread failed: %r", e)
+    def _warm():
+        from src.serving import core as serving_core
+        from src.serving.app import app
+
+        while not stop.is_set():
+            try:
+                with app.app_context():
+                    serving_core._ensure_metrics()
+            except Exception as exc:
+                worker.log.warning("snapshot hydration failed: %r", exc)
+            stop.wait(15)
 
     threading.Thread(target=_warm, daemon=True, name="prewarm").start()
+
+
+def worker_exit(server, worker):
+    if hasattr(worker, "snapshot_stop"):
+        worker.snapshot_stop.set()

@@ -1,11 +1,4 @@
-# torch is no longer provided by the base image — the slim nvidia/cuda:*-base
-# base (cold-start image-slim change) ships no torch, so install it here.
-# Torch 2.14.0 keeps the cu130 (CUDA 13.0) build shared with the local GPU
-# environment. Dependency upgrades can change training numerics; the next
-# six-position retrain re-establishes the benchmark baseline.
-# uv resolves this + its nvidia-*-cu13
-# deps from the extra index; UV_INDEX_STRATEGY=unsafe-best-match (set in
-# Dockerfile.train) lets PyPI serve the rest.
+# Generated from pyproject.toml; run python -m src.packaging.dependencies.
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.14.0+cu130
 numpy==2.5.3

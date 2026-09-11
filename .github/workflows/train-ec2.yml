@@ -19,7 +19,7 @@ on:
         description: "Random seed"
         default: "42"
       image_sha:
-        description: "Required full SHA of an already-built training image"
+        description: "Full 40-character source SHA of an already-built training image"
         required: true
         type: string
 
@@ -30,6 +30,7 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
+  FF_MODEL_S3_PREFIX: models
   # Same cluster/service deploy.yml targets — used by the post-train ECS
   # rollover step so freshly promoted stable model artifacts get picked
   # up by the running task without a code-change deploy.
@@ -47,6 +48,8 @@ jobs:
     uses: ./.github/workflows/_detect-positions.yml
 
   train:
+    outputs:
+      data_release: ${{ steps.data-release.outputs.release_id }}
     needs: detect
     # Gate: (a) detect found something to train; (b) either a manual dispatch
     # (break-glass — bypasses BATCH_ACTIVE so the EC2 path can be tested even
@@ -90,6 +93,14 @@ jobs:
         # pulls torch since cc0c627 added the attention NN. Mirrors tests.yml.
         run: pip install -r requirements-dev.txt
 
+      - name: Resolve immutable training image
+        id: image
+        env:
+          REQUESTED_IMAGE_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+        run: |
+          set -euo pipefail
+          python -m src.scripts.resolve_training_image ec2 --sha "$REQUESTED_IMAGE_SHA"
+
       - name: Resolve instance ID
         id: inst
         run: |
@@ -99,6 +110,23 @@ jobs:
             exit 1
           fi
           echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for compatible published training data
+        id: data-release
+        timeout-minutes: 62
+        env:
+          HEAD_SHA: ${{ steps.image.outputs.image_sha }}
+        run: |
+          python -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
+            --revision "$HEAD_SHA" --timeout-seconds 3600 --pin-training
+
+
+      - name: Register selected training source
+        env:
+          FF_TRAIN_GIT_SHA: ${{ steps.image.outputs.image_sha }}
+        run: |
+          python -m src.scripts.register_training_source --sha "$FF_TRAIN_GIT_SHA" \
+            --bucket "$S3_BUCKET" --prefix "$FF_MODEL_S3_PREFIX" --repo .
 
       - name: Start instance (no-op if already running)
         run: |
@@ -139,120 +167,23 @@ jobs:
             --region "$AWS_REGION" \
             --query StandardOutputContent --output text
 
-      - name: Ensure feature-cache mount in ff-train
-        # user-data.sh only runs on first boot, so existing warm instances
-        # may have an older ff-train. Idempotently patch in the bind mount +
-        # cache dir and FF_TRAIN_GIT_SHA passthrough so src/shared/feature_cache.py
-        # persists across stop/start cycles and EC2 metrics carry the trained
-        # image SHA.
+      - name: Install current pinned-image ff-train wrapper
+        # Bootstrap and warm hosts use the same checked-in wrapper template.
+        # Validate then atomically replace it; unchanged content is a no-op.
         run: |
-          read -r -d '' SCRIPT <<'BASH' || true
-          set -eu
-          mkdir -p /opt/ff/cache
-          chown ubuntu:ubuntu /opt/ff/cache
-          if grep -q '/opt/ff/cache:/opt/ml/code/.cache' /usr/local/bin/ff-train; then
-            echo "ff-train already has feature-cache mount"
-          else
-            sed -i 's|-v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\|-v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\\n  -v /opt/ff/cache:/opt/ml/code/.cache \\|' /usr/local/bin/ff-train
-            grep -A1 'data/raw' /usr/local/bin/ff-train | head -3
-            echo "ff-train patched with feature-cache mount"
-          fi
-          if grep -q 'FF_TRAIN_GIT_SHA' /usr/local/bin/ff-train; then
-            echo "ff-train already passes FF_TRAIN_GIT_SHA"
-          else
-            tmp=$(mktemp)
-            awk '
-              { print }
-              /-e FF_FORCE_REFRESH=/ && ! inserted {
-                print "  -e FF_TRAIN_GIT_SHA=\"${FF_TRAIN_GIT_SHA:-}\" \\"
-                inserted=1
-              }
-            ' /usr/local/bin/ff-train > "$tmp"
-            install -m 755 "$tmp" /usr/local/bin/ff-train
-            rm -f "$tmp"
-            echo "ff-train patched with FF_TRAIN_GIT_SHA passthrough"
-          fi
-          if grep -q 'FF_DATA_RELEASE' /usr/local/bin/ff-train; then
-            echo "ff-train already passes FF_DATA_RELEASE"
-          else
-            tmp=$(mktemp)
-            awk '
-              { print }
-              /-e FF_FORCE_REFRESH=/ && ! inserted {
-                print "  -e FF_DATA_RELEASE=\"${FF_DATA_RELEASE:-}\" \\"
-                inserted=1
-              }
-            ' /usr/local/bin/ff-train > "$tmp"
-            install -m 755 "$tmp" /usr/local/bin/ff-train
-            rm -f "$tmp"
-            echo "ff-train patched with FF_DATA_RELEASE passthrough"
-          fi
-          # Upgrade old warm-host scripts too: their literal IMAGE=:latest
-          # must never override the digest resolved before the data gate.
-          if ! grep -q '^IMAGE="${FF_TRAIN_IMAGE:?' /usr/local/bin/ff-train || \
-             grep -Fq 'IMAGE%:*' /usr/local/bin/ff-train; then
-            tmp=$(mktemp)
-            awk '
-              # Remove the known older source-tag override: applying it to a
-              # digest URI would turn the selected image into an invalid URI.
-              $0 == "if [ -n \"${FF_TRAIN_GIT_SHA:-}\" ]; then" { retag=1; next }
-              retag { if ($0 == "fi") retag=0; next }
-              /^IMAGE=/ {
-                print "IMAGE=\"${FF_TRAIN_IMAGE:?FF_TRAIN_IMAGE digest pin is required}\""
-                print "if [[ ! \"$IMAGE\" =~ @sha256:[0-9a-f]{64}$ ]] || [[ ! \"${FF_TRAIN_GIT_SHA:-}\" =~ ^[0-9a-f]{40}$ ]]; then"
-                print "  echo \"ff-train requires a digest-pinned image and its full verified source SHA\" >&2"
-                print "  exit 1"
-                print "fi"
-                next
-              }
-              { print }
-              END { if (retag) exit 1 }
-            ' /usr/local/bin/ff-train > "$tmp"
-            bash -n "$tmp"
-            install -m 755 "$tmp" /usr/local/bin/ff-train
-            rm -f "$tmp"
-          fi
-          if ! grep -q '^IMAGE="${FF_TRAIN_IMAGE:?' /usr/local/bin/ff-train || \
-             grep -Fq 'IMAGE%:*' /usr/local/bin/ff-train; then
-            echo "ff-train cannot honor the image pin; refusing training" >&2
-            exit 1
-          fi
-          BASH
-          PARAMS=$(jq -n --arg s "$SCRIPT" '{commands: [$s]}')
+          python -m src.scripts.ec2_wrapper --region "$AWS_REGION" --bucket "$S3_BUCKET" \
+            --output /tmp/ff-wrapper-ssm.json
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
             --document-name AWS-RunShellScript \
-            --parameters "$PARAMS" \
+            --parameters file:///tmp/ff-wrapper-ssm.json \
             --region "$AWS_REGION" --query Command.CommandId --output text)
           aws ssm wait command-executed \
-            --command-id "$CMD_ID" \
-            --instance-id "${{ steps.inst.outputs.id }}" \
-            --region "$AWS_REGION"
+            --command-id "$CMD_ID" --instance-id "${{ steps.inst.outputs.id }}" --region "$AWS_REGION"
           aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --instance-id "${{ steps.inst.outputs.id }}" \
-            --region "$AWS_REGION" \
-            --query StandardOutputContent --output text
+            --command-id "$CMD_ID" --instance-id "${{ steps.inst.outputs.id }}" \
+            --region "$AWS_REGION" --query StandardOutputContent --output text
 
-      - name: Resolve immutable EC2 training image
-        id: image
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
-        run: |
-          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "ERROR: supply image_sha as the full SHA of an already-built image." >&2
-            exit 1
-          fi
-          python -m src.scripts.resolve_training_image ec2 --sha "$HEAD_SHA"
-
-      - name: Wait for compatible published training data
-        id: data-release
-        timeout-minutes: 62
-        env:
-          HEAD_SHA: ${{ steps.image.outputs.image_sha }}
-        run: |
-          python -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
-            --revision "$HEAD_SHA" --timeout-seconds 3600 --pin-training
 
       - name: Run training for all positions (sequential)
         id: train
@@ -261,34 +192,32 @@ jobs:
           SEED: ${{ github.event.inputs.seed || '42' }}
           FF_TRAIN_GIT_SHA: ${{ steps.image.outputs.image_sha }}
           FF_TRAIN_IMAGE: ${{ steps.image.outputs.image_uri }}
+          FF_TRAIN_IMAGE_ID: ${{ steps.image.outputs.image_uri }}
+          FF_LEGACY_RUN_ID: "ec2:${{ github.run_id }}:${{ github.run_attempt }}"
         run: |
           STARTED_AT=$(date +%s)
           echo "started_at=$STARTED_AT" >> "$GITHUB_OUTPUT"
-          python -m src.scripts.register_training_source --sha "$FF_TRAIN_GIT_SHA" --bucket "$S3_BUCKET"
-          case "$SEED" in
-            ""|*[!0-9]*)
-              echo "Invalid seed: $SEED" >&2
-              exit 1
-              ;;
-          esac
-          # Reuse the release already verified before submitting remote work.
-          DATA_RELEASE="$FF_DATA_RELEASE"
-          echo "data_release=$DATA_RELEASE" >> "$GITHUB_OUTPUT"
-          # Sequential loop inside a single SSM command so we get one command
-          # ID to poll. Sequential by design on the single host — the g6/L4 has
-          # memory headroom but the rollback stays sequential for predictable polling.
-          # Positions are emitted by the detect helper as position symbols.
-          # JSON-encode via jq so command quoting can't bite us.
-          REMOTE_CMD="set -eu; for POS in $POSITIONS; do FF_DATA_RELEASE='$DATA_RELEASE' FF_TRAIN_GIT_SHA='$FF_TRAIN_GIT_SHA' FF_TRAIN_IMAGE='$FF_TRAIN_IMAGE' /usr/local/bin/ff-train \"\$POS\" '$SEED'; done"
-          # AWS-RunShellScript defaults executionTimeout to 3600s (1h); the
-          # sequential six-position loop runs ~120 min, so raise the SSM-side
-          # cap to match the wait-loop deadline below (mirrors retune-lgbm.yml).
-          jq -n --arg cmd "$REMOTE_CMD" \
-            '{commands: [$cmd], executionTimeout: ["7800"]}' > /tmp/ssm-params.json
+          # Validate and quote every remote argument before JSON encoding.
+          # One stable run ID is reused by all position retries in this attempt.
+          python - <<'PYCODE'
+          import json, os, shlex
+          positions = os.environ["POSITIONS"].split()
+          if not positions or any(p not in {"QB", "RB", "WR", "TE", "K", "DST"} for p in positions):
+              raise SystemExit("Invalid training position list")
+          seed = os.environ["SEED"]
+          if not seed.isdecimal():
+              raise SystemExit("Invalid seed")
+          names = ("FF_TRAIN_GIT_SHA", "FF_TRAIN_IMAGE", "FF_TRAIN_IMAGE_ID", "FF_LEGACY_RUN_ID", "FF_MODEL_S3_PREFIX", "FF_DATA_RELEASE", "FF_DATASET_ID", "FF_DATA_FORMAT")
+          assignments = " ".join(f"{name}={shlex.quote(os.environ[name])}" for name in names)
+          commands = ["set -eu", "export " + assignments]
+          commands += [f"/usr/local/bin/ff-train {shlex.quote(pos)} {shlex.quote(seed)}" for pos in positions]
+          with open("/tmp/ssm-params.json", "w") as stream:
+              json.dump({"commands": ["; ".join(commands)], "executionTimeout": ["7800"]}, stream)
+          PYCODE
           CMD_ID=$(aws ssm send-command \
             --targets "Key=InstanceIds,Values=${{ steps.inst.outputs.id }}" \
             --document-name AWS-RunShellScript \
-            --comment "train-ec2 ${{ github.sha }}" \
+            --comment "train-ec2 $FF_TRAIN_GIT_SHA" \
             --parameters file:///tmp/ssm-params.json \
             --cloud-watch-output-config "CloudWatchLogGroupName=/ff/training,CloudWatchOutputEnabled=true" \
             --region "$AWS_REGION" --query Command.CommandId --output text)
@@ -344,53 +273,29 @@ jobs:
             --query '{Status:Status,StdOut:StandardOutputContent,StdErr:StandardErrorContent}' \
             --output json
 
-      - name: Verify model artifact freshness
+      - name: Verify exact EC2 run artifacts
         env:
           POSITIONS: ${{ needs.detect.outputs.positions }}
-          FF_MODEL_S3_PREFIX: models
+          FF_TRAIN_GIT_SHA: ${{ steps.image.outputs.image_sha }}
+          FF_TRAIN_IMAGE_ID: ${{ steps.image.outputs.image_uri }}
+          FF_LEGACY_RUN_ID: "ec2:${{ github.run_id }}:${{ github.run_attempt }}"
         run: |
-          # Anchor on when training STARTED, not "now": a long sequential
-          # run would otherwise trip the threshold on early positions'
-          # artifacts that aged past 1200s while later positions trained.
-          train_started_at="${{ steps.train.outputs.started_at }}"
-          # Empty anchor ⇒ the train step never recorded started_at; the
-          # arithmetic below would treat "" as 0 and false-pass the gate
-          # without verifying freshness. Fail loud (mirrors train-batch.yml).
-          if [ -z "$train_started_at" ]; then
-            echo "ERROR: train step did not emit started_at — cannot verify artifact freshness." >&2
-            exit 1
-          fi
-          echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
-          model_prefix="${FF_MODEL_S3_PREFIX:-models}"
-          model_prefix="${model_prefix#/}"
-          model_prefix="${model_prefix%/}"
-          if [ -z "$model_prefix" ]; then model_prefix="models"; fi
-          fail=0
-          for POS in $POSITIONS; do
-            # Anchor on manifest.json — it's the atomic last write of
-            # src.batch.train.upload_artifacts. The legacy models/{POS}/model.tar.gz
-            # mirror was removed by the parallel-Batch race fix (commits
-            # f65bcbe + be56b0d); checking it would trip STALE on every run.
-            META=$(aws s3api head-object \
-              --bucket "$S3_BUCKET" \
-              --key "${model_prefix}/$POS/releases/manifest.json" \
-              --region "$AWS_REGION" 2>/dev/null || echo '{}')
-            LM=$(echo "$META" | jq -r '.LastModified // empty')
-            SZ=$(echo "$META" | jq -r '.ContentLength // 0')
-            if [ -z "$LM" ]; then
-              echo "| $POS | MISSING | — | — |" >> "$GITHUB_STEP_SUMMARY"
-              fail=1
-              continue
-            fi
-            lm_ts=$(date -d "$LM" +%s)
-            age=$(( train_started_at - lm_ts ))
-            status="OK"
-            if [ "$age" -gt 1200 ]; then status="STALE (${age}s before train start)"; fail=1; fi
-            mb=$(awk "BEGIN{printf \"%.1f\", $SZ/1048576}")
-            echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
-          done
-          exit $fail
+          python - <<'PYCODE'
+          import os, tempfile
+          from pathlib import Path
+          import boto3
+          from src.artifacts.receipts import load_run_receipt, download_run_artifact
+          s3 = boto3.client("s3")
+          bucket, prefix = os.environ["S3_BUCKET"], os.environ["FF_MODEL_S3_PREFIX"]
+          source, run_id = os.environ["FF_TRAIN_GIT_SHA"], os.environ["FF_LEGACY_RUN_ID"]
+          for position in os.environ["POSITIONS"].split():
+              receipt = load_run_receipt(s3, bucket, prefix, source, position, run_id)
+              if receipt.get("image_id") != os.environ["FF_TRAIN_IMAGE_ID"]:
+                  raise RuntimeError("EC2 receipt image differs from the selected digest")
+              with tempfile.TemporaryDirectory(prefix="verify-ec2-") as directory:
+                  download_run_artifact(s3, bucket, prefix, source, position, run_id, Path(directory) / "model.tar.gz")
+              print(f"Verified exact {position} artifact for {run_id}: {receipt['key']}")
+          PYCODE
 
       - name: Append EC2 run to benchmark_history/
         # MUST run before "Refresh ECS service" — the benchmark append also
@@ -413,7 +318,7 @@ jobs:
           # same names; mirroring the values here keeps the producer and
           # consumer in sync without a second config surface.
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
-          FF_MODEL_S3_PREFIX: models
+          FF_MODEL_S3_PREFIX: ${{ env.FF_MODEL_S3_PREFIX }}
           POSITIONS: ${{ needs.detect.outputs.positions }}
           # Branch + head SHA come from a workflow_run trigger whose payload
           # is attacker-controllable (e.g. a fork that happens to share a
@@ -423,6 +328,9 @@ jobs:
           # a normal shell variable that downstream commands can quote.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           HEAD_SHA: ${{ steps.image.outputs.image_sha }}
+          FF_TRAIN_GIT_SHA: ${{ steps.image.outputs.image_sha }}
+          FF_TRAIN_IMAGE_ID: ${{ steps.image.outputs.image_uri }}
+          FF_LEGACY_RUN_ID: "ec2:${{ github.run_id }}:${{ github.run_attempt }}"
         run: |
           # Resolve the PR number from the merge commit so the serving UI's
           # History tab can deep-link rows to GitHub. Direct pushes to main
@@ -456,9 +364,10 @@ jobs:
           # from the image-build SHA on rapid back-to-back merges. ``$HEAD_SHA``
           # is the stable image-build SHA that FF_TRAIN_GIT_SHA stamps into the
           # metrics, so the recorded git_hash matches benchmark.py's coherency
-          # check for both automatic and manual image resolutions. See
+          # check. Manual dispatch uses the same explicitly selected image SHA.
+          # No current-workspace HEAD fallback is permitted here; see
           # the TODO.md "Benchmark git_hash" archive entry for the failure mode.
-          NOTE_SHA="${HEAD_SHA:-$GITHUB_SHA}"
+          NOTE_SHA="$HEAD_SHA"
           NOTE_SHA="${NOTE_SHA::7}"
           # --instance-type is now a FALLBACK: src/batch/benchmark.py derives the
           # History-tab label at runtime from the gpu_name + cuda_graph_active
@@ -502,7 +411,7 @@ jobs:
           # Label with the image/head SHA the benchmark JSON pins, not the
           # run-level GITHUB_SHA (diverges on rapid merges) — keeps
           # `git log --grep <sha>` correlation intact.
-          MSG_SHA="${HEAD_SHA:-$GITHUB_SHA}"
+          MSG_SHA="$HEAD_SHA"
           git commit -m "chore(ci): append EC2 benchmark run ${MSG_SHA::7}"
           for attempt in 1 2 3; do
             if git push origin HEAD:"refs/heads/$BRANCH"; then
@@ -515,27 +424,50 @@ jobs:
           echo "Push failed after 3 attempts"
           exit 1
 
-      - name: Refresh ECS service to pick up new model + benchmark artifacts
-        # Boot-time sync_models_from_s3 / sync_data_from_s3 only run when an
-        # ECS task starts, so freshly promoted stable pointers in S3 are
-        # invisible to the running task until something restarts it. Forcing
-        # a rolling redeploy here pulls the same image and re-runs both
-        # syncs at boot (including sync_benchmark_history_from_s3, which
-        # depends on the previous step's S3 upload of the new JSON).
-        # Idempotent — if no stables advanced this run, the new task picks
-        # up the same artifacts. ``services-stable`` waits for the new task
-        # to reach RUNNING and the old to drain, so a task that fails to
-        # load the new artifacts surfaces here instead of silently serving
-        # NaN preds. See artifact_gc.py for the parallel: only smoke-passed
-        # artifacts ever become stable.
+      - name: Build and publish serving cache before rollout
+        # Publish this identified run's approved models with its pinned canonical
+        # data release before the serialized serving rollout.
+        env:
+          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
+          FF_MODEL_S3_PREFIX: ${{ env.FF_MODEL_S3_PREFIX }}
+          FF_TRAIN_GIT_SHA: ${{ steps.image.outputs.image_sha }}
+          FF_TRAIN_IMAGE_ID: ${{ steps.image.outputs.image_uri }}
+          FF_LEGACY_RUN_ID: "ec2:${{ github.run_id }}:${{ github.run_attempt }}"
+          FF_BUILD_POSITIONS: ${{ needs.detect.outputs.positions }}
+          FF_DEVICE: cpu
+          FF_ALLOW_RUNTIME_INFERENCE: "1"
+        run: python -m src.prediction.build_snapshot
+
+
+  ecs_rollout:
+    # A complete cache generation, its data release, and the deployed recipe
+    # are verified together before changing ECS or ALB state.
+    needs: train
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-fantasy-service
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Advance verified serving data release
+        env:
+          DATA_RELEASE: ${{ needs.train.outputs.data_release }}
         run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --force-new-deployment \
-            --no-cli-pager > /dev/null
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --region "$AWS_REGION"
+          python3 -m src.scripts.advance_data_release --bucket "$S3_BUCKET" \
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --release-id "$DATA_RELEASE" \
+            --state data-release-rollout.json --timeout 1200
+      - name: Restore interrupted serving rollout
+        if: failure() || cancelled()
+        run: |
+          if [ -f data-release-rollout.json ]; then
+            python3 -m src.artifacts.deployment restore --state data-release-rollout.json
+          fi

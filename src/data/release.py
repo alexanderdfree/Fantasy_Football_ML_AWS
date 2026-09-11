@@ -44,6 +44,11 @@ DATA_PRODUCER_PATHS = (
     "src/shared/comparison_scoring.py",
     "src/shared/evaluation_cohorts.py",
     "src/shared/expert_eligibility.py",
+    "src/shared/weather_features.py",
+    "src/contracts/feature_names.py",
+    "src/shared/team_box_score.py",
+    "src/training/context.py",
+    "requirements.txt",
     "src/scripts/build_evaluation_reference.py",
     "src/analysis/analysis_expert_comparison.py",
     "src/analysis/sleeper_loader.py",
@@ -131,7 +136,10 @@ def live_source_cache(cache_dir: str | Path):
     with _live_cache_lock:
         _live_cache_roots[root] = _live_cache_roots.get(root, 0) + 1
     try:
-        yield
+        from src.data.providers.snapshot import live_provider_sources
+
+        with live_provider_sources():
+            yield
     finally:
         with _live_cache_lock:
             _live_cache_roots[root] -= 1
@@ -241,6 +249,22 @@ def _input_files(raw_dir: Path, splits_dir: Path) -> dict[str, Path]:
             if p.is_file() and p.suffix in {".parquet", ".json"} and not p.name.startswith(".")
         }
     )
+    # Provider transport responses belong to the same sealed release. Keep
+    # other nested directories (live overlays/quarantine) out of history.
+    providers = raw_dir / "provider_sources"
+    if providers.is_dir():
+        if any(
+            path.is_file() and not re.fullmatch(r"[0-9a-f]{64}\.(json|parquet)", path.name)
+            for path in providers.iterdir()
+        ):
+            raise ValueError("Unsafe provider snapshot path")
+        files.update(
+            {
+                f"raw/provider_sources/{path.name}": path
+                for path in sorted(providers.iterdir())
+                if path.is_file() and path.suffix in {".json", ".parquet"}
+            }
+        )
     if not any(name.startswith("raw/") for name in files):
         raise ValueError("Cannot publish splits without their raw dependencies")
     for path in files.values():
@@ -280,6 +304,9 @@ def seal_inputs(*, raw_dir="data/raw", splits_dir="data/splits", repo_root=".") 
     """
     raw, splits, root = Path(raw_dir), Path(splits_dir), Path(repo_root)
     verify_historical_loader_inputs(raw)
+    from src.data.providers.snapshot import verify_provider_snapshot_files
+
+    verify_provider_snapshot_files(raw / "provider_sources")
     files = _input_files(raw, splits)
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -424,10 +451,19 @@ def resolve_release(
     for name, info in files.items():
         parts = PurePosixPath(name).parts
         if (
-            len(parts) != 2
+            not parts
+            or str(PurePosixPath(name)) != name
             or parts[0] not in {"raw", "splits"}
-            or parts[1] in {".", ".."}
+            or any(part in {".", ".."} for part in parts)
             or "\\" in name
+            or not (
+                len(parts) == 2
+                or (
+                    len(parts) == 3
+                    and parts[:2] == ("raw", "provider_sources")
+                    and re.fullmatch(r"[0-9a-f]{64}\.(json|parquet)", parts[2])
+                )
+            )
         ):
             raise ValueError(f"Unsafe training data path: {name}")
         if (
@@ -468,14 +504,19 @@ def _quarantine_unlisted_raw(raw: Path, files: dict, prior_raw: set[str], select
     if not raw.is_dir():
         return
     expected = {name.split("/", 1)[1] for name in files if name.startswith("raw/")}
-    for path in raw.iterdir():
-        managed = path.name in prior_raw or (
-            path.suffix in {".parquet", ".json", ".etag"}
-            and path.name.startswith(_MANAGED_RAW_PREFIXES)
+    for path in list(raw.iterdir()) + list((raw / "provider_sources").glob("*")):
+        relative = path.relative_to(raw).as_posix()
+        managed = (
+            relative in prior_raw
+            or relative.startswith("provider_sources/")
+            or (
+                path.suffix in {".parquet", ".json", ".etag"}
+                and path.name.startswith(_MANAGED_RAW_PREFIXES)
+            )
         )
-        if not path.is_file() or path.name in expected or not managed:
+        if not path.is_file() or relative in expected or not managed:
             continue
-        quarantine = raw / ".quarantine" / selected
+        quarantine = raw / ".quarantine" / selected / Path(relative).parent
         quarantine.mkdir(parents=True, exist_ok=True)
         os.replace(path, quarantine / path.name)
 
@@ -505,7 +546,7 @@ def download_release(
 
         def download(item):
             name, info = item
-            part, leaf = name.split("/")
+            part, leaf = name.split("/", 1)
             current = roots[part] / leaf
             if current.is_file() and _record(current) == info:
                 return
@@ -524,7 +565,7 @@ def download_release(
             staged = stage / name
             if not staged.exists():
                 continue
-            part, leaf = name.split("/")
+            part, leaf = name.split("/", 1)
             destination = roots[part] / leaf
             destination.parent.mkdir(parents=True, exist_ok=True)
             # Cross-filesystem safe, and compatible with mounted directories.
@@ -537,7 +578,17 @@ def download_release(
                 if os.path.exists(temporary):
                     os.unlink(temporary)
         _atomic_json(roots["splits"] / SEAL_NAME, manifest)
-        _atomic_json(roots["raw"] / ".release.json", {"release_id": release_id})
+        _atomic_json(
+            roots["raw"] / ".release.json",
+            {
+                "release_id": release_id,
+                "provider_sources": (
+                    "captured"
+                    if any(name.startswith("raw/provider_sources/") for name in files)
+                    else "derived_only"
+                ),
+            },
+        )
     return {
         "release_id": release_id,
         "files": len(files),

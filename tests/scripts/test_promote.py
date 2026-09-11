@@ -19,8 +19,20 @@ from src.scripts import promote  # noqa: E402
 from src.shared.model_sync import (  # noqa: E402
     manifest_key,
 )
+from tests.shared._helpers import make_tarball  # noqa: E402
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def smoke_test(monkeypatch):
+    from unittest.mock import Mock
+
+    from src.shared import smoke_test as module
+
+    smoke = Mock()
+    monkeypatch.setattr(module, "run_smoke_test", smoke)
+    return smoke
 
 
 # --------------------------------------------------------------------------
@@ -56,16 +68,22 @@ class _FakeS3:
         if Key not in self.objects:
             raise _nosuchkey_error(Key)
         self.ops.append(("get", Key))
-        return {"Body": _FakeBody(self.objects[Key]), "ETag": self._etag(Key)}
+        return {
+            "Body": _FakeBody(self.objects[Key]),
+            "ETag": hashlib.sha256(self.objects[Key]).hexdigest(),
+        }
 
-    def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
+    def put_object(self, Bucket, Key, Body, ContentType=None, IfMatch=None, IfNoneMatch=None):  # noqa: N803
+        existing = self.objects.get(Key)
+        etag = None if existing is None else hashlib.sha256(existing).hexdigest()
+        if (IfMatch is not None and IfMatch != etag) or (
+            IfNoneMatch == "*" and existing is not None
+        ):
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         if hasattr(Body, "read"):
             Body = Body.read()
         self.objects[Key] = Body
         self.ops.append(("put", Key))
-
-    def _etag(self, key):
-        return hashlib.sha256(self.objects.get(key, b"")).hexdigest()
 
     def head_object(self, Bucket, Key):  # noqa: N803
         if Key not in self.objects:
@@ -91,7 +109,7 @@ class _FakeS3:
 
 def _hist_key(n: int) -> str:
     """Produce a ``src.shared.model_sync.new_history_key``-shaped path."""
-    return f"models/WR/history/2026-04-{n:02d}T00-00-00Z-aaaa{n:03d}/model.tar.gz"
+    return f"models/releases/v3/WR/history/2026-04-{n:02d}T00-00-00Z-aaaa{n:03d}/model.tar.gz"
 
 
 def _make_manifest(current_key: str, previous_key: str | None, history: list[str]) -> dict:
@@ -111,7 +129,7 @@ def _make_manifest(current_key: str, previous_key: str | None, history: list[str
         }
     return {
         "schema_version": 3,
-        "publication_source": {"source_sha": "a" * 40, "source_order": 1},
+        "source_frontier": {"source_sha": "a" * 40, "source_order": 1},
         "current": cur,
         "previous": prev,
         "history": history,
@@ -137,7 +155,7 @@ def _bucket_with_manifest(
     }
     if history_objects:
         for k in history:
-            objects[k] = f"BYTES-FOR-{k}".encode()
+            objects[k] = make_tarball({"fixture.txt": k.encode()})
     return _FakeS3(objects)
 
 
@@ -211,6 +229,93 @@ class TestParseVersionFromKey:
 
 
 class TestPromote:
+    def test_legacy_dry_run_projects_protected_keys_without_writing(self, monkeypatch):
+        from src.artifacts import source
+
+        legacy_key = "models/WR/history/2026-04-05T00-00-00Z-aaaa005/model.tar.gz"
+        legacy_manifest = _make_manifest(legacy_key, None, [legacy_key])
+        legacy_manifest["schema_version"] = 1
+        legacy_manifest.pop("source_frontier")
+        fake = _FakeS3(
+            {
+                "models/WR/manifest.json": json.dumps(legacy_manifest).encode(),
+                legacy_key: make_tarball({"fixture.txt": b"legacy"}),
+            }
+        )
+        proof = {"source_sha": "a" * 40, "source_order": 1, "lineage": ["a" * 40]}
+        monkeypatch.setattr(source, "image_source_sha", lambda: proof["source_sha"])
+        monkeypatch.setattr(source, "load_source", lambda *_: proof)
+        before = fake.objects.copy()
+        planned = promote.promote(fake, "b", "models", "WR", legacy_key, dry_run=True)
+        assert planned["stable"]["key"].startswith("models/releases/v3/WR/history/")
+        assert planned["rollback_epoch"]
+        assert fake.objects == before
+        assert not any(operation in {"put", "copy"} for operation, _ in fake.ops)
+
+    def test_manual_rollback_preserves_source_and_intent_frontiers(self):
+        fake = _bucket_with_manifest(
+            "models", "WR", _hist_key(5), _hist_key(4), [_hist_key(5), _hist_key(4)]
+        )
+        key = manifest_key("models", "WR")
+        old = json.loads(fake.objects[key])
+        old["intent_frontier"] = {"source_sha": "a" * 40, "sequence": 7}
+        old["rollback_epoch"] = "prior-rollback"
+        fake.objects[key] = json.dumps(old).encode()
+        result = promote.promote(fake, "b", "models", "WR", _hist_key(4))
+        assert result["source_frontier"] == old["source_frontier"]
+        assert result["intent_frontier"] == old["intent_frontier"]
+        assert result["rollback_epoch"] != old["rollback_epoch"]
+        assert result["promotion_mode"] == "rollback"
+
+    def test_manifest_read_failure_does_not_attempt_publication(self, monkeypatch):
+        fake = _FakeS3({})
+
+        def denied(**_):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+
+        monkeypatch.setattr(fake, "get_object", denied)
+        with pytest.raises(promote.PromotionError, match="Cannot read manifest"):
+            promote.promote(fake, "b", "models", "WR", _hist_key(5))
+        assert fake.ops == []
+
+    def test_smoke_failure_leaves_manifest_unchanged(self, smoke_test):
+        fake = _bucket_with_manifest("models", "WR", _hist_key(5), None, [_hist_key(5)])
+        before = fake.objects[manifest_key("models", "WR")]
+        smoke_test.side_effect = RuntimeError("NaN predictions")
+        with pytest.raises(promote.PromotionError, match="failed validation"):
+            promote.promote(fake, "b", "models", "WR", _hist_key(5))
+        assert fake.objects[manifest_key("models", "WR")] == before
+        assert not any(op == "put" for op, _ in fake.ops)
+
+    def test_concurrent_publication_prevents_stale_operator_rollback(self, smoke_test):
+        fake = _bucket_with_manifest("models", "WR", _hist_key(5), None, [_hist_key(5)])
+        key = manifest_key("models", "WR")
+        newer = {"stable": {"key": "newer-approved"}, "history": ["newer-approved"]}
+
+        def concurrent_publish(*_):
+            fake.objects[key] = json.dumps(newer).encode()
+
+        smoke_test.side_effect = concurrent_publish
+        with pytest.raises(promote.PromotionError, match="PreconditionFailed"):
+            promote.promote(fake, "b", "models", "WR", _hist_key(5))
+        assert json.loads(fake.objects[key]) == newer
+
+    def test_legacy_rollback_establishes_approval_and_preserves_old_stable(self, smoke_test):
+        fake = _bucket_with_manifest(
+            "models", "WR", _hist_key(5), _hist_key(4), [_hist_key(5), _hist_key(4)]
+        )
+        key = manifest_key("models", "WR")
+        old = json.loads(fake.objects[key])
+        old["schema_version"] = 2
+        old["stable"] = old["current"]
+        fake.objects[key] = json.dumps(old).encode()
+        new = promote.promote(fake, "b", "models", "WR", _hist_key(4))
+        assert new["schema_version"] == 3
+        assert new["stable"]["key"] == _hist_key(4)
+        assert new["stable"]["smoke_passed"] is True
+        assert new["previous_stable"] == old["stable"]
+        smoke_test.assert_called_once()
+
     def test_happy_path_promotes_history_entry(self):
         """current=A, previous=B, history=[A, B, C]; promote --to C
         → current=C, previous=A, history unchanged. Only the manifest is
@@ -226,11 +331,9 @@ class TestPromote:
 
         new = promote.promote(fake, "b", "models", "WR", target)
 
-        assert new["current"]["rollback_of"] == target
-        assert new["stable"] == new["current"]
-        assert new["current"]["key"] != target
+        assert new["current"]["key"] == target
         assert new["previous"]["key"] == _hist_key(5)
-        assert new["history"][1:] == [_hist_key(5), _hist_key(4), _hist_key(3)]
+        assert new["history"] == [_hist_key(5), _hist_key(4), _hist_key(3)]
 
         # Manifest was actually written.
         on_disk = json.loads(fake.objects[manifest_key("models", "WR")])
@@ -286,7 +389,7 @@ class TestPromote:
         orig_manifest_bytes = fake.objects[manifest_key("models", "WR")]
 
         new = promote.promote(fake, "b", "models", "WR", _hist_key(3), dry_run=True)
-        assert new["current"]["rollback_of"] == _hist_key(3)
+        assert new["current"]["key"] == _hist_key(3)
 
         # No put/copy was issued.
         assert not any(op[0] in ("put", "copy") for op in fake.ops)
@@ -306,7 +409,7 @@ class TestPromote:
             history=[_hist_key(5), _hist_key(4)],
         )
         new = promote.promote(fake, "b", "models", "WR", _hist_key(4))
-        assert new["current"]["rollback_of"] == _hist_key(4)
+        assert new["current"]["key"] == _hist_key(4)
         assert new["previous"]["key"] == _hist_key(5)
 
     def test_raises_when_no_manifest_exists(self):
@@ -323,7 +426,9 @@ class TestPromote:
         untouched (write is atomic), so no rollback is needed."""
 
         class _PutAngryS3(_FakeS3):
-            def put_object(self, Bucket, Key, Body, ContentType=None, **conditions):  # noqa: N803
+            def put_object(
+                self, Bucket, Key, Body, ContentType=None, IfMatch=None, IfNoneMatch=None
+            ):  # noqa: N803
                 raise ClientError(
                     error_response={"Error": {"Code": "AccessDenied", "Message": "no"}},
                     operation_name="PutObject",
@@ -360,7 +465,7 @@ class TestPromote:
         fake.objects[manifest_key("models", "WR")] = json.dumps(raw).encode()
 
         new = promote.promote(fake, "b", "models", "WR", _hist_key(4))
-        assert new["schema_version"] == 2
+        assert new["schema_version"] == 3
 
 
 # --------------------------------------------------------------------------
@@ -412,11 +517,10 @@ class TestMainCLI:
         rc = promote.main(["--position", "WR", "--to", _hist_key(3)])
         out = capsys.readouterr().out
         assert rc == 0
-        assert "Promoted WR: stable and current → models/WR/releases/history/" in out
-        assert f"rollback source: {_hist_key(3)}" in out
+        assert f"Promoted WR: current → {_hist_key(3)}" in out
         # Manifest actually changed.
         m = json.loads(fake.objects[manifest_key("models", "WR")])
-        assert m["current"]["rollback_of"] == _hist_key(3)
+        assert m["current"]["key"] == _hist_key(3)
 
     def test_to_with_dry_run_prints_json_does_not_write(self, stub_boto3, capsys):
         fake = _bucket_with_manifest(
@@ -434,7 +538,7 @@ class TestMainCLI:
         assert "[dry-run]" in out
         # JSON is emitted and parseable.
         planned = json.loads(out.split("\n", 1)[1])
-        assert planned["current"]["rollback_of"] == _hist_key(3)
+        assert planned["current"]["key"] == _hist_key(3)
         # Manifest bytes unchanged.
         assert fake.objects[manifest_key("models", "WR")] == orig
 

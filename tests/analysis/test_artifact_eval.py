@@ -36,13 +36,36 @@ def test_make_total_fn_uses_target_signs_for_K_like_position():
     assert list(total_fn(preds)) == [8.0, 3.0]
 
 
-def test_attn_supported_for_flat_incl_opp_history_but_not_nested():
-    assert ae._attn_is_supported({}) is True
-    assert ae._attn_is_supported({"attn_history_structure": "flat"}) is True
-    # Opponent-history side branch (skill positions) IS supported in v1.
-    assert ae._attn_is_supported({"opp_attn_history_stats": ["def_sacks"]}) is True
-    # Nested per-kick variant (K) is not yet handled.
-    assert ae._attn_is_supported({"attn_history_structure": "nested"}) is False
+def test_artifact_analysis_delegates_nested_kick_predictions(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from src.prediction import frames
+    from src.shared.registry import get_inference_spec
+
+    reg = get_inference_spec("K")
+    frame = pd.DataFrame({"player_id": ["kicker"], "season": [2025], "week": [1]})
+    kicks = pd.DataFrame({"player_id": ["kicker"]})
+    raw = {target: np.array([1.0]) for target in reg["targets"]}
+    seen = []
+
+    def predict(position, train, val, test, spec, **kwargs):
+        seen.append((position, kwargs["kicks"]))
+        return SimpleNamespace(
+            frame=frame,
+            raw={"attn_nn": raw},
+            totals={"attn_nn": {"ppr": np.array([2.0])}},
+            errors={},
+            bundle_ids={"attn_nn": "bundle"},
+        )
+
+    monkeypatch.setattr(frames, "predict_position", predict)
+    monkeypatch.setattr(ae, "validate_reconstruction", lambda *args, **kwargs: None)
+    result = ae.build_test_df_from_artifacts(
+        "K", frame, frame, frame, model_dir=str(tmp_path), kick_history=kicks
+    )
+    assert seen[0][0] == "K" and seen[0][1] is kicks
+    assert result["pred_attn_nn_total"].tolist() == [2.0]
+    assert result.attrs["model_bundle_ids"] == {"attn_nn": "bundle"}
 
 
 def _populate(d):

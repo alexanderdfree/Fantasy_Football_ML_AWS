@@ -4,7 +4,9 @@ import Foundation
 @MainActor
 @Observable
 final class HistoryStore {
-    private let api = APIClient.shared
+    private let api: any APIProviding
+
+    init(api: any APIProviding = APIClient.shared) { self.api = api }
     var state: LoadState<BenchmarkHistory> = .idle
 
     func load() async {

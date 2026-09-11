@@ -150,6 +150,9 @@ ENTRYPOINT ["python", "-m", "src.batch.train"]
 | Variable | Default | Description |
 |---|---|---|
 | `FF_S3_BUCKET` | `ff-predictor-training` | Override bucket name (for staging accounts) |
+| `FF_BUILD_PLAN_ID` | (unset) | Immutable plan binding the source, dataset, positions, seed, image and publication intent; preferred for training |
+| `FF_LEGACY_RUN_ID` | (unset) | Required explicit request ID when no plan is selected; reuse only for retries of the same request |
+| `FF_TRAIN_GIT_SHA` | (required for training) | Actual image's full 40-character source SHA, matching the selected plan when used; source ancestry must be registered before dispatch |
 | `FF_JOB_QUEUE` | `ff-training-queue` | Override Batch job queue |
 | `FF_JOB_DEFINITION` | `ff-training-job` | Override Batch job definition (GPU) |
 | `FF_JOB_QUEUE_CPU` | (unset) | CPU queue for split `cpu` and `merge` branch jobs (`ff-cpu-training-queue`) |
@@ -359,7 +362,14 @@ docker push $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/ff-training:latest
 5. Create Job Queues (`ff-training-queue`, `ff-cpu-training-queue`)
 6. Register Job Definitions (`ff-training-job`, `ff-training-cpu-job`)
 7. Build and push training image to ECR
-8. Run: `python -m src.batch.launch`
+8. Select an immutable build plan, or register the actual image source and set
+   `FF_LEGACY_RUN_ID` plus `FF_TRAIN_GIT_SHA`, then run `python -m src.batch.launch`.
+   Anonymous training is rejected before upload/submission. Post-run model
+   downloads and automatic benchmark collection use that request's exact
+   checksum-verified receipts, even if a newer run has already been promoted.
+   `src.batch.benchmark --download-only` remains an explicit latest-artifact
+   retrieval when no plan or legacy request is selected. Nonpublishing tuning
+   and ablation launchers keep their separate submission modes.
 
 ## Rollback
 

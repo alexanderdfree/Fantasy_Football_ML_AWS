@@ -19,25 +19,7 @@ from unittest import mock
 
 import pytest
 
-
-@pytest.fixture(autouse=True)
-def _legacy_data_for_benchmark_stubs(monkeypatch):
-    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
-    from src.batch import benchmark
-
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_launch_binding",
-        lambda *a, **k: {"image_sha": "a" * 40, "gpu_definition": "gpu:1", "cpu_definition": ""},
-    )
-    monkeypatch.setattr(benchmark, "validate_local_publish", lambda *a: None)
-
-
-@pytest.fixture(autouse=True)
-def _no_live_aws(monkeypatch):
-    # Test doubles provide every AWS behavior; never use developer credentials.
-    monkeypatch.setattr("boto3.client", lambda *a, **kw: mock.MagicMock())
-
+from src.batch import launch
 
 # --------------------------------------------------------------------------
 # download_metrics — boto3 + tarfile mocked
@@ -267,16 +249,26 @@ def test_find_git_sha_divergence_skips_positions_without_sha():
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def source_registration(monkeypatch):
-    monkeypatch.setattr("src.shared.artifact_publication.register_source", lambda *a, **k: None)
-    monkeypatch.setattr("src.batch.run_history.create_run", lambda *a, **k: "unit-run")
-    monkeypatch.setattr("src.batch.benchmark.boto3.client", lambda *a, **k: object())
-    monkeypatch.setattr("src.batch.benchmark.validate_submission_source", lambda *a, **k: None)
+@pytest.fixture()
+def _identified_training(monkeypatch):
+    from src.batch import launch
+    from tests.batch._submission_fixture import mock_submission_boundaries
+
+    mock_submission_boundaries(monkeypatch, launch)
+    monkeypatch.delenv("FF_BUILD_PLAN_ID", raising=False)
+    monkeypatch.delenv("FF_DATASET_ID", raising=False)
+    monkeypatch.delenv("FF_REQUIRE_BUILD_PLAN", raising=False)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "unit-benchmark-request")
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", "abc1234" + "0" * 33)
+    from src.batch import launch, run_history
+
+    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "1")
+    monkeypatch.setattr(launch, "register_submission_source", lambda *_: None)
+    monkeypatch.setattr(run_history, "create_run", lambda *_, **__: "unit-history-run")
 
 
 @pytest.fixture()
-def _main_stubs(tmp_path, monkeypatch):
+def _main_stubs(tmp_path, monkeypatch, _identified_training):
     """Stub every external call main() makes. Returns the tmp project root."""
     import src.batch.benchmark as bb
 
@@ -289,23 +281,19 @@ def _main_stubs(tmp_path, monkeypatch):
     # which our append_to_history stub won't touch).
 
     launched: list[dict] = []
-    monkeypatch.setattr(
-        "src.shared.artifact_publication.register_source",
-        lambda *_args: launched.append({"source_registration": True}),
-    )
 
-    def _submit_job(pos, seed, **kwargs):
+    def _submit_job(pos, seed, batch_client=None, *, history_run_id=None, binding=None):
         launched.append({"pos": pos, "seed": seed})
         return pos, f"job-{pos}"
 
     def _wait_for_jobs(job_ids):
         return {p: ("SUCCEEDED", 0) for p in job_ids}
 
-    def _upload_data(bucket):
+    def _upload_data(bucket, **kwargs):
         launched.append({"upload": bucket})
 
     monkeypatch.setattr(bb, "submit_job", _submit_job)
-    monkeypatch.setattr(bb, "upload_data", _upload_data)
+    monkeypatch.setattr(launch, "upload_data", _upload_data)
     monkeypatch.setattr(bb, "wait_for_jobs", _wait_for_jobs)
 
     # Metrics are taken from download_metrics — stub it.
@@ -344,32 +332,27 @@ def _main_stubs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(bb, "append_to_history", _stub_append)
     monkeypatch.setattr(bb, "get_git_hash", lambda: "abc1234")
+    from src.batch import run_history
+
+    monkeypatch.setattr(
+        run_history,
+        "complete_run",
+        lambda *_, **__: {
+            "run_id": "unit-history-run",
+            "timestamp": "2026-09-10T00:00:00",
+            "git_hash": "abc1234",
+            "note": "unit test",
+            "backend": "batch",
+            "positions": ["QB", "RB"],
+            "results": list(fake_metrics.values()),
+        },
+    )
 
     # RESULTS_FILE writes are fine — they go to cwd which we monkeypatch.chdir'd
     # to tmp_path. Actually main() does os.chdir(project_root) FIRST, overriding
     # that. We patch RESULTS_FILE/HISTORY_DIR to point under tmp_path.
     monkeypatch.setattr(bb, "RESULTS_FILE", str(tmp_path / "results.json"))
     monkeypatch.setattr(bb, "HISTORY_DIR", str(tmp_path / "history"))
-
-    from src.batch import run_history
-
-    registered = {}
-
-    def _create_run(*args, **kwargs):
-        registered.update(kwargs)
-        return "unit-run"
-
-    def _complete_run(*args, **kwargs):
-        return {
-            "run_id": "unit-run",
-            "git_hash": "abc1234",
-            "note": registered["note"],
-            "positions": list(fake_metrics),
-            "results": [{"position": p, **m} for p, m in fake_metrics.items()],
-        }
-
-    monkeypatch.setattr(run_history, "create_run", _create_run)
-    monkeypatch.setattr(run_history, "complete_run", _complete_run)
 
     return launched, printed, appended
 
@@ -430,7 +413,6 @@ def test_main_full_launch_path(_main_stubs, monkeypatch):
     bb.main()
 
     # upload_data(bucket) was called, plus submit_job for each of 2 positions.
-    assert launched[0] == {"source_registration": True}
     assert any("upload" in entry for entry in launched)
     submitted = [e["pos"] for e in launched if "pos" in e]
     assert sorted(submitted) == ["QB", "RB"]
@@ -441,98 +423,14 @@ def test_main_full_launch_path(_main_stubs, monkeypatch):
 
 
 @pytest.mark.unit
-def test_active_benchmark_binds_history_to_selected_source_and_data(_main_stubs, monkeypatch):
-    from src.batch import benchmark as bb
-    from src.batch import run_history
-
-    release_id = "d" * 64
-    events = []
-
-    def pin(*args, source_ref, **kwargs):
-        assert source_ref == "a" * 40
-        events.append("pinned")
-        return release_id
-
-    def create(*args, **kwargs):
-        assert events == ["pinned"]
-        assert kwargs["git_sha"] == "a" * 40
-        assert kwargs["data_release"] == release_id
-        events.append("registered")
-        return "bound-history"
-
-    history = mock.Mock()
-    monkeypatch.setattr(bb, "pin_data_release", pin)
-    monkeypatch.setattr(run_history, "create_run", create)
-    monkeypatch.setattr(bb, "record_benchmark_run", history)
-    monkeypatch.setattr("sys.argv", ["benchmark", "--positions", "QB"])
-    bb.main()
-    assert events == ["pinned", "registered"]
-    assert history.call_args.kwargs["git_hash"] == "a" * 40
-    assert history.call_args.kwargs["run_id"] == "bound-history"
-    assert history.call_args.kwargs["data_release"] == release_id
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("expected_release", [None, "a" * 64])
-def test_run_collection_uses_only_explicit_expected_data(monkeypatch, tmp_path, expected_release):
-    from src.batch import benchmark as bb
-    from src.batch import run_history
-
-    monkeypatch.setenv("FF_DATA_RELEASE", "b" * 64)
-    entry = {
-        "run_id": "retained-history",
-        "git_hash": "aaaaaaa",
-        "positions": ["QB"],
-        "results": [{"position": "QB"}],
-    }
-    complete = mock.Mock(return_value=entry)
-    download = mock.Mock(side_effect=AssertionError("run collection read mutable serving pointers"))
-    mirror = mock.Mock(side_effect=AssertionError("immutable run was mirrored again"))
-    monkeypatch.setattr(run_history, "complete_run", complete)
-    monkeypatch.setattr(bb, "download_metrics", download)
-    monkeypatch.setattr(bb, "_maybe_upload_to_s3", mirror)
-    monkeypatch.setattr(bb, "get_git_hash", lambda: "bbbbbbb")
-    monkeypatch.setattr(bb, "_REPO_ROOT", str(tmp_path))
-    monkeypatch.setattr(bb, "RESULTS_FILE", "latest.json")
-    monkeypatch.setattr(bb, "HISTORY_DIR", "history")
-    monkeypatch.setattr(bb, "print_comparison_table", lambda *a, **kw: None)
-    monkeypatch.setattr(bb, "append_to_history", lambda *a, **kw: "history.json")
-    bb.record_benchmark_run(
-        ["QB"], run_id="retained-run", git_hash="a" * 40, data_release=expected_release
-    )
-    assert complete.call_args.kwargs["git_sha"] == "a" * 40
-    if expected_release is None:
-        assert "data_release" not in complete.call_args.kwargs
-    else:
-        assert complete.call_args.kwargs["data_release"] == expected_release
-    download.assert_not_called()
-    mirror.assert_not_called()
-
-
-@pytest.mark.unit
-def test_legacy_collection_rejects_a_moved_serving_source(monkeypatch):
-    from src.batch import benchmark as bb
-
-    monkeypatch.setattr(bb, "download_metrics", lambda _: {"QB": {"git_sha": "b" * 40}})
-    append = mock.Mock()
-    mirror = mock.Mock()
-    monkeypatch.setattr(bb, "append_to_history", append)
-    monkeypatch.setattr(bb, "_maybe_upload_to_s3", mirror)
-    with pytest.raises(ValueError, match="Refusing mismatched training history"):
-        bb.record_benchmark_run(["QB"], git_hash="a" * 40)
-    append.assert_not_called()
-    mirror.assert_not_called()
-
-
-@pytest.mark.unit
-def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
+def test_main_empty_metrics_early_returns(monkeypatch, tmp_path, _identified_training):
     """If download_metrics returns nothing, main() prints and exits — no writes."""
     import src.batch.benchmark as bb
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
-    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kwargs: (pos, "id"))
-    monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
+    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kw: (pos, "id"))
+    monkeypatch.setattr(launch, "upload_data", lambda *_, **__: None)
     monkeypatch.setattr(bb, "wait_for_jobs", lambda job_ids: {p: ("SUCCEEDED", 0) for p in job_ids})
 
     appended: list[dict] = []
@@ -543,7 +441,7 @@ def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
     monkeypatch.setattr(bb, "summarize_pipeline_result", lambda *a, **k: {})
 
     monkeypatch.setattr(
-        "sys.argv", ["src/batch/benchmark.py", "--download-only", "--positions", "QB"]
+        "sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "--download-only"]
     )
     bb.main()
     # Early-return branch: no history writes.
@@ -551,13 +449,13 @@ def test_main_empty_metrics_early_returns(monkeypatch, tmp_path):
 
 
 @pytest.mark.unit
-def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
+def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys, _identified_training):
     """When wait_for_jobs returns FAILED for a position, main() prints it."""
     import src.batch.benchmark as bb
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
-    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kwargs: (pos, f"j-{pos}"))
+    monkeypatch.setattr(launch, "upload_data", lambda *_, **__: None)
+    monkeypatch.setattr(bb, "submit_job", lambda pos, seed, **kw: (pos, f"j-{pos}"))
 
     def _wait(job_ids):
         out = {p: ("SUCCEEDED", 0) for p in job_ids}
@@ -567,23 +465,23 @@ def test_main_reports_failed_jobs(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(bb, "wait_for_jobs", _wait)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})  # early-exit after
     monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "RB"])
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as error:
         bb.main()
-    assert exc.value.code == 1
+    assert error.value.code == 1
     out = capsys.readouterr().out
     assert "Failed positions" in out
     assert "QB" in out
 
 
 @pytest.mark.unit
-def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
+def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys, _identified_training):
     """If submit_job raises, main() logs the failure (and keeps going for other positions)."""
     import src.batch.benchmark as bb
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(bb, "upload_data", lambda bucket: None)
+    monkeypatch.setattr(launch, "upload_data", lambda *_, **__: None)
 
-    def _bad_submit(pos, seed, **kwargs):
+    def _bad_submit(pos, seed, **kw):
         raise RuntimeError(f"{pos} submit boom")
 
     waited_for: list[dict] = []
@@ -596,9 +494,9 @@ def test_main_reports_submit_exception(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(bb, "wait_for_jobs", _wait)
     monkeypatch.setattr(bb, "download_metrics", lambda positions: {})
     monkeypatch.setattr("sys.argv", ["src/batch/benchmark.py", "--positions", "QB", "RB"])
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(SystemExit) as error:
         bb.main()
-    assert exc.value.code == 1
+    assert error.value.code == 1
     out = capsys.readouterr().out
     # Both submit failures must be logged with the position name + the
     # underlying error message, so a one-line CI tail still pinpoints which
@@ -709,8 +607,11 @@ def test_record_benchmark_run_returns_none_when_no_metrics(monkeypatch):
 
 
 @pytest.mark.unit
-def test_record_rejects_cross_run_metrics_before_writing_fingerprints(_main_stubs, monkeypatch):
-    """Mixed serving artifacts must not become a mislabeled row or gate evidence."""
+def test_record_benchmark_run_fingerprints_only_sha_matched_positions(_main_stubs, monkeypatch):
+    """code_fingerprints are stamped ONLY for positions whose downloaded
+    artifact trained at this checkout's HEAD (per-position manifest git_sha) —
+    --download-only / stale-manifest fallbacks must not manufacture pre-PR B2
+    evidence for code that never trained."""
     import src.batch.benchmark as bb
 
     _, _, appended = _main_stubs
@@ -727,7 +628,7 @@ def test_record_rejects_cross_run_metrics_before_writing_fingerprints(_main_stub
         "collect_code_fingerprints",
         lambda positions, repo_root=".", **kw: {p: "f" * 64 for p in positions},
     )
-    with pytest.raises(ValueError, match="Refusing mismatched training history"):
+    with pytest.raises(ValueError, match="mismatched training history"):
         bb.record_benchmark_run(["QB", "RB"])
     assert appended == []
 

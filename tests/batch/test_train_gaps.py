@@ -76,8 +76,8 @@ def test_download_if_stale_cache_hit_skips_download(tmp_path, capsys):
 
 @pytest.mark.unit
 def test_sync_raw_data_downloads_every_parquet_key(monkeypatch, tmp_path):
-    """Paginator yields pages of objects; only .parquet keys trigger download."""
     monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+    """Paginator yields pages of objects; only .parquet keys trigger download."""
     from src.batch import train as t
 
     monkeypatch.chdir(tmp_path)
@@ -320,10 +320,6 @@ def _stub_main_io(t, monkeypatch, *, runner_returns=_UNSET):
     """
     import pandas as pd
 
-    monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
-    monkeypatch.setattr(t, "load_source", lambda *a: {})
-    monkeypatch.setattr(t.boto3, "client", lambda *a, **k: object())
-
     monkeypatch.setattr(t, "sync_raw_data", lambda bucket: None)
     monkeypatch.setattr(t, "download_data", lambda *a, **k: None)
     monkeypatch.setattr(t, "upload_artifacts", lambda *a, **k: None)
@@ -337,6 +333,16 @@ def _stub_main_io(t, monkeypatch, *, runner_returns=_UNSET):
         lambda path: pd.DataFrame({"player_id": ["P"], "season": [2024], "week": [1]}),
     )
     if runner_returns is not _UNSET:
+        for name in (
+            "FF_DATASET_ID",
+            "FF_BUILD_PLAN_ID",
+            "FF_REQUIRE_BUILD_PLAN",
+            "FF_DATA_FORMAT",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "d" * 40)
+        monkeypatch.setattr("src.artifacts.source.image_source_sha", lambda: "d" * 40)
+        monkeypatch.setattr("src.artifacts.publication.prepare_training", lambda *a, **k: None)
         monkeypatch.setattr(t, "get_runner", lambda pos: lambda *a, **k: runner_returns)
 
 
@@ -362,6 +368,10 @@ def test_main_ablation_dispatch_skips_upload(tmp_path, monkeypatch):
         "upload_artifacts",
         lambda *a, **k: pytest.fail("upload_artifacts fired on ablation path"),
     )
+    monkeypatch.setattr(
+        "src.artifacts.publication.prepare_training",
+        lambda *a, **k: pytest.fail("Nonpublishing ablation attempted publication preparation"),
+    )
 
     with mock.patch("sys.argv", ["train.py", "--position", "RB", "--ablation", "rb-gate"]):
         t.main()
@@ -372,6 +382,7 @@ def test_main_ablation_dispatch_skips_upload(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_main_raises_when_pipeline_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     """``result is None`` → RuntimeError before the metrics write."""
     from src.batch import train as t
 
@@ -388,6 +399,7 @@ def test_main_raises_when_pipeline_returns_none(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_main_raises_when_src_model_dir_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     """If ``{pos}/outputs/models/`` doesn't exist, main refuses to upload."""
     from src.batch import train as t
 

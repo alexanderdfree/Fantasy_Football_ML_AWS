@@ -172,7 +172,7 @@ class TestKDstScoringColumns:
         — confirming the mirror is correct, not a fabricated bug."""
         import src.serving.app as app_mod
 
-        monkeypatch.setattr(app_mod, "_cache", {})
+        monkeypatch.setattr(app_mod._default_state, "cache", {})
         monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "sc"))
         _stub_base_data_loaders(monkeypatch, app_mod)
 
@@ -194,7 +194,7 @@ class TestKDstScoringColumns:
         """F33: every model pred column inits to NaN (uniform failure sentinel)."""
         import src.serving.app as app_mod
 
-        monkeypatch.setattr(app_mod, "_cache", {})
+        monkeypatch.setattr(app_mod._default_state, "cache", {})
         monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "sc"))
         _stub_base_data_loaders(monkeypatch, app_mod)
 
@@ -218,7 +218,7 @@ class TestWikiRenderMtimeInvalidation:
         doc = tmp_path / "doc.md"
         doc.write_text("# First\n\nhello\n", encoding="utf-8")
 
-        monkeypatch.setattr(app_mod, "_cache", {})
+        monkeypatch.setattr(app_mod._default_state, "cache", {})
         monkeypatch.setattr(
             wiki,
             "WIKI_DOCS",
@@ -250,7 +250,7 @@ class TestWikiRenderMtimeInvalidation:
 
         doc = tmp_path / "doc.md"
         doc.write_text("# Stable\n", encoding="utf-8")
-        monkeypatch.setattr(app_mod, "_cache", {})
+        monkeypatch.setattr(app_mod._default_state, "cache", {})
         monkeypatch.setattr(
             wiki, "WIKI_DOCS", {"d": {"name": "Doc", "group": "G", "path": "doc.md"}}
         )
@@ -344,13 +344,10 @@ class TestAllPositionsSentinelRecheck:
 
 
 class TestEnsureMetricsNoHydrateOnSentinelAdvance:
-    def test_sentinel_advance_skips_hydrate(self, monkeypatch, tmp_path):
+    def test_sentinel_advance_skips_hydrate(self, monkeypatch):
         import src.serving.app as app_mod
 
         app_mod._cache.clear()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(core, "_ensure_base_data", lambda: None)
-        monkeypatch.setattr(core, "_compute_models_fingerprint", lambda: ("current-inputs", []))
         # Pretend an aggregate is cached and a position's sentinel advanced.
         app_mod._cache["metrics_by_format"] = {"ppr": "STALE"}
         app_mod._cache["positions_loaded"] = {"QB"}

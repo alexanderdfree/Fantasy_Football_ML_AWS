@@ -204,6 +204,7 @@ def _build_jobs(
             label, _ = VARIANTS[variant_key]
             jobs.append(
                 AblationJob(
+                    context_aware=True,
                     position=position,
                     seed=seed,
                     variant=variant_key,

@@ -162,6 +162,7 @@ def test_isolation_restores_cwd_and_preserves_cache_policy_on_failure(tmp_path, 
         isolated_outputs(
             str(data),
             share_cache=True,
+            legacy_cwd=True,
         ),
     ):
         isolated = Path.cwd()
@@ -172,8 +173,30 @@ def test_isolation_restores_cwd_and_preserves_cache_policy_on_failure(tmp_path, 
     assert Path.cwd() == tmp_path
     assert not isolated.exists()
     assert not (tmp_path / "model.pt").exists()
-    with isolated_outputs(str(data)):
+    with isolated_outputs(str(data), legacy_cwd=True):
         assert not Path(".cache").exists()
+
+
+def test_context_isolation_keeps_cwd_and_separates_output_roots(tmp_path, monkeypatch):
+    from src.training.context import current_context
+
+    monkeypatch.chdir(tmp_path)
+    data = tmp_path / "data"
+    data.mkdir()
+    with isolated_outputs(str(data)) as first:
+        assert Path.cwd() == tmp_path
+        path = first.output_dir("RB") / "model"
+        path.parent.mkdir(parents=True)
+        path.write_text("first")
+        with isolated_outputs(str(data)) as second:
+            assert Path.cwd() == tmp_path
+            assert second.output_root != first.output_root
+            assert not (second.output_dir("RB") / "model").exists()
+            assert current_context() is second
+        assert current_context() is first
+        assert path.read_text() == "first"
+    assert current_context() is None
+    assert not first.output_root.exists()
 
 
 @pytest.mark.parametrize("kind", ["cell", "group"])

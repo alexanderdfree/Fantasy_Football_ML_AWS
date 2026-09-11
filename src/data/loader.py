@@ -1,5 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
 import pandas as pd
 
@@ -27,9 +28,9 @@ from src.data.identity import (
     bridge_snap_counts,
     load_player_id_bridge,
     load_player_metadata,
+    schedule_team_code_normalization,
     valid_player_ids,
 )
-from src.data.nflcom_loader import schedule_team_code_normalization
 from src.data.participation import restore_offensive_appearances
 from src.data.redzone_pbp import RZ_PBP_FEATURE_COLUMNS, reconstruct_redzone_from_pbp
 from src.data.release import DataReleaseError, assert_source_fetch_allowed
@@ -448,16 +449,20 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
         return load_contracts(seasons, cache_dir=cache_dir)
 
     with ThreadPoolExecutor(max_workers=10) as pool:
-        weekly_f = pool.submit(_fetch_weekly)
-        rosters_f = pool.submit(_fetch_rosters)
-        weekly_rosters_f = pool.submit(_fetch_weekly_rosters)
-        schedules_f = pool.submit(_fetch_schedules)
-        snap_counts_f = pool.submit(_fetch_snap_counts)
-        injuries_f = pool.submit(_fetch_injuries)
-        redzone_f = pool.submit(_fetch_redzone)
-        ff_opp_f = pool.submit(_fetch_ff_opp)
-        qbr_f = pool.submit(_fetch_qbr)
-        contracts_f = pool.submit(_fetch_contracts)
+
+        def submit(function):
+            return pool.submit(copy_context().run, function)
+
+        weekly_f = submit(_fetch_weekly)
+        rosters_f = submit(_fetch_rosters)
+        weekly_rosters_f = submit(_fetch_weekly_rosters)
+        schedules_f = submit(_fetch_schedules)
+        snap_counts_f = submit(_fetch_snap_counts)
+        injuries_f = submit(_fetch_injuries)
+        redzone_f = submit(_fetch_redzone)
+        ff_opp_f = submit(_fetch_ff_opp)
+        qbr_f = submit(_fetch_qbr)
+        contracts_f = submit(_fetch_contracts)
         weekly = weekly_f.result()
         rosters = rosters_f.result()
         weekly_rosters = weekly_rosters_f.result()

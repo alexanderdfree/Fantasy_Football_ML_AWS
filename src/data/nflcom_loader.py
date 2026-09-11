@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError, URLError
@@ -39,6 +38,18 @@ from src.config import CACHE_DIR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
 from src.data.external_sources import _seasons_cache_signature
+from src.data.identity import (
+    TEAM_CODE_MAP as TEAM_CODE_MAP,
+)
+from src.data.identity import (
+    normalize_player_name as normalize_player_name,
+)
+from src.data.identity import (
+    normalize_team_code as normalize_team_code,
+)
+from src.data.identity import (
+    schedule_team_code_normalization as schedule_team_code_normalization,
+)
 
 NFLCOM_BASE = "https://raw.githubusercontent.com/hvpkod/NFL-Data/main/NFL-data-Players"
 NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
@@ -61,7 +72,6 @@ _MAX_FETCH_WORKERS = 8  # Concurrent (year, week, position) HTTP fetches.
 # so this approximation is fine. Documented here so it shows up in code search.
 _FUM_LOST_RATIO = 0.5
 
-_SUFFIX_TOKENS = frozenset({"jr", "sr", "ii", "iii", "iv", "v"})
 
 # Map NFL.com column names -> our internal target names, per position.
 # QB/RB/WR/TE share the offensive-stat schema and we map every relevant column.
@@ -97,123 +107,6 @@ _ALL_TARGET_COLUMNS = {
     "receptions",
     "fumbles_lost",
 }
-
-# Historical -> canonical NFL team-abbr mapping. Both NFL.com and nflverse have
-# historically inconsistent codes; canonicalize one side so the join works.
-#
-# This is the **canonical project-wide team-code normalization base map** — the
-# single source of truth for relocation/abbr aliases. It targets the
-# *NFL.com/roster* join universe, which canonicalizes the Rams to ``"LAR"``
-# (``import_seasonal_rosters`` and NFL.com projection CSVs). Callers should
-# import ``TEAM_CODE_MAP`` / call ``normalize_team_code(code)`` rather than
-# hand-maintaining a parallel dictionary.
-#
-# Join-universe caveat (do NOT "fix" by collapsing the two): the nflverse
-# *schedule* + *weekly* releases use ``"LA"`` for the Rams (verified across
-# 2016-2025: ``import_schedules`` and ``import_weekly_data`` both emit ``LA``,
-# never ``LAR``). A merge that maps the schedule's ``LA`` to ``LAR`` while the
-# player frame still carries ``LA`` silently misses every Rams row. The
-# schedule-join consumers therefore derive their normalization from this base
-# via ``schedule_team_code_normalization()`` below, which remaps the Rams back
-# to ``LA`` and drops the historical ``STL`` to ``LA`` (not ``LAR``). That
-# helper is the *one* place the schedule-universe variant is defined;
-# ``src/shared/weather_features.TEAM_CODE_NORMALIZATION`` is built from it.
-TEAM_CODE_MAP: dict[str, str] = {
-    "OAK": "LV",
-    "SD": "LAC",
-    "STL": "LAR",
-    "WSH": "WAS",
-    "JAX": "JAX",
-    "JAC": "JAX",
-    "LA": "LAR",
-}
-
-
-def normalize_team_code(code: str | None) -> str:
-    """Map a historical NFL team code to its current canonical abbreviation.
-
-    Canonical project-wide helper for team-code normalization — importable
-    from ``src.data.nflcom_loader`` by any bundle that needs to align
-    franchise codes across data sources (NFL.com projections, nflverse
-    schedules/PBP, internal stats). Examples:
-
-        >>> normalize_team_code("OAK")
-        'LV'
-        >>> normalize_team_code("STL")
-        'LAR'
-        >>> normalize_team_code("@OAK")  # NFL.com prefixes opponent for away games
-        'LV'
-        >>> normalize_team_code(None)
-        ''
-
-    Parameters
-    ----------
-    code : str | None
-        The raw team code. ``None`` / NaN / empty string returns ``""``.
-        A leading ``"@"`` (NFL.com away-game prefix) is stripped.
-        Unknown codes pass through unchanged (after upper-case + strip).
-
-    Returns
-    -------
-    str
-        The canonical NFL team abbreviation, or ``""`` for missing input.
-    """
-    if code is None or (isinstance(code, float) and pd.isna(code)):
-        return ""
-    s = str(code).strip().upper()
-    # NFL.com sometimes prefixes opponent with '@' for away games — strip.
-    s = s.lstrip("@")
-    return TEAM_CODE_MAP.get(s, s)
-
-
-def schedule_team_code_normalization() -> dict[str, str]:
-    """Return the relocation map for the *nflverse schedule/weekly* join universe.
-
-    Derived from :data:`TEAM_CODE_MAP` (the single source of truth) with the
-    one documented join-direction difference: nflverse schedules and weekly
-    data canonicalize the Rams to ``"LA"`` (not ``"LAR"``), so the historical
-    ``STL`` maps to ``LA`` and the modern ``LA`` is left untouched (no
-    ``LA -> LAR`` rewrite, which would break the Rams join against player rows
-    that already carry ``LA``). The ``WSH/JAX/JAC`` entries are dropped because
-    nflverse already emits ``WAS``/``JAX`` consistently — only the three
-    relocated franchises ever differ between the schedule's historical codes
-    and the player frame's modern codes.
-
-    Consumed by ``src.shared.weather_features.TEAM_CODE_NORMALIZATION`` so the
-    schedule-side normalization has exactly one definition.
-    """
-    base = {k: v for k, v in TEAM_CODE_MAP.items() if k in ("OAK", "SD", "STL")}
-    base["STL"] = "LA"  # nflverse schedule/weekly uses LA for the Rams, not LAR.
-    return base
-
-
-def normalize_player_name(name: str | None) -> str:
-    """Canonicalize a player name for cross-source joining.
-
-    - Lowercase, strip leading/trailing whitespace.
-    - Drop trailing suffix tokens (Jr, Sr, II, III, IV, V).
-    - Drop punctuation entirely (apostrophes, periods, hyphens collapse to "").
-    - Collapse internal whitespace.
-
-    Examples:
-        "Patrick Mahomes II"   -> "patrick mahomes"
-        "Marvin Harrison Jr."  -> "marvin harrison"
-        "Ja'Marr Chase"        -> "jamarr chase"
-        "A.J. Brown"           -> "aj brown"
-        "Foo  Bar"             -> "foo bar"
-    """
-    if name is None or (isinstance(name, float) and pd.isna(name)):
-        return ""
-    s = str(name).strip().lower()
-    if not s:
-        return ""
-    # Drop punctuation. Keep whitespace and ascii letters/digits.
-    s = re.sub(r"[^\w\s]", "", s, flags=re.UNICODE)
-    # Tokenize, drop trailing suffix tokens (only at the end; "II Smith" stays).
-    tokens = s.split()
-    while tokens and tokens[-1] in _SUFFIX_TOKENS:
-        tokens.pop()
-    return " ".join(tokens)
 
 
 def _team_abbr_normalize(team: str | None) -> str:

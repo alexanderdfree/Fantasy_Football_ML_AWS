@@ -10,16 +10,34 @@ from src.te.config import POSITION_CONFIG  # noqa: I001
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
 from src.shared.run_pipeline_factory import cli_main
+from src.training.context import runner_context
 
 CONFIG = build_pipeline_config("TE", POSITION_CONFIG)
 
 
-def run(train_df=None, val_df=None, test_df=None, seed=42, config=None):
-    return run_pipeline("TE", config or CONFIG, train_df, val_df, test_df, seed)
+@runner_context
+def run(train_df=None, val_df=None, test_df=None, seed=42, config=None, *, context=None):
+    return run_pipeline(
+        "TE",
+        config or CONFIG,
+        train_df,
+        val_df,
+        test_df,
+        seed,
+        **({"context": context} if context is not None else {}),
+    )
 
 
-def run_cv(full_df=None, test_df=None, seed=42, config=None):
-    return run_cv_pipeline("TE", config or CONFIG, full_df, test_df, seed)
+@runner_context
+def run_cv(full_df=None, test_df=None, seed=42, config=None, *, context=None):
+    return run_cv_pipeline(
+        "TE",
+        config or CONFIG,
+        full_df,
+        test_df,
+        seed,
+        **({"context": context} if context is not None else {}),
+    )
 
 
 if __name__ == "__main__":

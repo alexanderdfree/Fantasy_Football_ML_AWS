@@ -15,21 +15,20 @@ from botocore.exceptions import ClientError
 
 from src.scripts import seed_s3_models as seed
 from src.shared import model_sync
+from tests.artifacts.test_publication import Store
 
 pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class FakeS3:
+class FakeS3(Store):
     def __init__(self):
-        self.objects = {}
+        super().__init__()
         self.reads = []
 
     def get_object(self, *, Bucket, Key):
         self.reads.append(Key)
-        if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        return {"Body": io.BytesIO(self.objects[Key]), "ETag": '"seed-etag"'}
+        return super().get_object(Bucket, Key)
 
 
 def put_models(s3, position="QB", *, prefix="models", legacy_manifest=False):
@@ -145,38 +144,117 @@ def test_all_candidates_validate_before_first_s3_write(monkeypatch, tmp_path):
     assert validated == list(model_sync.POSITIONS)
 
 
-def test_seed_initializes_then_verifies_and_restores_environment(monkeypatch, tmp_path):
+def pending_models(root, position="QB", sha="a" * 40):
+    directory = root / "src" / position.lower() / "outputs/models"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "benchmark_metrics.json").write_text(
+        json.dumps({"position": position, "git_sha": sha})
+    )
+    return directory
+
+
+@pytest.fixture
+def seed_world(monkeypatch):
+    from src.artifacts import source
+    from src.shared import smoke_test
+
     s3 = FakeS3()
-    registered = []
-    monkeypatch.setattr(seed, "_check_models", lambda *_: None)
-    monkeypatch.setattr(seed, "_register_source", lambda *args: registered.append(args))
+    sha = "a" * 40
+    monkeypatch.setattr(source, "image_source_sha", lambda **_: sha)
+    monkeypatch.setattr(smoke_test, "run_smoke_test", lambda *_: None)
+
+    def register(client, bucket, prefix, source_sha, root):
+        assert client is s3 and source_sha == sha
+        s3.objects[source.source_key(prefix, sha)] = json.dumps(
+            {"source_sha": sha, "source_order": 1, "lineage": [sha]}
+        ).encode()
+
+    monkeypatch.setattr(seed, "_register_source", register)
+    return s3, sha
+
+
+def test_seed_initializes_then_verifies_without_mutating_environment(
+    seed_world, monkeypatch, tmp_path
+):
+    s3, sha = seed_world
+    pending_models(tmp_path)
     monkeypatch.setenv("FF_MODEL_S3_PREFIX", "original")
     monkeypatch.delenv("FF_TRAIN_GIT_SHA", raising=False)
-
-    def upload(bucket, position, directory):
-        assert registered
-        assert bucket == "bucket"
-        assert directory == tmp_path / "src/qb/outputs/models"
-        assert os.environ["FF_MODEL_S3_PREFIX"] == "custom"
-        assert os.environ["FF_TRAIN_GIT_SHA"] == "sha"
-        put_models(s3, position, prefix="custom")
-
-    monkeypatch.setattr(seed, "_upload_initial_artifact", upload)
-    result = seed.seed_models(s3, "bucket", "custom", tmp_path, "sha", ("QB",))
+    result = seed.seed_models(s3, "bucket", "custom", tmp_path, sha, ("QB",))
     assert result[0]["source"] == "stable"
+    manifest = model_sync.load_manifest(s3, "bucket", "custom", "QB")
+    assert manifest["stable"]["origin"] == "operator-seed"
+    assert manifest["source_frontier"] == {"source_sha": sha, "source_order": 1}
+    assert manifest["stable"]["key"].startswith("custom/releases/v3/QB/history/")
+    assert not any("intents/" in key or "run-outputs/" in key for key in s3.objects)
     assert os.environ["FF_MODEL_S3_PREFIX"] == "original"
     assert "FF_TRAIN_GIT_SHA" not in os.environ
 
 
-def test_upload_requests_conditional_initialization(monkeypatch, tmp_path):
-    from src.batch import train
-
-    calls = []
+def test_all_captured_candidates_validate_before_source_registration(
+    seed_world, monkeypatch, tmp_path
+):
+    s3, sha = seed_world
+    pending_models(tmp_path, "QB")
+    pending_models(tmp_path, "DST", sha="b" * 40)
     monkeypatch.setattr(
-        train, "upload_artifacts", lambda *args, **kwargs: calls.append((args, kwargs))
+        seed, "_register_source", lambda *_: pytest.fail("registered invalid request")
     )
-    seed._upload_initial_artifact("bucket", "QB", tmp_path)
-    assert calls == [(("bucket", "QB", str(tmp_path)), {"initialize_only": True})]
+    with pytest.raises(RuntimeError, match="actual source and position"):
+        seed.seed_models(s3, "bucket", "models", tmp_path, sha, ("QB", "DST"))
+    assert not s3.objects
+
+
+def test_initialize_seed_loses_create_race_without_overwriting_winner(
+    seed_world, monkeypatch, tmp_path
+):
+    s3, sha = seed_world
+    pending_models(tmp_path)
+    put = s3.put_object
+    winner = []
+
+    def racing_put(**kwargs):
+        if kwargs["Key"] == model_sync.manifest_key("models", "QB"):
+            assert kwargs["IfNoneMatch"] == "*"
+            winner.append(put_models(s3))
+        return put(**kwargs)
+
+    monkeypatch.setattr(s3, "put_object", racing_put)
+    seed.seed_models(s3, "bucket", "models", tmp_path, sha, ("QB",))
+    assert model_sync.load_manifest(s3, "bucket", "models", "QB")["stable"]["key"] == winner[0]
+
+
+@pytest.mark.parametrize("protocol", ["ours", "previous", "v2"])
+def test_initialize_seed_rechecks_every_protocol_after_validation(
+    seed_world, monkeypatch, tmp_path, protocol
+):
+    from src.artifacts import publication, source
+
+    s3, sha = seed_world
+    pending_models(tmp_path)
+    original = publication.validate_seed
+    calls = []
+    winner = []
+
+    def validate(*args):
+        original(*args)
+        calls.append(True)
+        if len(calls) == 2:  # after whole-request preflight, before initial upload
+            key = put_models(s3)
+            pointer = s3.objects.pop(model_sync.manifest_key("models", "QB"))
+            destination = {
+                "ours": model_sync.manifest_key,
+                "previous": model_sync.previous_protocol_manifest_key,
+                "v2": model_sync.legacy_manifest_key,
+            }[protocol]("models", "QB")
+            s3.objects[destination] = pointer
+            winner.append(key)
+
+    monkeypatch.setattr(publication, "validate_seed", validate)
+    seed.seed_models(s3, "bucket", "models", tmp_path, sha, ("QB",))
+    assert model_sync.load_manifest(s3, "bucket", "models", "QB")["stable"]["key"] == winner[0]
+    assert not any("/history/seed-" in key for key in s3.objects)
+    assert source.source_key("models", sha) in s3.objects
 
 
 def test_verify_only_cli_never_registers_or_uploads(monkeypatch):
@@ -235,7 +313,7 @@ def test_bootstrap_failed_preflight_never_calls_aws(tmp_path):
     assert not calls.exists()
 
 
-def test_task_role_reconciliation_keeps_serving_permissions_and_scoped_writes():
+def test_task_role_reconciliation_keeps_artifact_only_read_permissions():
     policy = json.loads((ROOT / "infra/aws/task-role-policy.json").read_text())
 
     def allowed(action, resource):
@@ -254,14 +332,13 @@ def test_task_role_reconciliation_keeps_serving_permissions_and_scoped_writes():
     bucket = "arn:aws:s3:::ff-predictor-training"
     assert allowed("s3:ListBucket", bucket)
     for suffix in (
-        "/data/raw/schedules.parquet",
-        "/data/splits/train.parquet",
         "/models/QB/releases/manifest.json",
         "/models/QB/releases/history/release/model.tar.gz",
         "/models/predictions_cache/cache.tar.gz",
     ):
         assert allowed("s3:GetObject", bucket + suffix)
-    assert allowed("s3:PutObject", bucket + "/models/predictions_cache/cache.tar.gz")
+    assert not allowed("s3:PutObject", bucket + "/models/predictions_cache/cache.tar.gz")
+    assert not allowed("s3:GetObject", bucket + "/data/raw/schedules.parquet")
     assert not allowed("s3:PutObject", bucket + "/models/QB/releases/manifest.json")
     assert not allowed(
         "s3:DeleteObject", bucket + "/models/QB/releases/history/release/model.tar.gz"

@@ -42,7 +42,43 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import src.serving.core as core
-from src.shared.prediction_cache import current_generation, publish_generation, read_generation
+from src.artifacts import serving_snapshot as prediction_cache
+from src.artifacts.serving_snapshot import read_generation
+from src.serving import state
+from src.serving.app import app
+
+
+def current_generation(directory):
+    try:
+        return read_generation(directory)[0]
+    except (OSError, ValueError):
+        return None
+
+
+def publish_generation(directory, files):
+    """Build adversarial captured bytes without bypassing reader validation."""
+    import hashlib
+
+    manifest = {
+        "schema_version": 1,
+        "cache_schema_version": core._PREDICTIONS_CACHE_SCHEMA_VERSION,
+        "files": {
+            name: {"bytes": len(value), "sha256": hashlib.sha256(value).hexdigest()}
+            for name, value in files.items()
+        },
+    }
+    encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    generation = hashlib.sha256(encoded).hexdigest()
+    target = directory / "generations" / generation
+    target.mkdir(parents=True, exist_ok=True)
+    for name, value in files.items():
+        (target / name).write_bytes(value)
+    (target / "manifest.json").write_bytes(encoded)
+    (directory / "current.json").write_text(
+        json.dumps({"schema_version": 1, "generation": generation})
+    )
+    return target
+
 
 pytestmark = pytest.mark.unit
 
@@ -116,7 +152,7 @@ def test_sentinel_only_invalidation_rejects_old_generation_without_deleting_read
     old, files = read_generation(cache_dir)
     core._invalidate_metrics_cache(reason="sentinel-only-refresh")
     assert old.is_dir()
-    assert core._snapshot_path() is None
+    assert core._snapshot_response_bytes()[0] is None
     assert core._try_hydrate_from_disk() is False
 
     # Another process can finish a new generation without our invalidation
@@ -124,14 +160,13 @@ def test_sentinel_only_invalidation_rejects_old_generation_without_deleting_read
     snapshot = json.loads(files["snapshot.json"])
     snapshot["generated_at"] = "2026-09-10T13:00:00+00:00"
     publish_generation(cache_dir, {**files, "snapshot.json": json.dumps(snapshot).encode()})
-    assert core._snapshot_path() is not None
+    assert core._snapshot_response_bytes()[0] is not None
     assert core._try_hydrate_from_disk() is True
 
 
 def test_replacement_worker_cannot_hydrate_or_upload_invalidated_generation(
     cache_dir, fingerprint_files, monkeypatch
 ):
-    from src.shared import prediction_cache
 
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
@@ -142,9 +177,9 @@ def test_replacement_worker_cannot_hydrate_or_upload_invalidated_generation(
     # Replacement gunicorn worker has no predecessor's in-memory error marker.
     core.app_pkg._cache.clear()
     assert core._try_hydrate_from_disk() is False
-    assert core._snapshot_path() is None
+    assert core._snapshot_response_bytes()[0] is None
     with pytest.raises(ValueError):
-        prediction_cache.bundle_generation(cache_dir)
+        prediction_cache.read_generation(cache_dir)
     assert (old / "predictions.parquet").read_bytes() == files["predictions.parquet"]
 
 
@@ -170,7 +205,7 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
         "positions_loaded": set(positions),
         "positions_mtime": dict(mtimes),
     }
-    monkeypatch.setattr(core.app_pkg, "_cache", worker_a)
+    monkeypatch.setattr(core.app_pkg.DEFAULT_STATE, "cache", worker_a)
     monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes[pos])
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     _persist_fixture_cache()
@@ -179,12 +214,12 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
     # writes its tombstone. Its mtimes therefore cannot reveal stale predictions.
     mtimes["QB"] = 200.0
     worker_b = {}
-    monkeypatch.setattr(core.app_pkg, "_cache", worker_b)
+    monkeypatch.setattr(core.app_pkg.DEFAULT_STATE, "cache", worker_b)
     assert core._try_hydrate_from_disk()
     assert worker_b["positions_mtime"]["QB"] == 200.0
-    monkeypatch.setattr(core.app_pkg, "_cache", worker_a)
+    monkeypatch.setattr(core.app_pkg.DEFAULT_STATE, "cache", worker_a)
     core._invalidate_metrics_cache(reason="sentinel-only-refresh")
-    monkeypatch.setattr(core.app_pkg, "_cache", worker_b)
+    monkeypatch.setattr(core.app_pkg.DEFAULT_STATE, "cache", worker_b)
     calls = []
 
     def load_splits(results):
@@ -198,7 +233,7 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
 
     monkeypatch.setattr(core, "_load_splits_locked", load_splits)
     monkeypatch.setattr(core, "_apply_position_models", apply)
-    response = core.app_pkg.app.test_client().get(endpoint)
+    response = app.test_client().get(endpoint)
     assert response.status_code == 200
     if endpoint == "/api/metrics":
         assert set(calls) == set(positions)
@@ -211,7 +246,6 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
 def test_delayed_invalidation_preserves_another_workers_new_generation(
     cache_dir, fingerprint_files, monkeypatch
 ):
-    from src.shared import prediction_cache
 
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
     core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
@@ -234,15 +268,15 @@ def test_delayed_invalidation_preserves_another_workers_new_generation(
     assert read_generation(cache_dir) == (new, new_files)
     core.app_pkg._cache.clear()
     assert core._try_hydrate_from_disk()
-    assert core.app_pkg._cache["prediction_cache_generation"] == new.name
+    assert core.app_pkg._cache["snapshot_generation"] == new.name
 
 
 def test_recompute_identical_predictions_publishes_new_generation_after_invalidation(
     cache_dir, fingerprint_files, monkeypatch
 ):
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
-    # Even an absent/unchanged optional snapshot cannot be the uniqueness key.
-    monkeypatch.setattr(core, "_snapshot_bytes", lambda: None)
+    # An unchanged browser snapshot cannot be the uniqueness key.
+    monkeypatch.setattr(core, "_snapshot_bytes", lambda: b'{"weeks": [], "scoring": {}}')
     results, metrics = _fake_results(), _fake_metrics()
     core.app_pkg._cache.update(results=results, metrics_by_format=metrics)
     _persist_fixture_cache()
@@ -272,7 +306,7 @@ def cache_dir(tmp_path, monkeypatch):
     target = tmp_path / "serving_cache"
     target.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(target))
-    monkeypatch.setattr(app_mod, "_cache", {})
+    monkeypatch.setattr(app_mod._default_state, "cache", {})
     return target
 
 
@@ -407,7 +441,7 @@ def test_equal_manifest_identity_hydrates_across_containers_with_different_times
     (roots[1] / "src/qb/outputs/.manifest-etag").write_text('"QB-new-manifest"')
     core.app_pkg._cache.clear()
     assert core._try_hydrate_from_disk() is False
-    assert core._snapshot_path() is None
+    assert core._snapshot_response_bytes()[0] is None
 
 
 def test_fingerprint_skips_missing_paths(tmp_path, monkeypatch):
@@ -517,7 +551,7 @@ def _persist_hydratable_position(cache_dir, monkeypatch, position):
     assert core._try_hydrate_from_disk() is True
     pd.testing.assert_frame_equal(core.app_pkg._cache["results"], results)
     generation = _generation(cache_dir)
-    assert core._snapshot_path() == str(generation / core._SNAPSHOT_JSON)
+    assert core._snapshot_response_bytes()[0] == (generation / core._SNAPSHOT_JSON).read_bytes()
     core.app_pkg._cache.clear()
     return generation
 
@@ -543,7 +577,7 @@ def test_hydrate_invalidates_changed_historical_inputs(
     pd.DataFrame({"value": [7]}).to_parquet(source, index=False)
     assert core._try_hydrate_from_disk() is False
     assert "results" not in core.app_pkg._cache
-    assert core._snapshot_path() is None
+    assert core._snapshot_response_bytes()[0] is None
     # Reject this input fingerprint without removing another reader's files.
     retained, files = read_generation(cache_dir)
     assert retained == generation and core._SNAPSHOT_JSON in files
@@ -565,7 +599,7 @@ def test_hydrate_invalidates_changed_release_identity(
     marker.write_text(json.dumps({"release_id": "b" * 64}))
     assert core._try_hydrate_from_disk() is False
     assert "results" not in core.app_pkg._cache
-    assert core._snapshot_path() is None
+    assert core._snapshot_response_bytes()[0] is None
     retained, files = read_generation(cache_dir)
     assert retained == generation and core._SNAPSHOT_JSON in files
 
@@ -591,7 +625,7 @@ def test_hydrate_detects_same_size_kicker_change_after_sampled_head(
     assert changed != original
     assert core._try_hydrate_from_disk() is False
     assert "results" not in core.app_pkg._cache
-    assert core._snapshot_path() is None
+    assert core._snapshot_response_bytes()[0] is None
     retained, files = read_generation(cache_dir)
     assert retained == generation and core._SNAPSHOT_JSON in files
 
@@ -680,12 +714,12 @@ def test_expert_outage_cannot_publish_a_reusable_null_cache(
     _persist_fixture_cache()
     before = _generation(cache_dir)
     before_files = read_generation(cache_dir)[1]
-    assert uploads == [True]
+    assert uploads == []
     results.attrs[f"{source}_complete"] = False
     _persist_fixture_cache()
     assert _generation(cache_dir) == before
     assert read_generation(cache_dir)[1] == before_files
-    assert uploads == [True]
+    assert uploads == []
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is True
     assert app_mod._cache["results"].attrs[f"{source}_complete"] is True
@@ -731,7 +765,7 @@ def test_changed_model_inputs_cannot_relabel_existing_predictions(
     core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
     _persist_fixture_cache()
     previous, previous_files = read_generation(cache_dir)
-    assert uploads == [True]
+    assert uploads == []
 
     if change_during_serialization:
         serialize = pd.DataFrame.to_parquet
@@ -749,7 +783,7 @@ def test_changed_model_inputs_cannot_relabel_existing_predictions(
     core._persist_cache_to_disk()
 
     assert read_generation(cache_dir) == (previous, previous_files)
-    assert uploads == [True]
+    assert uploads == []
 
 
 def test_hydrate_rejects_model_change_during_parse(cache_dir, fingerprint_files, monkeypatch):
@@ -846,7 +880,7 @@ def test_hydrate_and_snapshot_refuse_changed_immutable_members(
 
     assert core._try_hydrate_from_disk() is False
     assert not core.app_pkg._cache
-    assert core.app_pkg.app.test_client().get("/api/snapshot").status_code == 404
+    assert app.test_client().get("/api/snapshot").status_code == 404
 
 
 def test_hydrate_ignores_valid_legacy_loose_files(cache_dir, fingerprint_files, monkeypatch):
@@ -861,7 +895,7 @@ def test_hydrate_ignores_valid_legacy_loose_files(cache_dir, fingerprint_files, 
 
     assert core._try_hydrate_from_disk() is False
     assert not core.app_pkg._cache
-    assert core.app_pkg.app.test_client().get("/api/snapshot").status_code == 404
+    assert app.test_client().get("/api/snapshot").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -872,17 +906,6 @@ def test_hydrate_ignores_valid_legacy_loose_files(cache_dir, fingerprint_files, 
 def test_atomic_write_survives_concurrent_persist(cache_dir, fingerprint_files, monkeypatch):
     """Two workers with different predictions commit whole browser/API views."""
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
-    worker = threading.local()
-
-    class IsolatedWorker:
-        # Gunicorn has a cache per process; thread-local state models that
-        # isolation while both writers share the real publication directory.
-        @property
-        def _cache(self):
-            return worker.cache
-
-    monkeypatch.setattr(core, "app_pkg", IsolatedWorker())
-
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
 
@@ -892,9 +915,10 @@ def test_atomic_write_survives_concurrent_persist(cache_dir, fingerprint_files, 
             results["ridge_pred_ppr"] = float(value)
             metrics = _fake_metrics()
             metrics["ppr"]["Ridge Regression"]["overall"]["mae"] = value
-            worker.cache = {"results": results, "metrics_by_format": metrics}
-            barrier.wait(timeout=5)
-            _persist_fixture_cache()
+            owner = state.ServingState(cache={"results": results, "metrics_by_format": metrics})
+            with state.use_state(owner):
+                barrier.wait(timeout=5)
+                _persist_fixture_cache()
         except BaseException as e:  # noqa: BLE001 — record + re-raise outside thread
             errors.append(e)
 
@@ -945,7 +969,7 @@ def _load_gunicorn_conf():
     return mod
 
 
-def test_post_fork_starts_daemon_thread_and_returns_quickly(monkeypatch):
+def test_post_fork_starts_daemon_thread_and_returns_quickly(monkeypatch, request):
     import src.serving.app as app_mod
 
     gunicorn_conf = _load_gunicorn_conf()
@@ -965,6 +989,7 @@ def test_post_fork_starts_daemon_thread_and_returns_quickly(monkeypatch):
 
     fake_worker = mock.MagicMock()
     fake_server = mock.MagicMock()
+    request.addfinalizer(lambda: gunicorn_conf.worker_exit(fake_server, fake_worker))
 
     t0 = time.monotonic()
     gunicorn_conf.post_fork(fake_server, fake_worker)
@@ -979,7 +1004,7 @@ def test_post_fork_starts_daemon_thread_and_returns_quickly(monkeypatch):
     release.set()
 
 
-def test_post_fork_swallows_warm_exception(monkeypatch):
+def test_post_fork_swallows_warm_exception(monkeypatch, request):
     """A failure inside the pre-warm thread must NOT propagate to gunicorn —
     the first user request will retry the load through the normal lazy path.
     """
@@ -997,6 +1022,7 @@ def test_post_fork_swallows_warm_exception(monkeypatch):
 
     fake_worker = mock.MagicMock()
     fake_server = mock.MagicMock()
+    request.addfinalizer(lambda: gunicorn_conf.worker_exit(fake_server, fake_worker))
 
     # Should not raise.
     gunicorn_conf.post_fork(fake_server, fake_worker)
@@ -1042,32 +1068,17 @@ def test_persist_writes_browser_snapshot(cache_dir, fingerprint_files, monkeypat
         assert {"nflcom_pred", "rotowire_pred"}.issubset(snap["scoring"][fmt][0])
 
 
-def test_hydrate_regenerates_snapshot_when_absent(cache_dir, fingerprint_files, monkeypatch):
-    """A valid generation whose manifest omits the optional snapshot regenerates
-    it locally from the selected generation so
-    ``/api/snapshot`` serves without waiting for the next retrain.
-    """
-    import src.serving.app as app_mod
-
-    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
-    app_mod._cache["results"] = _fake_results()
-    app_mod._cache["metrics_by_format"] = _fake_metrics()
+def test_hydrate_rejects_snapshot_absent_generation(cache_dir, fingerprint_files, monkeypatch):
+    """Schema 9 requires the browser snapshot; schema-8 caches must be rebuilt."""
+    core.app_pkg._cache.update(results=_fake_results(), metrics_by_format=_fake_metrics())
     _persist_fixture_cache()
-
-    # Commit the supported snapshot-absent shape. Deleting a member listed in
-    # an immutable manifest instead constitutes corruption and must be refused.
     _, files = read_generation(cache_dir)
     files.pop("snapshot.json")
-    without_snapshot = publish_generation(cache_dir, files)
-    assert not (without_snapshot / "snapshot.json").exists()
-
-    app_mod._cache.clear()
-    assert core._try_hydrate_from_disk() is True
-    regenerated = _generation(cache_dir)
-    assert regenerated != without_snapshot
-    assert (regenerated / "snapshot.json").is_file()
-    assert not (without_snapshot / "snapshot.json").exists()
-    assert app_mod.app.test_client().get("/api/snapshot").status_code == 200
+    incomplete = publish_generation(cache_dir, files)
+    core.app_pkg._cache.clear()
+    assert core._try_hydrate_from_disk() is False
+    assert app.test_client().get("/api/snapshot").status_code == 404
+    assert not (incomplete / "snapshot.json").exists()
 
 
 def test_snapshot_route_serves_file_without_triggering_compute(

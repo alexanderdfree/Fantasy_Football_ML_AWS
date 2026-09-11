@@ -6,6 +6,7 @@ from src.data import nfl_source
 from src.data.dst_scoring import SCORING_COLUMNS, SCORING_KEYS, load_dst_scoring_events
 from src.data.loader import load_team_week_stats
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
+from src.training.context import raw_data_dir
 
 
 def build_data(
@@ -35,7 +36,7 @@ def build_data(
     # Read src.config lazily (module-attr access, not an import-time name bind)
     # so a post-import mutation of src.config.SEASONS / CACHE_DIR — a mid-process
     # season rollover or a tuner broadening the range — is honored here. (#475)
-    cache_dir = config.CACHE_DIR
+    cache_dir = raw_data_dir(config.CACHE_DIR)
     seasons = config.SEASONS
     injected = weekly is not None or schedules is not None or team_stats is not None
     if scoring_events is None:
@@ -54,7 +55,7 @@ def build_data(
     if schedules is None:
         schedules = pd.read_parquet(f"{cache_dir}/schedules_{seasons[0]}_{seasons[-1]}.parquet")
     if team_stats is None:
-        team_stats = load_team_week_stats(seasons)
+        team_stats = load_team_week_stats(seasons, cache_dir=cache_dir)
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     # Normalize historical team codes (OAK/SD/STL → LV/LAC/LA) at the source so
     # every downstream ``team`` / ``opponent_team`` derived from the schedule

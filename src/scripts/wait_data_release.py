@@ -53,14 +53,15 @@ class AwsS3:
             return {"Body": io.BytesIO(Path(output.name).read_bytes())}
 
 
-def producer_hashes_at_revision(revision: str) -> dict[str, str]:
+def producer_hashes_at_revision(revision: str, *, repo_root=".") -> dict[str, str]:
     """Compare to the image's commit even when the CI checkout advanced on main."""
     commit = subprocess.check_output(
         ["git", "rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"],
+        cwd=repo_root,
         text=True,
     ).strip()
     names = subprocess.check_output(
-        ["git", "ls-tree", "-r", "--name-only", commit], text=True
+        ["git", "ls-tree", "-r", "--name-only", commit], cwd=repo_root, text=True
     ).splitlines()
     selected = [
         name
@@ -72,7 +73,7 @@ def producer_hashes_at_revision(revision: str) -> dict[str, str]:
     ]
     return {
         name: hashlib.sha256(
-            subprocess.check_output(["git", "show", f"{commit}:{name}"])
+            subprocess.check_output(["git", "show", f"{commit}:{name}"], cwd=repo_root)
         ).hexdigest()
         for name in selected
     }
@@ -160,7 +161,9 @@ def main():
         raise SystemExit(f"ERROR: {error}") from error
     if args.pin_training:
         with open(os.environ["GITHUB_ENV"], "a") as stream:
-            stream.write(f"FF_DATA_RELEASE={selected}\n")
+            stream.write(
+                f"FF_DATA_RELEASE={selected}\nFF_DATASET_ID={selected}\nFF_DATA_FORMAT=data-release-v1\n"
+            )
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
             stream.write(f"release_id={selected}\n")

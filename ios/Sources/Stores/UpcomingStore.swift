@@ -12,7 +12,9 @@ enum UpcomingScreenState {
 @MainActor
 @Observable
 final class UpcomingStore {
-    private let api = APIClient.shared
+    private let api: any APIProviding
+
+    init(api: any APIProviding = APIClient.shared) { self.api = api }
     private let decoder = JSONDecoder()
     var state: UpcomingScreenState = .loading
 

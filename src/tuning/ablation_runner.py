@@ -42,6 +42,7 @@ class AblationJob:
     run_fn: Callable[[AblationJob], dict[str, Any] | AblationResult]
     base_cfg: dict[str, Any]
     metadata: dict[str, Any]
+    context_aware: bool = False
 
 
 @dataclass(frozen=True)
@@ -282,7 +283,9 @@ def _run_job(
 
     try:
         if data_dir and os.path.isdir(data_dir):
-            with isolated_outputs(data_dir, share_cache=True):
+            with isolated_outputs(
+                data_dir, share_cache=True, legacy_cwd=not job.context_aware, seed=job.seed
+            ):
                 result = _body()
         else:
             result = _body()

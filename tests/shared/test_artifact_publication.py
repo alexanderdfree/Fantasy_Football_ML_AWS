@@ -1,9 +1,13 @@
-"""Exercise publication callers with real tarballs and conditional S3 semantics."""
+"""Compatibility and migration from the protected predecessor publication protocol.
+
+Current source/intent/CAS and coordinated retention interleavings are covered by
+artifacts/test_publication.py and test_gc.py. These cases exercise the actual
+old namespace, its source high-water mark, and the intentionally read-only facade.
+"""
 
 import hashlib
 import io
 import json
-import os
 import subprocess
 import tarfile
 from pathlib import Path
@@ -11,224 +15,219 @@ from pathlib import Path
 import pytest
 from botocore.exceptions import ClientError
 
-from src.batch import train
+from src.artifacts import model_sync, source
+from src.artifacts import publication as current
 from src.scripts import promote
 from src.shared import artifact_publication as publication
-from src.shared.artifact_gc import prune
-from src.shared.model_sync import load_manifest, manifest_key
-from src.shared.registry import ALL_POSITIONS, INFERENCE_REGISTRY
+from src.shared.registry import ALL_POSITIONS
+from tests.artifacts.test_publication import Store
 
 pytestmark = pytest.mark.unit
 OLD, NEW, LATEST = "a" * 40, "b" * 40, "c" * 40
 
 
-class S3:
-    def __init__(self):
-        self.objects = {}
-        self.before_put = None
-        self.deletes = []
-
-    def get_object(self, Bucket, Key):
-        if Key not in self.objects:
-            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
-        data = self.objects[Key]
-        return {"Body": io.BytesIO(data), "ETag": hashlib.sha256(data).hexdigest()}
-
-    def put_object(self, Bucket, Key, Body, **kwargs):
-        if self.before_put and Key.endswith("manifest.json"):
-            callback, self.before_put = self.before_put, None
-            callback()
-        if kwargs.get("IfNoneMatch") == "*" and Key in self.objects:
-            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
-        if "IfMatch" in kwargs and self.get_object(Bucket, Key)["ETag"] != kwargs["IfMatch"]:
-            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
-        self.objects[Key] = Body if isinstance(Body, bytes) else Body.read()
-        return {}
-
-    def upload_file(self, Filename, Bucket, Key):
-        self.objects[Key] = Path(Filename).read_bytes()
-
-    def delete_objects(self, Bucket, Delete):
-        for entry in Delete["Objects"]:
-            self.objects.pop(entry["Key"], None)
-            self.deletes.append(entry["Key"])
-        return {}
-
+class S3(Store):
     def head_object(self, Bucket, Key):
         obj = self.get_object(Bucket, Key)
         return {"ContentLength": len(obj["Body"].read()), "ETag": obj["ETag"]}
 
 
-def source(sha):
+def record(sha):
     lineage = [LATEST, NEW, OLD]
     lineage = lineage[lineage.index(sha) :]
     return {"source_sha": sha, "source_order": len(lineage), "lineage": lineage}
 
 
 @pytest.fixture
-def boundary(monkeypatch, tmp_path):
+def boundary(monkeypatch):
     s3 = S3()
     for sha in (OLD, NEW, LATEST):
-        s3.objects[publication.source_key("models", sha)] = json.dumps(source(sha)).encode()
-    monkeypatch.setattr(train.boto3, "client", lambda *_a, **_kw: s3)
-    monkeypatch.setattr(publication, "image_source_sha", lambda: os.environ["FF_TRAIN_GIT_SHA"])
-    monkeypatch.setenv("FF_TRAIN_GIT_SHA", NEW)
-    monkeypatch.delenv("FF_MODEL_S3_PREFIX", raising=False)
-    monkeypatch.setattr(train, "_try_smoke_test", lambda *_: True)
-    return s3, tmp_path
+        s3.objects[source.source_key("models", sha)] = json.dumps(record(sha)).encode()
+    actual = [LATEST]
+    monkeypatch.setattr(source, "image_source_sha", lambda **_: actual[0])
+    monkeypatch.setattr(current, "image_source_sha", lambda: actual[0])
+    monkeypatch.delenv("FF_TRAIN_GIT_SHA", raising=False)
+    return s3, actual
 
 
-def model_dir(tmp_path, position, sha=NEW, tag=""):
-    directory = tmp_path / f"{position}-{sha}-{tag}"
-    directory.mkdir(exist_ok=True)
-    reg = INFERENCE_REGISTRY[position]
-    for name in (reg["nn_file"], "nn_scaler.pkl", "nn_scaler_meta.json"):
-        (directory / name).write_bytes(b"fixture")
-    if reg.get("train_attention_nn") and reg.get("attn_nn_file"):
-        for name in (
-            reg["attn_nn_file"],
-            "attention_nn_scaler.pkl",
-            "attention_nn_scaler_meta.json",
-        ):
-            (directory / name).write_bytes(b"fixture")
-    (directory / "benchmark_metrics.json").write_text(json.dumps({"git_sha": sha, "tag": tag}))
-    return str(directory)
-
-
-def upload(boundary, monkeypatch, position="QB", sha=NEW, tag="", **kwargs):
-    _s3, tmp = boundary
-    with monkeypatch.context() as mp:
-        mp.setenv("FF_TRAIN_GIT_SHA", sha)
-        return train.upload_artifacts("b", position, model_dir(tmp, position, sha, tag), **kwargs)
-
-
-@pytest.mark.parametrize("position", ALL_POSITIONS)
-def test_actual_upload_rejects_older_source_for_every_position(boundary, monkeypatch, position):
-    s3, _ = boundary
-    newest = upload(boundary, monkeypatch, position, NEW)
-    with pytest.raises(publication.PublicationSuperseded):
-        upload(boundary, monkeypatch, position, OLD)
-    assert load_manifest(s3, "b", "models", position) == newest
-    assert newest["stable"] == newest["current"]
-    assert "releases/history/" in newest["stable"]["key"]
-
-
-def test_cas_conflict_rechecks_order_instead_of_overwriting(boundary, monkeypatch):
-    s3, _ = boundary
-    upload(boundary, monkeypatch, sha=OLD)
-    s3.before_put = lambda: upload(boundary, monkeypatch, sha=LATEST)
-    with pytest.raises(publication.PublicationSuperseded):
-        upload(boundary, monkeypatch, sha=NEW)
-    assert load_manifest(s3, "b", "models", "QB")["publication_source"]["source_sha"] == LATEST
-
-
-def test_initial_creation_conflict_cannot_overwrite_newer_winner(boundary, monkeypatch):
-    s3, _ = boundary
-    s3.before_put = lambda: upload(boundary, monkeypatch, sha=LATEST)
-    with pytest.raises(publication.PublicationSuperseded):
-        upload(boundary, monkeypatch, sha=NEW)
-    assert load_manifest(s3, "b", "models", "QB")["publication_source"]["source_sha"] == LATEST
-
-
-def test_delayed_cleanup_preserves_later_promotion_and_unpublished_upload(boundary, monkeypatch):
-    s3, _ = boundary
-    with monkeypatch.context() as mp:
-        mp.setattr(train, "_gc_prune", lambda *_: [])
-        for n in range(7):
-            stale = upload(boundary, monkeypatch, tag=str(n))
-        latest = upload(boundary, monkeypatch, tag="latest")
-    pending = "models/QB/releases/history/pending/model.tar.gz"
-    s3.objects[pending] = b"in-flight"
-    assert stale["retired"]
-    prune(s3, "b", "models", "QB", stale)
-    assert latest["stable"]["key"] in s3.objects
-    assert pending in s3.objects
-    assert all(key in s3.objects for key in publication.references(latest))
-
-
-def test_failed_smoke_keeps_stable_across_retention_window(boundary, monkeypatch):
-    s3, _ = boundary
-    good = upload(boundary, monkeypatch, sha=OLD)
-    monkeypatch.setattr(train, "_try_smoke_test", lambda *_: False)
-    for n in range(8):
-        new = upload(boundary, monkeypatch, tag=str(n))
-    assert new["stable"] == good["stable"]
-    assert new["stable"]["key"] in s3.objects
-
-
-def test_initial_seed_requires_smoke_and_cannot_race_training(boundary, monkeypatch):
-    s3, _ = boundary
-    monkeypatch.setattr(train, "_try_smoke_test", lambda *_: False)
-    with pytest.raises(RuntimeError, match="smoke test failed"):
-        upload(boundary, monkeypatch, initialize_only=True)
-    assert load_manifest(s3, "b", "models", "QB") is None
-    monkeypatch.setattr(train, "_try_smoke_test", lambda *_: True)
-    s3.before_put = lambda: upload(boundary, monkeypatch, sha=LATEST)
-    assert upload(boundary, monkeypatch, initialize_only=True) is None
-
-
-def test_rollback_uses_fresh_bytes_preserves_high_water_and_survives_delayed_gc(
-    boundary, monkeypatch
-):
-    s3, _ = boundary
-    older = upload(boundary, monkeypatch, sha=OLD)
-    newer = upload(boundary, monkeypatch, sha=NEW)
-    rolled = promote.promote(s3, "b", "models", "QB", older["stable"]["key"])
-    assert rolled["stable"]["key"] != older["stable"]["key"]
-    assert rolled["stable"] == rolled["current"]
-    assert rolled["publication_source"] == newer["publication_source"]
-    with pytest.raises(publication.PublicationSuperseded):
-        upload(boundary, monkeypatch, sha=OLD)
-    with pytest.raises(publication.PublicationSuperseded):
-        upload(boundary, monkeypatch, sha=NEW)
-    assert load_manifest(s3, "b", "models", "QB") == rolled
-    assert upload(boundary, monkeypatch, sha=LATEST) is not None
-
-
-def legacy_manifest(s3, sha=OLD, version=2):
-    key = "models/QB/history/2026-09-10T00-00-00Z-abc1234/model.tar.gz"
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w:gz") as tar:
-        data = json.dumps({"git_sha": sha}).encode()
-        entry = tarfile.TarInfo("benchmark_metrics.json")
-        entry.size = len(data)
-        tar.addfile(entry, io.BytesIO(data))
-    s3.objects[key] = stream.getvalue()
-    entry = {"key": key, "bytes": len(stream.getvalue()), "sha7": "abc1234"}
-    manifest = {"schema_version": version, "current": entry, "previous": None, "history": [key]}
-    if version == 2:
-        manifest["stable"] = entry
-    s3.objects["models/QB/manifest.json"] = json.dumps(manifest).encode()
+def predecessor(s3, position="QB", *, sha=OLD, frontier=NEW, rollback=False, stable=True):
+    key = f"models/{position}/releases/history/2026-09-10-unique-{sha[:7]}/model.tar.gz"
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        body = json.dumps({"git_sha": sha, "position": position}).encode()
+        member = tarfile.TarInfo("benchmark_metrics.json")
+        member.size = len(body)
+        tar.addfile(member, io.BytesIO(body))
+    s3.objects[key] = buffer.getvalue()
+    entry = {"key": key, "bytes": len(buffer.getvalue()), "sha7": sha[:7]}
+    manifest = {
+        "schema_version": 3,
+        "current": entry,
+        "stable": entry if stable else None,
+        "history": [key],
+        "publication_source": {
+            name: record(frontier)[name] for name in ("source_sha", "source_order")
+        },
+    }
+    if rollback:
+        manifest["promotion_mode"] = "rollback"
+    s3.objects[model_sync.previous_protocol_manifest_key("models", position)] = json.dumps(
+        manifest
+    ).encode()
     return manifest
 
 
-@pytest.mark.parametrize("version", [1, 2])
-def test_migration_protects_legacy_fallback_from_old_image_gc(boundary, monkeypatch, version):
+def candidate(s3, position, sha, run_id):
+    intent = current.reserve_intent(
+        s3,
+        "b",
+        "models",
+        position,
+        sha,
+        None,
+        run_id,
+        publication_revision=(
+            model_sync.load_publication_manifest(s3, "b", "models", position) or {}
+        ).get("rollback_epoch"),
+    )
+    entry = {
+        "key": model_sync.new_history_key("models", position, run_id, "d" * 64),
+        "git_sha": sha,
+        "publication_intent": intent,
+        "dataset_id": None,
+        "sha7": "d" * 7,
+        "bytes": 1,
+        "uploaded_at": "today",
+        "smoke_passed": True,
+    }
+    s3.objects[entry["key"]] = b"new candidate"
+    context = {"source": record(sha), "intent": intent}
+    return entry, context, intent["publication_revision"]
+
+
+def publish(s3, position, prepared):
+    entry, context, epoch = prepared
+    return current.publish_candidate(
+        s3, "b", "models", position, entry=entry, context=context, initial_revision=epoch
+    )
+
+
+@pytest.mark.parametrize("position", ALL_POSITIONS)
+def test_main_protocol_precedes_v2_and_preserves_frontier_and_copied_bytes(boundary, position):
     s3, _ = boundary
-    legacy = legacy_manifest(s3, version=version)
-    monkeypatch.setattr(train, "_try_smoke_test", lambda *_: False)
-    migrated = upload(boundary, monkeypatch)
-    # Old binaries may still overwrite their pointer and sweep all legacy history.
-    s3.objects["models/QB/manifest.json"] = b'{"current": null}'
-    s3.objects.pop(legacy["current"]["key"])
-    assert load_manifest(s3, "b", "models", "QB") == migrated
-    assert migrated["stable"]["key"] in s3.objects
-    assert migrated["stable"]["key"] != legacy["current"]["key"]
+    old = predecessor(s3, position)
+    s3.objects[model_sync.legacy_manifest_key("models", position)] = b'{"stable": null}'
+    assert model_sync.load_manifest(s3, "b", "models", position)["stable"] == old["stable"]
+    migrated = publish(s3, position, candidate(s3, position, LATEST, "new-run"))
+    protected = migrated["previous_stable"]["key"]
+    assert protected.startswith(model_sync.history_prefix("models", position))
+    assert s3.objects[protected] == s3.objects[old["stable"]["key"]]
+    assert migrated["source_frontier"]["source_sha"] == LATEST
+    # Queued main writers/GC can mutate only their independent namespace.
+    s3.objects[model_sync.previous_protocol_manifest_key("models", position)] = b'{"stable": null}'
+    s3.objects.pop(old["stable"]["key"])
+    assert model_sync.load_manifest(s3, "b", "models", position) == migrated
+    assert protected in s3.objects
 
 
-@pytest.mark.parametrize("sha", [None, LATEST])
-def test_missing_or_newer_legacy_provenance_refuses_migration(boundary, monkeypatch, sha):
+def test_main_rollback_high_water_is_not_replaced_by_older_artifact_source(boundary):
     s3, _ = boundary
-    legacy_manifest(s3, sha=sha)
-    with pytest.raises(RuntimeError, match="Cannot migrate"):
-        upload(boundary, monkeypatch)
-    assert manifest_key("models", "QB") not in s3.objects
+    predecessor(s3, rollback=True)
+    migrated = current.protect_legacy(s3, "b", "models", "QB", record(LATEST))
+    assert migrated["source_frontier"] == {"source_sha": NEW, "source_order": 2}
+    assert migrated["rollback_source_barrier"] == migrated["source_frontier"]
+    assert (
+        migrated["rollback_epoch"]
+        == model_sync.load_publication_manifest(s3, "b", "models", "QB")["rollback_epoch"]
+    )
+    assert publish(s3, "QB", candidate(s3, "QB", NEW, "same-source")) is None
+    assert publish(s3, "QB", candidate(s3, "QB", LATEST, "descendant")) is not None
 
 
-def test_actual_image_sha_must_match_supplied_source(boundary, monkeypatch):
-    monkeypatch.setattr(publication, "image_source_sha", lambda: OLD)
-    with pytest.raises(RuntimeError, match="actual image"):
-        upload(boundary, monkeypatch)
+def test_precompute_epoch_rejects_work_queued_before_main_rollback(boundary, monkeypatch):
+    s3, _ = boundary
+    predecessor(s3)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "queued")
+    context = current.prepare_training(s3, "b", "models", "QB")
+    entry, _, _ = candidate(s3, "QB", LATEST, "queued")
+    predecessor(s3, rollback=True)
+    assert (
+        current.publish_candidate(
+            s3,
+            "b",
+            "models",
+            "QB",
+            entry=entry,
+            context=context,
+            initial_revision=context["initial_revision"],
+        )
+        is None
+    )
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "after-rollback")
+    after = current.prepare_training(s3, "b", "models", "QB")
+    assert after["initial_revision"].startswith("previous-protocol:")
+    assert (
+        after["initial_revision"]
+        == current.protect_legacy(s3, "b", "models", "QB", record(LATEST))["rollback_epoch"]
+    )
+
+
+@pytest.mark.parametrize("failure", ["AccessDenied", "corrupt", "null"])
+def test_broken_main_pointer_never_falls_back_to_stale_v2(boundary, monkeypatch, failure):
+    s3, _ = boundary
+    key = model_sync.previous_protocol_manifest_key("models", "QB")
+    s3.objects[model_sync.legacy_manifest_key("models", "QB")] = b'{"stable": {"key": "stale"}}'
+    if failure == "AccessDenied":
+        original = s3.get_object
+
+        def get(Bucket, Key):
+            if Key == key:
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+            return original(Bucket, Key)
+
+        monkeypatch.setattr(s3, "get_object", get)
+    else:
+        s3.objects[key] = b"invalid JSON" if failure == "corrupt" else b"null"
+    with pytest.raises((ClientError, RuntimeError, ValueError)):
+        model_sync.load_manifest(s3, "b", "models", "QB")
+
+
+def test_main_candidate_is_not_silently_approved(boundary, tmp_path):
+    s3, _ = boundary
+    predecessor(s3, stable=False)
+    with pytest.raises(RuntimeError, match="all manifest entries failed"):
+        model_sync._resolve_manifest_extract(s3, "b", "models", "QB", tmp_path)
+
+
+def test_manual_migration_dry_run_is_read_only_and_adopts_epoch_semantics(boundary, monkeypatch):
+    from src.shared import smoke_test
+
+    s3, _ = boundary
+    old = predecessor(s3, rollback=True)
+    monkeypatch.setattr(smoke_test, "run_smoke_test", lambda *_: None)
+    before = dict(s3.objects)
+    preview = promote.promote(s3, "b", "models", "QB", old["stable"]["key"], dry_run=True)
+    assert s3.objects == before
+    assert "rollback_source_barrier" not in preview
+    committed = promote.promote(s3, "b", "models", "QB", old["stable"]["key"])
+    assert (
+        committed["rollback_epoch"]
+        != model_sync.load_legacy_manifest(s3, "b", "models", "QB")["rollback_epoch"]
+    )
+    assert committed["source_frontier"]["source_sha"] == NEW
+
+
+def test_legacy_writer_facade_cannot_bypass_intents_or_make_writes(boundary):
+    s3, _ = boundary
+    before = dict(s3.objects)
+    with pytest.raises(RuntimeError, match="no pre-training intent or canonical receipt"):
+        publication.publish_artifact(
+            s3, "b", "models", "QB", source=record(LATEST), initialize_only=True
+        )
+    assert s3.objects == before
+    assert publication.register_source is source.register_source
+    assert publication.load_source is source.load_source
+    assert publication.snapshot(s3, "b", "models", "QB") == (None, None)
 
 
 def test_source_registration_uses_requested_revision_not_checkout_head(tmp_path):
@@ -256,167 +255,20 @@ def test_source_registration_uses_requested_revision_not_checkout_head(tmp_path)
     assert publication.register_source(s3, "b", "models", commits[0], str(repo)) == old
 
 
-def test_first_poller_observation_compares_actual_boot_manifest(boundary, monkeypatch):
-    from src.shared import model_sync
-
-    s3, tmp = boundary
-    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "b")
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp)
-    legacy_manifest(s3)
-    boot = model_sync._sync_one(s3, "b", "models", "QB", tmp)
-    assert boot["manifest_etag"]
-    upload(boundary, monkeypatch)
-    etag, refreshed = model_sync.refresh_position("QB", None, s3_client=s3)
-    assert refreshed
-    metrics = tmp / "src/qb/outputs/models/benchmark_metrics.json"
-    assert json.loads(metrics.read_text())["git_sha"] == NEW
-    assert model_sync.refresh_position("QB", etag, s3_client=s3) == (etag, False)
-
-
-@pytest.mark.parametrize("split", [False, True])
-def test_launcher_registers_actual_source_before_submitting_all_positions(monkeypatch, split):
-    from src.batch import launch
-    from src.data import release
-    from src.scripts import wait_data_release
-
-    calls, resolved = [], []
-    registered = False
-    recipe = {"src/config.py": "1" * 64}
-    s3 = S3()
-    names = ["raw/weekly.parquet", *(f"splits/{name}" for name in release.SPLIT_NAMES)]
-    document = {
-        "schema_version": 1,
-        "producer": recipe,
-        "files": {name: {"sha256": "0" * 64, "bytes": 0} for name in names},
-    }
-    body = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
-    data_release = hashlib.sha256(body).hexdigest()
-    s3.objects[f"data/releases/{data_release}/manifest.json"] = body
-    s3.objects[f"data/by-producer/{release.producer_fingerprint(recipe)}/manifest.json"] = (
-        json.dumps({"schema_version": 1, "release_id": data_release}).encode()
-    )
-
-    def source_recipe(sha):
-        assert sha == NEW
-        return recipe
-
-    def register(_s3, bucket, prefix, sha):
-        nonlocal registered
-        assert set(resolved) == {"gpu-def:100", "cpu-def:101"}
-        assert sha == NEW
-        registered = True
-
-    class Batch:
-        def describe_job_definitions(self, *, jobDefinitions):
-            (reference,) = jobDefinitions
-            assert reference in {"gpu-def:100", "cpu-def:101"}
-            name, revision = reference.rsplit(":", 1)
-            resolved.append(reference)
-            return {
-                "jobDefinitions": [
-                    {
-                        "jobDefinitionName": name,
-                        "revision": int(revision),
-                        "status": "ACTIVE",
-                        "containerProperties": {"image": f"registry/training:{NEW}"},
-                    }
-                ]
-            }
-
-        def submit_job(self, **kwargs):
-            assert registered
-            env = {
-                entry["name"]: entry["value"]
-                for entry in kwargs["containerOverrides"]["environment"]
-            }
-            assert env["FF_TRAIN_GIT_SHA"] == NEW
-            assert env["FF_DATA_RELEASE"] == data_release
-            assert kwargs["jobDefinition"] in {"gpu-def:100", "cpu-def:101"}
-            calls.append(kwargs)
-            return {"jobId": str(len(calls))}
-
-    monkeypatch.setattr(publication, "register_source", register)
-    monkeypatch.setattr(wait_data_release, "producer_hashes_at_revision", source_recipe)
-    # Derive the true source from the selected revisions, not a local/global SHA.
-    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", None)
-    monkeypatch.setattr(launch, "JOB_IDS_FILE", None)
-    monkeypatch.setattr(launch, "JOB_DEFINITION", "gpu-def")
-    monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu-def")
-    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "100")
-    monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", "101")
-    monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-queue")
-    monkeypatch.setenv("FF_DATA_RELEASE", "")
-    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
-    monkeypatch.setattr(
-        launch.boto3, "client", lambda service, **_: Batch() if service == "batch" else s3
-    )
-    args = ["launch", "--positions", *ALL_POSITIONS, "--skip-upload", "--wait", "false"]
-    if split:
-        args += ["--split", "--split-run-id", "test-run"]
-    monkeypatch.setattr("sys.argv", args)
-    launch.main()
-    assert len(calls) == len(ALL_POSITIONS) * (3 if split else 1)
-    assert {call["containerOverrides"]["command"][1] for call in calls} == set(ALL_POSITIONS)
-
-
-def test_training_workflows_supply_immutable_source_identity():
-    import yaml
-
-    root = Path(__file__).resolve().parents[2]
-    build = yaml.safe_load((root / ".github/workflows/batch-image.yml").read_text())
-    steps = [step for job in build["jobs"].values() for step in job.get("steps", [])]
-    image_step = next(step for step in steps if step.get("name") == "Build & push training image")
-    assert '--build-arg TRAIN_GIT_SHA="$IMAGE_TAG"' in image_step["run"]
-    assert image_step["env"]["IMAGE_TAG"] == "${{ github.sha }}"
-    ec2 = yaml.safe_load((root / ".github/workflows/train-ec2.yml").read_text())
-    steps = ec2["jobs"]["train"]["steps"]
-    step = next(s for s in steps if s.get("name") == "Run training for all positions (sequential)")
-    assert step["run"].index("register_training_source") < step["run"].index("REMOTE_CMD=")
-    resolver = next(s for s in steps if s.get("id") == "image")
-    assert "workflow_run.head_sha" in resolver["env"]["HEAD_SHA"]
-    assert "github.event.inputs.image_sha" in resolver["env"]["HEAD_SHA"]
-    assert "^[0-9a-f]{40}$" in resolver["run"]
-    assert 'resolve_training_image ec2 --sha "$HEAD_SHA"' in resolver["run"]
-    assert steps.index(resolver) < steps.index(step)
-    assert step["env"]["FF_TRAIN_GIT_SHA"] == "${{ steps.image.outputs.image_sha }}"
-    assert step["env"]["FF_TRAIN_IMAGE"] == "${{ steps.image.outputs.image_uri }}"
-    runner = (root / "infra/ec2/user-data.sh").read_text()
-    assert 'IMAGE="\\${FF_TRAIN_IMAGE:?' in runner
-    assert "@sha256:[0-9a-f]{64}" in runner
-    assert "IMAGE%:*" not in runner
-
-
-def test_same_source_cas_retry_preserves_other_publisher_in_history(boundary, monkeypatch):
+def test_main_rollback_during_copy_is_rechecked_before_cutover(boundary, monkeypatch):
     s3, _ = boundary
-    upload(boundary, monkeypatch, sha=OLD)
-    winner = {}
+    predecessor(s3)
+    prepared = candidate(s3, "QB", LATEST, "queued-before-rollback")
+    put = s3.put_object
+    rolled_back = []
 
-    def race():
-        winner.update(upload(boundary, monkeypatch, sha=NEW, tag="winner"))
+    def interleaved_put(**kwargs):
+        result = put(**kwargs)
+        if "/history/legacy-" in kwargs["Key"] and not rolled_back:
+            rolled_back.append(predecessor(s3, rollback=True))
+        return result
 
-    s3.before_put = race
-    final = upload(boundary, monkeypatch, sha=NEW, tag="retry")
-    assert final["previous"] == winner["current"]
-    assert winner["current"]["key"] in final["history"]
-    assert final["current"]["key"] != winner["current"]["key"]
-
-
-def test_rollback_conflict_cannot_resurrect_a_retired_target(boundary, monkeypatch):
-    s3, _ = boundary
-    first = upload(boundary, monkeypatch, tag="first")
-    target = first["current"]["key"]
-
-    def retire_target():
-        for index in range(6):
-            upload(boundary, monkeypatch, tag=f"new-{index}")
-
-    s3.before_put = retire_target
-    with pytest.raises(promote.PromotionError, match="not in manifest.history"):
-        promote.promote(s3, "b", "models", "QB", target)
-    assert target not in s3.objects
-    assert load_manifest(s3, "b", "models", "QB")["stable"]["key"] != target
-
-
-def test_v3_rollback_timestamp_excludes_uniqueness_token():
-    key = f"models/QB/releases/history/2026-09-10T12-00-00Z-{'a' * 32}-b123456/model.tar.gz"
-    assert promote._parse_version_from_key(key) == ("2026-09-10T12-00-00Z", "b123456")
+    monkeypatch.setattr(s3, "put_object", interleaved_put)
+    assert publish(s3, "QB", prepared) is None
+    assert rolled_back
+    assert model_sync.manifest_key("models", "QB") not in s3.objects

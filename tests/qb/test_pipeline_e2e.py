@@ -188,7 +188,8 @@ def pipeline_run(synthetic_splits, tmp_path_factory):
     """Single pipeline invocation shared across tests (saves ~6s per test)."""
     workdir = tmp_path_factory.mktemp("qb_e2e_run1")
     t0 = time.time()
-    result = _run_once(synthetic_splits, workdir, seed=42)
+    # Timing belongs to this fixture; keep the pipeline's typed result immutable.
+    result = _run_once(synthetic_splits, workdir, seed=42).copy()
     result["_elapsed"] = time.time() - t0
     return result
 

@@ -13,20 +13,13 @@ WORKDIR /app
 # root, so hardlinking always fails and falls back to copy — explicit copy
 # mode skips the failed probe and silences the warning in CI.
 ENV UV_LINK_MODE=copy
+ENV FF_ALLOW_RUNTIME_INFERENCE=0
 
-# Single uv-install layer. Any change to requirements.txt invalidates exactly
-# one cached layer. The /root/.cache/uv mount persists wheel downloads across
-# builds (CI mirrors this via actions/cache in deploy.yml). Torch uses the
-# CPU-only index; --extra-index-url gives it priority over PyPI while keeping
-# PyPI available for dependencies missing from that index. The nflverse
-# data feed (nflreadpy + polars) is a normal pinned entry in requirements.txt
-# — no --no-deps workaround like the deprecated nfl_data_py needed.
-COPY requirements.txt .
+# Serving reads verified projections and metadata. Model execution and provider
+# ingestion dependencies belong only to the offline prediction/training image.
+COPY requirements-serving.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        torch==2.14.0 && \
-    uv pip install --system -r requirements.txt
+    uv pip install --system -r requirements-serving.txt
 
 # All Python source, Flask templates/static, and per-position assets live
 # under src/. data/ and src/**/outputs/models/ are deliberately NOT copied —
@@ -52,9 +45,13 @@ COPY gunicorn.conf.py ./
 COPY infra/ec2/README.md infra/ec2/
 COPY infra/aws/README.md infra/aws/
 
+# Verify the installed image, including successful artifact-backed API requests.
+COPY scripts/check-serving-runtime.py /tmp/check-serving-runtime.py
+RUN python /tmp/check-serving-runtime.py --require-absent && rm /tmp/check-serving-runtime.py
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
 
 CMD ["gunicorn", "-c", "gunicorn.conf.py", "--bind", "0.0.0.0:8000", "--workers", "2", "--preload", "--timeout", "120", "--access-logfile", "-", "src.serving.app:app"]

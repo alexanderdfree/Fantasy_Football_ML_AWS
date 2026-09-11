@@ -29,6 +29,9 @@
 
 Historical evidence, retrieved one issue at a time. Search these titles, then open only the matching entry. Old paths, settings, measurements and prescriptions describe the incident at its recorded revision; verify the current implementation and relevant ADR before reusing a fix. Current standing constraints live in [the stop rules](../agent-guides/stop-rules.md).
 
+### [FIXED] Incomplete cache/model identity and uncoordinated artifact publication
+[Read the incident record](fixed-archive/design-boundary-contracts-2026-09.md).
+
 ### [FIXED] Shared projected components define both sides of expert comparison
 [Read the incident record](fixed-archive/shared-component-comparison-2026-09.md).
 

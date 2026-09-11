@@ -22,7 +22,7 @@ GITHUB ACTIONS (push to main)                AWS
 ─────────────────────────────        ──────────────────────────────
 
 .github/workflows/
-  batch-image.yml ─── builds image ─> ECR: ff-training:latest
+  batch-image.yml ─── builds image ─> ECR: ff-training:<full-source-sha>
 
   train-ec2.yml (workflow_run after image built)
     detect job
@@ -53,7 +53,7 @@ GITHUB ACTIONS (push to main)                AWS
     │
     ├─ manual poll get-command-invocation (30-min deadline)
     ├─ stream stdout/stderr into Actions log
-    ├─ aws s3api head-object (freshness check + summary table)
+    ├─ verify exact source/run artifact receipts (checksum + image identity)
     └─ python -m src.batch.benchmark --download-only --backend ec2 …
          ├─ write {run_id}.json under benchmark_history/
          └─ commit + push (retry-rebase up to 3×)
@@ -80,7 +80,7 @@ Same as Batch. Training container reads `s3://ff-predictor-training/data/{train,
 
 ## Training Container
 
-Reused as-is from Batch path. `src/batch/Dockerfile.train` produces the image, CI pushes to ECR `ff-training:latest`, the EC2 instance pulls it via nvidia-docker with `--gpus all`. Env vars passed to the container (`S3_BUCKET`, `S3_DATA_PREFIX`, `LOG_EVERY`, `REQUIRE_GPU`) are unchanged.
+Reused from the Batch path. `src/batch/Dockerfile.train` produces the image and its baked full source SHA. EC2 CI selects that full-SHA tag, resolves an immutable ECR digest, and registers its Git ancestry before dispatch. The helper verifies the baked SHA and publication protocol before running the digest-pinned image with `--gpus all`. It passes the exact source/image identities and a stable `FF_LEGACY_RUN_ID` through training, artifact receipt collection, and cache building. The bootstrap may pre-pull `:latest` to warm layers; training never uses that mutable reference.
 
 ## Instance Spec
 

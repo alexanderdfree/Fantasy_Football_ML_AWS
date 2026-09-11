@@ -54,6 +54,9 @@ def test_official_source_fills_partial_primary_by_team(roster):
     assert result.metadata["covered_teams"] == ["BAL", "NE"]
     assert result.metadata["missing_teams"] == ["ATL"]
     assert result.metadata["unknown_players"] == 1
+    assert result.metadata["source_result"]["status"] == "partial"
+    assert result.metadata["source_result"]["coverage"]["known_players"] == 3
+    assert result.metadata["source_result"]["effective_period"] == {"season": 2026, "week": 1}
 
 
 def test_wrong_week_is_rejected():

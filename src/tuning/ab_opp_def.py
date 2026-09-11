@@ -77,7 +77,7 @@ def metric_fn(result, position):
     ``mae`` feeds the harness Ridge-invariance sentinel and the report's primary
     column; the Q4 keys land in the per-cell JSON / summary for the tail read.
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.prediction.bundle import record_constructor
+
 
 def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
     """Clamp ``val`` to ``>= 0`` when ``name`` is in ``non_negative``.
@@ -179,10 +181,22 @@ def _build_self_attention_stack(
     )
 
 
+def _resolve_backbone_norm(value: str | None) -> str:
+    """Resolve the legacy environment override once, or honor a saved recipe."""
+    if value is None:
+        value = os.environ.get("FF_NN_NORM", "").strip().lower()
+        return "layer" if value in {"layer", "ln", "layernorm"} else "batch"
+    if value not in {"batch", "layer"}:
+        raise ValueError(f"Unsupported backbone normalization: {value}")
+    return value
+
+
 def _build_backbone(
     input_dim: int,
     hidden_dims: list[int],
     dropout: float,
+    *,
+    normalization: str | None = None,
 ) -> nn.Sequential:
     """Shared ``Linear → BN → ReLU → Dropout`` backbone used by every
     ``MultiHeadNet*`` variant.
@@ -197,11 +211,7 @@ def _build_backbone(
     # shifting the eval-mode (val/test) normalisation (see
     # todo/gpu_launch_bound_levers.md). LayerNorm is stateless (no running
     # stats, train==eval). Default "batch" keeps production byte-identical.
-    use_layernorm = os.environ.get("FF_NN_NORM", "").strip().lower() in {
-        "layer",
-        "ln",
-        "layernorm",
-    }
+    use_layernorm = _resolve_backbone_norm(normalization) == "layer"
 
     def _norm(dim: int) -> nn.Module:
         return nn.LayerNorm(dim) if use_layernorm else nn.BatchNorm1d(dim)
@@ -280,6 +290,7 @@ class MultiHeadNet(nn.Module):
             -> Clamp >= 0 on non-negative targets
     """
 
+    @record_constructor
     def __init__(
         self,
         input_dim: int,
@@ -289,6 +300,7 @@ class MultiHeadNet(nn.Module):
         dropout: float = 0.3,
         head_hidden_overrides: dict = None,
         non_negative_targets: set = None,
+        backbone_norm: str | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -299,7 +311,10 @@ class MultiHeadNet(nn.Module):
         )
 
         # === Shared Backbone ===
-        self.backbone = _build_backbone(input_dim, backbone_layers, dropout)
+        self.backbone_norm = _resolve_backbone_norm(backbone_norm)
+        self.backbone = _build_backbone(
+            input_dim, backbone_layers, dropout, normalization=self.backbone_norm
+        )
 
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}
@@ -558,6 +573,7 @@ class MultiHeadNetWithHistory(nn.Module):
     consumes alongside its target-specific history.
     """
 
+    @record_constructor
     def __init__(
         self,
         static_dim: int,
@@ -591,6 +607,7 @@ class MultiHeadNetWithHistory(nn.Module):
         condition_queries_on_static: bool = False,
         opp_game_dim: int | None = None,
         no_history_embedding: bool = False,
+        backbone_norm: str | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -723,7 +740,10 @@ class MultiHeadNetWithHistory(nn.Module):
         # === Shared Backbone (static features only) ===
         # History is routed per-target directly into the heads, so the
         # backbone no longer needs to see the attention output.
-        self.backbone = _build_backbone(static_dim, backbone_layers, dropout)
+        self.backbone_norm = _resolve_backbone_norm(backbone_norm)
+        self.backbone = _build_backbone(
+            static_dim, backbone_layers, dropout, normalization=self.backbone_norm
+        )
 
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}
@@ -941,6 +961,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         inner_mask: [B, G, K]
     """
 
+    @record_constructor
     def __init__(
         self,
         static_dim: int,
@@ -970,6 +991,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self_attn_dropout: float = 0.0,
         condition_queries_on_static: bool = False,
         game_dim: int = 0,
+        backbone_norm: str | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -1063,7 +1085,10 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self.history_norms = nn.ModuleList([nn.LayerNorm(attn_out_dim) for _ in target_names])
 
         # === Shared backbone (static only) ===
-        self.backbone = _build_backbone(static_dim, backbone_layers, dropout)
+        self.backbone_norm = _resolve_backbone_norm(backbone_norm)
+        self.backbone = _build_backbone(
+            static_dim, backbone_layers, dropout, normalization=self.backbone_norm
+        )
 
         backbone_out_dim = backbone_layers[-1]
         overrides = head_hidden_overrides or {}

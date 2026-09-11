@@ -15,19 +15,6 @@ including the ECR pull-through cache cold-start optimization.
 
 ## First-time setup
 
-Production publication requires verified image provenance (ADR-0011). Manual
-Batch and EC2 workflow dispatches must supply the full built `image_sha`.
-For direct `src.batch.launch` or submission-mode `src.batch.benchmark`, set
-`FF_TRAIN_GIT_SHA` and the matching numeric `FF_JOB_DEFINITION_REVISION`;
-split/CPU submissions also need `FF_JOB_DEFINITION_CPU_REVISION`. An explicitly
-versioned job-definition name (`name:revision`) is also accepted. The mappings
-are written by the image build under `job-def-revisions/{image_sha}.txt` and
-`job-def-revisions/{image_sha}-cpu.txt` in the training bucket. Launchers register
-the source's full main ancestry before submission, and publishing jobs verify
-it against the image before computation. Use `src.scripts.promote` for an
-intentional rollback; a superseded normal training run cannot publish older
-models. Dry runs and diagnostic/tuning modes do not publish production models.
-
 Prereqs: AWS CLI v2, `gh` CLI, credentials with rights to create IAM + Batch
 resources. The `ff-training` ECR repo must exist (created by the first run of
 [batch-image.yml](../../.github/workflows/batch-image.yml)).
@@ -198,16 +185,27 @@ The CE's `minvCpus=0` means there are no in-flight instances to disrupt
    ```
    Both should return `["ENABLED","VALID"]`.
 
-2. **Smoke test** (single CPU-only position, ~2–3 min on Spot):
+2. **Smoke test**: prefer the immutable plan selected by `train-batch.yml`. For
+   the legacy operator path, register the actual built image's full source SHA
+   from a full Git checkout and select a unique request ID before submission:
    ```
+   export FF_TRAIN_GIT_SHA='<full-40-character-image-source-sha>'
+   export FF_LEGACY_RUN_ID='batch:manual:<unique-request-id>'
+   export FF_JOB_DEFINITION_REVISION='<matching-image-job-definition-revision>'
+   python -m src.scripts.register_training_source --sha "$FF_TRAIN_GIT_SHA"
    AWS_REGION=us-east-1 python -m src.batch.launch --positions K --seed 42
    ```
+   Reuse a request ID only for retries of that request; the trainer checks the
+   source against the actual executable before compute. Missing plan/request
+   identity is rejected before upload or submission.
    Expect: job submitted → RUNNABLE → STARTING → RUNNING → SUCCEEDED, then
-   a fresh `manifest.json` at `s3://ff-predictor-training/models/K/manifest.json` pointing at the new `models/K/history/{ts}-{sha7}/model.tar.gz` artifact (the flat `models/K/model.tar.gz` mirror was removed in #282/#288).
+   its exact successful receipt under `models/releases/v3/run-outputs/`.
+   Local model downloads and benchmark history use that receipt rather than
+   another run's newer global head.
 
 3. **Full parallel fanout test:**
    ```
-   AWS_REGION=us-east-1 python -m src.batch.launch \
+   FF_LEGACY_RUN_ID='batch:manual:<new-request-id>' AWS_REGION=us-east-1 python -m src.batch.launch \
      --positions QB RB WR TE K DST --seed 42
    ```
    All six should reach RUNNING simultaneously (six 4-vCPU GPU Spot hosts;

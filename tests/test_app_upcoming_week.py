@@ -307,6 +307,39 @@ def test_input_signature_changes_with_lines():
 
 
 @pytest.mark.unit
+def test_input_signature_binds_contract_fields_player_assignments_and_source_status():
+    slate = pd.DataFrame(
+        {
+            "recent_team": ["SEA"],
+            "opponent_team": ["NE"],
+            "is_home": [1],
+            "spread_line": [3.5],
+            "total_line": [44.5],
+        }
+    )
+    roster = pd.DataFrame({"player_id": ["A", "B"]})
+    contracts = pd.DataFrame(
+        {"contract_apy_cap_pct": [0.1, 0.2], "contract_guaranteed": [1.0, 2.0]}, index=["A", "B"]
+    )
+    base = upcoming_week._input_signature(2026, 1, slate, roster, contract_features=contracts)
+    redistributed = contracts.copy()
+    redistributed["contract_apy_cap_pct"] = [0.2, 0.1]
+    assert (
+        upcoming_week._input_signature(2026, 1, slate, roster, contract_features=redistributed)
+        != base
+    )
+    updated = contracts.copy()
+    updated["contract_guaranteed"] = [1.0, 3.0]
+    assert upcoming_week._input_signature(2026, 1, slate, roster, contract_features=updated) != base
+    assert (
+        upcoming_week._input_signature(
+            2026, 1, slate, roster, contract_features=contracts, source_digest="unavailable"
+        )
+        != base
+    )
+
+
+@pytest.mark.unit
 def test_input_signature_changes_with_reserve_inactive_roster():
     # #1277: a RES/INA move (which resizes the inheritance vacancy out-set) must
     # invalidate the cache, else a stale artifact ships with the wrong out-set.
@@ -625,7 +658,9 @@ def test_run_upcoming_inference_passes_season_context_and_slices_week(monkeypatc
 
     tiny = pd.DataFrame({"player_id": ["old"], "season": [2024], "week": [1]})
     monkeypatch.setattr(upcoming_week.core, "_ensure_base_data", lambda: None)
-    monkeypatch.setattr(upcoming_week.app_pkg, "_cache", {"splits": {"RB": (tiny, tiny, tiny)}})
+    monkeypatch.setattr(
+        upcoming_week.app_pkg.current_state(), "cache", {"splits": {"RB": (tiny, tiny, tiny)}}
+    )
 
     captured = {}
     sentinel_prefix = upcoming_week._MODEL_PRED_PREFIXES[0]
@@ -682,8 +717,8 @@ def test_special_teams_inference_receives_both_live_history_sources(monkeypatch)
     )
     monkeypatch.setattr(upcoming_week.core, "_ensure_base_data", lambda: None)
     monkeypatch.setattr(
-        upcoming_week.app_pkg,
-        "_cache",
+        upcoming_week.app_pkg.current_state(),
+        "cache",
         {
             "splits": {
                 "K": (k.assign(season=2023), k.assign(season=2024), k),

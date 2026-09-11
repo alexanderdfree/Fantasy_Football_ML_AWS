@@ -12,6 +12,8 @@ from multiprocessing.connection import wait
 from pathlib import Path
 from typing import TypeVar
 
+from src.training.context import RunContext, use_context
+
 Task = TypeVar("Task")
 Result = TypeVar("Result")
 
@@ -32,18 +34,28 @@ def _worker_environment(values: Mapping[str, str]):
 
 
 @contextmanager
-def isolated_outputs(data_dir: str, *, share_cache: bool = False):
-    """Redirect pipeline outputs while retaining the caller's cache policy."""
+def isolated_outputs(
+    data_dir: str, *, share_cache: bool = False, legacy_cwd: bool = False, seed: int = 42
+):
+    """Yield explicit paths for a cell; old external callbacks can opt into cwd isolation.
+
+    Production runners use RunContext. ``legacy_cwd`` is a compatibility
+    boundary for callbacks that still write hardcoded relative paths.
+    """
     original = Path.cwd()
     temporary = tempfile.mkdtemp(prefix="ff-ab-")
+    context = RunContext(output_root=Path(temporary), data_root=Path(data_dir), seed=seed)
     try:
-        os.chdir(temporary)
-        Path("data").symlink_to(data_dir, target_is_directory=True)
-        if share_cache:
-            Path(".cache").symlink_to(original / ".cache", target_is_directory=True)
-        yield
+        if legacy_cwd:
+            os.chdir(temporary)
+            Path("data").symlink_to(data_dir, target_is_directory=True)
+            if share_cache:
+                Path(".cache").symlink_to(original / ".cache", target_is_directory=True)
+        with use_context(context):
+            yield context
     finally:
-        os.chdir(original)
+        if legacy_cwd:
+            os.chdir(original)
         shutil.rmtree(temporary, ignore_errors=True)
 
 

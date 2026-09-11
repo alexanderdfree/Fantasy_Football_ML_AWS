@@ -12,7 +12,7 @@ def receiving_boom_metrics(result, position):
     baseline injection. ``correlation`` (Pearson pred-vs-actual on the slice) is the
     decomposition's closable edge. ``mae`` (overall) feeds the harness Ridge sentinel.
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)
@@ -54,7 +54,7 @@ def inheritance_metrics(result, position):
     is injected into *every* arm (baseline carries it un-whitelisted), so the slice is identical
     across arms. ``inh_n`` flags whether the TE cohort is large enough to read.
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

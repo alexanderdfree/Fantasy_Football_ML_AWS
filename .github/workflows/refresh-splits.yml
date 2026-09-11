@@ -64,6 +64,11 @@ on:
       - "src/shared/comparison_scoring.py"
       - "src/shared/evaluation_cohorts.py"
       - "src/shared/expert_eligibility.py"
+      - "src/shared/weather_features.py"
+      - "src/contracts/feature_names.py"
+      - "src/shared/team_box_score.py"
+      - "src/training/context.py"
+      - "requirements.txt"
       - "src/scripts/build_evaluation_reference.py"
       - "src/analysis/analysis_expert_comparison.py"
       - "src/analysis/sleeper_loader.py"
@@ -187,6 +192,7 @@ jobs:
         # ``KeyError`` on missing cols rather than zero-filling silently.
         env:
           NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
+          FF_CAPTURE_PROVIDER_SOURCES: data/raw/provider_sources
         run: |
           python - <<'PY'
           from src.config import CACHE_DIR, SEASONS
@@ -523,7 +529,7 @@ jobs:
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
           FF_DEVICE: cpu
-        run: python -m src.scripts.build_serving_cache
+        run: python -m src.prediction.build_snapshot
 
       - name: Trigger retrain via image rebuild
         # Optional chain — if the operator wants the full
@@ -626,7 +632,7 @@ jobs:
     # Serialize only the ECS mutation with code deployment. Holding this lock
     # during data production would deadlock a deploy waiting for its snapshot.
     concurrency:
-      group: ecs-fantasy-cluster-fantasy-service
+      group: deploy-fantasy-service
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
@@ -641,4 +647,10 @@ jobs:
           DATA_RELEASE: ${{ needs.refresh.outputs.release_id }}
         run: |
           python3 -m src.scripts.advance_data_release --bucket "$S3_BUCKET" \
-            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --release-id "$DATA_RELEASE"
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --release-id "$DATA_RELEASE" \
+            --state data-release-rollout.json --timeout 1200
+      - name: Restore prior data rollout after failure or cancellation
+        if: failure() || cancelled()
+        run: |
+          python3 -m src.artifacts.deployment restore \
+            --state data-release-rollout.json --region "$AWS_REGION"

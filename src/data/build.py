@@ -13,6 +13,7 @@ def build_training_data() -> dict:
     from src.data.external_sources import _seasons_cache_signature
     from src.data.loader import load_raw_data
     from src.data.preprocessing import preprocess
+    from src.data.providers.snapshot import capture_provider_sources
     from src.data.release import (
         prewarm_training_dependencies,
         seal_inputs,
@@ -21,14 +22,15 @@ def build_training_data() -> dict:
     from src.data.split import temporal_split
     from src.features.engineer import build_features
 
-    raw = load_raw_data()
-    verify_historical_loader_inputs(CACHE_DIR, SEASONS)
-    signature = _seasons_cache_signature(SEASONS)
-    injuries = pd.read_parquet(Path(CACHE_DIR) / f"injuries_{signature}.parquet")
-    rosters = pd.read_parquet(Path(CACHE_DIR) / f"rosters_weekly_{signature}.parquet")
-    full = build_features(preprocess(raw), injuries_df=injuries, rosters_df=rosters)
-    temporal_split(full)
-    prewarm_training_dependencies()
+    with capture_provider_sources(Path(CACHE_DIR) / "provider_sources"):
+        raw = load_raw_data()
+        verify_historical_loader_inputs(CACHE_DIR, SEASONS)
+        signature = _seasons_cache_signature(SEASONS)
+        injuries = pd.read_parquet(Path(CACHE_DIR) / f"injuries_{signature}.parquet")
+        rosters = pd.read_parquet(Path(CACHE_DIR) / f"rosters_weekly_{signature}.parquet")
+        full = build_features(preprocess(raw), injuries_df=injuries, rosters_df=rosters)
+        temporal_split(full)
+        prewarm_training_dependencies()
     return seal_inputs(raw_dir=CACHE_DIR, repo_root=Path(__file__).resolve().parents[2])
 
 

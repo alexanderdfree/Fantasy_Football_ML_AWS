@@ -25,57 +25,45 @@ from src.k.targets import compute_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
 from src.shared.run_pipeline_factory import cli_main
+from src.training.context import runner_context
+from src.training.contracts import DatasetSplits
 
 # K's CONFIG omits the runtime-injected attn_history_builder_fn; run() fills
 # it in after kicks_df is loaded.
 CONFIG = build_pipeline_config("K", POSITION_CONFIG)
 
 
-def run(seed=42, config=None):
-    """Run the K pipeline. ``config`` lets callers (e.g. ``src/tuning/tune_nn.py``)
-    pass an overridden cfg dict per trial; we still inject the runtime-only
-    ``attn_history_builder_fn`` closure on top because it captures ``kicks_df``
-    loaded inside this function and can't be pre-baked into the static
-    ``CONFIG`` dict.
-    """
-    # --- Load and prepare kicker data ---
+def provide_dataset(cfg, *, cross_validation=False) -> DatasetSplits:
+    """Keep kicker reconstruction and nested per-kick state at the provider boundary."""
     print("Loading kicker data...")
-    k_df = load_data()
-    print(f"  Loaded {len(k_df)} kicker rows, {k_df['player_id'].nunique()} kickers")
-
-    # Compute targets on full data (needed for feature computation)
-    k_df = compute_targets(k_df)
-
-    # Compute ALL features on full data before splitting
-    # (rolling features need complete within-season history)
-    print("Computing kicker features on full dataset...")
+    k_df = compute_targets(load_data())
     compute_features(k_df)
-
-    # Per-kick records for the attention NN's inner pool.
-    print("Loading per-kick records...")
     kicks_df = load_kicks(k_df)
-    print(f"  Loaded {len(kicks_df)} kick records")
+    if cross_validation:
+        train_df = k_df[k_df["season"].isin(TRAIN_SEASONS + VAL_SEASONS)].copy()
+        val_df = None
+        test_df = k_df[k_df["season"].isin(TEST_SEASONS)].copy()
+    else:
+        train_df, val_df, test_df = season_split(k_df)
+    return DatasetSplits(
+        train_df,
+        val_df,
+        test_df,
+        {
+            "attn_history_builder_fn": _build_kick_history_closure(cfg, kicks_df),
+            "attn_kick_stats": list(cfg.get("attn_kick_stats", POSITION_CONFIG.attn_kick_stats)),
+        },
+    )
 
-    # --- Cross-season split ---
-    train_df, val_df, test_df = season_split(k_df)
 
-    # Shallow-copy the caller's config (or CONFIG default) so we can inject the
-    # runtime builder without mutating the source dict — the tuner reuses the
-    # same base_cfg across trials and would crash on the second trial if we
-    # mutated it in place.
+@runner_context
+def run(seed=42, config=None, *, context=None):
     cfg = dict(config if config is not None else CONFIG)
-
-    # Closure over kicks_df so the shared pipeline can build nested history
-    # arrays for each split without knowing kicker specifics. The window shape
-    # (attn_max_games etc.) is read from ``cfg`` inside the helper so a tuner
-    # override via ``run(config=...)`` takes effect. ``build_pipeline_config``
-    # emits ``attn_max_games`` and ``attn_max_kicks_per_game``; only
-    # ``attn_kick_stats`` uses the POSITION_CONFIG fallback unless the caller
-    # adds a cfg override.
-    # Shared with ``run_cv`` via ``_build_kick_history_closure``.
-    cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
-
-    return run_pipeline("K", cfg, train_df, val_df, test_df, seed)
+    dataset = provide_dataset(cfg)
+    cfg.update(dataset.bindings)
+    return run_pipeline(
+        "K", cfg, *dataset.frames, seed, **({"context": context} if context is not None else {})
+    )
 
 
 def _build_kick_history_closure(cfg, kicks_df):
@@ -85,7 +73,7 @@ def _build_kick_history_closure(cfg, kicks_df):
     return functools.partial(
         build_nested_kick_history,
         kicks_df=kicks_df,
-        kick_stats=cfg.get("attn_kick_stats", POSITION_CONFIG.attn_kick_stats),
+        kick_stats=list(cfg.get("attn_kick_stats", POSITION_CONFIG.attn_kick_stats)),
         max_games=cfg.get("attn_max_games", POSITION_CONFIG.attn_max_games),
         max_kicks_per_game=cfg.get(
             "attn_max_kicks_per_game", POSITION_CONFIG.attn_max_kicks_per_game
@@ -93,28 +81,19 @@ def _build_kick_history_closure(cfg, kicks_df):
     )
 
 
-def run_cv(seed=42, config=None):
-    """Expanding-window CV for K. Self-loads kicker data + the per-kick closure
-    (like ``run()``), then hands the full train+val frame plus a held-out 2025
-    test frame to the shared CV pipeline.
-
-    ``full_df`` is built from the *unfiltered* ``k_df`` (not ``season_split``,
-    which applies K's ``min_games`` to train) so ``_prepare_position_data``
-    applies the shared ``MIN_GAMES_PER_SEASON`` filter uniformly per fold,
-    matching the QB/RB/WR CV path. Module-level def (not a factory closure) so
-    the runpy-monkeypatch test pattern keeps working.
-    """
-    k_df = load_data()
-    k_df = compute_targets(k_df)
-    compute_features(k_df)
-    kicks_df = load_kicks(k_df)
-
+@runner_context
+def run_cv(seed=42, config=None, *, context=None):
     cfg = dict(config if config is not None else CONFIG)
-    cfg["attn_history_builder_fn"] = _build_kick_history_closure(cfg, kicks_df)
-
-    full_df = k_df[k_df["season"].isin(TRAIN_SEASONS + VAL_SEASONS)].copy()
-    test_df = k_df[k_df["season"].isin(TEST_SEASONS)].copy()
-    return run_cv_pipeline("K", cfg, full_df, test_df, seed)
+    dataset = provide_dataset(cfg, cross_validation=True)
+    cfg.update(dataset.bindings)
+    return run_cv_pipeline(
+        "K",
+        cfg,
+        dataset.train,
+        dataset.test,
+        seed,
+        **({"context": context} if context is not None else {}),
+    )
 
 
 if __name__ == "__main__":

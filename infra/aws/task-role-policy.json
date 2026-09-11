@@ -2,40 +2,49 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadServingArtifacts",
+      "Sid": "ReadModelsFromS3",
       "Effect": "Allow",
-      "Action": ["s3:GetObject"],
-      "Resource": [
-        "arn:aws:s3:::ff-predictor-training/models/*",
-        "arn:aws:s3:::ff-predictor-training/data/*"
-      ]
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::ff-predictor-training/models/*"
     },
     {
-      "Sid": "ListServingArtifacts",
+      "Sid": "ListBenchmarkHistory",
       "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::ff-predictor-training"
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::ff-predictor-training",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "models/benchmark_history/",
+            "models/benchmark_history/*"
+          ]
+        }
+      }
     },
     {
       "Sid": "ReadUpcomingArtifactVersions",
       "Effect": "Allow",
-      "Action": ["s3:GetObjectVersion"],
+      "Action": [
+        "s3:GetObjectVersion"
+      ],
       "Resource": "arn:aws:s3:::ff-predictor-training/models/predictions_cache/upcoming_week.json"
     },
     {
       "Sid": "ListUpcomingArtifactVersions",
       "Effect": "Allow",
-      "Action": ["s3:ListBucketVersions"],
+      "Action": [
+        "s3:ListBucketVersions"
+      ],
       "Resource": "arn:aws:s3:::ff-predictor-training",
       "Condition": {
-        "StringEquals": {"s3:prefix": "models/predictions_cache/upcoming_week.json"}
+        "StringEquals": {
+          "s3:prefix": "models/predictions_cache/upcoming_week.json"
+        }
       }
-    },
-    {
-      "Sid": "WritePredictionsCache",
-      "Effect": "Allow",
-      "Action": ["s3:PutObject"],
-      "Resource": "arn:aws:s3:::ff-predictor-training/models/predictions_cache/*"
     }
   ]
 }

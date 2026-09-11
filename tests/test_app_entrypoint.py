@@ -1,16 +1,8 @@
-"""Local dev entrypoint contract for ``python -m src.serving.app``.
+"""The dev entrypoint must compose the same routes and state as the imported app.
 
-Regression guard for the double-module-instance bug: when app.py executes as
-``__main__`` (via ``-m`` or a direct path), routes.py's
-``from src.serving.app import app`` re-executes app.py as a *second* module
-instance — sys.modules holds only ``__main__`` at that point — so every
-``@app.route`` handler registers on the second instance's Flask app. Before
-the fix, the ``__main__`` branch ran its OWN route-less ``app`` and every
-endpoint 404'd. The branch must serve the canonical ``src.serving.app``
-instance (the one routes register on and ``app_pkg`` shared state lives on).
-
-Production (gunicorn ``src.serving.app:app``) never runs the ``__main__``
-branch and is unaffected; this is a dev-entrypoint-only contract.
+Previously routes registered on a different module's app and ``python -m``
+served only 404s. The blueprint factory now supports distinct complete Flask
+instances; assert actual route behavior and explicit state ownership.
 """
 
 from __future__ import annotations
@@ -29,8 +21,8 @@ if str(PROJECT_ROOT) not in sys.path:
 pytestmark = pytest.mark.unit
 
 
-def test_main_entrypoint_serves_canonical_app(monkeypatch):
-    """The ``__main__`` branch must call ``run()`` on the canonical app.
+def test_main_entrypoint_serves_complete_composed_app(monkeypatch):
+    """The ``__main__`` branch must serve the complete composed application.
 
     ``runpy.run_module(..., run_name="__main__")`` mirrors ``python -m``: it
     executes app.py's code in a fresh ``__main__`` namespace (creating the
@@ -39,6 +31,12 @@ def test_main_entrypoint_serves_canonical_app(monkeypatch):
     would serve.
     """
     import flask
+
+    import src.serving.app as app_module
+
+    # This exercises a cold application entrypoint, independently of a prior
+    # serving test's deliberately degraded default-owner cache.
+    monkeypatch.setattr(app_module._default_state, "cache", {})
 
     captured = {}
 
@@ -64,14 +62,15 @@ def test_main_entrypoint_serves_canonical_app(monkeypatch):
         )
         runpy.run_module("src.serving.app", run_name="__main__")
 
-    import src.serving.app as app_module
-
-    assert captured["app"] is app_module.app, (
-        "python -m src.serving.app must serve the canonical src.serving.app "
-        "instance, not the __main__ duplicate (which has no routes and 404s "
-        "every endpoint)"
-    )
-    # Sanity: the served instance carries the real route table, not just the
-    # built-in /static rule the duplicate had.
-    rule_count = len(list(captured["app"].url_map.iter_rules()))
-    assert rule_count > 10, f"canonical app should expose the full route table, got {rule_count}"
+    served = captured["app"]
+    rules = {(rule.rule, tuple(sorted(rule.methods))) for rule in served.url_map.iter_rules()}
+    expected = {
+        (rule.rule, tuple(sorted(rule.methods))) for rule in app_module.app.url_map.iter_rules()
+    }
+    assert rules == expected
+    assert len(rules) > 10
+    assert served.extensions["ffp_state"] is app_module._default_state
+    with served.test_client() as client:
+        response = client.get("/health")
+    assert response.status_code == 200
+    assert response.is_json

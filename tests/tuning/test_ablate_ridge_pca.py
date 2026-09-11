@@ -9,6 +9,9 @@ pytest.mark.unit — runs in the fast unit shard (no data/splits needed).
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pandas as pd
 import pytest
 
 from src.tuning import ablate_ridge_pca as abl
@@ -174,6 +177,41 @@ def test_build_jobs_does_not_mutate_base_cfg(monkeypatch):
     abl._build_jobs(positions=["QB"], seeds=[42], variants=["none", "pca55"])
     # _job_pca_n must not leak back into the original cfg dict.
     assert "_job_pca_n" not in base
+
+
+@pytest.mark.parametrize("position", ["QB", "TE"])
+@pytest.mark.parametrize("variant", ["none", "pca55"])
+def test_execute_job_keeps_orchestration_metadata_out_of_typed_recipe(
+    monkeypatch, position, variant
+):
+    from src.training.contracts import ResolvedRecipe, resolve_recipe
+
+    job = abl._build_jobs(positions=[position], seeds=[42], variants=[variant])[0]
+    pca_n = abl.VARIANTS[variant]
+    frames = {name: pd.DataFrame({"holdout": [name]}) for name in ("train", "val", "test")}
+    monkeypatch.setattr(abl.pd, "read_parquet", lambda path: frames[Path(path).stem])
+    calls = []
+
+    def typed_runner(*, train_df, val_df, test_df, seed, config):
+        recipe = resolve_recipe(position, config)
+        assert isinstance(recipe, ResolvedRecipe)
+        assert "_job_pca_n" not in recipe
+        assert recipe["ridge_pca_components"] == pca_n
+        assert recipe["train_ridge"] is True and recipe["train_base_nn"] is False
+        assert train_df is frames["train"] and val_df is frames["val"] and seed == 42
+        calls.append(test_df["holdout"].iloc[0])
+        return {
+            "ridge_metrics": {"total": {"mae": 1.0 if calls[-1] == "val" else 2.0}},
+            "phase_seconds": {"ridge_train": 0.25},
+        }
+
+    monkeypatch.setattr(abl, "get_runner", lambda requested: typed_runner)
+    result = abl._execute_ridge_pca_job(job)
+    assert calls == ["val", "test"]
+    assert result["metrics"] == {"val_mae": 1.0, "test_mae": 2.0, "pca_n": pca_n}
+    assert result["metadata"]["pca_n"] == pca_n
+    assert job.base_cfg["_job_pca_n"] == pca_n
+    assert "ridge_pca_components" not in job.base_cfg
 
 
 # ---------------------------------------------------------------------------

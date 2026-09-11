@@ -97,4 +97,4 @@ jobs:
           sync_data_from_s3()
           sync_models_from_s3()
           PY
-          python -m src.serving.upcoming_week
+          python -m src.prediction.upcoming

@@ -149,7 +149,9 @@ def synthetic_parquets(tmp_path, monkeypatch):
     # what it honors. (#475)
     monkeypatch.setattr("src.config.CACHE_DIR", str(cache_dir))
     monkeypatch.setattr("src.config.SEASONS", _SEASONS)
-    monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons: team_stats)
+    monkeypatch.setattr(
+        dst_data, "load_team_week_stats", lambda seasons, cache_dir=None: team_stats
+    )
     monkeypatch.setattr(
         dst_data, "load_dst_scoring_events", lambda *a, **kw: _make_scoring_events()
     )
@@ -177,7 +179,7 @@ def test_yards_allowed_uses_opponent_net_offense_and_scoring_tier(synthetic_parq
     stats["passing_yards"] = 300.0
     stats["rushing_yards"] = 75.0
     stats["sack_yards_lost"] = -30.0
-    monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons: stats)
+    monkeypatch.setattr(dst_data, "load_team_week_stats", lambda seasons, cache_dir=None: stats)
     df = dst_data.build_data()
     assert df["yards_allowed"].eq(345).all()
     assert df["yards_allowed"].map(_yds_allowed_to_bonus).eq(0).all()

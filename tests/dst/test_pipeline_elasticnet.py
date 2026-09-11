@@ -54,6 +54,7 @@ def _make_dst_elasticnet_cfg() -> dict:
         "compute_adjustment_fn": None,
         "loss_weights": LOSS_WEIGHTS,
         "huber_deltas": HUBER_DELTAS,
+        "head_losses": POSITION_CONFIG.head_losses,
         "poisson_targets": POISSON_TARGETS,
         # Mirror _make_dst_tiny_cfg: set the real DST aggregator so the
         # ElasticNet ranking/backtest ``_total`` uses signed PA/YA bonuses
