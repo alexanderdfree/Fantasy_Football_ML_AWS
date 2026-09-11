@@ -32,7 +32,40 @@
 
 **K game-index contract.** The weekly observation frame defines the games in both nested-history branches. It includes observed games with no FG/PAT attempts: their game mask is true and every kick mask is false. Unused history slots have both masks false. Callers supply the complete in-season weekly history, and the builder selects strictly earlier games before joining kick records; an event-only table cannot define the outer slots. Existing weekly observations are preserved, and historical omissions are recovered only from actual special-teams participation by roster-designated kickers. This does not synthesize appearances from season rosters, byes, or inactive weeks. Per-game FG/PAT counts retain opportunity information alongside the pooled individual made/missed kicks.
 
+## QB role reconstruction
+
+Historical QB participation deliberately reconstructs unavailable or lagged
+pregame role/injury information. This owner-approved proxy supplies
+`is_top_available` and `inherited_opportunity` on historical rows. It is not a claim
+that the archived feature was observable as of kickoff. Corrected player identities
+and weekly roster-status semantics remain in force; a participating historical QB
+cannot also contribute an unavailable role because of a conflicting absence record.
+
+Rows marked `_is_upcoming=True` use the actual eligible roster population. Known
+positive QB depth ranks choose the best available depth; prior expected opportunity
+breaks ties and values the vacated role. If depth is unavailable, the prior-role
+fallback is reported. Out/Doubtful and RES/INA exclusions apply before depth ranking.
+Current/future game statistics never select an upcoming QB or enter its role history.
+RB/WR/TE retain their roster-based availability behavior; K/DST are unaffected.
+
+The live builder passes depth to feature engineering before role selection. Filling
+the ordinary `depth_chart_rank` model feature afterward is insufficient: an active
+backup with one high-opportunity appearance can otherwise outrank the expected
+starter. Missing or stale role information remains a limitation, including planned
+rest and late lineup changes.
+
+Native historical benchmarks use the reconstructed proxy. Deployment-oriented
+validation must separately replay prediction rows with pregame inputs while keeping
+historical proxy training, common player-weeks, and scoring components fixed. The
+[validation report](../../todo/qb-role-reconstruction-validation.md) distinguishes
+these information regimes and records the production-pipeline evidence.
+
 ## Changelog
+
+- **2026-09-10** — Restore the intended historical QB participation proxy using
+  corrected source data, and select upcoming QB roles with eligible pregame depth
+  ranks before computing inheritance. Keep RB/WR/TE behavior unchanged and retain
+  explicit fallback/coverage limits. (PR pending)
 
 - **2026-09-10** — Normalize ESPN multi-slot WR ranks to legacy within-slot
   depth levels before filtering unidentified players. Compute availability

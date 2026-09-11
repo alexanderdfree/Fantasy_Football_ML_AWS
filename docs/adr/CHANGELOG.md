@@ -6,6 +6,7 @@
 
 - 2026-09-10 · Remove repository Codex model, reasoning, and context pins; inherit personal defaults and session selections · (PR #1579) · → ADR-0025
 - 2026-09-10 · Remove ML dependencies from the serving image and move offline prediction builders and providers out of HTTP code · (PR #1566 follow-up) · → ADR-0027
+- 2026-09-10 · Restore historical QB role reconstruction and use pregame depth for upcoming availability · (PR pending) · → ADR-0004
 
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
 - 2026-09-10 · Exclude non-shared DST points allowed, enforce NFL.com source eligibility, and pair offline comparison cohorts · (PR pending) · → ADR-0024

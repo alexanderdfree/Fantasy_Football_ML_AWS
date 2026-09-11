@@ -34,6 +34,8 @@ def build_features(
     df: pd.DataFrame,
     injuries_df: pd.DataFrame | None = None,
     rosters_df: pd.DataFrame | None = None,
+    *,
+    qb_depth_chart_ranks: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Build the engineered feature columns from preprocessed data.
 
@@ -55,9 +57,11 @@ def build_features(
     absent from BOTH the weekly frame and the injury report, so without it a starter lost to IR or
     scratched is invisible to the vacancy signal (#1106; serving already sees the injury subset
     because ESPN maps IR/out to ``Out``). Passed alongside ``injuries_df`` by the splits callers;
-    ``ACT`` rows define the candidate population, including active players with no
-    stat line. Missing roster groups emit neutral zeros for both inheritance features;
-    observed game participants must never stand in for a pregame roster.
+    ``ACT`` rows define the RB/WR/TE and upcoming-QB candidate population, including
+    active nonparticipants. Historical QB participation deliberately reconstructs
+    missing pregame availability/role information; it is a proxy, not an as-of feed.
+    Upcoming QB rows (``_is_upcoming=True``) instead prefer the best available rank
+    in ``qb_depth_chart_ranks`` and fall back to prior role when depth is unavailable.
     """
     df = df.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
 
@@ -383,7 +387,9 @@ def build_features(
     df = pd.concat([df, pd.DataFrame(pos_cols, index=df.index)], axis=1)
 
     # --- Role-inheritance features (QB/RB/WR/TE static branch) ---
-    df = _build_inheritance_features(df, injuries_df, rosters_df)
+    df = _build_inheritance_features(
+        df, injuries_df, rosters_df, qb_depth_chart_ranks=qb_depth_chart_ranks
+    )
 
     return df
 
@@ -435,6 +441,8 @@ def _build_inheritance_features(
     df: pd.DataFrame,
     injuries_df: pd.DataFrame | None,
     rosters_df: pd.DataFrame | None = None,
+    *,
+    qb_depth_chart_ranks: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """Add ``is_top_available`` + ``inherited_opportunity`` per (position, recent_team,
     season, week), within position.
@@ -442,19 +450,20 @@ def _build_inheritance_features(
     * role(player, W) = prior-to-W expanding mean of the position's opportunity proxy, falling
       back to the player's prior-season mean role when there is no current-season game yet
       (Week 1 / cold-start) so the vacancy signal is not silently zeroed (#1106 finding B).
-    * ``is_top_available`` = top prior-role among active same-position roster teammates
-      that week, excluding Out/Doubtful and reserve/inactive players. Active nonparticipants
-      contribute to this ranking without becoming stat lines or history observations.
+    * Historical QB ``is_top_available`` uses observed participants to reconstruct
+      missing pregame role/availability information. Participation overrides a conflicting
+      absence report in this historical proxy only. Upcoming QB rows prefer known pregame
+      depth among eligible roster players, with prior role breaking ties or supplying a
+      fallback. RB/WR/TE retain their active-roster, prior-role ranking.
     * ``inherited_opportunity`` = Σ prior-role of same-team, same-position OUT/Doubtful
       teammates ranked above, only for the top-available one. The out-set is the injury
       report (Out/Doubtful) plus, when ``rosters_df`` is given, players on reserve or the
       inactive list (``status`` in {"RES", "INA"}) — absent from BOTH the weekly
       frame and the report, so a starter lost to IR or scratched is otherwise invisible (#1106).
 
-    Runs on the full pre-split frame; ``role_before`` indexes only weeks < W, so it stays
-    leakage-safe despite future weeks being present. Missing weekly roster groups have
-    neutral-zero features, with a warning; ranking observed participants would leak the
-    game's participation and disagree with the live active-roster skeleton.
+    Role magnitudes use weeks < W only. Historical QB participation is an explicit
+    information-reconstruction assumption; it never defines upcoming availability.
+    Other missing/unknown roster populations yield neutral features with a warning.
     """
     df = df.reset_index(drop=True)
     is_top = np.zeros(len(df))
@@ -466,6 +475,13 @@ def _build_inheritance_features(
         return df
 
     pid = df["player_id"].astype(str).to_numpy()
+    upcoming = (
+        df["_is_upcoming"].eq(True).to_numpy()
+        if "_is_upcoming" in df
+        else np.zeros(len(df), dtype=bool)
+    )
+    qb_depth = pd.to_numeric(pd.Series(qb_depth_chart_ranks or {}, dtype=object), errors="coerce")
+    qb_depth = qb_depth[np.isfinite(qb_depth) & qb_depth.gt(0)].to_dict()
 
     # out-set per (position, season, team, week) from the injury report
     outmap: dict = {}
@@ -596,6 +612,7 @@ def _build_inheritance_features(
         return prior_role.get(pos, {}).get((p, s), 0.0)
 
     missing_groups = 0
+    qb_depth_fallbacks = 0
     for pos in _INHERITANCE_POSITIONS:
         if pos not in pref:
             continue
@@ -603,16 +620,31 @@ def _build_inheritance_features(
         for (s, tm, w), idx in grp.groupby(["season", "recent_team", "week"]).groups.items():
             si, wi = int(s), int(w)
             key = (pos, si, tm, wi)
-            if key not in roster_groups or key in unknown_groups:
-                missing_groups += 1
-                continue
             rows = idx.to_numpy()  # df is reset_index'd → labels ARE row positions
             pids = pid[rows]
             roles = np.array([role_before(pos, p, si, wi) for p in pids])
             out_set = outmap.get(key, set())
-            available = available_map.get(key, set()) - out_set
+            historical_qb = pos == "QB" and not upcoming[rows].any()
+            if historical_qb:
+                # Owner-intended historical stand-in for sparse/lagged role and injury
+                # feeds. Keep corrected out-set semantics for absent players; an observed
+                # participant cannot also be an unavailable teammate in this proxy.
+                available = set(pids)
+                out_set = out_set - available
+            else:
+                if key not in roster_groups or key in unknown_groups:
+                    missing_groups += 1
+                    continue
+                available = available_map.get(key, set()) - out_set
             if not available:
                 continue
+            if pos == "QB" and not historical_qb:
+                known_depth = {p: qb_depth[p] for p in available if p in qb_depth}
+                if known_depth:
+                    best_depth = min(known_depth.values())
+                    available = {p for p, rank in known_depth.items() if rank == best_depth}
+                else:
+                    qb_depth_fallbacks += 1
             top_role = max(role_before(pos, p, si, wi) for p in available)
             out_roles = np.array([role_before(pos, g, si, wi) for g in out_set])
             for j, rp in enumerate(roles):
@@ -626,6 +658,11 @@ def _build_inheritance_features(
             "inheritance: weekly roster population missing or unknown for %d position/team/weeks; "
             "availability features are neutral zero (no participant fallback)",
             missing_groups,
+        )
+    if qb_depth_fallbacks:
+        logger.warning(
+            "inheritance: pregame QB depth unavailable for %d team/weeks; using prior-role fallback",
+            qb_depth_fallbacks,
         )
     df["is_top_available"] = is_top
     df["inherited_opportunity"] = inh
