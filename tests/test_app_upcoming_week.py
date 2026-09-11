@@ -805,7 +805,7 @@ def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
     monkeypatch.setattr(
         upcoming_week,
         "build_features",
-        lambda combined, injuries_df=None, rosters_df=None: combined,
+        lambda combined, injuries_df=None, rosters_df=None, **kwargs: combined,
     )
 
     out = upcoming_week.build_upcoming_week_frame(2026, 4, slate, roster, schedules=pd.DataFrame())

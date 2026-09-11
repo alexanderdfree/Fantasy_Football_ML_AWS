@@ -405,6 +405,9 @@ def build_upcoming_week_frame(
     out-set as training does. The supplied live active ``roster`` defines this
     week's available population, including nonparticipants. Without weekly
     rosters the live population remains usable, but RES/INA vacancies are unknown.
+    QB role selection receives the live depth ranks before inheritance is computed;
+    missing ranks retain the prior-role fallback. Historical QB context uses the
+    participation-based role proxy, while the marked upcoming rows never do.
     ``depth_chart_ranks`` / ``game_status_map`` /
     ``practice_status_map`` / ``contract_features`` are the live role/health/
     contract signals applied in ``_fill_current_week_context`` (``None`` →
@@ -427,7 +430,12 @@ def build_upcoming_week_frame(
         raise RuntimeError("The upcoming slate overlaps completed player games")
     combined = pd.concat([history, skel], ignore_index=True)
     availability_rosters = _availability_rosters(season, week, roster, rosters_df)
-    featurized = build_features(combined, injuries_df=injuries_df, rosters_df=availability_rosters)
+    featurized = build_features(
+        combined,
+        injuries_df=injuries_df,
+        rosters_df=availability_rosters,
+        qb_depth_chart_ranks=depth_chart_ranks,
+    )
     if not featurized.index.is_unique:
         # _apply_position_models writes predictions by index; a duplicated index
         # would land week-W predictions on context rows (and vice versa).

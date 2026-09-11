@@ -12,6 +12,9 @@
 ### [FIXED] Inheritance magnitude collapsed and reception expectations omitted truncation
 [Read the incident record](fixed-archive/inheritance-reception-contracts-2026-09.md).
 
+### [FIXED] QB availability rewrite removed the intended historical role proxy
+[Read the incident record](fixed-archive/qb-role-reconstruction.md).
+
 ### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
 [Read the incident record](fixed-archive/upcoming-refresh-availability-2026-09.md).
 
