@@ -41,7 +41,12 @@ from src.serving.serialization import (
 )
 from src.serving.wiki import WIKI_DOCS, _render_wiki_doc
 from src.shared.aggregate_targets import TARGET_UNITS
-from src.shared.comparison_scoring import ACTUAL_BASIS, EXCLUDED_SOURCES, scoring_components
+from src.shared.comparison_scoring import (
+    ACTUAL_BASIS,
+    EXCLUDED_COMPONENTS,
+    EXCLUDED_SOURCES,
+    scoring_components,
+)
 from src.shared.weather_features import WEATHER_FEATURES_ALL
 
 # Sortable keys for /api/predictions: the realized total ("actual"), the week, and
@@ -393,11 +398,18 @@ def api_weekly_accuracy():
 
 @app.route("/api/timeline")
 def api_timeline():
-    """Changelog & Timeline tab payload: the live weekly head-to-head log
-    (models + experts, winner, edge on common rows) plus the committed
-    release-changelog entries. See src/serving/timeline.py for semantics."""
+    """Matched weekly per-model records plus the committed release changelog."""
     scoring = _validate_scoring(request.args.get("scoring", "ppr"))
-    payload = timeline.compute_timeline(scoring)
+    group = request.args.get("group", "offense")
+    if group not in timeline.TIMELINE_GROUPS:
+        return jsonify({"error": f"Invalid comparison group: {group}"}), 400
+    season = request.args.get("season")
+    if season is not None:
+        try:
+            season = int(season)
+        except ValueError:
+            return jsonify({"error": f"Invalid season: {season}"}), 400
+    payload = timeline.compute_timeline(scoring, group, season)
     payload["releases"] = timeline.load_release_changelog()
     return jsonify(payload)
 
@@ -651,6 +663,7 @@ def api_comparison():
                 pos: list(scoring_components(pos)) for pos in comparison.COMPARISON_POSITIONS
             },
             "excluded_sources": EXCLUDED_SOURCES,
+            "excluded_components": EXCLUDED_COMPONENTS,
             "sample_basis": "shared_player_weeks",
             "cohort_definitions": {
                 "weekly_reference_top24": "Top 24 per week by shared-component NFL.com/RotoWire mean; ESPN for K, RotoWire for DST",

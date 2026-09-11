@@ -29,6 +29,9 @@ def records(n=30):
             "nflcom_pred_ppr": np.arange(n, dtype=float),
             "rotowire_pred_ppr": np.arange(n, dtype=float),
             "espn_pred_ppr": np.arange(n, dtype=float),
+            "nflcom_comparison_pred_ppr": np.arange(n, dtype=float),
+            "rotowire_comparison_pred_ppr": np.arange(n, dtype=float),
+            "espn_comparison_pred_ppr": np.arange(n, dtype=float),
         }
     )
 
@@ -44,7 +47,7 @@ def test_identical_forecasts_have_identical_errors_on_shared_actuals():
 def test_missing_expert_week_is_excluded_for_every_displayed_source():
     data = records()
     data.loc[0, "fantasy_points"] = 10000
-    data.loc[0, "nflcom_pred_ppr"] = np.nan
+    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
     assert all(cell["mae"] == 7 and cell["n"] == 29 for cell in subsets["all"]["WR"].values())
     assert coverage["all"]["WR"]["cohort_n"] == 30
@@ -52,7 +55,7 @@ def test_missing_expert_week_is_excluded_for_every_displayed_source():
 
 def test_zero_projection_is_retained_and_infinite_prediction_is_excluded():
     data = records()
-    data.loc[1, "nflcom_pred_ppr"] = np.inf
+    data.loc[1, "nflcom_comparison_pred_ppr"] = np.inf
     subsets, _, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
     assert subsets["all"]["WR"]["nflcom"]["n"] == 29
 
@@ -62,7 +65,7 @@ def test_weekly_list_is_reference_selected_before_coverage_filter():
     ref = data[["player_id", "position", "season", "week"]].copy()
     ref["reference_rank"] = np.arange(1, 31)
     ref["reference_version"] = REFERENCE_VERSION
-    data.loc[0, "nflcom_pred_ppr"] = np.nan
+    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=ref)
     assert coverage["weekly_reference_top24"]["WR"]["cohort_n"] == 24
     assert all(cell["n"] == 23 for cell in subsets["weekly_reference_top24"]["WR"].values())
@@ -84,7 +87,7 @@ def test_available_reference_cannot_hide_an_empty_comparison():
     ref["reference_rank"] = np.arange(1, 31)
     ref["reference_version"] = REFERENCE_VERSION
     # This source exists in the position, but not for any of the reference top 24.
-    data.loc[:23, "nflcom_pred_ppr"] = np.nan
+    data.loc[:23, "nflcom_comparison_pred_ppr"] = np.nan
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=ref)
     cell = coverage["weekly_reference_top24"]["WR"]
     assert cell["n"] == 0
@@ -151,6 +154,8 @@ def test_incompatible_kicker_total_is_excluded_from_errors_and_quartiles():
         nflcom_pred_ppr=1000,
         rotowire_pred_ppr=np.nan,
         espn_pred_ppr=8.0,
+        rotowire_comparison_pred_ppr=np.nan,
+        espn_comparison_pred_ppr=8.0,
     )
     subsets, coverage, quartiles, rankings = comparison.comparison_tables(
         data, reference=pd.DataFrame()

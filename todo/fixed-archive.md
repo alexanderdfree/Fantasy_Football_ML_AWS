@@ -1,7 +1,16 @@
 # Fixed archive — index
 
+### [FIXED] Expert forecasts lost scoring components outside the model target list
+[Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
+
 ### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
 [Read the incident record](fixed-archive/upcoming-refresh-availability-2026-09.md).
+
+### [FIXED] DST scoring semantics, historical expert eligibility and offline comparison cohorts
+[Read the incident record](fixed-archive/expert-fairness-scoring-eligibility-cohorts-2026-09.md).
+
+### [FIXED] Timeline used incompatible actuals, source populations, and hindsight winners
+[Read the incident record](fixed-archive/timeline-fair-comparisons.md).
 
 ### [FIXED] Live QBR qualification and roster/practice identity joins omitted available data
 [Read the incident record](fixed-archive/live-source-identity-qbr-2026-09.md).

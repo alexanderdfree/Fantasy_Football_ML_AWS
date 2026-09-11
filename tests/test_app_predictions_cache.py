@@ -191,10 +191,9 @@ def test_hydrated_worker_reloads_when_another_worker_revokes_its_generation(
         core.app_pkg._cache["splits"] = dict.fromkeys(positions, (None, None, None))
 
     def apply(train, val, test, pos, results):
-        calls.append(pos)
-        # Match the real model writer: even disjoint pandas row assignments
-        # can lose updates when six loader threads copy the same backing block.
+        # Mirror production: pandas writes need a lock even for disjoint rows.
         with core.app_pkg._results_write_lock:
+            calls.append(pos)
             results.loc[results["position"] == pos, "ridge_pred_ppr"] = 99.0
 
     monkeypatch.setattr(core, "_load_splits_locked", load_splits)
@@ -639,6 +638,23 @@ def test_persist_then_hydrate_round_trips_results_and_metrics(
         app_mod._cache["results"].reset_index(drop=True),
         results.reset_index(drop=True),
     )
+
+
+def test_truncated_expert_scoring_schema_cannot_hydrate(cache_dir, fingerprint_files, monkeypatch):
+    import src.serving.app as app_mod
+
+    monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: None)
+    app_mod._cache["results"] = _fake_results()
+    app_mod._cache["metrics_by_format"] = _fake_metrics()
+    _persist_fixture_cache()
+    _, files = read_generation(cache_dir)
+    stored = json.loads(files["fingerprint.json"])
+    assert stored["schema_version"] > 10
+    assert core._try_hydrate_from_disk() is True
+    stored["schema_version"] = 10
+    publish_generation(cache_dir, {**files, "fingerprint.json": json.dumps(stored).encode()})
+    app_mod._cache.clear()
+    assert core._try_hydrate_from_disk() is False
 
 
 def test_espn_outage_cannot_publish_a_reusable_null_cache(

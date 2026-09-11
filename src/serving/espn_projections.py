@@ -21,10 +21,10 @@ from src.config import CACHE_DIR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
 from src.serving import espn_live
+from src.serving.expert_sources import score_offensive_projections
 from src.shared.aggregate_targets import (
     DST_TARGETS,
     K_TARGETS,
-    POSITION_TARGET_MAP,
     predictions_to_fantasy_points,
 )
 
@@ -139,8 +139,8 @@ def _normalize_season(payload: dict, season: int) -> pd.DataFrame:
             stats = split.get("stats") or {}
             if pos in _REQUIRED_STATS and not _REQUIRED_STATS[pos].issubset(stats):
                 continue
-            if pos in POSITION_TARGET_MAP and not any(
-                _OFFENSE_STATS[target] in stats for target in POSITION_TARGET_MAP[pos]
+            if pos not in _REQUIRED_STATS and not any(
+                key in stats for key in _OFFENSE_STATS.values()
             ):
                 continue
             # Sparse absent fields are zero; malformed/nonfinite values fail the
@@ -212,7 +212,7 @@ def load_espn_projections(
     }
 
     def load_season(season):
-        path = Path(cache_dir) / f"espn_projections_v1_{season}.parquet"
+        path = Path(cache_dir) / f"espn_projections_v2_{season}.parquet"
         if path.exists() and not force_refresh:
             return pd.read_parquet(path)
         frame = _normalize_season(
@@ -256,12 +256,15 @@ def load_espn_with_gsis_id(
 
 
 def project_espn_to_fantasy(raw: pd.DataFrame, pos: str, scoring_format: str) -> pd.DataFrame:
-    """Rescore every position through the same aggregator as model predictions."""
+    """Score all offense stats; retain the model scoring rules for K and DST."""
     frame = raw.loc[(raw["position"] == pos) & raw["player_id"].notna()]
     if frame.empty:
         return pd.DataFrame(columns=[*_KEYS, "espn_pred_total"])
-    targets = K_TARGETS if pos == "K" else DST_TARGETS if pos == "DST" else POSITION_TARGET_MAP[pos]
     out = frame[_KEYS].copy()
+    if pos not in ("K", "DST"):
+        out["espn_pred_total"] = score_offensive_projections(frame, scoring_format)
+        return out
+    targets = K_TARGETS if pos == "K" else DST_TARGETS
     out["espn_pred_total"] = predictions_to_fantasy_points(
         pos,
         {name: frame[name].to_numpy() for name in targets},

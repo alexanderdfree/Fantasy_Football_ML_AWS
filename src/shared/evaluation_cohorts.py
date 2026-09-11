@@ -15,11 +15,16 @@ import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR
-from src.shared.comparison_scoring import ACTUAL_BASIS, score_actual_components, scoring_components
+from src.shared.comparison_scoring import (
+    ACTUAL_BASIS,
+    comparison_model_totals,
+    score_actual_components,
+    scoring_components,
+)
 from src.shared.evaluation import compute_metrics
 
 REFERENCE_FILENAME = "weekly_evaluation_reference_v1.parquet"
-REFERENCE_VERSION = "shared_components_v2"
+REFERENCE_VERSION = "shared_components_v3"
 KEYS = ["player_id", "season", "week"]
 MODEL_COLUMNS = {
     "Ridge": "pred_ridge_total",
@@ -201,7 +206,7 @@ def build_cohorts(
             }
             for key, definition in definitions.items()
         }
-    df = regular_season_rows(frame).copy()
+    df = comparison_model_totals(regular_season_rows(frame), position)
     df["player_id"] = df["player_id"].astype(str)
     df["fantasy_points"] = score_actual_components(df, position)
     if not df["fantasy_points"].notna().any():
