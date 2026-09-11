@@ -17,6 +17,9 @@ SCORING_FORMATS = ("ppr", "half_ppr", "standard")
 MODEL_SOURCES = ("ridge", "nn", "attn_nn", "lgbm")
 EXPERT_SOURCES = ("nflcom", "rotowire", "espn")
 PREDICTION_FIELDS = tuple(f"{source}_pred" for source in MODEL_SOURCES)
+COMPARISON_PREDICTION_FIELDS = tuple(
+    f"{source}_comparison_pred" for source in (*MODEL_SOURCES, *EXPERT_SOURCES)
+)
 
 # An intentionally small envelope schema: structural requirements shared by the
 # generated browser boundary, fixture tests, and independent Python consumers.
@@ -37,6 +40,12 @@ API_CONTRACT = {
     "model_sources": list(MODEL_SOURCES),
     "expert_sources": list(EXPERT_SOURCES),
     "nullable_prediction_fields": list(PREDICTION_FIELDS),
+    "nullable_comparison_prediction_fields": list(COMPARISON_PREDICTION_FIELDS),
+    "optional_row_comparison_metadata": [
+        "comparison_actual",
+        "comparison_actual_basis",
+        "comparison_excluded_sources",
+    ],
     "envelopes": ENVELOPES,
     "endpoints": {
         "/api/snapshot": "snapshot",
@@ -105,7 +114,12 @@ def validate_response(path: str, payload: object, status_code: int = 200) -> Non
             raise ContractError(f"players[{index}] must name a known position")
         if not isinstance(row.get("player_id"), str):
             raise ContractError(f"players[{index}].player_id must be a string")
-        for field in ("actual", *PREDICTION_FIELDS):
+        for field in (
+            "actual",
+            "comparison_actual",
+            *PREDICTION_FIELDS,
+            *COMPARISON_PREDICTION_FIELDS,
+        ):
             value = row.get(field)
             if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
                 raise ContractError(f"players[{index}].{field} must be finite or null")

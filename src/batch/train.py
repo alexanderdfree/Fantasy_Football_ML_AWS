@@ -592,7 +592,12 @@ def _extract_metrics(position, result):
     metrics: dict = {"position": position, **_artifact_provenance()}
     metrics["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
     metrics["evaluation_record"] = record_for_result(
-        position, result, cohorts=metrics["cohorts"], execution_regime="eager", use_environment=True
+        position,
+        result,
+        cohorts=metrics["cohorts"],
+        execution_regime="eager",
+        use_environment=True,
+        actual_columns=INFERENCE_REGISTRY[position]["targets"],
     ).to_dict()
 
     # Stamp the image's commit SHA into the per-position artifact. launch.py
@@ -1056,6 +1061,7 @@ def _merged_split_metrics(
         cohorts=metrics["cohorts"],
         execution_regime="eager",
         use_environment=False,
+        actual_columns=INFERENCE_REGISTRY[position]["targets"],
     ).to_dict()
     metrics["evaluation_record"]["branches"] = {
         branch: values.get("evaluation_record")

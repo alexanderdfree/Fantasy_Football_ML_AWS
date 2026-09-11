@@ -77,6 +77,90 @@ def test_evaluation_identity_ignores_predictions_and_row_order():
     assert evaluation_data_identity(frame) != identity
 
 
+def test_record_identity_distinguishes_equal_native_dst_totals_with_different_raw_truth():
+    from src.shared.aggregate_targets import DST_TARGETS, predictions_to_fantasy_points
+    from src.shared.comparison_scoring import score_actual_components
+
+    frame = pd.DataFrame(
+        {
+            "player_id": ["BUF"],
+            "season": [2025],
+            "week": [1],
+            "position": ["DST"],
+            **{target: [0.0] for target in DST_TARGETS},
+        }
+    )
+    frame["yards_allowed"] = 349.0
+    frame["fantasy_points"] = predictions_to_fantasy_points(
+        "DST", {c: frame[c] for c in DST_TARGETS}
+    )
+    changed = frame.copy()
+    changed["points_allowed"] = 21.0
+    changed["def_sacks"] = 10.0
+    changed["fantasy_points"] = predictions_to_fantasy_points(
+        "DST", {c: changed[c] for c in DST_TARGETS}
+    )
+    assert frame["fantasy_points"].equals(changed["fantasy_points"])
+    assert not score_actual_components(frame, "DST").equals(score_actual_components(changed, "DST"))
+    first = record_for_result("DST", {"test_df": frame}, actual_columns=DST_TARGETS)
+    second = record_for_result("DST", {"test_df": changed}, actual_columns=DST_TARGETS)
+    assert first.evaluation_data_id is not None
+    assert first.evaluation_data_id != second.evaluation_data_id
+
+
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_summary_identity_binds_raw_targets_even_when_model_metrics_are_sparse(position):
+    from src.shared.aggregate_targets import DST_TARGETS, K_TARGETS, POSITION_TARGET_MAP
+    from src.shared.benchmark_utils import summarize_pipeline_result
+
+    targets = tuple({**POSITION_TARGET_MAP, "K": K_TARGETS, "DST": DST_TARGETS}[position])
+    frame = sample().assign(**{target: 0.0 for target in targets})
+    result = {
+        "test_df": frame,
+        "ridge_metrics": {"total": {"mae": 1.0, "r2": 0.0}},
+        "nn_metrics": {"total": {"mae": 2.0, "r2": 0.0}},
+        "cohorts": {"custom": {}},
+    }
+    first = summarize_pipeline_result(position, result)["evaluation_record"]["evaluation_data_id"]
+    assert first is not None
+    frame.loc[0, targets[0]] = 1.0
+    second = summarize_pipeline_result(position, result)["evaluation_record"]["evaluation_data_id"]
+    assert second != first
+    result["test_df"] = frame.drop(columns=targets[0])
+    assert (
+        summarize_pipeline_result(position, result)["evaluation_record"]["evaluation_data_id"]
+        is None
+    )
+
+
+def test_record_requires_declared_truth_and_keeps_predictions_out_of_identity():
+    frame = sample().assign(passing_yards=100.0, fantasy_points_half_ppr=10.0)
+    assert record_for_result("QB", {"test_df": frame}).evaluation_data_id is None
+    result = {"test_df": frame, "ridge_metrics": {"passing_yards": {"mae": 1.0}}}
+    first = record_for_result("QB", result).evaluation_data_id
+    assert first is not None
+    frame["pred_ridge_total"] = 999.0
+    frame["engineered_feature"] = 10.0
+    result["test_df"] = frame.iloc[::-1]
+    assert record_for_result("QB", result).evaluation_data_id == first
+    result["test_df"].loc[0, "fantasy_points_half_ppr"] = 11.0
+    assert record_for_result("QB", result).evaluation_data_id != first
+    assert (
+        record_for_result("QB", result, actual_columns=("missing_truth",)).evaluation_data_id
+        is None
+    )
+
+
+def test_record_identity_binds_prefill_comparison_truth_and_availability():
+    frame = sample().assign(passing_yards=0.0, actual_projected_total=np.nan)
+    result = {"test_df": frame}
+    unavailable = record_for_result("QB", result, actual_columns=("passing_yards",))
+    frame["actual_projected_total"] = 0.0
+    available = record_for_result("QB", result, actual_columns=("passing_yards",))
+    assert unavailable.evaluation_data_id is not None
+    assert unavailable.evaluation_data_id != available.evaluation_data_id
+
+
 def test_record_keeps_unknown_history_and_execution_regimes_distinct(monkeypatch):
     monkeypatch.setenv("FF_DATASET_ID", "current-job-dataset")
     result = {

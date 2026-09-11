@@ -139,7 +139,10 @@ def test_complete_cached_empty_sources_seal_and_replay_without_changing_bytes(
     cached_inputs, monkeypatch
 ):
     raw, splits, calls = cached_inputs
-    before = loader.load_raw_data(SEASONS, cache_dir=str(raw))
+    # These complete empty fixtures are a historical replay, not a mutable
+    # live cache whose emptiness should trigger a source-recovery attempt.
+    with release.require_cached_sources(raw):
+        before = loader.load_raw_data(SEASONS, cache_dir=str(raw))
     hashes = {path.name: release._hash(path) for path in raw.iterdir()}
     manifest = release.seal_inputs(raw_dir=raw, splits_dir=splits)
     assert (splits / release.SEAL_NAME).is_file()

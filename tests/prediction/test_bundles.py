@@ -108,7 +108,8 @@ def test_six_position_bundle_roundtrip_owns_constructor_and_order(position, fami
             loaded.predict_raw(replace(inputs, schema=changed))
 
 
-def test_ridge_bundle_binds_files_and_feature_schema(tmp_path):
+@pytest.mark.parametrize("with_selection", [False, True])
+def test_ridge_bundle_binds_files_and_feature_schema(tmp_path, with_selection):
     reg = get_inference_spec("QB")
     features = ["a", "b"]
     reg["get_feature_columns_fn"] = lambda: features
@@ -116,11 +117,23 @@ def test_ridge_bundle_binds_files_and_feature_schema(tmp_path):
     model = RidgeMultiTarget(reg["targets"], alpha=1.0)
     model.fit(x, {target: np.arange(4, dtype=np.float32) for target in reg["targets"]})
     model.save(str(tmp_path))
-    write_bundle(tmp_path, "QB", "ridge", reg, features, model, data_id="fixed")
+    selection = tmp_path / "ridge_selection.json"
+    if with_selection:
+        selection.write_text('{"metric": "mean_cv_fantasy_rmse_ppr", "score": 1.25}')
+    bundle = write_bundle(tmp_path, "QB", "ridge", reg, features, model, data_id="fixed")
+    with bundle.pinned_directory(tmp_path) as pinned:
+        assert (pinned / selection.name).exists() == with_selection
+        if with_selection:
+            assert (pinned / selection.name).read_bytes() == selection.read_bytes()
     loaded = Predictor.from_bundle(tmp_path, "ridge", position="QB")
     actual = loaded.predict_raw(PredictionInputs(loaded.schema, x))
     for target, expected in model.predict(x).items():
         np.testing.assert_array_equal(actual[target], expected)
+    if with_selection:
+        selection.write_text('{"metric": "mean_cv_fantasy_rmse_ppr", "score": 99.0}')
+        with pytest.raises(ValueError, match="artifact mismatch.*ridge_selection"):
+            Predictor.from_bundle(tmp_path, "ridge", position="QB")
+        return
     weights = tmp_path / reg["targets"][0] / "ridge_model.pkl"
     weights.write_bytes(weights.read_bytes() + b"corruption")
     with pytest.raises(ValueError, match="artifact mismatch"):

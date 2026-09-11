@@ -335,6 +335,7 @@ def _apply_position_models(
 ):
     """Compatibility writer around the shared, HTTP-independent predictor."""
     from src.prediction.frames import predict_position
+    from src.shared.comparison_scoring import ACTUAL_BASIS, EXCLUDED_SOURCES, comparison_actuals
 
     # Select a registry-owned name before deriving any artifact filename.
     # A request may choose a supported position; its string must never become
@@ -400,6 +401,12 @@ def _apply_position_models(
             if key == pos or key.startswith(f"{pos}_"):
                 errors.pop(key)
         errors.update(prediction.errors)
+        for scoring in _VALID_SCORING:
+            results.loc[index, f"comparison_actual_{scoring}"] = comparison_actuals(
+                prediction.frame, pos, scoring
+            ).to_numpy(dtype=float)
+        results.loc[index, "comparison_actual_basis"] = ACTUAL_BASIS
+        results.loc[index, "comparison_excluded_sources"] = ",".join(EXCLUDED_SOURCES.get(pos, {}))
         for family in _MODEL_PRED_PREFIXES:
             totals = prediction.totals.get(family)
             for scoring in _VALID_SCORING:
@@ -412,6 +419,12 @@ def _apply_position_models(
                 np.round(totals["ppr"], 2).astype(np.float32) if totals is not None else np.nan
             )
             raw = prediction.raw.get(family, {})
+            for scoring in _VALID_SCORING:
+                results.loc[index, _pred_col(f"{family}_comparison", scoring)] = (
+                    score_actual_components(pd.DataFrame(raw), pos, scoring).to_numpy()
+                    if raw
+                    else np.nan
+                )
             if pos == "DST":
                 results.loc[index, _pred_col(family, "comparison")] = (
                     np.round(score_actual_components(pd.DataFrame(raw), "DST").to_numpy(), 2)

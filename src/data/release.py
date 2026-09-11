@@ -42,6 +42,7 @@ DATA_PRODUCER_PATHS = (
     "src/dst/data.py",
     "src/dst/config.py",
     "src/shared/comparison_scoring.py",
+    "src/shared/comparison_truth.py",
     "src/shared/evaluation_cohorts.py",
     "src/shared/expert_eligibility.py",
     "src/shared/weather_features.py",
@@ -499,6 +500,39 @@ _MANAGED_RAW_PREFIXES = (
 )
 
 
+def _validate_release_directories(roots: dict[str, Path], files: dict, selected: str) -> None:
+    """Keep every nested write inside the caller's selected data directories.
+
+    The root itself may be an explicitly supplied alias or an EC2 bind mount.
+    Descendant symlinks are not owned by this release and must not be followed
+    for either installation or quarantine. Check the whole request before any
+    destination mutation, including when no provider files occur in the release.
+    """
+    directories = {name: {Path()} for name in roots}
+    for name in files:
+        part, relative = name.split("/", 1)
+        directories[part].add(Path(relative).parent)
+    directories["raw"].update(
+        {
+            Path("provider_sources"),
+            Path(".quarantine") / selected,
+            Path(".quarantine") / selected / "provider_sources",
+        }
+    )
+    for part, relative_paths in directories.items():
+        root = roots[part]
+        if root.exists() and not root.is_dir():
+            raise ValueError(f"Training data destination is not a directory: {root}")
+        for relative in relative_paths:
+            current = root
+            for component in relative.parts:
+                current = current / component
+                if current.is_symlink():
+                    raise ValueError(f"Refusing a symlinked release directory: {current}")
+                if current.exists() and not current.is_dir():
+                    raise ValueError(f"Training data destination is not a directory: {current}")
+
+
 def _quarantine_unlisted_raw(raw: Path, files: dict, prior_raw: set[str], selected: str) -> None:
     """Remove only previously released or known producer caches from cache hits."""
     if not raw.is_dir():
@@ -533,6 +567,7 @@ def download_release(
     release_id, manifest = resolve_release(s3, bucket, prefix, release_id)
     roots = {"raw": Path(raw_dir), "splits": Path(splits_dir)}
     files = manifest["files"]
+    _validate_release_directories(roots, files, release_id)
     prior_seal = roots["splits"] / SEAL_NAME
     prior_raw = set()
     if prior_seal.is_file():
@@ -560,6 +595,8 @@ def download_release(
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(download, files.items()))
+        # Remote downloads can take time; recheck before touching live roots.
+        _validate_release_directories(roots, files, release_id)
         _quarantine_unlisted_raw(roots["raw"], files, prior_raw, release_id)
         for name in files:
             staged = stage / name

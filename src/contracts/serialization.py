@@ -85,8 +85,16 @@ _PLAYER_ROW_COLS = [
     "fantasy_points",
     "fantasy_points_half_ppr",
     "fantasy_points_standard",
+    *(f"comparison_actual_{fmt}" for fmt in _VALID_SCORING),
+    "comparison_actual_basis",
+    "comparison_excluded_sources",
     *(f"{prefix}_pred" for prefix in _ROW_PRED_PREFIXES),
     *(_pred_col(prefix, fmt) for prefix in _ROW_PRED_PREFIXES for fmt in _VALID_SCORING),
+    *(
+        _pred_col(f"{prefix}_comparison", fmt)
+        for prefix in _ROW_PRED_PREFIXES
+        for fmt in _VALID_SCORING
+    ),
     "headshot_url",
     "age",
     "is_rookie",
@@ -130,8 +138,25 @@ def _records_to_player_rows(df, scoring="ppr"):
             "team": _safe_str(r.get("recent_team")),
             "week": int(r["week"]),
             "actual": _round_or_none(r.get(actual_key)),
+            "comparison_actual": _safe_num(r.get(f"comparison_actual_{scoring}")),
+            "comparison_actual_basis": _safe_str(r.get("comparison_actual_basis"), None),
+            "comparison_excluded_sources": (
+                [
+                    source
+                    for source in _safe_str(r.get("comparison_excluded_sources")).split(",")
+                    if source
+                ]
+                if _safe_str(r.get("comparison_actual_basis"), None) is not None
+                else None
+            ),
             **{
                 f"{prefix}_pred": _safe_num(r.get(pred_keys[prefix]))
+                for prefix in _ROW_PRED_PREFIXES
+            },
+            **{
+                f"{prefix}_comparison_pred": _safe_num(
+                    r.get(_pred_col(f"{prefix}_comparison", scoring))
+                )
                 for prefix in _ROW_PRED_PREFIXES
             },
             "headshot": _safe_str(r.get("headshot_url", "")),

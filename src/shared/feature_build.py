@@ -139,6 +139,11 @@ def build_position_features(
     for df in dfs:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
 
+    from src.shared.comparison_truth import restore_comparison_actuals
+
+    for df in dfs:
+        restore_comparison_actuals(df)
+
     pos_train.attrs["preprocessing_state"] = fitted_state or {
         "fill_values": pos_train.attrs.get("fitted_fill_values", {}),
         "depth_chart_rank_fill": depth_fill,

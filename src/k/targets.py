@@ -17,6 +17,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     total aggregation here (and mirrored in the inference path).
     """
     df = df.copy()
+    from src.shared.comparison_truth import (
+        attach_comparison_actuals,
+        comparison_source_availability,
+    )
+
+    source_available = comparison_source_availability(df, "K")
 
     # Positive-contribution heads
     df["fg_yard_points"] = df["fg_yards_made"].fillna(0) * 0.1
@@ -32,4 +38,4 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
         df["fg_yard_points"] + df["pat_points"] - df["fg_misses"] - df["xp_misses"]
     )
 
-    return df
+    return attach_comparison_actuals(df, "K", source_available)

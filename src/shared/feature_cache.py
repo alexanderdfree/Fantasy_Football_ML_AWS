@@ -53,6 +53,7 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 _PREPARATION_SOURCES = (
     "src/config.py",
     "src/shared/feature_build.py",
+    "src/shared/comparison_truth.py",
     "src/shared/weather_features.py",
     "src/contracts/feature_names.py",
     "src/shared/team_box_score.py",

@@ -10,7 +10,7 @@ import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from flask import Flask, jsonify, request
+from flask import Flask, current_app, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 # Boot-time S3 sync lives in gunicorn.conf.py::on_starting (master-level,
@@ -56,9 +56,14 @@ def __getattr__(name):
 def handle_api_error(error):
     if request.path.startswith("/api/"):
         if isinstance(error, HTTPException):
-            return jsonify({"error": error.description}), error.code
+            response = error.get_response()
+            response.data = current_app.json.dumps({"error": error.description})
+            response.content_type = "application/json"
+            return response
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
+    if isinstance(error, HTTPException):
+        return error
     raise error
 
 

@@ -247,9 +247,13 @@ def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
     workdir = tmp_path_factory.mktemp(f"e2e_QB_split_{branch}")
     result = run_pipeline_in_tmp("QB", cfg, splits, workdir, seed=42)
 
-    # The short-circuit was actually taken (full-eval extras absent) — without
-    # this, a future default flip could run the full path and vacuously pass.
-    assert "test_df" not in result
+    # Partial runs expose their evaluation frame too. Check the selected
+    # branch and fitted families directly instead of using frame absence.
+    family = "ridge" if branch == "cpu" else "nn"
+    assert result.recipe["_artifact_branch"] == branch
+    assert set(result["per_target_preds"]) == {family}
+    assert {name for name, model in result.models.items() if model is not None} == {family}
+    assert f"pred_{family}_total" in result["test_df"]
 
     present, absent = (
         ("ridge_ranking", "nn_ranking") if branch == "cpu" else ("nn_ranking", "ridge_ranking")

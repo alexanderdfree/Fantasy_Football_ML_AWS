@@ -62,6 +62,7 @@ on:
       - "src/data/**"
       - "src/features/**"
       - "src/shared/comparison_scoring.py"
+      - "src/shared/comparison_truth.py"
       - "src/shared/evaluation_cohorts.py"
       - "src/shared/expert_eligibility.py"
       - "src/shared/weather_features.py"

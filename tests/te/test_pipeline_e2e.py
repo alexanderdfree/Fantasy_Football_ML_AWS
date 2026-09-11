@@ -64,6 +64,12 @@ def _build_tiny_cfg() -> dict:
     """
     return {
         **CONFIG_TINY,
+        # Preserve the fixture's existing all-Huber loss, including the
+        # count-target delta=1 defaults now required by the resolved recipe.
+        "head_losses": dict.fromkeys(TARGETS, "huber"),
+        "huber_deltas": {
+            target: CONFIG_TINY["huber_deltas"].get(target, 1.0) for target in TARGETS
+        },
         "filter_fn": filter_to_position,
         "compute_targets_fn": compute_targets,
         "add_features_fn": add_specific_features,

@@ -12,6 +12,27 @@ private actor ScriptedAPI: APIProviding {
     }
 }
 
+private actor ControlledAPI: APIProviding {
+    var requests: [Endpoint] = []
+    var pending: [CheckedContinuation<Data, Error>] = []
+    func rawData(_ endpoint: Endpoint) async throws -> Data {
+        requests.append(endpoint)
+        return try await withCheckedThrowingContinuation { pending.append($0) }
+    }
+    func waitForRequests(_ count: Int) async {
+        while requests.count < count { await Task.yield() }
+    }
+    func complete(_ index: Int, _ result: Result<Data, APIError>) {
+        switch result {
+        case .success(let data): pending[index].resume(returning: data)
+        case .failure(let error): pending[index].resume(throwing: error)
+        }
+    }
+    func scoring(_ index: Int) -> String? {
+        requests[index].query.first { $0.name == "scoring" }?.value
+    }
+}
+
 private final class MemorySnapshotCache: SnapshotCaching {
     var data: Data?
     init(_ data: Data? = nil) { self.data = data }
@@ -90,6 +111,113 @@ final class ClientStoreTests: XCTestCase {
         XCTAssertFalse(store.isStale)
         XCTAssertNil(store.errorMessage)
         XCTAssertEqual(cache.data, bytes)
+    }
+
+    func testOlderSnapshotCannotReplaceNewerResponseOrSavedBytes() async throws {
+        let old = try fixture("snapshot")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: old) as? [String: Any])
+        object["weeks"] = [99]
+        let latest = try JSONSerialization.data(withJSONObject: object)
+        let api = ControlledAPI()
+        let cache = MemorySnapshotCache()
+        let store = SnapshotStore(api: api, cache: cache)
+        let first = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(1)
+        let second = Task { await store.hydrate(scoring: .standard) }
+        await api.waitForRequests(2)
+        await api.complete(1, .success(latest))
+        await second.value
+        await api.complete(0, .success(old))
+        await first.value
+        XCTAssertEqual(store.weeks, [99])
+        XCTAssertEqual(cache.data, latest)
+        XCTAssertFalse(store.isStale)
+    }
+
+    func testOlderRefreshErrorCannotMarkNewSnapshotStale() async throws {
+        let api = ControlledAPI()
+        let store = SnapshotStore(api: api, cache: MemorySnapshotCache())
+        let first = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(1)
+        let second = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(2)
+        await api.complete(1, .success(try fixture("snapshot")))
+        await second.value
+        await api.complete(0, .failure(.http(500)))
+        await first.value
+        XCTAssertFalse(store.isStale)
+        XCTAssertNil(store.errorMessage)
+    }
+
+    func testPendingSnapshotFallbackUsesLatestSelectedScoring() async throws {
+        let api = ControlledAPI()
+        let store = SnapshotStore(api: api, cache: MemorySnapshotCache(try fixture("snapshot")))
+        let hydration = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(1)
+        await store.ensureLive(.standard)
+        await api.complete(0, .failure(.http(404)))
+        await api.waitForRequests(2)
+        let scoring = await api.scoring(1)
+        XCTAssertEqual(scoring, "standard")
+        let live = try fixture("predictions_qb_w1")
+        await api.complete(1, .success(live))
+        await hydration.value
+        XCTAssertFalse(store.players(.standard).isEmpty)
+        XCTAssertTrue(store.players(.ppr).isEmpty)
+        XCTAssertFalse(store.usingSnapshot)
+    }
+
+    func testNewLiveGenerationDoesNotReuseAnotherFormatsOlderRows() async throws {
+        let live = try fixture("predictions_qb_w1")
+        let api = ScriptedAPI([.failure(.http(404)), .success(live), .failure(.http(404)), .success(live)])
+        let store = SnapshotStore(api: api, cache: MemorySnapshotCache())
+        await store.hydrate(scoring: .ppr)
+        XCTAssertFalse(store.players(.ppr).isEmpty)
+        await store.hydrate(scoring: .standard)
+        XCTAssertFalse(store.players(.standard).isEmpty)
+        XCTAssertTrue(store.players(.ppr).isEmpty)
+    }
+
+    func testInactiveScoringFailureCannotInvalidateCurrentLiveRows() async throws {
+        let api = ControlledAPI()
+        let store = SnapshotStore(api: api, cache: MemorySnapshotCache())
+        let hydration = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(1)
+        await api.complete(0, .failure(.http(404)))
+        await api.waitForRequests(2)
+        let standard = Task { await store.ensureLive(.standard) }
+        await api.waitForRequests(3)
+        await api.complete(2, .success(try fixture("predictions_qb_w1")))
+        await standard.value
+        await api.complete(1, .failure(.http(500)))
+        await hydration.value
+        XCTAssertFalse(store.players(.standard).isEmpty)
+        XCTAssertFalse(store.isStale)
+        XCTAssertNil(store.errorMessage)
+    }
+
+    func testExistingLiveModeResumesSelectedFormatAfterSnapshotRefreshFailure() async throws {
+        let api = ControlledAPI()
+        let store = SnapshotStore(api: api, cache: MemorySnapshotCache())
+        let first = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(1)
+        await api.complete(0, .failure(.http(404)))
+        await api.waitForRequests(2)
+        let live = try fixture("predictions_qb_w1")
+        await api.complete(1, .success(live))
+        await first.value
+        let refresh = Task { await store.hydrate(scoring: .ppr) }
+        await api.waitForRequests(3)
+        await store.ensureLive(.standard)
+        await api.complete(2, .failure(.http(503)))
+        await api.waitForRequests(4)
+        let scoring = await api.scoring(3)
+        XCTAssertEqual(scoring, "standard")
+        await api.complete(3, .success(live))
+        await refresh.value
+        XCTAssertFalse(store.players(.standard).isEmpty)
+        XCTAssertFalse(store.isStale)
+        XCTAssertNil(store.errorMessage)
     }
 
     func testWarmingAndFailureAreDifferentUpcomingStates() async {

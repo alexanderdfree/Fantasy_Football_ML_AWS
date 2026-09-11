@@ -91,13 +91,24 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
     stat_cols = [
         # Skill-position raw stats (QB/RB/WR/TE)
         "passing_yards",
+        "passing_tds",
+        "interceptions",
+        "sacks",
         "rushing_yards",
+        "rushing_tds",
         "receiving_yards",
+        "receiving_tds",
         "receptions",
         "targets",
         "carries",
         "completions",
         "attempts",
+        "sack_fumbles_lost",
+        "rushing_fumbles_lost",
+        "receiving_fumbles_lost",
+        "passing_2pt_conversions",
+        "rushing_2pt_conversions",
+        "receiving_2pt_conversions",
         # K raw counts — see src/k/targets.py
         "fg_att",
         "pat_att",
@@ -114,11 +125,16 @@ def preprocess(raw_df: pd.DataFrame) -> pd.DataFrame:
         "special_teams_tds",
     ]
     existing_stat_cols = [c for c in stat_cols if c in df.columns]
-    all_zero = df[existing_stat_cols].fillna(0).sum(axis=1) == 0
+    # Signed yardage can cancel an attempt/count despite a recorded play.
+    all_zero = df[existing_stat_cols].fillna(0).eq(0).all(axis=1)
     no_snaps = (
         df["snap_pct"].isna() if "snap_pct" in df.columns else pd.Series(True, index=df.index)
     )
     df = df[~(all_zero & no_snaps)].copy()
+
+    from src.shared.comparison_truth import preserve_comparison_source_availability
+
+    df = preserve_comparison_source_availability(df)
 
     # Step 3: Fill missing stat columns with 0
     fill_zero_cols = [

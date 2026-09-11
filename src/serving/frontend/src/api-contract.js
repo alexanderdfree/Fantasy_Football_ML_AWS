@@ -47,7 +47,7 @@ export function validateAPIResponse(url, payload, version = null) {
         if (!row || typeof row.player_id !== "string" || !contract.positions.includes(row.position)) {
             throw new Error("Invalid prediction row identity");
         }
-        for (const field of ["actual", ...contract.nullable_prediction_fields]) {
+        for (const field of ["actual", "comparison_actual", ...contract.nullable_prediction_fields, ...contract.nullable_comparison_prediction_fields]) {
             if (row[field] != null && (typeof row[field] !== "number" || !Number.isFinite(row[field]))) {
                 throw new Error(`Invalid prediction: ${field}`);
             }

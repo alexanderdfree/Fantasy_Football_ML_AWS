@@ -106,6 +106,159 @@ def test_seal_rejects_corrupt_captured_provider_bytes(producer):
         release.seal_inputs(**producer)
 
 
+@pytest.mark.parametrize("entrypoint", ["download", "materialize"])
+@pytest.mark.parametrize("captured", [False, True])
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "provider_sources",
+        ".quarantine",
+        ".quarantine/{release}",
+        ".quarantine/{release}/provider_sources",
+    ],
+)
+def test_hydration_rejects_nested_symlinks_before_changing_any_files(
+    producer, tmp_path, monkeypatch, entrypoint, captured, relative
+):
+    from src.orchestration.datasets import DatasetError, materialize_dataset
+
+    if captured:
+
+        @snapshot.snapshot_source
+        def provider():
+            return pd.DataFrame({"value": [1]})
+
+        with snapshot.capture_provider_sources(producer["raw_dir"] / "provider_sources"):
+            provider()
+        release.seal_inputs(**producer)
+    s3 = FakeS3()
+    selected = release.publish_release(s3, "bucket", **producer)
+    raw, splits = tmp_path / "consumer/raw", tmp_path / "consumer/splits"
+    raw.mkdir(parents=True)
+    splits.mkdir()
+    (raw / "weekly.parquet").write_bytes(b"prior raw")
+    (splits / "train.parquet").write_bytes(b"prior split")
+    external = tmp_path / "shared-provider-cache"
+    external.mkdir()
+    (external / ("f" * 64 + ".json")).write_bytes(b"unrelated shared capture")
+    nested = raw / relative.format(release=selected)
+    nested.parent.mkdir(parents=True, exist_ok=True)
+    nested.symlink_to(external, target_is_directory=True)
+    before = {p.name: p.read_bytes() for p in external.iterdir()}
+    monkeypatch.setattr(
+        s3, "download_file", lambda *args: pytest.fail("Preflight must reject first")
+    )
+    with pytest.raises((ValueError, DatasetError), match="symlinked release directory"):
+        if entrypoint == "download":
+            release.download_release(
+                s3, "bucket", raw_dir=raw, splits_dir=splits, release_id=selected
+            )
+        else:
+            materialize_dataset(s3, "bucket", selected, raw_dir=raw, splits_dir=splits)
+    assert {p.name: p.read_bytes() for p in external.iterdir()} == before
+    assert (raw / "weekly.parquet").read_bytes() == b"prior raw"
+    assert (splits / "train.parquet").read_bytes() == b"prior split"
+    assert not (raw / ".release.json").exists()
+
+
+def test_direct_download_preserves_existing_root_directories_and_explicit_root_alias(
+    producer, tmp_path
+):
+    s3 = FakeS3()
+    selected = release.publish_release(s3, "bucket", **producer)
+    raw, splits = tmp_path / "mounted/raw", tmp_path / "mounted/splits"
+    raw.mkdir(parents=True)
+    splits.mkdir()
+    inodes = (raw.stat().st_ino, splits.stat().st_ino)
+    alias = tmp_path / "selected-raw"
+    alias.symlink_to(raw, target_is_directory=True)
+    release.download_release(s3, "bucket", raw_dir=alias, splits_dir=splits, release_id=selected)
+    assert (raw.stat().st_ino, splits.stat().st_ino) == inodes
+    assert alias.is_symlink()
+    assert (raw / "weekly.parquet").read_bytes() == (
+        producer["raw_dir"] / "weekly.parquet"
+    ).read_bytes()
+    assert json.loads((raw / ".release.json").read_text())["release_id"] == selected
+
+
+def test_hydration_rechecks_nested_destinations_after_remote_downloads(
+    producer, tmp_path, monkeypatch
+):
+    import threading
+
+    s3 = FakeS3()
+    selected = release.publish_release(s3, "bucket", **producer)
+    raw, splits = tmp_path / "consumer/raw", tmp_path / "consumer/splits"
+    raw.mkdir(parents=True)
+    (raw / "weekly.parquet").write_bytes(b"prior raw")
+    external = tmp_path / "external"
+    external.mkdir()
+    captured = external / ("f" * 64 + ".json")
+    captured.write_bytes(b"shared capture")
+    download = s3.download_file
+    lock = threading.Lock()
+
+    def changed_directory(*args):
+        with lock:
+            if not (raw / "provider_sources").is_symlink():
+                (raw / "provider_sources").symlink_to(external, target_is_directory=True)
+        download(*args)
+
+    monkeypatch.setattr(s3, "download_file", changed_directory)
+    with pytest.raises(ValueError, match="symlinked release directory"):
+        release.download_release(s3, "bucket", raw_dir=raw, splits_dir=splits, release_id=selected)
+    assert captured.read_bytes() == b"shared capture"
+    assert (raw / "weekly.parquet").read_bytes() == b"prior raw"
+    assert not splits.exists()
+
+
+def test_dst_scoring_workers_capture_and_replay_contextual_provider_responses(
+    monkeypatch, tmp_path
+):
+    from src.data import dst_scoring, nfl_source
+
+    calls = []
+
+    @snapshot.snapshot_source
+    def pbp_data(seasons, cols):
+        calls.append(seasons)
+        return pd.DataFrame(
+            [
+                {
+                    **dict.fromkeys(dst_scoring.PBP_COLUMNS, 0),
+                    "season": seasons[0],
+                    "season_type": "REG",
+                    "week": 1,
+                    "game_id": str(seasons[0]),
+                    "play_id": 1,
+                    "home_team": "BUF",
+                    "away_team": "NYJ",
+                    "posteam": "BUF",
+                    "defteam": "NYJ",
+                    "td_team": None,
+                    "play_type": "run",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(nfl_source, "pbp_data", pbp_data)
+    raw = tmp_path / "data/raw"
+    captured = raw / "provider_sources"
+    with use_context(RunContext(tmp_path / "outputs", tmp_path / "data")):
+        with snapshot.capture_provider_sources(captured):
+            expected = dst_scoring.load_dst_scoring_events([2024, 2025], raw)
+        assert len(list(captured.glob("*.json"))) == 2
+        assert len(list(captured.glob("*.parquet"))) == 2
+        for metadata in captured.glob("*.json"):
+            assert json.loads(metadata.read_text())["loader"] == "pbp_data"
+        next(raw.glob("dst_scoring_*.parquet")).unlink()
+        monkeypatch.setenv("FF_DATASET_ID", "a" * 64)
+        replayed = dst_scoring.load_dst_scoring_events([2024, 2025], raw)
+        snapshot.assert_snapshot_sources_complete()
+    pd.testing.assert_frame_equal(replayed, expected)
+    assert sorted(calls) == [[2024], [2025]]
+
+
 def test_actual_loader_workers_inherit_live_provider_scope(cached_inputs, monkeypatch, tmp_path):
     from src.data import loader, nfl_source
 

@@ -190,10 +190,16 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
 
     summary["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
     from src.evaluation.records import record_for_result
+    from src.shared.aggregate_targets import DST_TARGETS, K_TARGETS, POSITION_TARGET_MAP
 
     summary["evaluation_record"] = (
         result.get("evaluation_record")
-        or record_for_result(position, result, cohorts=summary["cohorts"]).to_dict()
+        or record_for_result(
+            position,
+            result,
+            cohorts=summary["cohorts"],
+            actual_columns={**POSITION_TARGET_MAP, "K": K_TARGETS, "DST": DST_TARGETS}[position],
+        ).to_dict()
     )
     return summary
 

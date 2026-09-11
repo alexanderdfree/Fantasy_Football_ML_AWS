@@ -247,6 +247,9 @@ def _model_files(directory: Path, position: str, family: str, targets) -> list[P
     if family == "ridge":
         files = [p for target in targets for p in (directory / target).rglob("*") if p.is_file()]
         files.append(directory / "non_negative_targets.json")
+        selection = directory / "ridge_selection.json"
+        if selection.is_file():
+            files.append(selection)
     elif family == "lgbm":
         files = [p for p in (directory / "lightgbm").rglob("*") if p.is_file()]
     else:
