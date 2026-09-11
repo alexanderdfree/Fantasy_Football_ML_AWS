@@ -17,7 +17,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "codex/**"]
   schedule:
     - cron: "31 5 * * 1"  # weekly (Mondays) — mirrors default-setup "weekly"
 

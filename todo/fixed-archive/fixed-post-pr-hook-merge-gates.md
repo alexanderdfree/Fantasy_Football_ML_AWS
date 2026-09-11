@@ -17,3 +17,10 @@
   contradictory workflow. Check emitted instructions against the authoritative
   [merge gates](../../agent-guides/delivery.md#pr-and-merge-gates), including
   exceptional paths and branch-specific approval rules.
+
+Stacked-review follow-up (2026-09-11): test and CodeQL PR filters accepted only
+`main`, so a PR retargeted to another Codex branch received no checks. The PR
+filters now also accept `codex/**`; push and production deployment/image triggers
+remain on `main`. `tests/test_stacked_pr_ci.py` guards both boundaries. Supporting
+the review stack must preserve the gates rather than treating absent checks as a
+successful validation.

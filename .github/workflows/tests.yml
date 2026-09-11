@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, "codex/**"]
 
 # Docs-only PRs no longer need a separate workflow to emit a green
 # `tests-pass`: the `detect` job below strips docs files from the diff
