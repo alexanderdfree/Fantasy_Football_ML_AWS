@@ -129,6 +129,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D25 | [Scoped agent guidance and incident retrieval](adr/0025-scoped-agent-guidance-and-incident-retrieval.md) | Accepted |
 | D26 | [Coherent training-data releases and isolated live overlays](adr/0026-coherent-training-data-releases.md) | Accepted |
 | D27 | [Versioned prediction, execution and serving contracts](adr/0027-versioned-prediction-and-execution-contracts.md) | Accepted |
+| D28 | [Scheduled data maintenance and inference](adr/0028-scheduled-data-maintenance.md) | Accepted; opt-in |
 
 ## 4. Cross-Cutting Consequences
 

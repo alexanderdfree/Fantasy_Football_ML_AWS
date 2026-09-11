@@ -166,7 +166,16 @@ def begin_build(s3, bucket, prefix="models", *, expected_model_keys=None):
     return SnapshotBuild(pointer, tuple(models), os.environ.get("FF_BUILD_PLAN_ID"), dataset_id)
 
 
-def publish(s3, bucket, directory, build: SnapshotBuild, prefix="models", *, generation=None):
+def publish(
+    s3,
+    bucket,
+    directory,
+    build: SnapshotBuild,
+    prefix="models",
+    *,
+    generation=None,
+    before_publish=None,
+):
     root = Path(directory)
     captured = None
     if generation is not None or (root / "current.json").exists():
@@ -210,6 +219,8 @@ def publish(s3, bucket, directory, build: SnapshotBuild, prefix="models", *, gen
     if captured is not None and is_invalidated(root, captured.name):
         raise ValueError("Serving snapshot generation was invalidated before upload")
     condition = {"IfMatch": build.pointer_etag} if build.pointer_etag else {"IfNoneMatch": "*"}
+    if before_publish is not None:
+        before_publish(pointer)
     s3.put_object(
         Bucket=bucket,
         Key=f"{prefix}/predictions_cache/current.json",

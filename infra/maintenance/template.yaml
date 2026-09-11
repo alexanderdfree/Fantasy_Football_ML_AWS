@@ -1,0 +1,1197 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Opt-in data maintenance: two small Standard workflows, isolated Fargate builders, public
+  freshness monitoring.'
+Parameters:
+  ArtifactBucket:
+    Type: String
+    Default: ff-predictor-training
+  WorkerImage:
+    Type: String
+    Description: Immutable ARM64 image URI built from the same source as the Lambda package and serving
+      image
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key of the matching control.zip in ArtifactBucket
+  ClusterName:
+    Type: String
+    Default: fantasy-cluster
+  ServiceName:
+    Type: String
+    Default: fantasy-service
+  ServiceUrl:
+    Type: String
+    Default: https://fantasy.alexfree.me
+    AllowedPattern: https://[^ ]+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  SecurityGroups:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  ServingTaskRoleArn:
+    Type: String
+  ServingExecutionRoleArn:
+    Type: String
+  Mode:
+    Type: String
+    Default: shadow
+    AllowedValues:
+    - shadow
+    - active
+  EnableSchedules:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+    - 'true'
+    - 'false'
+  IntradayExpression:
+    Type: String
+    Default: cron(45 * * * ? *)
+Conditions:
+  Enabled:
+    Fn::Equals:
+    - Ref: EnableSchedules
+    - 'true'
+  Active:
+    Fn::Equals:
+    - Ref: Mode
+    - active
+  ActiveEnabled:
+    Fn::And:
+    - Condition: Enabled
+    - Condition: Active
+Resources:
+  Coordination:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+      - AttributeName: pk
+        KeyType: HASH
+      AttributeDefinitions:
+      - AttributeName: pk
+        AttributeType: S
+      TimeToLiveSpecification:
+        AttributeName: expires
+        Enabled: true
+  WorkerLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 14
+  Alerts:
+    Type: AWS::SNS::Topic
+  DeliveryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  InferenceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: inference
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/data/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/models/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/maintenance/*
+          - Effect: Allow
+            Action:
+            - s3:ListBucket
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:DeleteItem
+            Resource:
+              Fn::GetAtt:
+              - Coordination
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/maintenance/*
+  PreparationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: prepare
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/data/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/models/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/maintenance/*
+          - Effect: Allow
+            Action:
+            - s3:ListBucket
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:DeleteItem
+            Resource:
+              Fn::GetAtt:
+              - Coordination
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/maintenance/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/data/releases/*
+  InferenceTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      RequiresCompatibilities:
+      - FARGATE
+      NetworkMode: awsvpc
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      Cpu: '4096'
+      Memory: '16384'
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - ExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - InferenceRole
+        - Arn
+      ContainerDefinitions:
+      - Name: maintenance
+        Image:
+          Ref: WorkerImage
+        Essential: true
+        EntryPoint:
+        - python
+        - -m
+        - src.maintenance.worker
+        Environment:
+        - Name: FF_MODEL_S3_BUCKET
+          Value:
+            Ref: ArtifactBucket
+        - Name: FF_MAINTENANCE_LOCK_TABLE
+          Value:
+            Ref: Coordination
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: FF_DEVICE
+          Value: cpu
+        - Name: NFLREADPY_CACHE
+          Value: 'off'
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: WorkerLogs
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: inference
+      Tags:
+      - Key: MaintenanceStack
+        Value:
+          Ref: AWS::StackName
+  PreparationTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      RequiresCompatibilities:
+      - FARGATE
+      NetworkMode: awsvpc
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      Cpu: '4096'
+      Memory: '16384'
+      ExecutionRoleArn:
+        Fn::GetAtt:
+        - ExecutionRole
+        - Arn
+      TaskRoleArn:
+        Fn::GetAtt:
+        - PreparationRole
+        - Arn
+      ContainerDefinitions:
+      - Name: maintenance
+        Image:
+          Ref: WorkerImage
+        Essential: true
+        EntryPoint:
+        - python
+        - -m
+        - src.maintenance.worker
+        Environment:
+        - Name: FF_MODEL_S3_BUCKET
+          Value:
+            Ref: ArtifactBucket
+        - Name: FF_MAINTENANCE_LOCK_TABLE
+          Value:
+            Ref: Coordination
+        - Name: AWS_REGION
+          Value:
+            Ref: AWS::Region
+        - Name: FF_DEVICE
+          Value: cpu
+        - Name: NFLREADPY_CACHE
+          Value: 'off'
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group:
+              Ref: WorkerLogs
+            awslogs-region:
+              Ref: AWS::Region
+            awslogs-stream-prefix: prepare
+      Tags:
+      - Key: MaintenanceStack
+        Value:
+          Ref: AWS::StackName
+  ControlRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: control
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource:
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/data/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/models/*
+            - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/maintenance/*
+          - Effect: Allow
+            Action:
+            - s3:ListBucket
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:DeleteItem
+            Resource:
+              Fn::GetAtt:
+              - Coordination
+              - Arn
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/maintenance/*
+          - Effect: Allow
+            Action:
+            - ecs:DescribeServices
+            - ecs:DescribeTaskDefinition
+            - ecs:ListTasks
+            - ecs:DescribeTasks
+            - elasticloadbalancing:DescribeTargetGroups
+            - elasticloadbalancing:DescribeTargetGroupAttributes
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - cloudwatch:PutMetricData
+            Resource: '*'
+            Condition:
+              StringEquals:
+                cloudwatch:namespace: Fantasy/Maintenance
+          - Fn::If:
+            - Active
+            - Effect: Allow
+              Action:
+              - s3:PutObject
+              - s3:DeleteObject
+              Resource:
+              - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/data/manifest.json
+              - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/data/by-producer/*/manifest.json
+              - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/models/predictions_cache/current.json
+              - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/models/predictions_cache/generations/*
+              - Fn::Sub: arn:${AWS::Partition}:s3:::${ArtifactBucket}/models/predictions_cache/upcoming_week.json
+            - Ref: AWS::NoValue
+          - Fn::If:
+            - Active
+            - Effect: Allow
+              Action:
+              - ecs:RegisterTaskDefinition
+              Resource: '*'
+            - Ref: AWS::NoValue
+          - Fn::If:
+            - Active
+            - Effect: Allow
+              Action:
+              - elasticloadbalancing:ModifyTargetGroup
+              - elasticloadbalancing:ModifyTargetGroupAttributes
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:elasticloadbalancing:${AWS::Region}:${AWS::AccountId}:targetgroup/*
+            - Ref: AWS::NoValue
+          - Fn::If:
+            - Active
+            - Effect: Allow
+              Action:
+              - ecs:UpdateService
+              Resource:
+                Fn::Sub: arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${ClusterName}/${ServiceName}
+            - Ref: AWS::NoValue
+          - Fn::If:
+            - Active
+            - Effect: Allow
+              Action:
+              - iam:PassRole
+              Resource:
+              - Ref: ServingTaskRoleArn
+              - Ref: ServingExecutionRoleArn
+              Condition:
+                StringEquals:
+                  iam:PassedToService: ecs-tasks.amazonaws.com
+            - Ref: AWS::NoValue
+  Control:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: src.maintenance.control.handler
+      Role:
+        Fn::GetAtt:
+        - ControlRole
+        - Arn
+      Code:
+        S3Bucket:
+          Ref: ArtifactBucket
+        S3Key:
+          Ref: LambdaCodeKey
+      Timeout: 900
+      MemorySize: 512
+      Environment:
+        Variables:
+          ARTIFACT_BUCKET:
+            Ref: ArtifactBucket
+          LOCK_TABLE:
+            Ref: Coordination
+          ECS_CLUSTER:
+            Ref: ClusterName
+          ECS_SERVICE:
+            Ref: ServiceName
+          SERVICE_URL:
+            Ref: ServiceUrl
+          MAINTENANCE_MODE:
+            Ref: Mode
+  WorkflowRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: states.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: workflow
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - Control
+              - Arn
+          - Effect: Allow
+            Action:
+            - ecs:RunTask
+            Resource:
+            - Ref: InferenceTask
+            - Ref: PreparationTask
+          - Effect: Allow
+            Action:
+            - ecs:StopTask
+            - ecs:DescribeTasks
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - iam:PassRole
+            Resource:
+            - Fn::GetAtt:
+              - InferenceRole
+              - Arn
+            - Fn::GetAtt:
+              - PreparationRole
+              - Arn
+            - Fn::GetAtt:
+              - ExecutionRole
+              - Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: ecs-tasks.amazonaws.com
+          - Effect: Allow
+            Action:
+            - events:PutTargets
+            - events:PutRule
+            - events:DescribeRule
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForECSTaskRule
+          - Effect: Allow
+            Action:
+            - sns:Publish
+            Resource:
+              Ref: Alerts
+  InferenceWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineType: STANDARD
+      RoleArn:
+        Fn::GetAtt:
+        - WorkflowRole
+        - Arn
+      Definition:
+        Comment: One pinned Fargate inference job, validated publication, and public verification.
+        StartAt: Begin
+        States:
+          Begin:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: begin
+                kind: inference
+                execution_id.$: $$.Execution.Id
+                request.$: $
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.run
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 5
+              BackoffRate: 2
+              MaxAttempts: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Infer
+          Infer:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            Parameters:
+              LaunchType: FARGATE
+              Cluster:
+                Ref: ClusterName
+              TaskDefinition:
+                Ref: InferenceTask
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    Ref: Subnets
+                  SecurityGroups:
+                    Ref: SecurityGroups
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                - Name: maintenance
+                  Command.$: States.Array('--request-key', $.run.value.request_key)
+            ResultPath: $.task
+            TimeoutSeconds: 3600
+            Retry:
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 120
+              BackoffRate: 2
+              MaxAttempts: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Publish
+          Publish:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: finish
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.control
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Verify
+          Verify:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: verify
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.control
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            - ErrorEquals:
+              - NotVisibleYet
+              IntervalSeconds: 30
+              BackoffRate: 1
+              MaxAttempts: 30
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Done
+          Done:
+            Type: Succeed
+          Alert:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn:
+                Ref: Alerts
+              Subject: Fantasy maintenance failed
+              Message.$: States.JsonToString($.failure)
+            ResultPath: $.notification
+            Next: Failed
+          Failed:
+            Type: Fail
+            Error: MaintenanceFailed
+            Cause: Inspect the failed execution and its S3 run receipt
+  WeeklyWorkflow:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineType: STANDARD
+      RoleArn:
+        Fn::GetAtt:
+        - WorkflowRole
+        - Arn
+      Definition:
+        Comment: Prepare data and cache before compatible activation; then refresh and verify forecasts.
+        StartAt: Begin
+        States:
+          Begin:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: begin
+                kind: weekly
+                execution_id.$: $$.Execution.Id
+                request.$: $
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.run
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Prepare
+          Prepare:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            Parameters:
+              LaunchType: FARGATE
+              Cluster:
+                Ref: ClusterName
+              TaskDefinition:
+                Ref: PreparationTask
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    Ref: Subnets
+                  SecurityGroups:
+                    Ref: SecurityGroups
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                - Name: maintenance
+                  Command.$: States.Array('--request-key', $.run.value.request_key)
+            ResultPath: $.task
+            TimeoutSeconds: 5400
+            Retry:
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 120
+              BackoffRate: 2
+              MaxAttempts: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Activate
+          Activate:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: finish
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.activation
+            TimeoutSeconds: 930
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 5
+              BackoffRate: 2
+              MaxAttempts: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Rollback
+            Next: VerifyActivation
+          VerifyActivation:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: verify
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.control
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            - ErrorEquals:
+              - NotVisibleYet
+              IntervalSeconds: 30
+              BackoffRate: 1
+              MaxAttempts: 30
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Rollback
+            Next: BeginInference
+          Rollback:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: rollback
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.control
+            TimeoutSeconds: 930
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 5
+              BackoffRate: 2
+              MaxAttempts: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Alert
+          BeginInference:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: begin
+                kind: inference
+                execution_id.$: $$.Execution.Id
+                request:
+                  check_sources: false
+                  data_release.$: $.activation.value.data_release
+                  expected_data_release.$: $.activation.value.data_release
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.run
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Infer
+          Infer:
+            Type: Task
+            Resource: arn:aws:states:::ecs:runTask.sync
+            Parameters:
+              LaunchType: FARGATE
+              Cluster:
+                Ref: ClusterName
+              TaskDefinition:
+                Ref: InferenceTask
+              NetworkConfiguration:
+                AwsvpcConfiguration:
+                  Subnets:
+                    Ref: Subnets
+                  SecurityGroups:
+                    Ref: SecurityGroups
+                  AssignPublicIp: ENABLED
+              Overrides:
+                ContainerOverrides:
+                - Name: maintenance
+                  Command.$: States.Array('--request-key', $.run.value.request_key)
+            ResultPath: $.task
+            TimeoutSeconds: 3600
+            Retry:
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 120
+              BackoffRate: 2
+              MaxAttempts: 2
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Publish
+          Publish:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: finish
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.control
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Verify
+          Verify:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName:
+                Fn::GetAtt:
+                - Control
+                - Arn
+              Payload:
+                action: verify
+                run_id.$: $.run.value.run_id
+            ResultSelector:
+              value.$: $.Payload
+            ResultPath: $.control
+            TimeoutSeconds: 120
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - LeaseBusy
+              IntervalSeconds: 15
+              BackoffRate: 1
+              MaxAttempts: 40
+            - ErrorEquals:
+              - NotVisibleYet
+              IntervalSeconds: 30
+              BackoffRate: 1
+              MaxAttempts: 30
+            Catch:
+            - ErrorEquals:
+              - States.ALL
+              ResultPath: $.failure
+              Next: Alert
+            Next: Done
+          Done:
+            Type: Succeed
+          Alert:
+            Type: Task
+            Resource: arn:aws:states:::sns:publish
+            Parameters:
+              TopicArn:
+                Ref: Alerts
+              Subject: Fantasy maintenance failed
+              Message.$: States.JsonToString($.failure)
+            ResultPath: $.notification
+            Next: Failed
+          Failed:
+            Type: Fail
+            Error: MaintenanceFailed
+            Cause: Inspect the failed execution and its S3 run receipt
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: scheduler.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: schedule
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - states:StartExecution
+            Resource:
+            - Ref: InferenceWorkflow
+            - Ref: WeeklyWorkflow
+          - Effect: Allow
+            Action:
+            - lambda:InvokeFunction
+            Resource:
+              Fn::GetAtt:
+              - Control
+              - Arn
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - DeliveryDLQ
+              - Arn
+  DailySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-daily
+      ScheduleExpression: cron(15 6 * * ? *)
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State:
+        Fn::If:
+        - Enabled
+        - ENABLED
+        - DISABLED
+      Target:
+        Arn:
+          Ref: InferenceWorkflow
+        RoleArn:
+          Fn::GetAtt:
+          - SchedulerRole
+          - Arn
+        Input: '{"check_sources":true,"scheduled_at":"<aws.scheduler.scheduled-time>"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 1800
+          MaximumRetryAttempts: 3
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DeliveryDLQ
+            - Arn
+  IntradaySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-intraday
+      ScheduleExpression:
+        Ref: IntradayExpression
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State:
+        Fn::If:
+        - Enabled
+        - ENABLED
+        - DISABLED
+      Target:
+        Arn:
+          Ref: InferenceWorkflow
+        RoleArn:
+          Fn::GetAtt:
+          - SchedulerRole
+          - Arn
+        Input: '{"check_sources":false,"scheduled_at":"<aws.scheduler.scheduled-time>"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 1800
+          MaximumRetryAttempts: 3
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DeliveryDLQ
+            - Arn
+  WeeklySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-weekly
+      ScheduleExpression: cron(15 7 ? * THU *)
+      ScheduleExpressionTimezone: America/New_York
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State:
+        Fn::If:
+        - Enabled
+        - ENABLED
+        - DISABLED
+      Target:
+        Arn:
+          Ref: WeeklyWorkflow
+        RoleArn:
+          Fn::GetAtt:
+          - SchedulerRole
+          - Arn
+        Input: '{"check_sources":true,"scheduled_at":"<aws.scheduler.scheduled-time>"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 1800
+          MaximumRetryAttempts: 3
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DeliveryDLQ
+            - Arn
+  WatchdogSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-watchdog
+      ScheduleExpression: rate(15 minutes)
+      ScheduleExpressionTimezone: UTC
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      State:
+        Fn::If:
+        - ActiveEnabled
+        - ENABLED
+        - DISABLED
+      Target:
+        Arn:
+          Fn::GetAtt:
+          - Control
+          - Arn
+        RoleArn:
+          Fn::GetAtt:
+          - SchedulerRole
+          - Arn
+        Input: '{"action":"watchdog"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 1800
+          MaximumRetryAttempts: 3
+        DeadLetterConfig:
+          Arn:
+            Fn::GetAtt:
+            - DeliveryDLQ
+            - Arn
+  FreshnessAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: ActiveEnabled
+    Properties:
+      AlarmDescription: Public forecasts or source/correction receipts are unhealthy or overdue
+      Namespace: Fantasy/Maintenance
+      MetricName: FreshnessFailure
+      Statistic: Maximum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+      - Ref: Alerts
+      OKActions:
+      - Ref: Alerts
+  DeliveryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: A maintenance schedule could not deliver its invocation
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+      - Name: QueueName
+        Value:
+          Fn::GetAtt:
+          - DeliveryDLQ
+          - QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+      - Ref: Alerts
+Outputs:
+  InferenceWorkflowArn:
+    Value:
+      Ref: InferenceWorkflow
+  WeeklyWorkflowArn:
+    Value:
+      Ref: WeeklyWorkflow
+  LockTable:
+    Value:
+      Ref: Coordination
+  AlertsTopicArn:
+    Value:
+      Ref: Alerts
+  ControlFunction:
+    Value:
+      Ref: Control

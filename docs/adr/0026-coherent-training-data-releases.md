@@ -101,6 +101,8 @@ Identity sources are part of the release rather than a per-run network lookup.
 
 ## Changelog
 
+- **2026-09-10** — Add a staged-publication option for scheduled maintenance: seal and verify immutable candidates before a separate compatible cache/data activation (ADR-0028). Default CI publication behavior is retained.
+
 - **2026-09-10** — Seal, verify, publish, pin, and gate coherent raw/split releases;
   isolate live-data overlays and record source coverage. (PR #1564)
 
