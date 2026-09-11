@@ -9,6 +9,10 @@ DST aggregation with torch inputs, and the two ValueError branches in
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
 import pytest
 import torch
@@ -19,6 +23,34 @@ from src.shared.aggregate_targets import (
     aggregate_fn_for,
     predictions_to_fantasy_points,
 )
+
+
+@pytest.mark.unit
+def test_numpy_scoring_does_not_require_torch():
+    source = textwrap.dedent("""
+        import importlib.abc
+        import sys
+        class NoTorch(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "torch" or fullname.startswith("torch."):
+                    raise AssertionError("NumPy scoring imported Torch")
+        sys.meta_path.insert(0, NoTorch())
+        import numpy as np
+        from src.shared.aggregate_targets import (
+            DST_TARGETS, K_TARGETS, POSITION_TARGET_MAP, predictions_to_fantasy_points,
+        )
+        targets = {**POSITION_TARGET_MAP, "K": K_TARGETS, "DST": DST_TARGETS}
+        for position, names in targets.items():
+            values = {name: np.zeros(2) for name in names}
+            for scoring in ("ppr", "half_ppr", "standard"):
+                result = predictions_to_fantasy_points(position, values, scoring)
+                assert result.shape == (2,) and np.isfinite(result).all()
+        assert "torch" not in sys.modules
+    """)
+    result = subprocess.run([sys.executable, "-c", source], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 from src.shared.registry import get_config
 
 
