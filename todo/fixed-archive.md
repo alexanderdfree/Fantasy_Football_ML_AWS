@@ -9,11 +9,23 @@
 ### [FIXED] Scheduled maintenance used the superseded cache and rollout protocols
 [Read the incident record](fixed-archive/maintenance-contract-consolidation-2026-09.md).
 
+### [FIXED] Consolidated research dataset, population and execution contracts
+[Read the incident record](fixed-archive/consolidated-research-review-followup.md).
+
 ### [FIXED] Expert forecasts lost scoring components outside the model target list
 [Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
 
 ### [FIXED] QB availability rewrite removed the intended historical role proxy
 [Read the incident record](fixed-archive/qb-role-reconstruction.md).
+
+### [CONFIRMED — ship pending] E2 O-line continuity for TE (expert-edge Phase 2b)
+[Read the incident record](fixed-archive/oline-continuity-confirmation-2026-07.md).
+
+### [TESTED, REJECTED] B2 team PROE / pace season-to-date features (expert-edge Phase 2 RB-ordering lever)
+[Read the incident record](fixed-archive/proe-pace-rejection-2026-07.md).
+
+### [TESTED, REJECTED] Week-1 empty-history calibration arms (career games-gap, implied-total×no-history, RB returning re-add) — no arm clears the gates; QB attention destabilizes; the measurement reframes the cohort to QB/K-only
+[Read the incident record](fixed-archive/week1-games-gap-rejection-2026-07.md).
 
 ### [FIXED] Delayed upcoming refreshes and artifact replacement reduced availability
 [Read the incident record](fixed-archive/upcoming-refresh-availability-2026-09.md).
