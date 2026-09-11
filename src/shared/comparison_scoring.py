@@ -60,15 +60,36 @@ def score_actual_components(frame, position, scoring="ppr", *, prefix="") -> pd.
     return pd.Series(np.where(valid, total, np.nan), index=frame.index)
 
 
-def comparison_model_totals(frame: pd.DataFrame, position: str) -> pd.DataFrame:
+def comparison_actuals(frame, position, scoring="ppr", *, prefix="") -> pd.Series:
+    """Use certified pre-imputation truth and preserve its missing-value mask."""
+    metadata = (frame.attrs.get("actual_projected_total_metadata_by_position") or {}).get(position)
+    metadata = metadata or frame.attrs.get("actual_projected_total_metadata") or {}
+    verified = (
+        "actual_projected_total" in frame
+        and isinstance(metadata, dict)
+        and metadata.get("basis") == "configured_target_aggregation_v1"
+        and set(metadata.get("targets") or ()) == set(scoring_components(position))
+    )
+    if verified:
+        observed = pd.to_numeric(frame["actual_projected_total"], errors="coerce")
+        valid = np.isfinite(observed)
+        if metadata.get("scoring_format") == scoring:
+            return observed.where(valid)
+    values = score_actual_components(frame, position, scoring, prefix=prefix)
+    return values.where(valid) if verified else values
+
+
+def comparison_model_totals(
+    frame: pd.DataFrame, position: str, scoring="ppr", *, rescore=False
+) -> pd.DataFrame:
     """Rebuild DST comparison totals from raw heads, never rounded native totals.
 
     Pipeline totals retain ordinary fantasy scoring. Other positions already
     share that total's component set; DST comparison omits points allowed.
     """
     out = frame.copy()
-    if position == "DST":
+    if position == "DST" or rescore:
         for column in frame:
             if column.startswith("pred_") and column.endswith("_total"):
-                out[column] = score_actual_components(frame, position, prefix=column[:-5])
+                out[column] = score_actual_components(frame, position, scoring, prefix=column[:-5])
     return out

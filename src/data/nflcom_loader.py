@@ -47,6 +47,7 @@ NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
 NFLCOM_DEFAULT_WEEKS = tuple(range(1, 19))  # NFL regular season is 18 weeks since 2021.
 # v2 retains cross-position offense stats; v1 caches already lost those values.
 _CACHE_VERSION = "v2"
+_FETCH_COMPLETE_ATTR = "nflcom_fetch_complete_v1"
 
 # Network defensiveness: 404 is expected (late-season weeks) and not retried.
 # Other transient failures (5xx, ECONNRESET, DNS blips) are retried once after
@@ -254,6 +255,18 @@ def _is_404(err: Exception) -> bool:
     return isinstance(err, HTTPError) and getattr(err, "code", None) == 404
 
 
+class _ProjectionFetchUnavailable(RuntimeError):
+    """A transient fetch failed, so the returned coverage cannot be cached."""
+
+
+def _read_complete_cache(path):
+    if os.path.exists(path):
+        cached = pd.read_parquet(path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+            return cached
+    return None
+
+
 def _read_one_projection(
     year: int,
     week: int,
@@ -265,7 +278,7 @@ def _read_one_projection(
 ) -> pd.DataFrame | None:
     """Fetch one (year, week, position) CSV from upstream.
 
-    Returns ``None`` on 404 / persistent connection errors / empty file. Logs a
+    Returns ``None`` on 404 / empty file; transient failures raise. Logs a
     warning so operators see late-season weeks dropping out rather than silently
     shrinking the frame.
 
@@ -280,7 +293,7 @@ def _read_one_projection(
     for attempt in range(max_retries + 1):
         try:
             df = reader(url)
-        except (HTTPError, URLError, FileNotFoundError) as e:
+        except (HTTPError, URLError, TimeoutError, FileNotFoundError) as e:
             last_err = e
             if _is_404(e) or isinstance(e, FileNotFoundError):
                 # 404 is expected — no retry, just log and skip.
@@ -298,7 +311,7 @@ def _read_one_projection(
                 f"  WARN nflcom: skip {position} {year} W{week} "
                 f"({type(e).__name__} after {max_retries} retry)"
             )
-            return None
+            raise _ProjectionFetchUnavailable(f"{position} {year} W{week}: {e}") from e
         except pd.errors.EmptyDataError:
             print(f"  WARN nflcom: skip {position} {year} W{week} (empty CSV)")
             return None
@@ -406,8 +419,10 @@ def load_nflcom_projections(
     cache_path = (
         f"{cache_dir}/nflcom_projections_{_CACHE_VERSION}_{seasons_sig}_{weeks_sig}.parquet"
     )
-    if os.path.exists(cache_path) and not force_refresh:
-        return pd.read_parquet(cache_path)
+    if not force_refresh:
+        cached = _read_complete_cache(cache_path)
+        if cached is not None:
+            return cached
 
     # Parallelize the (year, week, position) fetch fan-out. Each task is one
     # HTTP GET, so I/O-bound — threads beat sequential by ~5-10x for typical
@@ -419,6 +434,7 @@ def load_nflcom_projections(
         for position in NFLCOM_POSITIONS
     ]
     parts: list[pd.DataFrame] = []
+    fetch_complete = True
     with ThreadPoolExecutor(max_workers=_MAX_FETCH_WORKERS) as executor:
         futures = {
             executor.submit(_read_one_projection, year, week, position, reader=reader): (
@@ -430,7 +446,11 @@ def load_nflcom_projections(
         }
         for future in as_completed(futures):
             year, week, position = futures[future]
-            raw = future.result()
+            try:
+                raw = future.result()
+            except _ProjectionFetchUnavailable:
+                fetch_complete = False
+                continue
             if raw is None:
                 continue
             parts.append(_normalize_one_position(raw, position))
@@ -445,7 +465,9 @@ def load_nflcom_projections(
     # Sort for deterministic cache contents (parallel fetch returns rows in
     # nondeterministic order); makes diffs across re-fetches stable.
     df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
-    atomic_write_parquet(df, cache_path)
+    df.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete:
+        atomic_write_parquet(df, cache_path)
     return df
 
 
@@ -558,16 +580,23 @@ def load_nflcom_with_gsis_id(
     )
     # ``rosters`` is the one input not captured by the cache key (seasons +
     # version + match-rate). A caller-supplied override must bypass the cache
-    # read so its result isn't shadowed by a default-rosters cache; with the
+    # read or write so it cannot replace a default-rosters cache; with the
     # default (``rosters is None``) the rosters are derived from ``seasons``, so
-    # the key is complete and the cache hit is correct. Read-only guard — the
-    # write below is left unconditional. (#439)
-    if os.path.exists(cache_path) and not force_refresh and rosters is None:
-        return pd.read_parquet(cache_path)
+    # the key is complete and the cache hit is correct. (#439)
+    default_rosters = rosters is None
+    if not force_refresh and default_rosters:
+        cached = _read_complete_cache(cache_path)
+        if cached is not None and "player_id" in cached and len(cached):
+            valid = cached["player_id"].notna() & ~cached["player_id"].astype(str).str.lower().isin(
+                ["nan", "none", "<na>", ""]
+            )
+            if valid.mean() >= min_match_rate:
+                return cached
 
     proj = load_nflcom_projections(
         seasons, weeks=weeks, cache_dir=cache_dir, force_refresh=force_refresh, reader=reader
     )
+    fetch_complete = proj.attrs.get(_FETCH_COMPLETE_ATTR) is True
 
     if rosters is None:
         rosters = nfl_source.rosters(list(seasons))
@@ -644,5 +673,7 @@ def load_nflcom_with_gsis_id(
         )
 
     primary = primary.drop(columns=["norm_name"])
-    atomic_write_parquet(primary, cache_path)
+    primary.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete and default_rosters:
+        atomic_write_parquet(primary, cache_path)
     return primary

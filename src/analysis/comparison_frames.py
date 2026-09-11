@@ -3,13 +3,14 @@
 import numpy as np
 import pandas as pd
 
-from src.shared.comparison_scoring import comparison_model_totals, score_actual_components
+from src.shared.comparison_scoring import comparison_actuals as comparison_truth
+from src.shared.comparison_scoring import comparison_model_totals
 from src.shared.evaluation_cohorts import KEYS, regular_season_rows
 
 
 def comparison_actuals(frame: pd.DataFrame, position: str, scoring="ppr") -> pd.DataFrame:
     """Use regular-season raw component truth, never a full-fantasy fallback."""
-    out = comparison_model_totals(regular_season_rows(frame), position)
+    out = comparison_model_totals(regular_season_rows(frame), position, scoring)
     if "position" in out:
         out = out.loc[out["position"].eq(position)].copy()
     out = out.dropna(subset=KEYS)
@@ -18,7 +19,7 @@ def comparison_actuals(frame: pd.DataFrame, position: str, scoring="ppr") -> pd.
         out[col] = out[col].astype(int)
     if out.duplicated(KEYS).any():
         raise ValueError("Duplicate actual player-weeks in expert comparison")
-    out["fantasy_points"] = score_actual_components(out, position, scoring)
+    out["fantasy_points"] = comparison_truth(out, position, scoring)
     return out.loc[out["fantasy_points"].notna()].copy()
 
 

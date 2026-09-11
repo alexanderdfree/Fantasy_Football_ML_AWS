@@ -19,6 +19,7 @@ import pandas as pd
 
 from src.config import CACHE_DIR, SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD
 from src.data import nfl_source
+from src.data.cache_io import atomic_write_parquet
 from src.shared.aggregate_targets import POSITION_TARGET_MAP
 from src.shared.comparison_scoring import score_actual_components
 from src.shared.expert_eligibility import filter_eligible_forecasts
@@ -92,6 +93,7 @@ _SLEEPER_DEF_CODE = "DEF"
 SLEEPER_FETCH_POSITIONS: tuple[str, ...] = (*SLEEPER_OFFENSE_POSITIONS, _SLEEPER_DEF_CODE)
 SLEEPER_DEFAULT_WEEKS = tuple(range(1, 19))
 _CACHE_VERSION = "v2"
+_FETCH_COMPLETE_ATTR = "sleeper_fetch_complete_v1"
 _MIN_SEASON = 2018
 _RETRY_BACKOFF_S = 0.5
 _REQUEST_TIMEOUT_S = 30
@@ -139,6 +141,10 @@ def _projection_url(season: int, week: int, positions: Sequence[str]) -> str:
     return f"{SLEEPER_BASE}/{season}/{week}?season_type=regular{pos_q}"
 
 
+class _SleeperFetchIncompleteError(RuntimeError):
+    """A transient fetch failed, so partial coverage must not be cached."""
+
+
 def _read_one_sleeper_week(
     season: int,
     week: int,
@@ -160,15 +166,13 @@ def _read_one_sleeper_week(
                 print(f"  WARN sleeper: transient HTTP {e.code} on {season} W{week}; retrying")
                 time.sleep(backoff_s)
                 continue
-            print(f"  WARN sleeper: skip {season} W{week} (HTTP {e.code} after retry)")
-            return None
+            raise _SleeperFetchIncompleteError(f"{season} W{week}: HTTP {e.code}") from e
         except (urllib.error.URLError, TimeoutError) as e:
             if attempt < max_retries:
                 print(f"  WARN sleeper: transient {type(e).__name__} on {season} W{week}; retrying")
                 time.sleep(backoff_s)
                 continue
-            print(f"  WARN sleeper: skip {season} W{week} ({type(e).__name__} after retry)")
-            return None
+            raise _SleeperFetchIncompleteError(f"{season} W{week}: {e}") from e
         else:
             return records if records else None
     return None
@@ -259,17 +263,25 @@ def load_sleeper_projections(
     weeks_to_try = tuple(weeks) if weeks is not None else SLEEPER_DEFAULT_WEEKS
     os.makedirs(cache_dir, exist_ok=True)
     pos_sig = "-".join(sorted(positions))
+    season_sig = "s" + "-".join(map(str, seasons))
     cache_path = (
         f"{cache_dir}/sleeper_projections_{_CACHE_VERSION}"
-        f"_{min(seasons)}_{max(seasons)}_{_weeks_signature(weeks_to_try)}_{pos_sig}.parquet"
+        f"_{season_sig}_{_weeks_signature(weeks_to_try)}_{pos_sig}.parquet"
     )
     if os.path.exists(cache_path) and not force_refresh:
-        return pd.read_parquet(cache_path)
+        cached = pd.read_parquet(cache_path)
+        if cached.attrs.get(_FETCH_COMPLETE_ATTR) is True:
+            return cached
 
     parts: list[pd.DataFrame] = []
+    fetch_complete = True
     for season in seasons:
         for week in weeks_to_try:
-            records = _read_one_sleeper_week(season, week, positions, reader=reader)
+            try:
+                records = _read_one_sleeper_week(season, week, positions, reader=reader)
+            except _SleeperFetchIncompleteError:
+                fetch_complete = False
+                continue
             if records is None:
                 continue
             frame = _normalize_sleeper_week(records, season, week)
@@ -283,7 +295,9 @@ def load_sleeper_projections(
         )
     df = pd.concat(parts, ignore_index=True)
     df = df.sort_values(["season", "week", "position", "player_name"]).reset_index(drop=True)
-    df.to_parquet(cache_path)
+    df.attrs[_FETCH_COMPLETE_ATTR] = fetch_complete
+    if fetch_complete:
+        atomic_write_parquet(df, cache_path)
     return df
 
 
@@ -316,6 +330,7 @@ def load_sleeper_with_gsis_id(
     dst = proj[is_dst].copy()
     dst["player_id"] = dst["sleeper_player_id"]
     merged = pd.concat([offense, dst], ignore_index=True)
+    merged.attrs[_FETCH_COMPLETE_ATTR] = proj.attrs.get(_FETCH_COMPLETE_ATTR) is True
 
     n_off = len(offense)
     n_matched = int(offense["player_id"].notna().sum())

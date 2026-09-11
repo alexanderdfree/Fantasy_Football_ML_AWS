@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Consolidated offline comparison and provider-cache boundaries
+[Read the incident record](fixed-archive/consolidated-evaluation-review-followup.md).
+
 ### [FIXED] Expert forecasts lost scoring components outside the model target list
 [Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
 

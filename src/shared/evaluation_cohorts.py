@@ -17,8 +17,8 @@ import pandas as pd
 from src.config import CACHE_DIR
 from src.shared.comparison_scoring import (
     ACTUAL_BASIS,
+    comparison_actuals,
     comparison_model_totals,
-    score_actual_components,
     scoring_components,
 )
 from src.shared.evaluation import compute_metrics
@@ -208,7 +208,7 @@ def build_cohorts(
         }
     df = comparison_model_totals(regular_season_rows(frame), position)
     df["player_id"] = df["player_id"].astype(str)
-    df["fantasy_points"] = score_actual_components(df, position)
+    df["fantasy_points"] = comparison_actuals(df, position)
     if not df["fantasy_points"].notna().any():
         return {
             key: {
@@ -240,7 +240,7 @@ def build_cohorts(
     # mean is not equivalent for offense, and the generic split is invalid for K/DST.
     if prior_frames:
         prior = pd.concat([regular_season_rows(f) for f in prior_frames if f is not None])
-        prior["fantasy_points"] = score_actual_components(prior, position)
+        prior["fantasy_points"] = comparison_actuals(prior, position)
         if {*KEYS, "fantasy_points"}.issubset(prior):
             prior = (
                 prior.drop_duplicates(KEYS)

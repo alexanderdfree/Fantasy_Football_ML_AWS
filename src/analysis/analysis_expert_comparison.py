@@ -91,6 +91,7 @@ from src.shared.aggregate_targets import (
 )
 from src.shared.comparison_scoring import (
     ACTUAL_BASIS,
+    comparison_actuals,
     comparison_model_totals,
     score_actual_components,
     scoring_components,
@@ -252,7 +253,7 @@ def _default_model_preds(
     test_df = result.get("test_df")
     if test_df is None:
         raise KeyError(f"{pos} run() result has no 'test_df'")
-    return test_df
+    return comparison_model_totals(test_df, pos, scoring_format, rescore=True)
 
 
 # ---------- Per-position comparison ------------------------------------------
@@ -289,7 +290,7 @@ def _compare_one_position(
     expert_pred_total]`` by the source's ``project`` callable.
     """
     eval_set = {int(s) for s in eval_seasons}
-    model_df = comparison_model_totals(model_df, pos)
+    model_df = comparison_model_totals(regular_season_rows(model_df), pos, scoring_format)
 
     model_col = next((c for c in _MODEL_PRED_COLS if c in model_df.columns), None)
     if model_col is None:
@@ -310,8 +311,8 @@ def _compare_one_position(
         }
 
     model = model_df[list(needed)].copy()
-    model["fantasy_points"] = score_actual_components(model_df, pos, scoring_format)
-    model = regular_season_rows(model).dropna(subset=["fantasy_points", model_col])
+    model["fantasy_points"] = comparison_actuals(model_df, pos, scoring_format)
+    model = model.dropna(subset=_KEY_COLS)
     model = model[model["season"].astype(int).isin(eval_set)]
     model["player_id"] = model["player_id"].astype(str)
     model["season"] = model["season"].astype(int)
@@ -325,19 +326,24 @@ def _compare_one_position(
             "reason": f"no {expert_name} projections for {pos}",
         }
     expert = filter_eligible_forecasts(expert_df, expert_name, pos)
-    expert = expert[[*_KEY_COLS, _EXPERT_PRED_COL]].copy()
+    expert = expert[[*_KEY_COLS, _EXPERT_PRED_COL]].dropna(subset=_KEY_COLS).copy()
     expert["player_id"] = expert["player_id"].astype(str)
     expert["season"] = expert["season"].astype(int)
     expert["week"] = expert["week"].astype(int)
     expert = expert[expert["season"].isin(eval_set)]
 
-    joined = model.merge(expert, on=_KEY_COLS, how="inner")
+    joined = model.merge(expert, on=_KEY_COLS, how="inner", validate="one_to_one")
+    compared = ["fantasy_points", model_col, _EXPERT_PRED_COL]
+    joined[compared] = joined[compared].apply(pd.to_numeric, errors="coerce")
+    joined = joined.loc[np.isfinite(joined[compared]).all(axis=1)]
     if joined.empty:
         return {
             "position": pos,
             "expert_name": expert_name,
             "skipped": True,
-            "reason": f"no (player_id, season, week) overlap for {pos}",
+            "reason": f"no finite shared player-week actuals and forecasts for {pos}",
+            "status": "unavailable",
+            "n_matched": 0,
         }
 
     actual = joined["fantasy_points"].to_numpy(dtype=float)
@@ -484,18 +490,6 @@ def main(
         model_preds_loader = _default_model_preds
     experts = _build_experts(nflcom_loader, sleeper_loader, fftoday_loader, espn_loader)
 
-    # The default model loader sources predictions from the pipeline's held-out
-    # test_df, scored in the pipeline's configured format (PPR for shipped models).
-    # This script re-scores only the *expert* side to ``scoring_format``; a non-PPR
-    # head-to-head while the model side stays PPR would be apples-to-oranges.
-    if scoring_format != "ppr" and model_preds_loader is _default_model_preds:
-        print(
-            f"WARNING: --scoring-format={scoring_format} only re-scores the expert sides. "
-            "The model side reflects the pipeline's configured scoring (PPR for the shipped "
-            "models), so a non-PPR head-to-head is only valid if the pipeline is also run in "
-            "that format."
-        )
-
     # Load each expert's raw projections once (network/data-source boundary —
     # defensive: a failed expert is skipped, not fatal to the others).
     expert_raws: dict[str, pd.DataFrame | None] = {}
@@ -576,9 +570,7 @@ def _parse_args() -> argparse.Namespace:
         "--scoring-format",
         default=SCORING_FORMAT_DEFAULT,
         choices=["ppr", "half_ppr", "standard"],
-        help="Scoring format for the expert sides. NOTE: the model side reflects the pipeline's "
-        "configured scoring (PPR for shipped models), so non-PPR is only valid if the pipeline is "
-        "also run in that format (default: ppr).",
+        help="Scoring format for actuals and both forecast sides, rescored from raw stats.",
     )
     parser.add_argument(
         "--positions",

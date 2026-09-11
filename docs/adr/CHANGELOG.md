@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-11 · Repair finite paired offline scoring and incomplete provider cache boundaries · (PR #1574 follow-up) · → ADR-0024
+
 - 2026-09-10 · Remove repository Codex model, reasoning, and context pins; inherit personal defaults and session selections · (PR #1579) · → ADR-0025
 
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018

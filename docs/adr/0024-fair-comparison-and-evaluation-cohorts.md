@@ -181,6 +181,10 @@ to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
 
+- 2026-09-11: Preserve certified pre-fill comparison truth, use finite paired
+  populations in offline reports, and keep incomplete provider fetches from
+  becoming reusable comparison caches (PR #1574 follow-up).
+
 - 2026-09-11 — Consolidate complete expert display forecasts with separate shared
   comparison totals, DST Timeline scoring and current source eligibility; retain
   the shared-components reference and require cache schema 11 (PR #1574).

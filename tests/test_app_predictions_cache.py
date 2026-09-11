@@ -657,15 +657,16 @@ def test_truncated_expert_scoring_schema_cannot_hydrate(cache_dir, fingerprint_f
     assert core._try_hydrate_from_disk() is False
 
 
-def test_espn_outage_cannot_publish_a_reusable_null_cache(
-    cache_dir, fingerprint_files, monkeypatch
+@pytest.mark.parametrize("source", ["espn", "nflcom", "rotowire"])
+def test_expert_outage_cannot_publish_a_reusable_null_cache(
+    cache_dir, fingerprint_files, monkeypatch, source
 ):
     import src.serving.app as app_mod
 
     uploads = []
     monkeypatch.setattr(core, "upload_predictions_cache_to_s3", lambda: uploads.append(True))
     results = _fake_results()
-    results.attrs["espn_complete"] = False
+    results.attrs[f"{source}_complete"] = False
     app_mod._cache["results"] = results
     app_mod._cache["metrics_by_format"] = _fake_metrics()
     _persist_fixture_cache()
@@ -675,19 +676,19 @@ def test_espn_outage_cannot_publish_a_reusable_null_cache(
 
     # Once a retry succeeds, persistence/hydration resume. A later failed
     # refresh must also leave this complete on-disk snapshot untouched.
-    results.attrs["espn_complete"] = True
+    results.attrs[f"{source}_complete"] = True
     _persist_fixture_cache()
     before = _generation(cache_dir)
     before_files = read_generation(cache_dir)[1]
     assert uploads == [True]
-    results.attrs["espn_complete"] = False
+    results.attrs[f"{source}_complete"] = False
     _persist_fixture_cache()
     assert _generation(cache_dir) == before
     assert read_generation(cache_dir)[1] == before_files
     assert uploads == [True]
     app_mod._cache.clear()
     assert core._try_hydrate_from_disk() is True
-    assert app_mod._cache["results"].attrs["espn_complete"] is True
+    assert app_mod._cache["results"].attrs[f"{source}_complete"] is True
 
 
 def test_hydrate_returns_false_on_fingerprint_mismatch(cache_dir, fingerprint_files, monkeypatch):

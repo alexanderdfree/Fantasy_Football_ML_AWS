@@ -362,8 +362,8 @@ def test_read_one_projection_does_not_retry_404():
 
 
 def test_read_one_projection_gives_up_after_max_retries():
-    """Persistent transient errors should ultimately give up and return None."""
-    from src.data.nflcom_loader import _read_one_projection
+    """Exhausted transient errors are distinct from an expected absent week."""
+    from src.data.nflcom_loader import _ProjectionFetchUnavailable, _read_one_projection
 
     state = {"n": 0}
 
@@ -371,8 +371,8 @@ def test_read_one_projection_gives_up_after_max_retries():
         state["n"] += 1
         raise HTTPError(url, 503, "Service Unavailable", hdrs=None, fp=None)
 
-    df = _read_one_projection(2024, 1, "QB", reader=stub, max_retries=1, backoff_s=0.0)
-    assert df is None
+    with pytest.raises(_ProjectionFetchUnavailable):
+        _read_one_projection(2024, 1, "QB", reader=stub, max_retries=1, backoff_s=0.0)
     assert state["n"] == 2  # initial + 1 retry
 
 
@@ -679,7 +679,7 @@ def test_load_with_gsis_id_below_threshold_raises(tmp_path):
         )
 
 
-def test_load_with_gsis_id_writes_cache(tmp_path):
+def test_load_with_gsis_id_writes_cache(tmp_path, monkeypatch):
     rosters = _make_rosters(
         [
             {"player_id": f"00-{i}", "player_name": n, "team": t, "position": "QB", "season": 2024}
@@ -694,10 +694,11 @@ def test_load_with_gsis_id_writes_cache(tmp_path):
             )
         ]
     )
+    monkeypatch.setattr("src.data.nflcom_loader.nfl_source.rosters", lambda _: rosters)
     load_nflcom_with_gsis_id(
         seasons=[2024],
         cache_dir=str(tmp_path),
-        rosters=rosters,
+        rosters=None,
         reader=_fixture_reader_qb_only,
     )
     # Joined cache key includes min_match_rate (F105): default 0.90 -> "mr90".
@@ -717,7 +718,7 @@ def test_load_with_gsis_id_writes_cache(tmp_path):
     assert len(df) == 5
 
 
-def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
+def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path, monkeypatch):
     """F105: a stricter ``min_match_rate`` must not silently hit an earlier,
     looser-threshold cache. Distinct thresholds -> distinct cache files."""
     rosters = _make_rosters(
@@ -736,17 +737,18 @@ def test_load_with_gsis_id_cache_key_varies_with_min_match_rate(tmp_path):
     )
     # Full-match roster, so both thresholds pass — we are checking the cache
     # KEY varies, not the RuntimeError path.
+    monkeypatch.setattr("src.data.nflcom_loader.nfl_source.rosters", lambda _: rosters)
     load_nflcom_with_gsis_id(
         seasons=[2024],
         cache_dir=str(tmp_path),
-        rosters=rosters,
+        rosters=None,
         reader=_fixture_reader_qb_only,
         min_match_rate=0.80,
     )
     load_nflcom_with_gsis_id(
         seasons=[2024],
         cache_dir=str(tmp_path),
-        rosters=rosters,
+        rosters=None,
         reader=_fixture_reader_qb_only,
         min_match_rate=0.99,
     )

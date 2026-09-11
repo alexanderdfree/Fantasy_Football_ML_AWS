@@ -252,7 +252,8 @@ def _apply_expert_predictions(
     Expert feeds are an auxiliary UI comparison surface. Loader/projection failures
     leave stable NaN columns instead of breaking model serving.
     """
-    results.attrs["espn_complete"] = True
+    for source in _EXPERT_PRED_PREFIXES:
+        results.attrs[f"{source}_complete"] = True
     for source in _EXPERT_PRED_PREFIXES:
         for fmt in _VALID_SCORING:
             results[_pred_col(source, fmt)] = np.nan
@@ -293,6 +294,13 @@ def _apply_expert_predictions(
     if raw_espn is not None and (raw_espn.empty or "position" not in raw_espn.columns):
         raw_espn = None
     results.attrs["espn_complete"] = raw_espn is not None
+    results.attrs["nflcom_complete"] = (
+        raw_nflcom is not None and raw_nflcom.attrs.get("nflcom_fetch_complete_v1") is not False
+    )
+    results.attrs["rotowire_complete"] = (
+        raw_rotowire is not None
+        and raw_rotowire.attrs.get("sleeper_fetch_complete_v1") is not False
+    )
 
     for source, raw in (("rotowire", raw_rotowire), ("espn", raw_espn)):
         results[_pred_col(source, "comparison")] = np.nan
@@ -317,6 +325,7 @@ def _apply_expert_predictions(
                         )
                     except Exception as e:  # noqa: BLE001 - optional source boundary
                         print(f"[experts] {source} {pos}/{fmt} comparison unavailable: {e!r}")
+                        results.attrs[f"{source}_complete"] = False
             if raw_espn is not None:
                 try:
                     espn = project_espn_to_fantasy(raw_espn, pos, fmt)
@@ -330,12 +339,14 @@ def _apply_expert_predictions(
                     _assign_expert_totals(results, "nflcom", fmt, nfl, "nflcom_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[experts] NFL.com {pos}/{fmt} projection failed: {e!r}")
+                    results.attrs["nflcom_complete"] = False
             if raw_rotowire is not None and pos != "K":
                 try:
                     rw = _project_rotowire_to_fantasy(raw_rotowire, pos, fmt)
                     _assign_expert_totals(results, "rotowire", fmt, rw, "rotowire_pred_total")
                 except Exception as e:  # noqa: BLE001 - one source/position can degrade
                     print(f"[experts] RotoWire {pos}/{fmt} projection failed: {e!r}")
+                    results.attrs["rotowire_complete"] = False
 
     for source in _EXPERT_PRED_PREFIXES:
         results[f"{source}_pred"] = results[_pred_col(source, "ppr")]
@@ -1741,8 +1752,15 @@ def _persist_cache_to_disk():
     """
     if "results" not in app_pkg._cache or "metrics_by_format" not in app_pkg._cache:
         return
-    if app_pkg._cache["results"].attrs.get("espn_complete") is False:
-        print("[predcache] ESPN unavailable — not publishing incomplete results")
+    incomplete = [
+        source
+        for source in _EXPERT_PRED_PREFIXES
+        if app_pkg._cache["results"].attrs.get(f"{source}_complete") is False
+    ]
+    if incomplete:
+        print(
+            f"[predcache] Experts unavailable ({', '.join(incomplete)}) — not publishing incomplete results"
+        )
         return
     sha, input_files = _compute_models_fingerprint()
     expected = app_pkg._cache.get("prediction_inputs_fingerprint")

@@ -55,7 +55,12 @@ from src.analysis.comparison_frames import (
 )
 from src.analysis.significance import diebold_mariano_test, paired_bootstrap_metric_ci
 from src.config import TEST_SEASONS
-from src.shared.comparison_scoring import ACTUAL_BASIS, score_actual_components, scoring_components
+from src.shared.comparison_scoring import (
+    ACTUAL_BASIS,
+    comparison_model_totals,
+    score_actual_components,
+    scoring_components,
+)
 from src.shared.evaluation import compute_metrics
 from src.shared.expert_eligibility import filter_eligible_forecasts
 
@@ -242,7 +247,13 @@ def local_expert_source(spec: LocalExpertSpec) -> ExpertSource:
             valid_pred = np.isfinite(pred)
         else:
             pred = pd.to_numeric(df[pred_col], errors="coerce")
-            valid_pred = pred.gt(0.0) & np.isfinite(pred)
+            has_stat_line = pd.Series(False, index=df.index)
+            for target in scoring_components(pos):
+                for column in (f"pred_{target}", f"projected_{target}", f"{target}_projection"):
+                    if column in df and column != pred_col:
+                        values = pd.to_numeric(df[column], errors="coerce")
+                        has_stat_line |= np.isfinite(values) & values.ne(0)
+            valid_pred = np.isfinite(pred) & (pred.gt(0.0) | has_stat_line)
         df = df.loc[valid_pred].copy()
         if df.empty:
             return pd.DataFrame(columns=[*_KEY_COLS, _EXPERT_PRED_COL])
@@ -409,8 +420,8 @@ def season_selection_rows(
             precision = len(hits) / len(pred_set) if pred_set else _nan()
             recall = len(hits) / len(actual_set) if actual_set else _nan()
             f1 = (
-                2.0 * precision * recall / (precision + recall)
-                if precision + recall > 0
+                2.0 * len(hits) / (len(pred_set) + len(actual_set))
+                if pred_set and actual_set
                 else _nan()
             )
             hit_ranks = season_actual[season_actual["player_id"].isin(hits)].dropna(
@@ -953,11 +964,11 @@ def load_position_predictions(
 def _fresh_model_predictions(
     position: str, eval_seasons: Sequence[int], scoring_format: str
 ) -> pd.DataFrame:
-    del eval_seasons, scoring_format
+    del eval_seasons
     result = importlib.import_module(f"src.{position.lower()}.run_pipeline").run()
     if "test_df" not in result:
         raise KeyError(f"{position} run() result has no 'test_df'")
-    return result["test_df"]
+    return comparison_model_totals(result["test_df"], position, scoring_format, rescore=True)
 
 
 def _filter_eval_seasons(df: pd.DataFrame, eval_seasons: Sequence[int]) -> pd.DataFrame:
