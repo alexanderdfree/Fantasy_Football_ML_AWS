@@ -428,17 +428,22 @@ def test_trial_to_params_rejects_stale_scheduler_mismatch():
 
 
 def test_study_storage_is_versioned_for_scheduler_search_space():
-    assert tune_nn._study_name("RB") == "nn_scheduler_v2_rb"
-    assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v2_rb.db"
-    assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v2/rb"
+    assert tune_nn._study_name("RB") == "nn_scheduler_v2_fp_rmse_ppr_v1_rb"
+    assert tune_nn._study_db_path("RB") == "tune_nn_scheduler_v2_fp_rmse_ppr_v1_rb.db"
+    assert tune_nn._s3_key_prefix("RB") == "tune_nn/scheduler_v2_fp_rmse_ppr_v1/rb"
 
 
 def test_mps_graph_storage_profile_is_separate_from_eager():
     version = tune_nn._resolve_search_space_version("mps", cuda_graph=True)
-    assert version == "scheduler_v2_mps_graph"
-    assert tune_nn._study_name("RB", version) == "nn_scheduler_v2_mps_graph_rb"
-    assert tune_nn._study_db_path("RB", version) == "tune_nn_scheduler_v2_mps_graph_rb.db"
-    assert tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v2_mps_graph/rb"
+    assert version == "scheduler_v2_fp_rmse_ppr_v1_mps_graph"
+    assert tune_nn._study_name("RB", version) == "nn_scheduler_v2_fp_rmse_ppr_v1_mps_graph_rb"
+    assert (
+        tune_nn._study_db_path("RB", version)
+        == "tune_nn_scheduler_v2_fp_rmse_ppr_v1_mps_graph_rb.db"
+    )
+    assert (
+        tune_nn._s3_key_prefix("RB", version) == "tune_nn/scheduler_v2_fp_rmse_ppr_v1_mps_graph/rb"
+    )
 
 
 def test_thread_graph_storage_profile_is_separate_from_eager():
@@ -446,10 +451,16 @@ def test_thread_graph_storage_profile_is_separate_from_eager():
     cutover) must not resume the eager local study — full 2x2 backend×graph
     namespace matrix."""
     assert tune_nn._resolve_search_space_version("thread", cuda_graph=True) == (
-        "scheduler_v2_graph"
+        "scheduler_v2_fp_rmse_ppr_v1_graph"
     )
-    assert tune_nn._resolve_search_space_version("thread", cuda_graph=False) == "scheduler_v2"
-    assert tune_nn._resolve_search_space_version("mps", cuda_graph=False) == "scheduler_v2_mps"
+    assert (
+        tune_nn._resolve_search_space_version("thread", cuda_graph=False)
+        == "scheduler_v2_fp_rmse_ppr_v1"
+    )
+    assert (
+        tune_nn._resolve_search_space_version("mps", cuda_graph=False)
+        == "scheduler_v2_fp_rmse_ppr_v1_mps"
+    )
 
 
 def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
@@ -459,22 +470,42 @@ def test_resolve_storage_version_follows_live_capture_decision(monkeypatch):
     provenance."""
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graph", True, False)
-    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps_graph", True, False)
+    assert tune_nn._resolve_storage_version("thread") == (
+        "scheduler_v2_fp_rmse_ppr_v1_graph",
+        True,
+        False,
+    )
+    assert tune_nn._resolve_storage_version("mps") == (
+        "scheduler_v2_fp_rmse_ppr_v1_mps_graph",
+        True,
+        False,
+    )
 
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: True)
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2_graphfull", True, True)
+    assert tune_nn._resolve_storage_version("thread") == (
+        "scheduler_v2_fp_rmse_ppr_v1_graphfull",
+        True,
+        True,
+    )
     assert tune_nn._resolve_storage_version("mps") == (
-        "scheduler_v2_mps_graphfull",
+        "scheduler_v2_fp_rmse_ppr_v1_mps_graphfull",
         True,
         True,
     )
 
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
     # full requires the base gate: full-true + graph-false -> eager namespace.
-    assert tune_nn._resolve_storage_version("thread") == ("scheduler_v2", False, True)
+    assert tune_nn._resolve_storage_version("thread") == (
+        "scheduler_v2_fp_rmse_ppr_v1",
+        False,
+        True,
+    )
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("mps") == ("scheduler_v2_mps", False, False)
+    assert tune_nn._resolve_storage_version("mps") == (
+        "scheduler_v2_fp_rmse_ppr_v1_mps",
+        False,
+        False,
+    )
 
 
 def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch):
@@ -488,12 +519,12 @@ def test_resolve_storage_version_ignores_env_when_capture_disagrees(monkeypatch)
     monkeypatch.setenv("FF_CUDA_GRAPH", "1")
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: False)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("mps")[0] == "scheduler_v2_mps"
+    assert tune_nn._resolve_storage_version("mps")[0] == "scheduler_v2_fp_rmse_ppr_v1_mps"
     # sm_80+ box + env unset: autodetect captures -> graph namespace.
     monkeypatch.delenv("FF_CUDA_GRAPH", raising=False)
     monkeypatch.setattr(tune_nn, "_cuda_graph_enabled", lambda: True)
     monkeypatch.setattr(tune_nn, "_cuda_graph_full_enabled", lambda: False)
-    assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v2_graph"
+    assert tune_nn._resolve_storage_version("thread")[0] == "scheduler_v2_fp_rmse_ppr_v1_graph"
 
 
 def test_concurrent_thread_trials_force_eager(monkeypatch, capsys):
@@ -664,12 +695,13 @@ def test_objective_returns_min_of_captured_val_losses(monkeypatch, pos):
     def fake_runner(seed, config):
         cb = config.get("epoch_callback")
         assert cb is not None, "tune_nn must install epoch_callback into cfg"
+        assert config["nn_selection_metric"] == "fantasy_rmse_ppr"
         # Decreasing trajectory: min is the last value.
         for ep, loss in enumerate([1.5, 1.2, 0.9, 0.7, 0.6]):
             cb(ep, loss)
         # Return a minimal result dict — objective should prefer the
         # captured trajectory over result["attn_history"].
-        return {"attn_history": {"val_loss": [5.0]}}
+        return {"attn_history": {"val_fantasy_rmse_ppr": [5.0]}}
 
     base_cfg = {"train_attention_nn": True}
     monkeypatch.setattr(tune_nn, "get_runner", lambda _pos: fake_runner)
@@ -721,7 +753,7 @@ def test_objective_maps_sampled_scheduler_lr_to_attention_override(
         assert config[attn_key] == pytest.approx(sampled_value)
         assert config[attn_key] != pytest.approx(base_value)
         config["epoch_callback"](0, 0.5)
-        return {"attn_history": {"val_loss": [0.5]}}
+        return {"attn_history": {"val_fantasy_rmse_ppr": [0.5]}}
 
     base_cfg = {"train_attention_nn": True, "scheduler_type": scheduler_type, attn_key: base_value}
     monkeypatch.setattr(tune_nn, "_sample_overrides", lambda trial, *a, **k: dict(overrides))
@@ -745,7 +777,7 @@ def test_objective_propagates_pruned_trial(monkeypatch):
         # Manually trigger the pruning path — the test's trial.report mock
         # below will return True from should_prune at step 1.
         cb(1, 0.9)
-        return {"attn_history": {"val_loss": [0.9]}}
+        return {"attn_history": {"val_fantasy_rmse_ppr": [0.9]}}
 
     base_cfg = {"train_attention_nn": True}
     monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fake_runner)
@@ -772,7 +804,7 @@ def test_objective_falls_back_to_attn_history_when_callback_unused(monkeypatch):
     def fake_runner(seed, config):
         # Deliberately ignore the callback — simulates a pipeline where
         # attention training was disabled at runtime.
-        return {"attn_history": {"val_loss": [2.0, 1.5, 1.1]}}
+        return {"attn_history": {"val_fantasy_rmse_ppr": [2.0, 1.5, 1.1]}}
 
     base_cfg = {"train_attention_nn": True}
     monkeypatch.setattr(tune_nn, "get_runner", lambda pos: fake_runner)
@@ -800,7 +832,7 @@ def test_objective_raises_when_no_val_loss_anywhere(monkeypatch):
     # surfaces as the trial's failure rather than a Python exception. Drive
     # the objective directly instead.
     trial = study.ask()
-    with pytest.raises(RuntimeError, match="no val_loss trajectory"):
+    with pytest.raises(RuntimeError, match="no validation RMSE trajectory"):
         objective(trial)
 
 
@@ -1072,11 +1104,13 @@ def test_graphfull_storage_profiles_compose_only_with_graph():
     full-step capture requires the base graph gate, so full-without-graph
     resolves to the plain namespace instead of an unreachable one."""
     rs = tune_nn._resolve_search_space_version
-    assert rs("mps", cuda_graph=True, full_graph=True) == "scheduler_v2_mps_graphfull"
-    assert rs("thread", cuda_graph=True, full_graph=True) == "scheduler_v2_graphfull"
-    assert rs("mps", cuda_graph=False, full_graph=True) == "scheduler_v2_mps"
-    assert rs("thread", cuda_graph=False, full_graph=True) == "scheduler_v2"
-    assert rs("mps", cuda_graph=True, full_graph=False) == "scheduler_v2_mps_graph"
+    assert (
+        rs("mps", cuda_graph=True, full_graph=True) == "scheduler_v2_fp_rmse_ppr_v1_mps_graphfull"
+    )
+    assert rs("thread", cuda_graph=True, full_graph=True) == "scheduler_v2_fp_rmse_ppr_v1_graphfull"
+    assert rs("mps", cuda_graph=False, full_graph=True) == "scheduler_v2_fp_rmse_ppr_v1_mps"
+    assert rs("thread", cuda_graph=False, full_graph=True) == "scheduler_v2_fp_rmse_ppr_v1"
+    assert rs("mps", cuda_graph=True, full_graph=False) == "scheduler_v2_fp_rmse_ppr_v1_mps_graph"
 
 
 # ---------------------------------------------------------------------------

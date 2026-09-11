@@ -145,6 +145,18 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
     }
     summary.update(_rmse_field("ridge", ridge))
     summary.update(_rmse_field("nn", nn))
+    for model, history_key in (
+        ("ridge", None),
+        ("nn", "history"),
+        ("attn_nn", "attn_history"),
+        ("lgbm", None),
+    ):
+        # In-memory pipelines and serialized Batch metrics share this contract.
+        selection = result.get(f"{model}_selection") or (result.get(history_key) or {}).get(
+            "checkpoint_selection"
+        )
+        if selection is not None:
+            summary[f"{model}_selection"] = selection
     if "elasticnet_metrics" in result:
         enet = result["elasticnet_metrics"]["total"]
         summary["elasticnet_mae"] = round(enet["mae"], 3)

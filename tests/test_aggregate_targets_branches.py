@@ -9,6 +9,10 @@ DST aggregation with torch inputs, and the two ValueError branches in
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import numpy as np
 import pytest
 import torch
@@ -19,6 +23,51 @@ from src.shared.aggregate_targets import (
     aggregate_fn_for,
     predictions_to_fantasy_points,
 )
+
+
+@pytest.mark.unit
+def test_numpy_scoring_does_not_require_torch():
+    source = textwrap.dedent("""
+        import importlib.abc
+        import sys
+        class NoTorch(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "torch" or fullname.startswith("torch."):
+                    raise AssertionError("NumPy scoring imported Torch")
+        sys.meta_path.insert(0, NoTorch())
+        import numpy as np
+        from src.shared.aggregate_targets import (
+            DST_TARGETS, K_TARGETS, POSITION_TARGET_MAP, predictions_to_fantasy_points,
+        )
+        targets = {**POSITION_TARGET_MAP, "K": K_TARGETS, "DST": DST_TARGETS}
+        for position, names in targets.items():
+            values = {name: np.zeros(2) for name in names}
+            for scoring in ("ppr", "half_ppr", "standard"):
+                result = predictions_to_fantasy_points(position, values, scoring)
+                assert result.shape == (2,) and np.isfinite(result).all()
+        assert "torch" not in sys.modules
+    """)
+    result = subprocess.run([sys.executable, "-c", source], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+from src.shared.registry import get_config
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_tensor_scoring_matches_numpy_with_leading_member_dimension(position):
+    targets = get_config(position)["targets"]
+    values = np.array([[0.0, 7.0, 14.0], [1.0, 28.0, 35.0]])
+    arrays = {t: values for t in targets}
+    tensors = {t: torch.tensor(values, requires_grad=True) for t in targets}
+    actual = predictions_to_fantasy_points(position, tensors)
+    assert isinstance(actual, torch.Tensor)
+    np.testing.assert_allclose(
+        actual.detach().numpy(), predictions_to_fantasy_points(position, arrays)
+    )
+    actual.sum().backward()
+    assert any(t.grad is not None for t in tensors.values())
 
 
 @pytest.mark.unit

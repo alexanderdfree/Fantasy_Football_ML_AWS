@@ -125,6 +125,7 @@ class PositionConfig:
     ridge_pca_components: int | None = None
     ridge_cv_folds: int | None = None
     ridge_refine_points: int | None = None
+    ridge_selection_metric: str = "fantasy_rmse_ppr"
     cv_split_column: str | None = None
     train_elasticnet: bool = False
     enet_l1_ratios: list[float] = field(default_factory=lambda: list(DEFAULT_ENET_L1_RATIOS))
@@ -139,6 +140,9 @@ class PositionConfig:
     nn_epochs: int = 250
     nn_batch_size: int = 128
     nn_patience: int = 30
+    # Checkpoint/pruning metric; raw-stat head losses remain independent.
+    # The two weighted selectors are retained for matched A/B comparisons.
+    nn_selection_metric: str = "fantasy_rmse_ppr"
     nn_head_hidden_overrides: dict[str, int] = field(default_factory=dict)
     # Mixed-precision autocast on the NN forward + loss path (both base and
     # attention branches). True by default so every position opts in; flip to
@@ -239,6 +243,7 @@ class PositionConfig:
     lgbm_min_child_samples: int = 30
     lgbm_min_split_gain: float = 0.0
     lgbm_objective: str = "huber"
+    lgbm_selection_metric: str = "fantasy_rmse_ppr"
 
     # === TabPFN (pretrained tabular transformer; 5th model variant) ===
     # Off by default — only positions that opt in run it (and the env must have

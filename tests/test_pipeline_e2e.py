@@ -231,12 +231,14 @@ def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
     cfg = build_tiny_config("QB")
     cfg["_artifact_branch"] = branch
     if branch == "cpu":
-        # Production's cpu branch trains Ridge + LightGBM; the tiny config
-        # keeps LightGBM off, and the ranking attach is per-family, so Ridge
-        # alone covers the short-circuit path.
+        # Exercise both CPU model families and their selection provenance
+        # through the actual short-circuit result and saved artifacts.
         cfg["train_base_nn"] = False
         cfg["train_attention_nn"] = False
         cfg["train_ridge"] = True
+        cfg["train_lightgbm"] = True
+        cfg["lgbm_n_estimators"] = 4
+        cfg["lgbm_num_leaves"] = 4
     else:
         cfg["train_base_nn"] = True
         cfg["train_attention_nn"] = False
@@ -249,11 +251,27 @@ def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
 
     # Partial runs expose their evaluation frame too. Check the selected
     # branch and fitted families directly instead of using frame absence.
-    family = "ridge" if branch == "cpu" else "nn"
+    families = {"ridge", "lgbm"} if branch == "cpu" else {"nn"}
     assert result.recipe["_artifact_branch"] == branch
-    assert set(result["per_target_preds"]) == {family}
-    assert {name for name, model in result.models.items() if model is not None} == {family}
-    assert f"pred_{family}_total" in result["test_df"]
+    assert set(result["per_target_preds"]) == families
+    assert {name for name, model in result.models.items() if model is not None} == families
+    for family in families:
+        assert f"pred_{family}_total" in result["test_df"]
+    if branch == "nn":
+        from src.batch.train import _extract_metrics
+
+        selection = result["history"]["checkpoint_selection"]
+        assert selection["metric"] == "fantasy_rmse_ppr"
+        assert selection["epoch"] >= 1
+        assert np.isfinite(selection["score"])
+        assert _extract_metrics("QB", result)["nn_selection"] == selection
+    else:
+        from src.batch.train import _extract_metrics
+
+        extracted = _extract_metrics("QB", result)
+        assert extracted["ridge_selection"]["metric"] == "mean_cv_fantasy_rmse_ppr"
+        assert extracted["lgbm_selection"]["metric"] == "fantasy_rmse_ppr"
+        assert all(1 <= n <= 4 for n in extracted["lgbm_selection"]["iterations"].values())
 
     present, absent = (
         ("ridge_ranking", "nn_ranking") if branch == "cpu" else ("nn_ranking", "ridge_ranking")

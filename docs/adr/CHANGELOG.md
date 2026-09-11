@@ -16,6 +16,9 @@
 - 2026-09-10 · Exclude non-shared DST points allowed, enforce NFL.com source eligibility, and pair offline comparison cohorts · (PR pending) · → ADR-0024
 - 2026-09-10 · Correct Timeline scoring and source populations, retain K/DST comparisons, and report fixed per-model records · (PR #1573) · → ADR-0024
 - 2026-09-10 · Add opt-in AWS daily/intraday inference and weekly data correction workflows with staged activation, shared publication leases, and public freshness verification · (PR pending) · → ADR-0028
+- 2026-09-10 · Align Ridge/LightGBM selection and LightGBM tuning with PPR RMSE; preserve selected prefixes and raw-stat fitting · (PR #1568) · → ADR-0003
+
+- 2026-09-10 · Align NN checkpoint/tuning selection with validation PPR fantasy-point RMSE; retain raw-stat supervision and isolated legacy comparisons · (PR #1568) · → ADR-0002, ADR-0015
 
 - 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR #1569) · → ADR-0018
 

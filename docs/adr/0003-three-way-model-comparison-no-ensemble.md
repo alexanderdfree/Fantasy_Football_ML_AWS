@@ -6,6 +6,8 @@
 
 **Context.** A core goal is comparing multiple model architectures quantitatively. Ensembling would dominate any single model's MAE, but it would also muddle the question the project is trying to answer.
 
+**Validation objective.** Production Ridge, NN, and LightGBM select raw-stat models using PPR fantasy-point RMSE. Ridge uses expanding-window CV and cached per-target candidate predictions, including fixed special heads. Two coordinate sweeps over each coarse/refined grid select target-specific alphas against the mean fold PPR RMSE. LightGBM fits the configured tree budget with its unchanged raw-stat loss, then uses two coordinate sweeps over per-head tree prefixes to minimize aggregate validation PPR RMSE. Its per-head raw RMSE initializes the search only. These are bounded coordinate searches, not exhaustive joint optima. Selected tree counts survive save/load, and unselected trees are trimmed from served artifacts. LightGBM Optuna/pruning averages PPR RMSE across folds and seeds in the new `ppr_rmse_v1` study namespace. Validation/test separation, stat diagnostics and other scoring formats are retained. ElasticNet's optional independent raw-stat MAE search is unchanged.
+
 **Options considered.**
 
 | Option | What it answers | What it costs |
@@ -39,6 +41,8 @@ It ships **disabled for every position** (`PositionConfig.train_tabpfn=False`), 
 **Tuning levers (per position, 2026-06-08).** Beyond `tabpfn_n_estimators` / `tabpfn_pca_components` / `tabpfn_ignore_pretraining_limits`, `PositionConfig` exposes `tabpfn_softmax_temperature` (predictive-distribution calibration), `tabpfn_auto_scale_n_estimators` (set `False` to honor `n_estimators` exactly), and `tabpfn_inference_config` (a dict passthrough to TabPFN's advanced `InferenceConfig` — e.g. `REGRESSION_Y_PREPROCESS_TRANSFORMS` for skewed targets). All default to TabPFN's own values, so they are inert until changed; they thread `PositionConfig → build_pipeline_config → _build_tabpfn → TabPFNMultiTarget → _new_regressor`.
 
 ## Changelog
+
+- **2026-09-10** — Align Ridge alpha selection and LightGBM tree-prefix/tuning selection with validation PPR fantasy-point RMSE, preserving raw-stat fitting, temporal CV and artifact replay. (PR #1568)
 
 - 2026-07-06 · The NextWeek board's default "rank" sort now uses **per-position best-ranker head selection**: LightGBM ranks RB/WR (it beats the attention head on lineup regret in 4/4 rolling-origin seasons vs RotoWire — [todo/expert-gap-investigation-2026-06.md](../../todo/expert-gap-investigation-2026-06.md) §3); other positions keep the attention-first chain. This *selects* one independent comparison column per position — no blending — so the decision is unchanged. (PR pending)
 - **2026-06-30** — Doc-nit: the Decision's "LightGBM … falls apart on K/DST" reflects the decision-time read. Current benchmarks show LightGBM is **best/tied-best on DST R²** and 2nd-best on K (every model has ≈0 R² on K); the neural nets are the weak DST/K models. The original framing is retained as decision-time context.
