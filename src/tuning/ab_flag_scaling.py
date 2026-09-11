@@ -117,11 +117,8 @@ def metric_fn(result: dict, position: str) -> dict[str, dict[str, float]]:
     here — otherwise a change to the canonical questionable threshold would
     silently desynchronize this A/B from the repo's injury-cohort reporting.
     """
-    from src.analysis.cohort_analysis import (
-        SUBGROUP_SPECS,
-        available_models,
-        per_model_metrics,
-    )
+    from src.analysis.cohort_analysis import SUBGROUP_SPECS
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)
