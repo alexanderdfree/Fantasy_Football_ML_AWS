@@ -20,9 +20,12 @@ after a retrain. Requires ``FF_MODEL_S3_BUCKET`` (and optional
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import shutil
 import sys
+from dataclasses import asdict
 
 _ALL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
@@ -57,7 +60,24 @@ def expected_model_keys(s3, bucket, prefix, *, plan_id=None, dataset_id=None, le
     return {}
 
 
-def main() -> int:
+def stage_cache(directory, build, destination, *, generation):
+    """Export verified canonical files without moving the remote serving pointer."""
+    from pathlib import Path
+
+    from src.artifacts import serving_snapshot
+
+    _, content = serving_snapshot.read_generation(directory, generation)
+    target = Path(destination)
+    target.mkdir(parents=True, exist_ok=True)
+    for name, payload in content.items():
+        (target / name).write_bytes(payload)
+    (target / "build.json").write_text(json.dumps(asdict(build), sort_keys=True))
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stage-directory", help="Export a candidate; do not publish it")
+    args = parser.parse_args(argv)
     bucket = os.environ.get("FF_MODEL_S3_BUCKET", "").strip()
     if not bucket:
         print("FF_MODEL_S3_BUCKET unset — refusing to build a cache with no S3 source/target")
@@ -143,6 +163,15 @@ def main() -> int:
         # comparison assembly. Seal the matching comparison into metrics.json
         # before publishing this generation's immutable files.
         completed = core._persist_cache_to_disk(required=True)
+        if args.stage_directory:
+            stage_cache(
+                core._PREDICTIONS_CACHE_DIR,
+                token,
+                args.stage_directory,
+                generation=completed.name,
+            )
+            print("[build_serving_cache] staged canonical files; serving pointer unchanged")
+            return 0
         published = serving_snapshot.publish(
             s3,
             bucket,

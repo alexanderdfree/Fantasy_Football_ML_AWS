@@ -1,0 +1,94 @@
+{
+  "date": "2026-09-10",
+  "purpose": "Validate opt-in scheduled maintenance without publishing or activating production artifacts",
+  "source": {
+    "base_sha": "3fca0605a99349d1f1a7f88a87e8f2ec43f34438",
+    "tree": "staged working tree; benchmark code fingerprint verified against the checkout",
+    "qb_code_fingerprint": "48ac9269fe9631c39c9440a49fb8eee2201cfbd2d01f34a8935d10d0b1674be9",
+    "rebased_onto": "927531ae"
+  },
+  "data_release": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+  "runtime": {
+    "os": "Linux",
+    "architecture": "ARM64",
+    "python": "3.12",
+    "torch": "2.14.0+cpu",
+    "device": "cpu"
+  },
+  "production_artifact_replay": {
+    "positions": [
+      "QB",
+      "RB",
+      "WR",
+      "TE",
+      "K",
+      "DST"
+    ],
+    "rows_per_format": 7961,
+    "formats": [
+      "ppr",
+      "half_ppr",
+      "standard"
+    ],
+    "models": [
+      "ridge_pred",
+      "nn_pred",
+      "attn_nn_pred",
+      "lgbm_pred"
+    ],
+    "max_absolute_prediction_difference": 0,
+    "reference": "S3 serving-cache snapshot and stable model artifacts captured by the September 10 production audit"
+  },
+  "pipeline_benchmark": "benchmark_history/2026-09-10T23-30-18_unknown.json",
+  "infrastructure_validation": {
+    "cloudformation": "PASS (final YAML template)",
+    "cfn_lint": "PASS",
+    "standard_state_machines": {
+      "InferenceWorkflow": "OK; no diagnostics",
+      "WeeklyWorkflow": "OK; no diagnostics"
+    },
+    "template": "infra/maintenance/template.yaml"
+  },
+  "source_check_smoke": {
+    "sources": 14,
+    "status": "complete",
+    "failed": 0
+  },
+  "local_checks": {
+    "unit_tests_passed": 4371,
+    "unit_tests_skipped": 2,
+    "ruff_check": "PASS",
+    "ruff_format": "PASS",
+    "post_rebase_affected_tests_passed": 124,
+    "review_recovery_tests_passed": 66,
+    "original_review_reproductions_passed": 4
+  },
+  "review_fixes": [
+    "Bucket-scoped ListBucket permission distinguishes absent receipts from access denial",
+    "Weekly activation rejects data pointers superseded during preparation",
+    "Rollback checks the exact recorded task definition and all publication ownership before mutation",
+    "Explicit bounded resume reuses prepared artifacts after rollback; expired forecasts cannot publish"
+  ],
+  "deployment": "No CloudFormation stack or Fargate execution was created; shadow AWS/network and activation rehearsal remains a cutover prerequisite. The final AWS timer preserves main PR #1572's hourly refresh cadence.",
+  "local_docker_note": "A damaged Docker Desktop snapshot store prevented docker run; an isolated BuildKit builder executed the Linux image build, production replay, and QB benchmark. This is not evidence of an AWS Fargate deployment.",
+  "source_readiness_smoke": {
+    "checked_at": "2026-09-11T00:19:09.046500+00:00",
+    "status": "complete",
+    "readiness": "degraded",
+    "archive_sources": 14,
+    "archive_blocked": [],
+    "expected_team_games": 7326,
+    "live_sources": {
+      "roster": "ready",
+      "injuries": "ready",
+      "practice": "partial",
+      "weather": "partial",
+      "qbr": "ready",
+      "snap_counts": "ready",
+      "opportunity": "upstream_pending",
+      "espn": "partial",
+      "rotowire": "partial",
+      "nflcom": "not_needed"
+    }
+  }
+}

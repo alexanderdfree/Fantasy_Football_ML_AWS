@@ -1,0 +1,12 @@
+**
+!requirements.txt
+!requirements-dev.txt
+!src/
+!src/**
+!.github/
+!.github/workflows/
+!.github/workflows/refresh-splits.yml
+**/__pycache__/
+**/*.pyc
+**/outputs/
+src/serving/frontend/

@@ -1,0 +1,56 @@
+name: Build maintenance runtime
+
+on:
+  workflow_run:
+    workflows: ["Deploy to ECS"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-runtime
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  S3_BUCKET: ff-predictor-training
+  STACK_NAME: ff-maintenance
+
+jobs:
+  build:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd
+        id: ecr
+      - name: Build immutable worker and matching control package
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          SOURCE_SHA=$(git rev-parse HEAD)
+          aws ecr describe-repositories --repository-names ff-maintenance >/dev/null 2>&1 || \
+            aws ecr create-repository --repository-name ff-maintenance --image-tag-mutability IMMUTABLE >/dev/null
+          IMAGE_URI="$ECR_REGISTRY/ff-maintenance:$SOURCE_SHA"
+          if ! aws ecr describe-images --repository-name ff-maintenance --image-ids "imageTag=$SOURCE_SHA" >/dev/null 2>&1; then
+            docker build --build-arg "SOURCE_SHA=$SOURCE_SHA" -f infra/maintenance/Dockerfile -t "$IMAGE_URI" .
+            docker push "$IMAGE_URI"
+          fi
+          python3 -m src.maintenance.package --source-sha "$SOURCE_SHA" --output /tmp/maintenance-control.zip
+          aws s3 cp /tmp/maintenance-control.zip "s3://$S3_BUCKET/maintenance/images/$SOURCE_SHA/control.zip" --no-progress
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+      - name: Update an installed runtime after its matching serving deployment
+        # First installation is explicit; existing mode/schedules/network settings are preserved.
+        run: python3 -m src.maintenance.update_runtime --stack "$STACK_NAME" --image "$IMAGE_URI" --source-sha "$SOURCE_SHA"

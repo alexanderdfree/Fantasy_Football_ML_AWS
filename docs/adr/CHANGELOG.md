@@ -4,6 +4,8 @@
 
 - 2026-09-11 · Repair finite paired offline scoring and incomplete provider cache boundaries · (PR #1574 follow-up) · → ADR-0024
 
+- 2026-09-11 · Integrate maintenance with canonical snapshot publication, generation-aware readiness rollout and durable bounded recovery · (PR #1577) · → ADR-0028
+
 - 2026-09-10 · Remove repository Codex model, reasoning, and context pins; inherit personal defaults and session selections · (PR #1579) · → ADR-0025
 - 2026-09-10 · Remove ML dependencies from the serving image and move offline prediction builders and providers out of HTTP code · (PR #1566 follow-up) · → ADR-0027
 - 2026-09-10 · Restore historical QB role reconstruction and use pregame depth for upcoming availability · (PR pending) · → ADR-0004
@@ -11,6 +13,7 @@
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
 - 2026-09-10 · Exclude non-shared DST points allowed, enforce NFL.com source eligibility, and pair offline comparison cohorts · (PR pending) · → ADR-0024
 - 2026-09-10 · Correct Timeline scoring and source populations, retain K/DST comparisons, and report fixed per-model records · (PR #1573) · → ADR-0024
+- 2026-09-10 · Add opt-in AWS daily/intraday inference and weekly data correction workflows with staged activation, shared publication leases, and public freshness verification · (PR pending) · → ADR-0028
 
 - 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR #1569) · → ADR-0018
 

@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 90  # up to 60 min for compatible data plus the existing build budget
     # Don't rebuild on a FAILED train run (models didn't change); cron/manual
     # always run.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ vars.AWS_MAINTENANCE_ACTIVE != 'true' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     steps:
       - uses: actions/checkout@v7
 
@@ -98,3 +98,22 @@ jobs:
           sync_models_from_s3()
           PY
           python -m src.prediction.upcoming
+
+  aws_refresh:
+    # After cutover, cron/manual/post-training requests share the AWS publisher.
+    if: ${{ vars.AWS_MAINTENANCE_ACTIVE == 'true' && github.event_name != 'schedule' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Start the common inference workflow
+        env:
+          INFERENCE_ARN: ${{ vars.MAINTENANCE_INFERENCE_ARN }}
+        run: |
+          test -n "$INFERENCE_ARN"
+          aws stepfunctions start-execution --state-machine-arn "$INFERENCE_ARN" \
+            --name "github-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --input '{"check_sources":false}'
