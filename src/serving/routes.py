@@ -749,7 +749,11 @@ def api_benchmark_history():
 
 @app.route("/health")
 def health():
-    """Liveness probe for ALB + ECS.
+    """Liveness probe, or strict readiness during the legacy ALB migration.
+
+    ``readiness=1`` delegates to the same artifact gate as ``/ready``. Older
+    images ignore that query, so a mixed rollout retains healthy old targets
+    while excluding new targets until their artifact generation is hydrated.
 
     Three return shapes, matched on the joint state of ``positions_loaded``
     and ``position_load_errors`` / shared ``base_load_error``:
@@ -782,6 +786,8 @@ def health():
     to 503, recycling a task that was still serving five of six positions
     cleanly (alexfree.me, 2026-05-21 12:16 UTC, ~60 s ALB 5xx window).
     """
+    if request.args.get("readiness") == "1":
+        return ready()
     loaded = set(app_pkg._cache.get("positions_loaded") or ())
     # Keep original diagnostics in the owned cache/logs. Public probes expose
     # availability without paths, provider URLs or exception implementation text.

@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-11 · Preserve legacy task health during strict artifact-readiness migration with a 200-only query bridge · (PR #1577) · → ADR-0027
+
 - 2026-09-11 · Repair data isolation, observation provenance and client boundaries after consolidation · (PR #1566 follow-up) · → ADR-0027
 
 - 2026-09-11 · Repair finite paired offline scoring and incomplete provider cache boundaries · (PR #1574 follow-up) · → ADR-0024

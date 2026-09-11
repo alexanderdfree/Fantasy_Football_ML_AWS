@@ -169,9 +169,10 @@ jobs:
             --task-definition "$FF_RENDERED_TASK_DEFINITION" --bind-data --timeout 2400
 
       - name: Deploy to ECS
-        # Old images return /ready 404; new images return 503 until hydrated.
-        # The helper temporarily accepts 200,404, verifies the exact new revision
-        # and container health, then tightens to 200. Failure restores prior health.
+        # /health?readiness=1 preserves old images' health response while new
+        # images require hydrated artifacts. Only 200 passes throughout; the
+        # exact new revision/container must be ready before switching to /ready.
+        # Failure restores the prior service and health settings.
         env:
           FF_RENDERED_TASK_DEFINITION: ${{ steps.render-task-def.outputs.task-definition }}
         run: |

@@ -212,6 +212,28 @@ def test_cold_readiness_is_warming_and_health_is_alive(tmp_path, monkeypatch):
     assert app.test_client().get("/health").get_json() == {"status": "ok"}
 
 
+@pytest.mark.parametrize("artifact", ["absent", "valid", "corrupt", "revoked"])
+def test_legacy_health_query_uses_strict_artifact_readiness(tmp_path, monkeypatch, artifact):
+    if artifact != "absent":
+        generation = _write_generation(tmp_path, _cache())
+        if artifact == "corrupt":
+            (tmp_path / "generations" / generation / "metrics.json").write_text("corrupt")
+        elif artifact == "revoked":
+            serving_snapshot.invalidate_generation(tmp_path, generation)
+    monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path))
+    _forbid_compute(monkeypatch)
+    owner = state.ServingState()
+    app = create_app(serving_state=owner, config={"ALLOW_RUNTIME_INFERENCE": False})
+    client = app.test_client()
+    assert client.get("/health").status_code == 200
+    response = client.get("/health?readiness=1")
+    assert response.status_code == (200 if artifact == "valid" else 503)
+    canonical = client.get("/ready")
+    assert response.status_code == canonical.status_code
+    assert response.get_json() == canonical.get_json()
+    assert "splits" not in owner.cache
+
+
 @pytest.mark.parametrize("matches", [True, False])
 def test_prediction_metadata_requires_exact_returned_bundle_identity(monkeypatch, matches):
     cache = _cache()

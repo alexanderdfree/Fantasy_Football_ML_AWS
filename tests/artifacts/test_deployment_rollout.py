@@ -69,6 +69,14 @@ class RolloutAWS:
         self.events = []
         self.fail_update = False
 
+    def probe_code(self, revision, path=None):
+        path = path or self.health["HealthCheckPath"]
+        if revision == "old-revision":
+            # The deployed legacy handler ignores queries; its missing /ready
+            # route is rethrown by the error handler and becomes HTTP 500.
+            return 200 if path.split("?", 1)[0] == "/health" else 500
+        return 200 if path == "/health" else self.code
+
     def call(self, api, operation, **request):
         self.events.append((api, operation, copy.deepcopy(request)))
         if operation == "describe-services":
@@ -115,10 +123,11 @@ class RolloutAWS:
             return {}
         if operation == "update-service":
             if request["taskDefinition"] == "new-revision":
-                # The old image's /ready returns404. It must remain healthy
-                # while replacement tasks return503 and hydrate their cache.
-                assert self.health["HealthCheckPath"] == "/ready"
-                assert "404" in self.health["Matcher"]["HttpCode"].split(",")
+                # Keep the observed legacy /ready failure out of the bridge;
+                # only old health/new readiness 200 responses are eligible.
+                assert self.health["HealthCheckPath"] == "/health?readiness=1"
+                assert self.health["Matcher"] == {"HttpCode": "200"}
+                assert self.probe_code("old-revision") == 200
                 if self.fail_update:
                     raise RuntimeError("update failed")
             self.current = request["taskDefinition"]
@@ -219,13 +228,16 @@ def test_operator_revision_during_health_migration_is_preserved_and_own_health_r
     assert json.loads((tmp_path / "state.json").read_text())["phase"] == "restored"
 
 
-def test_legacy_404_stays_eligible_while_new_503_waits_then_only_new_200_is_accepted(tmp_path):
+def test_legacy_missing_ready_stays_eligible_while_new_artifacts_warm(tmp_path):
     aws = RolloutAWS(response_code=503)
     now = [0]
 
     def warm(seconds):
-        assert aws.health["Matcher"] == {"HttpCode": "200,404"}
-        assert "503" not in aws.health["Matcher"]["HttpCode"].split(",")
+        assert aws.health["HealthCheckPath"] == "/health?readiness=1"
+        assert aws.health["Matcher"] == {"HttpCode": "200"}
+        assert aws.probe_code("old-revision", "/ready") == 500
+        assert aws.probe_code("old-revision") == 200
+        assert aws.probe_code("new-revision") == 503
         now[0] += seconds
         aws.code = 200
 
@@ -246,14 +258,14 @@ def test_legacy_404_stays_eligible_while_new_503_waits_then_only_new_200_is_acce
     assert aws.health["Matcher"] == {"HttpCode": "200"}
     assert json.loads((tmp_path / "state.json").read_text())["phase"] == "complete"
     events = [
-        request["Matcher"]["HttpCode"]
+        (request["HealthCheckPath"], request["Matcher"]["HttpCode"])
         for _, operation, request in aws.events
         if operation == "modify-target-group"
     ]
-    assert events == ["200,404", "200"]
+    assert events == [("/health?readiness=1", "200"), ("/ready", "200")]
 
 
-@pytest.mark.parametrize("response_code", [503, 404])
+@pytest.mark.parametrize("response_code", [503, 404, 500])
 def test_unready_new_revision_times_out_and_restores_old_health(response_code, tmp_path):
     aws = RolloutAWS(response_code=response_code)
     with pytest.raises(RuntimeError, match="timeout"):

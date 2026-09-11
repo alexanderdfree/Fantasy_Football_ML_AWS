@@ -123,8 +123,10 @@ _HEALTH_FIELDS = (
     "Matcher",
 )
 _COMPATIBILITY_HEALTH = {
-    "HealthCheckPath": "/ready",
-    "Matcher": {"HttpCode": "200,404"},
+    # Legacy images ignore this query and keep their existing /health response;
+    # current images delegate it to /ready, rejecting unhydrated replacements.
+    "HealthCheckPath": "/health?readiness=1",
+    "Matcher": {"HttpCode": "200"},
     "HealthyThresholdCount": 2,
     "HealthCheckIntervalSeconds": 10,
 }
