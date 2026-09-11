@@ -149,6 +149,22 @@ class PositionConfig:
     nn_batch_size: int = 128
     nn_patience: int = 30
     nn_head_hidden_overrides: dict[str, int] = field(default_factory=dict)
+    # Replace StandardScaler's fitted stats for the bounded ordinal
+    # injury-report flags (game_status / practice_status) so their semantic
+    # domain maps onto [-value, +value] instead of being z-scored — see
+    # ``src/shared/feature_build.py::BOUNDED_FLAG_DOMAINS`` for why z-scoring a
+    # ~96%-constant ordinal code is the wrong transform. NN-path only (Ridge
+    # carries its own scaler inside ``RidgeMultiTarget``), so setting it leaves
+    # the deterministic Ridge fit bit-identical.
+    #
+    # ``None`` disables the override. The value is an experimental axis, not a
+    # cosmetic constant: unit variance and a clip-free range are mutually
+    # exclusive for a rare binary, so 1.0 (bounded, ~5x quieter than a
+    # standardized feature) and 4.0 (the full clip-free range, near unit
+    # variance) are genuinely different hypotheses. Default None: production
+    # does not change until the A/B measures the questionable-cohort bias —
+    # ``src/tuning/ab_flag_scaling.py``.
+    nn_bounded_flag_range: float | None = None
     # Mixed-precision autocast on the NN forward + loss path (both base and
     # attention branches). True by default so every position opts in; flip to
     # False per-position if a benchmark diff shows a per-target MAE regression

@@ -26,6 +26,102 @@ from src.shared.weather_features import merge_schedule_features
 # NN extrapolation.
 FEATURE_CLIP: tuple[float, float] = (-4.0, 4.0)
 
+# Bounded ordinal "flag" columns → their semantic ``(center, half_width)``
+# domain, used to override a fitted ``StandardScaler``'s stats.
+#
+# Both are injury-report codes on a fixed, semantically-bounded domain
+# (``src/data/loader.py``'s ``status_map``), NOT samples from a continuous
+# distribution:
+#   game_status      1.0 healthy / 0.5 Questionable / 0.1 Doubtful / 0.0 Out
+#   practice_status  2.0 full / 1.0 limited / 0.0 DNP
+#
+# z-scoring them is the wrong transform. Out/Doubtful players self-eliminate
+# (preprocessing drops no-play rows), so ``game_status`` is ~96% constant at 1.0
+# and its train std collapses to ~0.099 — a Questionable row lands at z=-4.83,
+# which FEATURE_CLIP then truncates to -4.0. That single coordinate carries
+# ~34% of the expected squared norm of the whole standardized static vector, and
+# the clip flattens Questionable/Doubtful/Out into one indistinguishable value.
+# On the 2026-06-11 splits the clip fires on 4.0% (RB) / 5.3% (WR) / 4.1% (TE) /
+# 2.2% (QB) of rows — essentially every questionable row. LightGBM is
+# scale-invariant and never sees this; it is an NN-path artifact.
+#
+# The override rewrites ``(mean_, scale_)`` so the column's semantic domain maps
+# onto ``[-target_range, +target_range]``: ``mean_ = center`` and
+# ``scale_ = half_width / target_range``. Ordinal-preserving and, for any
+# ``target_range <= FEATURE_CLIP``, provably never clipped.
+#
+# ``target_range`` is a real experimental axis, not a cosmetic constant, because
+# unit variance and a clip-free range are mutually exclusive for a rare binary:
+# forcing unit variance on a 4%-prevalence column *necessarily* puts the
+# minority value ~4.8 sigma out. So the two candidate arms trade off:
+#   range=1.0  bounded and conservative, but post-scale std ~0.15-0.23 —
+#              ~5x quieter than a genuinely standardized feature.
+#   range=4.0  the domain mapped onto exactly +/-FEATURE_CLIP: the largest
+#              provably clip-free magnitude, post-scale std ~0.58-0.90 (near
+#              unit variance).
+# Running both against the z-scored baseline is what separates "the clip was the
+# problem" from "the magnitude was the problem" — a single arm confounds them.
+#
+# Expressing this as scaler state rather than a separate transform is
+# deliberate: the fitted scaler is persisted and reused verbatim at serving time
+# (``src/serving/core.py::_apply_position_models``), so training and inference
+# cannot drift.
+#
+# Only genuinely bounded ordinal codes belong here. The other high-|z| static
+# features (``opp_*_pts_allowed_to_pos``, ``prior_season_*``, ``contract_*``)
+# are heavy-tailed continuous columns with hundreds of distinct values, where
+# the clip is doing its intended job — leave those to StandardScaler.
+BOUNDED_FLAG_DOMAINS: dict[str, tuple[float, float]] = {
+    "game_status": (0.5, 0.5),  # domain [0, 1]
+    "practice_status": (1.0, 1.0),  # domain [0, 2]
+}
+
+
+def apply_bounded_flag_scaling(
+    scaler: StandardScaler,
+    feature_cols: list[str],
+    *,
+    target_range: float = 1.0,
+) -> list[str]:
+    """Overwrite ``scaler``'s fitted stats for bounded flag columns, in place.
+
+    Maps each flag column's semantic domain onto ``[-target_range,
+    +target_range]``. Must be called on an already-fitted ``scaler`` whose
+    column order is ``feature_cols``.
+
+    Returns the columns actually overridden. Callers MUST treat an empty return
+    as a failure when the knob is on: an A/B arm that silently overrides nothing
+    (a renamed column, a position whose whitelist omits the flags) otherwise
+    reads as a genuine "no effect" result, and the Ridge-invariance sentinel is
+    structurally blind to it because Ridge never sees NN config either way.
+    """
+    if getattr(scaler, "mean_", None) is None:
+        raise ValueError("apply_bounded_flag_scaling requires a fitted StandardScaler")
+    if len(feature_cols) != scaler.n_features_in_:
+        raise ValueError(
+            f"feature_cols has {len(feature_cols)} entries but the scaler was fit on "
+            f"{scaler.n_features_in_} features — column order would be misaligned."
+        )
+    if not target_range > 0:
+        raise ValueError(f"target_range must be positive, got {target_range!r}")
+    if target_range > FEATURE_CLIP[1]:
+        raise ValueError(
+            f"target_range={target_range} exceeds FEATURE_CLIP={FEATURE_CLIP[1]}, which would "
+            "reintroduce the truncation this override exists to remove."
+        )
+    touched: list[str] = []
+    for i, col in enumerate(feature_cols):
+        domain = BOUNDED_FLAG_DOMAINS.get(col)
+        if domain is None:
+            continue
+        center, half_width = domain
+        scale = half_width / target_range
+        scaler.mean_[i] = center
+        scaler.scale_[i] = scale
+        scaler.var_[i] = scale**2
+        touched.append(col)
+    return touched
+
 
 class MagnitudePreservingScaler(StandardScaler):
     """Keep sparse continuous magnitudes distinguishable within the NN bounds.

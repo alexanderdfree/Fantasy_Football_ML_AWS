@@ -92,7 +92,7 @@ def _train_one_worker(which: str, position: str, seed: int, result_q) -> None:
         t0 = time.monotonic()
         if which == "base":
             _model, _scaler, test_preds, _metrics, _hist = _train_nn(
-                X_tr, X_v, X_te, y_tr, y_v, y_te, cfg, targets, seed
+                X_tr, X_v, X_te, y_tr, y_v, y_te, cfg, targets, seed, feature_cols=feat_cols
             )
         elif which == "attn":
             _model, _scaler, test_preds, _metrics, _hist, _cols = _train_attention_holdout(

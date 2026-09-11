@@ -197,6 +197,7 @@ def build_pipeline_config(
         "nn_magnitude_features": pc.nn_magnitude_features,
         "nn_correct_ztnb_mean": pc.nn_correct_ztnb_mean,
         "nn_poisson_log_rate": pc.nn_poisson_log_rate,
+        "nn_bounded_flag_range": pc.nn_bounded_flag_range,
         # === Attention ===
         "train_attention_nn": pc.train_attention_nn,
         "attn_d_model": pc.attn_d_model,

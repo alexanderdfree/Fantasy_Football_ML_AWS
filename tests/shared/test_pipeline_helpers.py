@@ -313,3 +313,93 @@ def test_build_expanding_cv_folds_contiguous_splits():
     tr1, va1 = folds[1]
     assert set(split_values[tr1]) == {2020, 2021}
     assert set(split_values[va1]) == {2022}
+
+
+# --------------------------------------------------------------------------
+# _scale_xs — bounded-flag scaling wiring (nn_bounded_flag_scaling)
+# --------------------------------------------------------------------------
+
+
+def _flag_arrays(seed: int = 0):
+    """(X_train, X_test, cols) with a realistic ~4%-prevalence game_status."""
+    rng = np.random.default_rng(seed)
+    gs = np.where(rng.random(500) < 0.04, 0.5, 1.0)
+    X_train = np.column_stack([rng.standard_normal(500), gs, rng.standard_normal(500)])
+    X_test = np.column_stack([rng.standard_normal(50), np.full(50, 0.5), rng.standard_normal(50)])
+    return X_train, X_test, ["other", "game_status", "another"]
+
+
+@pytest.mark.unit
+def test_scale_xs_off_matches_legacy_fit_transform():
+    """Regression guard: the knob-off path must stay byte-identical to the
+    pre-change ``scale_and_clip(..., fit=True)`` implementation, so production
+    (nn_bounded_flag_scaling=False) is provably untouched."""
+    from sklearn.preprocessing import StandardScaler
+
+    from src.shared.feature_build import scale_and_clip
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, cols = _flag_arrays()
+    legacy_scaler = StandardScaler()
+    legacy = [
+        scale_and_clip(legacy_scaler, X_train, fit=True),
+        scale_and_clip(legacy_scaler, X_test),
+    ]
+
+    for cfg in (None, {}, {"nn_bounded_flag_range": None}):
+        scaler, scaled = _scale_xs(X_train, X_test, cfg=cfg, feature_cols=cols)
+        np.testing.assert_array_equal(scaled[0], legacy[0])
+        np.testing.assert_array_equal(scaled[1], legacy[1])
+        np.testing.assert_array_equal(scaler.mean_, legacy_scaler.mean_)
+        np.testing.assert_array_equal(scaler.scale_, legacy_scaler.scale_)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("flag_range,expected_scale", [(1.0, 0.5), (4.0, 0.125)])
+def test_scale_xs_on_applies_the_flag_override(flag_range, expected_scale):
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, cols = _flag_arrays()
+    scaler, scaled = _scale_xs(
+        X_train, X_test, cfg={"nn_bounded_flag_range": flag_range}, feature_cols=cols
+    )
+    assert scaler.mean_[1] == 0.5
+    assert scaler.scale_[1] == expected_scale
+    # Every test row is Questionable (0.5) -> 0.0 under the override, whereas
+    # the plain scaler pins them all to the -4 clip floor.
+    np.testing.assert_allclose(scaled[1][:, 1], 0.0, atol=1e-12)
+    # Non-flag columns still get ordinary standardization.
+    np.testing.assert_allclose(scaler.mean_[0], X_train[:, 0].mean(), atol=1e-12)
+
+
+@pytest.mark.unit
+def test_scale_xs_on_without_columns_raises():
+    """Degrading to plain scaling would be invisible in a fleet run's table."""
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, _ = _flag_arrays()
+    with pytest.raises(ValueError, match="no column list reached"):
+        _scale_xs(X_train, X_test, cfg={"nn_bounded_flag_range": 1.0}, feature_cols=None)
+
+
+@pytest.mark.unit
+def test_scale_xs_on_with_no_matching_column_raises():
+    """The silent-no-op trap: the knob is on, but nothing it targets is being
+    scaled. The Ridge sentinel cannot catch this (Ridge never sees NN config
+    either way), so it must fail here or a never-applied arm reads as
+    'no effect' in the aggregate table."""
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, _ = _flag_arrays()
+    with pytest.raises(ValueError, match="silent no-op"):
+        _scale_xs(X_train, X_test, cfg={"nn_bounded_flag_range": 1.0}, feature_cols=["a", "b", "c"])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("flag_range", [0.0, -1.0, float("nan"), float("inf")])
+def test_scale_xs_rejects_invalid_configured_flag_ranges(flag_range):
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, cols = _flag_arrays()
+    with pytest.raises(ValueError, match="must be positive|exceeds FEATURE_CLIP"):
+        _scale_xs(X_train, X_test, cfg={"nn_bounded_flag_range": flag_range}, feature_cols=cols)
