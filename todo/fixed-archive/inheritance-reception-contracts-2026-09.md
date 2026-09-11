@@ -5,6 +5,9 @@ requested reception-mean and Poisson log-rate policies. Reuse legacy trunks but
 retain the new fit's train-only final-layer initialization when the count link
 changes. The combined checkpoint regression test distinguishes this new-fit rule
 from inference's requirement to preserve saved legacy behavior.
+The final contracts-based 30-cell CPU comparison completed successfully; the
+validation report separates its mixed metric effects from the warm-start
+regression test and retains the explicit dependency on the contracts migration.
 
 **File(s):** `src/shared/feature_build.py`, `src/shared/pipeline.py`,
 `src/shared/neural_net.py`, configuration/factory/registry wiring and

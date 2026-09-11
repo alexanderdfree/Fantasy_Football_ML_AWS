@@ -120,3 +120,27 @@ The new scaler and expectation version require updated serving code before
 new-format artifacts are published. Existing artifacts keep their original
 behavior. This PR remains a reviewable correctness change with explicit metric
 tradeoffs; model promotion/merge requires the normal production validation.
+
+## Consolidated contracts validation — 2026-09-11
+
+After combining #1552 with #1575 and rebasing onto #1566, the final CPU/eager
+production-config comparison completed **30/30 cells**: QB/RB/WR/TE/DST,
+legacy versus combined policies, seeds 42/123/7. The
+[complete metrics and provenance](../benchmark_history/ablations/nn_consolidation_cpu_20260911.json)
+include per-head, subgroup, mean/std and Ridge-sentinel results. All twelve
+skill-position paired frames have exactly equal non-prediction values; this
+direct input comparison supplements the unchanged Ridge predictions. Saved-model
+inference differences for all four model families are zero across the twelve
+skill-position/seed pairs. K has no affected Poisson or truncated-NB policy.
+
+Mean attention fantasy-MAE changes (combined minus legacy) are QB **-0.0093**,
+RB **+0.0262**, WR **+0.1045**, TE **+0.0377**, and DST **-0.0032**. These are mixed
+accuracy effects, not a non-regression result. This run supplies no new GPU
+evidence. The legacy warm-start transition has a dedicated regression test;
+this comparison does not separately establish warm-start metric neutrality.
+
+The new-fit policy reuses the legacy trunk while retaining the initialized
+count-output layer when changing from a raw-rate link to a log-rate link.
+Inference continues to honor checkpoint markers. The branch depends on the
+contracts migration so model-policy changes remain a separate review; that
+dependency also ties delivery of these focused fixes to the migration.
