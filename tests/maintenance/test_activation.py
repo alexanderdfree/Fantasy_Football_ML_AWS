@@ -197,6 +197,24 @@ def system(producer, tmp_path):
     return s3, ecs, settings, metadata, request, result, old
 
 
+@pytest.mark.parametrize("mode", ["shadow", "active"])
+@pytest.mark.parametrize("kind", ["inference", "weekly"])
+def test_begin_accepts_canonical_publisher_models_in_every_workflow(system, mode, kind):
+    s3, ecs, settings, metadata, *_ = system
+    settings = {**settings, "mode": mode}
+    begun = control.begin(
+        s3,
+        ecs,
+        settings,
+        {"kind": kind, "execution_id": f"canonical-{mode}-{kind}", "request": {}},
+        metadata,
+    )
+    request, _ = storage.get_json(s3, "bucket", begun["request_key"])
+    assert set(request["models"]) == set(storage.POSITIONS)
+    assert request["mode"] == mode
+    assert request["kind"] == kind
+
+
 def test_staging_leaves_current_data_and_cache_unchanged(system):
     s3, ecs, settings, metadata, request, result, old = system
     assert release.resolve_release(s3, "bucket")[0] == old

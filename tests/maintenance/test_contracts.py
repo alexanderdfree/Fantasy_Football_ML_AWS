@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import pytest
 from botocore.exceptions import ClientError
 
+from src.artifacts import model_sync
 from src.maintenance import control, coordination, sources, storage, worker
 
 pytestmark = pytest.mark.unit
@@ -71,14 +72,32 @@ class Dynamo:
 
 def models(s3):
     for pos in storage.POSITIONS:
-        key = f"models/{pos}/releases/history/one/model.tar.gz"
-        storage.put_json(
-            s3,
-            "bucket",
-            f"models/releases/v3/{pos}/manifest.json",
-            {"stable": {"key": key, "bytes": 3}},
+        key = model_sync.new_history_key("models", pos, "2026-09-11T00-00-00Z", "a" * 64)
+        manifest = model_sync.build_manifest(
+            key, "a" * 7, 3, "2026-09-11T00:00:00Z", smoke_passed=True
         )
+        model_sync.write_manifest(s3, "bucket", "models", pos, manifest, expected_etag=None)
     return storage.model_pins(s3, "bucket")
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "models/QB/releases/history/one/model.tar.gz",
+        model_sync.new_history_key("models", "RB", "one", "a" * 64),
+    ],
+)
+def test_model_pins_reject_predecessor_and_wrong_position_keys(key):
+    s3 = S3()
+    models(s3)
+    storage.put_json(
+        s3,
+        "bucket",
+        model_sync.manifest_key("models", "QB"),
+        {"stable": {"key": key, "bytes": 3}},
+    )
+    with pytest.raises(ValueError, match="No verified stable manifest for QB"):
+        storage.model_pins(s3, "bucket")
 
 
 def forecast():

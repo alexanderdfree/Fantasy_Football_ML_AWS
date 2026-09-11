@@ -72,14 +72,14 @@ def put_json(s3, bucket: str, key: str, value, **conditions):
 
 def model_pins(s3, bucket: str) -> dict:
     """Resolve every stable artifact once, including its consumed manifest ETag."""
-    from src.artifacts.model_sync import load_manifest_snapshot, manifest_key
+    from src.artifacts.model_sync import history_prefix, load_manifest_snapshot, manifest_key
 
     pins = {}
     for pos in POSITIONS:
         key = manifest_key("models", pos)
         manifest, etag = load_manifest_snapshot(s3, bucket, "models", pos)
         entry = (manifest or {}).get("stable") or {}
-        if not str(entry.get("key", "")).startswith(f"models/{pos}/") or not etag:
+        if not str(entry.get("key", "")).startswith(history_prefix("models", pos)) or not etag:
             raise ValueError(f"No verified stable manifest for {pos}")
         pins[pos] = {"artifact": entry, "manifest_key": key, "etag": etag}
     return pins

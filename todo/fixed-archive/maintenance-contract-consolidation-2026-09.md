@@ -1,5 +1,12 @@
 ### [FIXED] Scheduled maintenance used the superseded cache and rollout protocols
 
+Final review follow-up: stable artifact validation now uses the same v3 history
+prefix as the publisher. Fixtures construct manifests with the actual publisher
+helpers; both shadow/active inference and weekly begin paths are exercised.
+The old fixture placed predecessor keys inside v3 manifests and masked a failure
+before either workflow could start. Seventy-three maintenance tests pass after
+this correction. AWS rehearsal and activation remain separate gates.
+
 **File(s):** `src/maintenance/`, `src/prediction/build_snapshot.py`,
 `src/artifacts/{deployment,serving_snapshot}.py`,
 `src/scripts/advance_data_release.py`, and maintenance/CI infrastructure (PR #1577).
