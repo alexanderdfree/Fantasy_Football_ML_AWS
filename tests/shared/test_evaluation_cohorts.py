@@ -99,7 +99,7 @@ def test_cohorts_have_distinct_definitions_and_shared_component_errors():
     assert block["weekly_reference_top24"]["cohort_hash"] != block["elite_top24"]["cohort_hash"]
     assert block["weekly_reference_top24"]["models"]["Ridge"]["bias"] == 1
     assert block["weekly_reference_top24"]["models"]["Ridge"]["mae"] == 1
-    assert block["weekly_reference_top24"]["actual_basis"] == "shared_projected_components_v1"
+    assert block["weekly_reference_top24"]["actual_basis"] == "shared_projected_components_v2"
     assert block["weekly_actual_top24"]["models"]["Ridge"]["hit_rate"] == 1
 
 

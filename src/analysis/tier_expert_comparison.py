@@ -7,8 +7,9 @@ a different question raised by the scoring-tier diagnostic
 top-drafted slice**, how do **all** of our models (Ridge / NN / Attention NN /
 LightGBM) and each expert compare — and does the expert also under-predict elites?
 
-For each (position, expert) it restricts to the matched player-weeks, labels each row
-with the same a-priori tier (prior-season FP rank), and reports per tier
+For each position it selects tiers before forecast coverage, then intersects
+finite player-weeks across every available model and expert. Actuals and prior
+scores use the shared projected components. It reports per tier
 {elite_top_drafted, field}: per-model and expert **MAE** and signed **bias**
 (``mean(pred - actual)``; negative = under-prediction). "All models matter" — we do
 not collapse to the served best model.
@@ -42,9 +43,15 @@ from src.analysis.cohort_analysis import (
     _load_splits,
     available_models,
     label_scoring_tier_rows,
-    player_prior_season_fp,
+)
+from src.analysis.comparison_frames import (
+    common_forecast_frames,
+    comparison_actuals,
+    position_frames,
+    prior_component_means,
 )
 from src.config import TEST_SEASONS
+from src.shared.expert_eligibility import filter_eligible_forecasts
 
 DEFAULT_POSITIONS = ["QB", "RB", "WR", "TE"]
 EVAL_SEASONS_DEFAULT = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
@@ -72,39 +79,47 @@ def compare_position(
         print(f"  ! {pos}: no prediction/actual columns; skipping.")
         return
 
-    labeled = _normalize_keys(test_df)
+    labeled = comparison_actuals(test_df, pos)
     labeled[TIER_BUCKET] = label_scoring_tier_rows(labeled, prior_fp, top_n=tier_topn)
 
     model_cols = list(models.values())
     base = labeled[[*_KEY_COLS, ACTUAL, TIER_BUCKET, *model_cols]]
 
+    source_frames = [
+        (name, base.rename(columns={col: "pred_total"})) for name, col in models.items()
+    ]
     for src in experts:
         if pos in src.skipped or expert_raws.get(src.name) is None:
             continue
         proj = src.project(expert_raws[src.name], pos, "ppr")
+        if proj is not None:
+            proj = filter_eligible_forecasts(proj, src.name, pos)
         if proj is None or proj.empty:
             print(f"\n  {pos} vs {src.label}: no projections; skipping.")
             continue
         expert = _normalize_keys(proj[[*_KEY_COLS, _EXPERT_PRED_COL]])
-        joined = base.merge(expert, on=_KEY_COLS, how="inner")
+        joined = base.merge(expert, on=_KEY_COLS, how="inner", validate="one_to_one")
         if joined.empty:
             print(f"\n  {pos} vs {src.label}: no matched player-weeks; skipping.")
             continue
 
-        print(f"\n{'=' * 84}")
-        print(f"{pos} vs {src.label}  (matched player-weeks; MAE / bias by a-priori tier)")
-        print("  bias = mean(pred - actual); negative on elite = under-prediction.")
-        print("=" * 84)
-        for bucket in (TIER_ELITE, TIER_FIELD):
-            sub = joined[joined[TIER_BUCKET] == bucket]
-            actual = sub[ACTUAL].to_numpy(dtype=float)
-            print(f"\n  {bucket}  (n={len(sub)})")
-            print(f"    {'forecaster':<18}{'MAE':>9}{'bias':>9}")
-            for name, col in models.items():
-                mae, bias, _ = _mae_bias(actual, sub[col].to_numpy(dtype=float))
-                print(f"    {name:<18}{mae:>9.3f}{bias:>+9.3f}")
-            e_mae, e_bias, _ = _mae_bias(actual, sub[_EXPERT_PRED_COL].to_numpy(dtype=float))
-            print(f"    {src.label:<18}{e_mae:>9.3f}{e_bias:>+9.3f}")
+        source_frames.append((src.label, joined.rename(columns={_EXPERT_PRED_COL: "pred_total"})))
+
+    paired = common_forecast_frames([frame for _, frame in source_frames])
+    print(f"\n{pos}: shared-component PPR; identical player-weeks across available sources")
+    for (name, original), frame in zip(source_frames, paired, strict=True):
+        print(f"  {name}: {len(frame)} common / {len(original)} covered / {len(base)} actual rows")
+    for bucket in (TIER_ELITE, TIER_FIELD):
+        common_n = max((int(frame[TIER_BUCKET].eq(bucket).sum()) for frame in paired), default=0)
+        print(f"\n  {bucket}  (n={common_n})")
+        print(f"    {'forecaster':<18}{'MAE':>9}{'bias':>9}")
+        for (name, _), frame in zip(source_frames, paired, strict=True):
+            sub = frame.loc[frame[TIER_BUCKET].eq(bucket)]
+            if sub.empty:
+                print(f"    {name:<18}{'unavailable':>18}")
+                continue
+            mae, bias, _ = _mae_bias(sub[ACTUAL].to_numpy(), sub["pred_total"].to_numpy())
+            print(f"    {name:<18}{mae:>9.3f}{bias:>+9.3f}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -130,7 +145,6 @@ def main(argv: list[str] | None = None) -> None:
     eval_set = {int(s) for s in args.seasons}
 
     train_df, val_df, test_df_all = _load_splits()
-    prior_fp = player_prior_season_fp([train_df, val_df, test_df_all])
 
     if args.from_artifacts and args.sync:
         from src.analysis.artifact_eval import warn_if_sync_noop
@@ -151,6 +165,8 @@ def main(argv: list[str] | None = None) -> None:
             expert_raws[src.name] = None
 
     for pos in positions:
+        frames = position_frames(pos, (train_df, val_df, test_df_all))
+        prior_fp = prior_component_means(frames, pos)
         if args.from_artifacts:
             print(f"\nScoring {pos} from saved artifacts ...", flush=True)
             from src.analysis.artifact_eval import build_test_df_from_artifacts
@@ -158,7 +174,7 @@ def main(argv: list[str] | None = None) -> None:
             # A position with no artifacts raises loudly; skip it and keep going so
             # one missing position doesn't abort the whole multi-position comparison.
             try:
-                test_df = build_test_df_from_artifacts(pos, train_df, val_df, test_df_all)
+                test_df = build_test_df_from_artifacts(pos, *frames)
             except FileNotFoundError as e:
                 print(f"  ! {pos}: {e} — skipping.")
                 continue

@@ -168,7 +168,7 @@ def test_loaders_receive_only_supported_seasons(monkeypatch):
         lambda *a: [source("nflcom"), source("sleeper")],
     )
     result = builder.build_reference([2017, 2025])
-    assert calls == {"nflcom": [2017, 2025], "sleeper": [2025]}
+    assert calls == {"nflcom": [2025], "sleeper": [2025]}
     assert set(result.season) == {2025}
     calls.clear()
     assert builder.build_reference([2012]).empty

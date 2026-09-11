@@ -216,7 +216,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
 
             <div className="comparison-notes">
                 QB includes passing, rushing, interceptions and lost fumbles. RB includes rushing, receiving and lost fumbles. WR/TE include receiving and lost fumbles. Stats outside those sets are excluded from actuals too.
-                K uses field-goal yardage, extra points and misses; NFL.com is excluded because its scoring components do not match. The kicker reference uses ESPN. DST uses the shared defensive stats and points/yardage tiers.
+                K uses field-goal yardage, extra points and misses; NFL.com is excluded because its scoring components do not match. The kicker reference uses ESPN. DST uses shared defensive stats and yardage tiers. Points allowed is excluded from every comparison column because provider definitions differ.
             </div>
 
             <div className="comparison-controls">

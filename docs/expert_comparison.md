@@ -1,8 +1,10 @@
 # Comparison Against Expert Projection Sources
 
 > **Evaluation correction (2026-09-10):** the live Comparison tab now computes
-> every source's metrics from the same cached player-weeks and full regular-season
-> PPR actuals. Its primary cohort is the shared pregame weekly top 24; seasonal
+> every source's metrics from the same cached player-weeks and regular-season
+> actuals restricted to shared projected components, with PPR weights. DST points
+> allowed is excluded because provider definitions differ. Its primary cohort
+> is the shared pregame weekly top 24; seasonal
 > top-12/top-30 and weekly leader capture are separate diagnostics. Earlier tables
 > below are dated research snapshots: the former static summary used modeled-stat
 > actuals and postseason-influenced leader IDs, and coverage was not always shared.

@@ -253,6 +253,16 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                     "nflcom_pred": base_nflcom,
                     "rotowire_pred": base_rotowire,
                 }
+                if pos == "DST":
+                    # Schema 10 has independent comparison totals. Their
+                    # presence is required; native totals are never a fallback.
+                    row.update(
+                        ridge_pred_comparison=base_ridge,
+                        nn_pred_comparison=base_nn,
+                        attn_nn_pred_comparison=base_attn,
+                        lgbm_pred_comparison=base_lgbm,
+                        rotowire_pred_comparison=base_rotowire,
+                    )
                 # Per-format pred columns. NaN preds (K/DST attn/lgbm) stay NaN
                 # across all three formats — multiplying by a constant preserves
                 # NaN under numpy / float arithmetic.
@@ -269,6 +279,8 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                     row[f"rotowire_pred_{fmt}"] = (
                         base_rotowire * m if not np.isnan(base_rotowire) else np.nan
                     )
+                    row[f"nflcom_comparison_pred_{fmt}"] = row[f"nflcom_pred_{fmt}"]
+                    row[f"rotowire_comparison_pred_{fmt}"] = row[f"rotowire_pred_{fmt}"]
                 # Per-target raw-stat columns: NaN everywhere, then fill this
                 # position's own targets (sparse, mirrors _load_base_data_locked).
                 # lgbm stays NaN for K/DST (no LightGBM trained there).

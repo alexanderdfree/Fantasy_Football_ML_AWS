@@ -1931,6 +1931,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 if preds is None:
                     continue
                 ranked_test[pred_col] = agg_fn(preds)
+                if pos == "DST":
+                    for target in targets:
+                        ranked_test[f"{pred_col[:-5]}{target}"] = preds[target]
                 ranking = compute_ranking_metrics(ranked_test, pred_col=pred_col)
                 result[ranking_key] = ranking
                 print(f"{label} Top-12 Hit Rate: {ranking['season_avg_hit_rate']:.3f}")
@@ -2525,6 +2528,11 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     pos_test["pred_ridge_total"] = _total(ridge_test_preds)
     pos_test["pred_nn_total"] = _total(nn_test_preds)
     pos_test["pred_baseline"] = baseline_preds
+
+    if position == "DST":
+        for target in targets:
+            pos_test[f"pred_ridge_{target}"] = ridge_test_preds[target]
+            pos_test[f"pred_nn_{target}"] = nn_test_preds[target]
 
     backtest_pred_columns = {
         "Season Avg": "pred_baseline",

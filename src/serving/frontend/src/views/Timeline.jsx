@@ -1,12 +1,8 @@
-/* Changelog & Timeline — the weekly re-scoring log and the model release
- * changelog (design-system HistoryView pattern). Every completed week is
- * ground truth; all four models plus the two expert baselines are re-scored
- * weekly server-side (/api/timeline), and the release rail renders the
- * committed release_changelog.json entries, filterable by model family. */
+/* Matched weekly evaluation, fixed per-model records, and historical releases. */
 import { useEffect, useMemo, useState } from "react";
 import { fetchJSON } from "../api.js";
 import { fmt } from "../lib/format.js";
-import { modelColors, chartTheme } from "../lib/chartTheme.js";
+import { modelColors } from "../lib/chartTheme.js";
 import { useChart } from "../hooks/useChart.js";
 import { SortableTh } from "../components/common.jsx";
 
@@ -18,23 +14,31 @@ function familyColor(family) {
     return COLORS[family] || COLORS.actual;
 }
 
-/* Weekly MAE for all four of our models across the test season. */
-function WeeklyTrendChart({ weekly, labels, theme }) {
+const GROUPS = [{ id: "offense", label: "Offense" }, { id: "k", label: "Kickers" }, { id: "dst", label: "D/ST" }];
+const REASONS = {
+    no_regular_season_rows: "No regular-season rows are available for this selection.",
+    shared_actual_components_missing: "The observed stats needed for this comparison are unavailable.",
+    required_forecasts_missing: "A required source has no matching forecasts.",
+    no_common_source_rows: "The sources have no player-weeks in common.",
+};
+
+function TimelineChart({ weekly, sources, labels, theme, edges = false }) {
     const ref = useChart((t) => {
         const COLORS = modelColors();
         return {
             type: "line",
             data: {
                 labels: weekly.map((w) => `Wk ${w.week}`),
-                datasets: MODELS.map((m) => ({
+                datasets: (edges ? MODELS : sources).map((m) => ({
                     label: labels[m],
-                    data: weekly.map((w) => w[m]),
-                    borderColor: COLORS[m],
-                    backgroundColor: COLORS[m],
-                    tension: 0.3,
+                    data: weekly.map((w) => (edges ? w.edges : w.mae)[m]),
+                    borderColor: COLORS[m] || "#f97316",
+                    backgroundColor: COLORS[m] || "#f97316",
+                    borderDash: MODELS.includes(m) ? [] : [6, 4],
+                    tension: 0,
                     pointRadius: 2,
-                    borderWidth: m === "attn_nn" ? 2.6 : 1.4,
-                    spanGaps: true,
+                    borderWidth: 2,
+                    spanGaps: false,
                 })),
             },
             options: {
@@ -42,59 +46,15 @@ function WeeklyTrendChart({ weekly, labels, theme }) {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
-                    title: { display: true, text: "Weekly MAE — our four models", color: t.heading, font: { size: 12, weight: "600" }, padding: { bottom: 8 } },
+                    title: { display: true, text: edges ? "Each model’s edge vs experts" : "Weekly MAE — same player-weeks", color: t.heading, font: { size: 12, weight: "600" }, padding: { bottom: 8 } },
                 },
                 scales: {
-                    y: { title: { display: true, text: "MAE (fantasy pts)" }, grid: { color: t.grid } },
+                    y: { title: { display: true, text: edges ? "Expert MAE − model MAE (positive is better)" : "MAE (shared-component points)" }, grid: { color: t.grid } },
                     x: { grid: { display: false } },
                 },
             },
         };
-    }, [weekly, theme]);
-    return <canvas ref={ref} />;
-}
-
-/* Our strongest model vs the two expert baselines — the edge over time. */
-function VsExpertsChart({ weekly, champion, labels, theme }) {
-    const ref = useChart((t) => {
-        const COLORS = modelColors();
-        const line = (key, label, color, dash) => ({
-            label,
-            data: weekly.map((w) => w[key]),
-            borderColor: color,
-            backgroundColor: color,
-            borderDash: dash || [],
-            tension: 0.3,
-            pointRadius: 2,
-            borderWidth: dash ? 1.4 : 2.6,
-            fill: false,
-            spanGaps: true,
-        });
-        const champ = champion || "attn_nn";
-        return {
-            type: "line",
-            data: {
-                labels: weekly.map((w) => `Wk ${w.week}`),
-                datasets: [
-                    line(champ, `${labels[champ]} (ours)`, COLORS[champ]),
-                    line("nflcom", "NFL.com", COLORS.nflcom, [6, 4]),
-                    line("rotowire", "RotoWire", COLORS.rotowire, [6, 4]),
-                ],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
-                    title: { display: true, text: "Our best vs the experts", color: t.heading, font: { size: 12, weight: "600" }, padding: { bottom: 8 } },
-                },
-                scales: {
-                    y: { title: { display: true, text: "MAE (fantasy pts)" }, grid: { color: t.grid } },
-                    x: { grid: { display: false } },
-                },
-            },
-        };
-    }, [weekly, champion, theme]);
+    }, [weekly, sources, labels, theme, edges]);
     return <canvas ref={ref} />;
 }
 
@@ -105,37 +65,42 @@ function EdgeValue({ value }) {
     return <span className={cls}>{`${sign}${value.toFixed(2)}`}</span>;
 }
 
-// Module-level cache keyed by scoring so tab revisits don't refetch.
+// Every filter participates in the cache key; responses never relabel old data.
 const timelineCache = new Map();
 
 export function TimelineView({ scoring, theme }) {
-    const [payload, setPayload] = useState(() => timelineCache.get(scoring) || null);
-    const [error, setError] = useState(null);
+    const [group, setGroup] = useState("offense");
+    const [season, setSeason] = useState("");
+    const query = `/api/timeline?${new URLSearchParams({ scoring, group, ...(season ? { season } : {}) })}`;
+    const [response, setResponse] = useState(null);
+    const payload = response?.query === query ? response.data : timelineCache.get(query);
+    const error = response?.query === query ? response.error : null;
     const [family, setFamily] = useState("ALL");
     const [sort, setSort] = useState({ key: "week", order: "desc" });
 
     useEffect(() => {
-        const cached = timelineCache.get(scoring);
-        if (cached) { setPayload(cached); return undefined; }
+        const cached = timelineCache.get(query);
+        if (cached) { setResponse({ query, data: cached }); return undefined; }
         let cancelled = false;
-        setPayload(null);
-        setError(null);
-        fetchJSON(`/api/timeline?scoring=${scoring}`)
+        fetchJSON(query)
             .then((data) => {
-                timelineCache.set(scoring, data);
-                if (!cancelled) setPayload(data);
+                if (data.schema_version !== 2) throw new Error("Timeline data is updating. Reload this page to try again.");
+                timelineCache.set(query, data);
+                if (!cancelled) setResponse({ query, data });
             })
             .catch((e) => {
                 console.error("Failed to load timeline:", e);
-                if (!cancelled) setError(e.message);
+                if (!cancelled) setResponse({ query, error: e.message });
             });
         return () => { cancelled = true; };
-    }, [scoring]);
+    }, [query]);
 
     const labels = (payload && payload.model_labels) || FAMILY_LABELS;
     const weekly = (payload && payload.weekly) || [];
     const releases = (payload && payload.releases) || [];
     const summary = (payload && payload.summary) || null;
+    const sources = payload?.sources || [];
+    const expertNames = (payload?.experts || []).map((key) => labels[key]).join(" and ");
 
     const families = useMemo(
         () => ["ALL", ...Array.from(new Set(releases.map((r) => r.family)))],
@@ -149,8 +114,8 @@ export function TimelineView({ scoring, theme }) {
     const sortedWeekly = useMemo(() => {
         const rows = [...weekly];
         rows.sort((a, b) => {
-            const va = a[sort.key];
-            const vb = b[sort.key];
+            const va = a.mae[sort.key] ?? a[sort.key];
+            const vb = b.mae[sort.key] ?? b[sort.key];
             if (va == null && vb == null) return 0;
             if (va == null) return 1;
             if (vb == null) return -1;
@@ -159,22 +124,6 @@ export function TimelineView({ scoring, theme }) {
         });
         return rows;
     }, [weekly, sort]);
-
-    const winnerTag = (m) => (
-        <span className="winner-tag">
-            <span className="winner-dot" style={{ background: familyColor(m) }} />
-            {labels[m] || m}
-        </span>
-    );
-
-    const modelCell = (w, m) => {
-        const win = w.winner === m;
-        return (
-            <span style={win ? { fontWeight: 700, color: familyColor(m) } : undefined}>
-                {w[m] == null ? "--" : w[m].toFixed(2)}
-            </span>
-        );
-    };
 
     return (
         <section id="view-timeline" className="view active">
@@ -187,45 +136,68 @@ export function TimelineView({ scoring, theme }) {
                 <div>
                     <div className="callout-title">Changelog &amp; Timeline</div>
                     <div className="callout-desc">
-                        Every week, the season's completed games become new ground truth and all four models plus the
-                        two expert baselines are re-scored. This is the running log — the accuracy trend, the
-                        head-to-head weekly record, and the release changelog behind each step down in error.
+                        Retrospective evaluation of the current forecasts on completed regular-season games.
+                        Every source is graded on the same player-weeks and projected stats.
+                        Each model keeps its own record across the season.
                     </div>
                 </div>
             </div>
 
+            <div className="release-controls">
+                <div className="pill-group" aria-label="Timeline comparison group">
+                    {(payload?.groups || GROUPS).map((option) => (
+                        <button key={option.id} type="button" aria-pressed={group === option.id}
+                            className={`pill${group === option.id ? " active" : ""}`}
+                            onClick={() => setGroup(option.id)}>{option.label}</button>
+                    ))}
+                </div>
+                <label>Season {" "}
+                    <select aria-label="Timeline season" value={season} onChange={(e) => setSeason(e.target.value)}>
+                        <option value="">Latest</option>
+                        {(payload?.seasons || (season ? [Number(season)] : [])).map((year) => <option key={year} value={year}>{year}</option>)}
+                    </select>
+                </label>
+            </div>
             {error && <p className="error-message">Failed to load timeline: {error}</p>}
             {!error && !payload && <p className="arch-loading">Loading timeline…</p>}
 
             {payload && summary && (
                 <>
-                    <div className="section-header">Track Record</div>
+                    <div className="section-header">Each Model’s Season Record</div>
+                    <p className="results-info">
+                        {payload.season ? `${payload.season} · ` : ""}{payload.positions.join(" / ")} · {expertNames} · {summary.n} common player-weeks
+                    </p>
+                    {summary.reason && <p className="error-message">{REASONS[summary.reason]}</p>}
                     <div className="timeline-track-card">
                         <div className="stat-block-row">
-                            <div className="stat-block">
-                                <span className="stat-block-label">Current Champion</span>
-                                <span className="stat-block-value neutral">{summary.champion ? labels[summary.champion] : "--"}</span>
-                            </div>
-                            <div className="stat-block">
-                                <span className="stat-block-label">Champion Weeks</span>
-                                <span className="stat-block-value">{`${summary.champion_weeks} / ${summary.total_weeks}`}</span>
-                            </div>
-                            <div className="stat-block">
-                                <span className="stat-block-label">{summary.best_week != null ? `Best MAE · Wk ${summary.best_week}` : "Best MAE"}</span>
-                                <span className="stat-block-value">{summary.best_mae != null ? summary.best_mae.toFixed(2) : "--"}</span>
-                            </div>
-                            <div className="stat-block">
-                                <span className="stat-block-label">Beat Both Experts</span>
-                                <span className="stat-block-value">{`${summary.beat_experts} / ${summary.total_weeks}`}</span>
-                            </div>
-                            {payload.season && <span className="meta-badge">{`${payload.season} Season`}</span>}
+                            {MODELS.map((model) => (
+                                <div className="stat-block" key={model}>
+                                    <span className="stat-block-label">{labels[model]} · MAE</span>
+                                    <span className="stat-block-value neutral">{fmt(summary.models[model].mae, 2)}</span>
+                                    <span>Beat {payload.experts.length > 1 ? "both experts" : expertNames}: {summary.models[model].beat_experts} / {summary.models[model].evaluated_weeks} weeks</span>
+                                </div>
+                            ))}
                         </div>
                     </div>
+                    <p className="results-info">
+                        Season MAE weights each evaluated player-week equally. {summary.evaluated_weeks} / {summary.total_weeks} weeks evaluable.
+                        Positive edge means that model beat every required expert on the common sample.
+                    </p>
+                    <details className="results-info">
+                        <summary>Scoring and coverage</summary>
+                        <p>Common rows / eligible rows: {summary.n} / {summary.cohort_n}. Matching observed stats: {summary.actual_n}.</p>
+                        <p>Forecast coverage with matching actuals: {sources.map((source) => `${labels[source]} ${summary.source_n[source]}`).join(" · ")}.</p>
+                        {Object.entries(payload.scoring_components).map(([position, components]) => (
+                            <p key={position}>{position}: {components.map((name) => name.replaceAll("_", " ")).join(", ")}.</p>
+                        ))}
+                        {Object.entries(payload.excluded_sources).map(([source, reason]) => <p key={source}>{reason}</p>)}
+                        <p>Missing stats or forecasts reduce every source’s sample equally. An unavailable required source leaves a gap in the charts.</p>
+                    </details>
 
                     <div className="section-header">Season Accuracy Trend</div>
                     <div className="charts-row">
-                        <div className="chart-box"><WeeklyTrendChart weekly={weekly} labels={labels} theme={theme} /></div>
-                        <div className="chart-box"><VsExpertsChart weekly={weekly} champion={summary.champion} labels={labels} theme={theme} /></div>
+                        <div className="chart-box"><TimelineChart weekly={weekly} sources={sources} labels={labels} theme={theme} /></div>
+                        <div className="chart-box"><TimelineChart weekly={weekly} sources={sources} labels={labels} theme={theme} edges /></div>
                     </div>
 
                     {releases.length > 0 && (
@@ -290,34 +262,32 @@ export function TimelineView({ scoring, theme }) {
 
                     <div className="section-header">Weekly Benchmark Log</div>
                     <div className="results-info">
-                        {`${weekly.length} weeks benchmarked · lower MAE is better · green edge means our best model beat both experts`}
+                        Common rows / eligible rows · lower MAE is better · expand a week’s coverage for missing data
                     </div>
                     <div className="table-container">
                         <table id="timeline-table">
                             <thead>
                                 <tr>
                                     <SortableTh label="Wk" sortKey="week" className="col-week" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <th>Best Model</th>
-                                    <SortableTh label="Ridge" sortKey="ridge" className="col-pred ridge-col" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <SortableTh label="NN" sortKey="nn" className="col-pred nn-col" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <SortableTh label="Attn NN" sortKey="attn_nn" className="col-pred attn-nn-col" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <SortableTh label="LGBM" sortKey="lgbm" className="col-pred lgbm-col" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <SortableTh label="NFL.com" sortKey="nflcom" className="col-pred nflcom-col" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <SortableTh label="RotoWire" sortKey="rotowire" className="col-pred rotowire-col" sort={sort.key} order={sort.order} onSort={onSort} />
-                                    <SortableTh label="Edge vs Exp." sortKey="edge" className="col-delta" sort={sort.key} order={sort.order} onSort={onSort} />
+                                    <SortableTh label="Common rows" sortKey="n" sort={sort.key} order={sort.order} onSort={onSort} />
+                                    {sources.map((source) => <SortableTh key={source} label={labels[source]} sortKey={source} className="col-pred" sort={sort.key} order={sort.order} onSort={onSort} />)}
                                 </tr>
                             </thead>
                             <tbody>
                                 {sortedWeekly.map((w) => (
                                     <tr key={w.week}>
                                         <td className="col-week"><strong>{w.week}</strong></td>
-                                        <td>{w.winner ? winnerTag(w.winner) : "--"}</td>
-                                        {MODELS.map((m) => (
-                                            <td key={m} className="col-pred">{modelCell(w, m)}</td>
+                                        <td>
+                                            <details>
+                                                <summary>{w.n} / {w.cohort_n}</summary>
+                                                {w.reason && <p>{REASONS[w.reason]}</p>}
+                                                <p>Matching observed stats: {w.actual_n}</p>
+                                                {sources.map((source) => <p key={source}>{labels[source]}: {w.source_n[source]}</p>)}
+                                            </details>
+                                        </td>
+                                        {sources.map((source) => (
+                                            <td key={source} className="col-pred" title={MODELS.includes(source) && w.edges[source] != null ? `Edge vs experts: ${w.edges[source].toFixed(3)}` : undefined}>{fmt(w.mae[source], 2)}</td>
                                         ))}
-                                        <td className="col-pred">{w.nflcom == null ? "--" : w.nflcom.toFixed(2)}</td>
-                                        <td className="col-pred">{w.rotowire == null ? "--" : w.rotowire.toFixed(2)}</td>
-                                        <td className="col-delta"><EdgeValue value={w.edge} /></td>
                                     </tr>
                                 ))}
                             </tbody>

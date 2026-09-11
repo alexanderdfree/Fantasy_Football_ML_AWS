@@ -9,7 +9,7 @@ Provides two public entry points:
     load_nflcom_projections(seasons, ...) -> pd.DataFrame
         One row per (player_name, position, season, week). Raw stats are mapped
         to our internal target names (passing_yards, rushing_tds, etc.). Cached
-        to ``data/raw/nflcom_projections_v1_{seasons_sig}_{weeks_sig}.parquet``
+        to ``data/raw/nflcom_projections_v2_{seasons_sig}_{weeks_sig}.parquet``
         (a contiguous season range renders as ``{min}_{max}``; a sparse list
         adds a disambiguating hash — see ``_seasons_cache_signature``).
 
@@ -45,7 +45,8 @@ NFLCOM_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K")
 """Positions available in upstream archive. There is no DST/Defense file."""
 
 NFLCOM_DEFAULT_WEEKS = tuple(range(1, 19))  # NFL regular season is 18 weeks since 2021.
-_CACHE_VERSION = "v1"
+# v2 retains cross-position offense stats; v1 caches already lost those values.
+_CACHE_VERSION = "v2"
 
 # Network defensiveness: 404 is expected (late-season weeks) and not retried.
 # Other transient failures (5xx, ECONNRESET, DNS blips) are retried once after
@@ -66,40 +67,24 @@ _SUFFIX_TOKENS = frozenset({"jr", "sr", "ii", "iii", "iv", "v"})
 # K's projected file is per-distance-bucket FG/PAT counts, which doesn't align
 # with our K raw-stat targets — only `nflcom_projected_pts` (their PlayerWeekProjectedPts)
 # is reusable downstream.
+_OFFENSE_COLUMN_MAP = {
+    "PassingYDS": "passing_yards",
+    "PassingTD": "passing_tds",
+    "PassingInt": "interceptions",
+    "RushingYDS": "rushing_yards",
+    "RushingTD": "rushing_tds",
+    "ReceivingRec": "receptions",
+    "ReceivingYDS": "receiving_yards",
+    "ReceivingTD": "receiving_tds",
+    "Fum": "fumbles_lost",  # × _FUM_LOST_RATIO at ingestion
+}
 NFLCOM_COLUMN_MAP: dict[str, dict[str, str]] = {
-    "QB": {
-        "PassingYDS": "passing_yards",
-        "PassingTD": "passing_tds",
-        "PassingInt": "interceptions",
-        "RushingYDS": "rushing_yards",
-        "RushingTD": "rushing_tds",
-        "Fum": "fumbles_lost",  # × _FUM_LOST_RATIO at ingestion
-    },
-    "RB": {
-        "RushingYDS": "rushing_yards",
-        "RushingTD": "rushing_tds",
-        "ReceivingRec": "receptions",
-        "ReceivingYDS": "receiving_yards",
-        "ReceivingTD": "receiving_tds",
-        "Fum": "fumbles_lost",
-    },
-    "WR": {
-        "ReceivingRec": "receptions",
-        "ReceivingYDS": "receiving_yards",
-        "ReceivingTD": "receiving_tds",
-        "Fum": "fumbles_lost",
-    },
-    "TE": {
-        "ReceivingRec": "receptions",
-        "ReceivingYDS": "receiving_yards",
-        "ReceivingTD": "receiving_tds",
-        "Fum": "fumbles_lost",
-    },
+    pos: dict(_OFFENSE_COLUMN_MAP) for pos in ("QB", "RB", "WR", "TE")
+} | {
     "K": {},
 }
 
-# Empty placeholder columns to fill on positions that don't carry a stat (e.g.
-# QB rows: receiving_*=0). Lets the per-position aggregator reuse a uniform shape.
+# Uniform raw-stat shape, with absent source columns filled with zero.
 _ALL_TARGET_COLUMNS = {
     "passing_yards",
     "passing_tds",
@@ -351,8 +336,7 @@ def _normalize_one_position(df: pd.DataFrame, position: str) -> pd.DataFrame:
 
     Output schema (all positions): season, week, position, nflcom_player_id,
     player_name, team, opponent, nflcom_projected_pts, nflcom_projected_rank,
-    plus per-target columns from ``_ALL_TARGET_COLUMNS`` (filled with 0 where the
-    position doesn't carry that stat).
+    plus scoring columns from ``_ALL_TARGET_COLUMNS`` (0 for absent source stats).
     """
     out = pd.DataFrame(
         {
@@ -377,7 +361,7 @@ def _normalize_one_position(df: pd.DataFrame, position: str) -> pd.DataFrame:
         if target_col == "fumbles_lost":
             vals = vals * _FUM_LOST_RATIO
         out[target_col] = vals.astype(float)
-    # Fill missing target columns (e.g. QB rows have no receiving_*) with 0.
+    # K has no normalized offense stats, but keeps the same frame schema.
     for col in _ALL_TARGET_COLUMNS:
         if col not in out.columns:
             out[col] = 0.0

@@ -40,6 +40,7 @@ import pandas as pd
 
 from src.config import TEST_SEASONS
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.serving.expert_sources import score_offensive_projections
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     TARGET_UNITS,
@@ -47,6 +48,7 @@ from src.shared.aggregate_targets import (
 )
 from src.shared.evaluation import compute_metrics
 from src.shared.evaluation_cohorts import regular_season_rows
+from src.shared.expert_eligibility import filter_eligible_forecasts
 
 EVAL_SEASONS_DEFAULT: tuple[int, ...] = tuple(TEST_SEASONS) if TEST_SEASONS else (2025,)
 TARGET_POSITIONS_DEFAULT: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
@@ -150,7 +152,7 @@ def _actuals_for_position(
 def _project_nflcom_to_ppr(
     nflcom_df: pd.DataFrame, pos: str, scoring_format: str = "ppr"
 ) -> pd.DataFrame:
-    """Apply ``predictions_to_fantasy_points`` to NFL.com's projected raw stats.
+    """Score all NFL.com offensive stats, retaining modeled-head diagnostics.
 
     Returns a frame keyed by (player_id, season, week) with columns:
       - nflcom_pred_total: the PPR-aggregated projection (their raw stats × our scoring)
@@ -159,6 +161,7 @@ def _project_nflcom_to_ppr(
         as a reference for callers that want to compare native vs aggregated.
     """
     pos_df = nflcom_df[nflcom_df["position"] == pos].copy()
+    pos_df = filter_eligible_forecasts(pos_df, "nflcom", pos)
     pos_df = pos_df[pos_df["player_id"].notna()]
     if pos_df.empty:
         return pos_df
@@ -174,8 +177,7 @@ def _project_nflcom_to_ppr(
         return out
 
     targets = list(POSITION_TARGET_MAP[pos].keys())
-    pred_dict = {t: pos_df[t].to_numpy() for t in targets}
-    out["nflcom_pred_total"] = predictions_to_fantasy_points(pos, pred_dict, scoring_format)
+    out["nflcom_pred_total"] = score_offensive_projections(pos_df, scoring_format)
     for t in targets:
         out[f"nflcom_pred_{t}"] = pos_df[t].to_numpy()
     return out
@@ -185,7 +187,7 @@ def _aggregate_actuals_to_ppr(actuals: pd.DataFrame, pos: str, scoring_format: s
     """Re-score actuals through our aggregator so they're apples-to-apples
     with the NFL.com projections.
 
-    QB/RB/WR/TE: ``predictions_to_fantasy_points`` with the position's target map.
+    QB/RB/WR/TE: full offensive scoring, independent of the model's target map.
     K: computed directly from raw FG/PAT stats per ``src.k.targets.compute_targets``
        (``fg_made_distance × 0.1 + pat_made − fg_missed − pat_missed``). The
        precomputed ``fantasy_points`` column on the parquet is offensive-only and
@@ -263,6 +265,12 @@ def _compute_season_block(
         }
 
     nflcom_pred = _project_nflcom_to_ppr(nflcom_season, pos, scoring_format)
+    if pos in {"QB", "RB", "WR", "TE"}:
+        from src.serving.expert_sources import project_expert_comparison
+
+        nflcom_pred["nflcom_pred_total"] = project_expert_comparison(
+            nflcom_season, pos, scoring_format, source="nflcom"
+        )["expert_pred_total"].to_numpy()
     if nflcom_pred.empty:
         return {
             "season": season,

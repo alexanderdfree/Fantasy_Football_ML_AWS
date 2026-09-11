@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.serving.serialization import (
+    _EXPERT_PRED_PREFIXES,
     _MODEL_PRED_PREFIXES,
     _ROW_PRED_PREFIXES,
     _actual_col,
@@ -33,6 +34,7 @@ from src.shared.evaluation_cohorts import (
     seasonal_top_mask,
     weekly_ranking_metrics,
 )
+from src.shared.expert_eligibility import eligible_forecast_rows
 
 # ---------------------------------------------------------------------------
 # Comparison tab: our model vs expert projection sources
@@ -68,6 +70,8 @@ def _shared_rows(frame, scoring, columns=None):
         }
     )
     data = frame.copy()
+    if not columns:
+        return data.iloc[:0], columns
     for col in [actual, *columns.values()]:
         data[col] = pd.to_numeric(data[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
     common = data.dropna(subset=[actual, *columns.values()])
@@ -105,8 +109,22 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
         actual = _actual_col(scoring)
         df[actual] = score_actual_components(df, pos, scoring, prefix="actual_")
         df["fantasy_points"] = df[actual]
+        if pos == "DST":
+            # Native totals include a non-shared points-allowed tier. Dedicated
+            # totals are built from full-precision heads before cache rounding.
+            for source in _ROW_PRED_PREFIXES:
+                df[_pred_col(source, scoring)] = df.get(_pred_col(source, "comparison"), np.nan)
+        else:
+            for source in _EXPERT_PRED_PREFIXES:
+                df[_pred_col(source, scoring)] = df.get(
+                    _pred_col(f"{source}_comparison", scoring), np.nan
+                )
         for source in EXCLUDED_SOURCES.get(pos, {}):
             df[_pred_col(source, scoring)] = np.nan
+        for source in _ROW_PRED_PREFIXES:
+            col = _pred_col(source, scoring)
+            if col in df:
+                df.loc[~eligible_forecast_rows(df, source, pos), col] = np.nan
         if df[actual].notna().sum() == 0:
             for name in COMPARISON_SUBSETS:
                 subsets[name][pos] = dict(empty)

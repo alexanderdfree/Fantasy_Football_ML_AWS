@@ -175,10 +175,15 @@ def test_intervals_calibrated_and_leak_excluded() -> None:
     result = _run()
     qb = result["intervals"]["nflcom"]["QB"]
     assert not qb.get("skipped")
-    # Leak season excluded; the genuine stationary seasons fit. (In-memory keys are
+    # NFL.com source policy excludes all pre-2024 offense, even if a synthetic
+    # season looks plausible. RotoWire still exercises the empirical detector.
+    # (In-memory keys are
     # ints — they only become strings once round-tripped through JSON.)
     assert qb["excluded_seasons"].get(_LEAK_SEASON) == "look-ahead"
-    assert set(qb["fit_seasons"]) == set(_FIT_SEASONS)
+    assert set(qb["fit_seasons"]) == {2024}
+    rotowire = result["intervals"]["rotowire"]["QB"]
+    assert set(rotowire["fit_seasons"]) == set(_FIT_SEASONS)
+    assert rotowire["excluded_seasons"][_LEAK_SEASON] == "look-ahead"
     # Held-out coverage is computed and in a sane band (synthetic noise, not the real
     # ≈0.8 — that is verified on the committed JSON in the serving contract test).
     assert 0.55 <= qb["calibration"]["coverage"] <= 0.95

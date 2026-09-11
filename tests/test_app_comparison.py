@@ -344,6 +344,8 @@ def test_comparison_includes_quartile_bias(app_module, synthetic_cache, monkeypa
     assert "expert_reliability" not in body
     assert "model_reliability" not in body
     assert "intervals" not in body
+    assert "points_allowed" in body["excluded_components"]["DST"]
+    assert "points_allowed" not in body["scoring_components"]["DST"]
 
     meta = body["quartile_bias_meta"]
     assert meta["quartiles"] == ["Q1", "Q2", "Q3", "Q4"]
