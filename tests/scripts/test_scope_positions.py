@@ -9,11 +9,14 @@ below are intentionally thorough.
 
 from __future__ import annotations
 
+import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -25,6 +28,38 @@ pytestmark = pytest.mark.unit
 
 
 ALL_SIX = ["QB", "RB", "WR", "TE", "K", "DST"]
+
+
+@pytest.mark.parametrize("package", ["prediction", "training", "evaluation", "data/providers"])
+def test_numerical_package_moves_preserve_full_dependency_scope(package):
+    path = f"src/{package}/new_module.py"
+    assert scope_positions.compute_positions([path]) == ALL_SIX
+    assert scope_positions.compute_test_shards([path]) == list(scope_positions.ALL_TEST_SHARDS)
+    assert scope_positions.compute_benchmark_scope([path])["shared"] is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/artifacts/model_sync.py",
+        "src/artifacts/artifact_gc.py",
+        "src/shared/model_sync.py",
+        "src/shared/artifact_gc.py",
+        "src/contracts/comparison.py",
+    ],
+)
+def test_transport_and_http_packages_scope_serving_and_shared_without_retraining(path):
+    assert scope_positions.compute_positions([path]) == []
+    assert scope_positions.compute_test_shards([path]) == ["serving", "shared"]
+    scope = scope_positions.compute_benchmark_scope([path])
+    assert scope["shared"] is False
+    assert scope["exempt"] == [path]
+
+
+def test_orchestration_package_runs_shared_tests_without_numerical_retrain():
+    path = "src/orchestration/build_plan.py"
+    assert scope_positions.compute_positions([path]) == []
+    assert scope_positions.compute_test_shards([path]) == ["shared"]
 
 
 # --------------------------------------------------------------------------
@@ -479,12 +514,14 @@ class TestComputeTestShards:
         [
             "src/serving/app.py",
             "src/serving/core.py",
+            "src/serving/state.py",
             "src/serving/routes.py",
             "src/serving/comparison.py",
             "tests/test_app.py",
             "tests/test_app_boot.py",
             "tests/test_app_comparison.py",
             "tests/test_app_warm.py",
+            "tests/serving/test_state.py",
         ],
     )
     def test_serving_shard(self, path):
@@ -536,6 +573,92 @@ class TestComputeTestShards:
 
     def test_empty_input(self):
         assert scope_positions.compute_test_shards([]) == []
+
+
+@pytest.mark.parametrize(
+    "changed_path,shard,expected_files",
+    [
+        (
+            path,
+            "serving",
+            {"tests/test_app.py", "tests/test_app_boot.py", "tests/serving/test_state.py"},
+        )
+        for path in ("src/serving/state.py", "tests/serving/test_state.py")
+    ]
+    + [
+        (
+            "tests/shared/test_helpers.py",
+            "shared",
+            {"tests/test_other.py", "tests/shared/test_helpers.py"},
+        )
+    ]
+    + [
+        (f"src/{pos.lower()}/features.py", pos, {f"tests/{pos.lower()}/test_features.py"})
+        for pos in ALL_SIX
+    ],
+)
+def test_workflow_shard_paths_collect_the_detected_suite(
+    tmp_path, changed_path, shard, expected_files
+):
+    """Execute the CI resolver and collect its shell-expanded paths on a tiny test tree."""
+    assert scope_positions.compute_test_shards([changed_path]) == [shard]
+    workflow = yaml.safe_load((PROJECT_ROOT / ".github/workflows/tests.yml").read_text())
+    step = next(
+        item
+        for item in workflow["jobs"]["test"]["steps"]
+        if item.get("name") == "Resolve shard test paths and coverage flags"
+    )
+    all_files = {
+        "tests/test_app.py",
+        "tests/test_app_boot.py",
+        "tests/serving/test_state.py",
+        "tests/test_other.py",
+        "tests/shared/test_helpers.py",
+        *(f"tests/{pos.lower()}/test_features.py" for pos in ALL_SIX),
+    }
+    for name in all_files:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def test_probe():\n    pass\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    output_path = tmp_path / "github-output"
+    env = {
+        **os.environ,
+        "GITHUB_OUTPUT": str(output_path),
+        "PYTEST_ADDOPTS": "",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    }
+    subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", step["run"].replace("${{ matrix.shard }}", shard)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    outputs = dict(line.split("=", 1) for line in output_path.read_text().splitlines())
+    # The CI Run Tests step lets bash expand the resolver's paths, including the
+    # top-level app glob and shared shard ignore options. Exercise that behavior.
+    collected = subprocess.run(
+        [
+            "bash",
+            "-euo",
+            "pipefail",
+            "-c",
+            f"{shlex.quote(sys.executable)} -m pytest --collect-only -q "
+            f"--import-mode=importlib -c pytest.ini {outputs['paths']}",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    node_ids = [line for line in collected.stdout.splitlines() if line.endswith("::test_probe")]
+    assert set(node_ids) == {f"{name}::test_probe" for name in expected_files}
+    assert len(node_ids) == len(expected_files), "a test must not be collected by duplicate paths"
 
 
 # --------------------------------------------------------------------------

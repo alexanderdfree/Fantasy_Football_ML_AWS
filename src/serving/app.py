@@ -6,18 +6,19 @@ No general cross-position model is used.
 
 import os
 import sys
-import threading
 import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-import matplotlib
-
-matplotlib.use("Agg")
-
 from flask import Flask, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+# Boot-time S3 sync lives in gunicorn.conf.py::on_starting (master-level,
+# before --preload import) so this module has no import-time side effects.
+# See that hook for the rationale; cross-link kept here so future readers
+# don't reach for the simpler-looking module-level call.
+from src.contracts.api import install_api_contract
+from src.serving import state
 from src.serving.metadata import _ALL_POSITIONS as _ALL_POSITIONS
 from src.serving.metadata import _ALL_TARGETS as _ALL_TARGETS
 
@@ -42,86 +43,51 @@ from src.serving.wiki import WIKI_DOCS as WIKI_DOCS
 from src.serving.wiki import _render_wiki_doc as _render_wiki_doc
 from src.serving.wiki import _wiki_rewrite_href as _wiki_rewrite_href
 
-# Boot-time S3 sync lives in gunicorn.conf.py::on_starting (master-level,
-# before --preload import) so this module has no import-time side effects.
-# See that hook for the rationale; cross-link kept here so future readers
-# don't reach for the simpler-looking module-level call.
-
-app = Flask(__name__)
-
-_cache = {}
-# Serializes lazy model/data loads — Flask dispatches requests on multiple
-# threads, so two concurrent first-hit requests would otherwise both see
-# _cache as empty and race on duplicate I/O plus .loc-writes into the shared
-# results DataFrame. Reentrant because _ensure_metrics nests into
-# _ensure_position_loaded.
-_cache_lock = threading.RLock()
-# ``_apply_position_models`` writes per-position prediction columns into the
-# shared ``_cache["results"]`` DataFrame. Even when row indices are disjoint
-# across positions (QB rows vs RB rows, etc.), pandas' BlockManager is not
-# thread-safe for concurrent ``.loc[]`` writes — the internal column-block
-# representation is shared across columns, and two writers can corrupt block
-# state mid-update. The parallel pre-warm path in ``_ensure_all_positions_loaded``
-# spawns one worker per position; without this lock those workers race on the
-# DataFrame's internals. Plain ``threading.Lock`` is correct here (no
-# reentrancy needed — the write block doesn't call back into itself).
-_results_write_lock = threading.Lock()
-# Wiki page caching uses its own lock so a slow first-hit ``_ensure_metrics``
-# (model loads, feature build) doesn't serialize wiki-tab GETs behind it.
-# Wiki entries live in the SAME ``_cache`` dict (keyed by ("wiki", slug))
-# because the existing module-global cache structure is shared; only the
-# locking discipline diverges. Plain ``threading.Lock`` is sufficient — the
-# wiki cache path doesn't nest into other cache helpers, so the RLock
-# reentrancy that ``_cache_lock`` requires is overkill here.
-#
-# Originally split out under code-review finding L-SS4 (one RLock serializing
-# two unrelated cache disciplines).
-_wiki_cache_lock = threading.Lock()
-# Benchmark-history cache (see ``_load_benchmark_history_rows``) is a third
-# discipline because its invalidation is mtime-driven rather than write-driven
-# and the cache structure is a tuple, not a dict slot. Documented at
-# ``_BENCHMARK_HISTORY_LOCK`` near the rendering helpers.
+_default_state = state.DEFAULT_STATE
 
 
-@app.errorhandler(Exception)
-def handle_api_error(e):
-    """Return JSON errors for /api/ routes, default HTML for others."""
+def __getattr__(name):
+    # Read-through compatibility for callers inspecting the default app.
+    if name in {"_cache", "_cache_lock", "_results_write_lock", "_wiki_cache_lock"}:
+        return getattr(state, name)
+    raise AttributeError(name)
+
+
+def handle_api_error(error):
     if request.path.startswith("/api/"):
-        # HTTPExceptions (404 NotFound, 405 MethodNotAllowed, 400 BadRequest,
-        # ...) carry a real client-facing status — preserve it as JSON instead
-        # of masking every 4xx as a 500 (which distorts ALB/monitoring error
-        # counters). Their ``description`` is a safe, library-authored string,
-        # unlike ``str(e)`` on an arbitrary exception.
-        if isinstance(e, HTTPException):
-            return jsonify({"error": e.description}), e.code
-        # Unexpected server-side bug: log the full traceback server-side but
-        # never echo exception text to the client. str(e) on a Python exception
-        # can leak filesystem paths, config values, or library internals
-        # (CodeQL py/stack-trace-exposure).
+        if isinstance(error, HTTPException):
+            return jsonify({"error": error.description}), error.code
         traceback.print_exc()
         return jsonify({"error": "Internal server error"}), 500
-    raise e
+    raise error
 
 
-# Route handlers live in routes.py; importing the module registers them on
-# ``app`` as a side effect. Kept here at the bottom (after ``app`` + shared
-# state are defined) — the canonical Flask circular-import pattern.
-from src.serving import routes  # noqa: E402, F401
+def create_app(*, serving_state=None, snapshots=None, config=None):
+    """Construct an independent HTTP application over an explicit state owner."""
+    from src.serving.routes import app as routes
+
+    application = Flask(__name__)
+    application.config.update(
+        ALLOW_RUNTIME_INFERENCE=os.environ.get("FF_ALLOW_RUNTIME_INFERENCE", "1").lower()
+        not in {"0", "false", "off"}
+    )
+    if config is not None:
+        application.config.update(config)
+    owner = serving_state if serving_state is not None else state.ServingState()
+    owner.allow_runtime_inference = application.config["ALLOW_RUNTIME_INFERENCE"]
+    if snapshots is not None:
+        owner.snapshots = snapshots
+    application.extensions["ffp_state"] = owner
+    application.register_blueprint(routes)
+    application.register_error_handler(Exception, handle_api_error)
+    state.install_snapshot_context(application)
+    install_api_contract(application)
+    return application
+
+
+app = create_app(serving_state=_default_state)
+
 
 if __name__ == "__main__":
-    # Production runs under gunicorn (see Dockerfile CMD); this branch is the
-    # local dev entrypoint. Debug defaults off — set FLASK_DEBUG=1 for the
-    # Werkzeug debugger locally. Bound to 127.0.0.1 so the debugger console is
-    # never reachable off-box even when enabled.
-    #
-    # Serve the canonical ``src.serving.app`` instance, NOT this module's
-    # ``app``. Under ``python -m src.serving.app`` this file executes as
-    # ``__main__``, so routes.py's ``from src.serving.app import app``
-    # re-executes it as a second module instance — every @app.route handler
-    # registers on THAT instance's Flask app (and handlers read shared state
-    # via ``app_pkg``, i.e. the canonical module). Running this module's
-    # ``app`` would serve the route-less duplicate: 404 on every endpoint.
-    from src.serving.app import app as _canonical_app
-
     debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
-    _canonical_app.run(debug=debug, host="127.0.0.1", port=5050, use_reloader=False)
+    app.run(debug=debug, host="127.0.0.1", port=5050, use_reloader=False)

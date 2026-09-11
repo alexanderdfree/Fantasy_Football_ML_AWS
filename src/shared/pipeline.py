@@ -6,8 +6,8 @@ position-specific callables and hyperparameters.
 
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 
-import joblib
 import matplotlib
 import numpy as np
 import pandas as pd
@@ -16,7 +16,6 @@ from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from src.config import (
     CACHE_DIR,
@@ -34,18 +33,13 @@ from src.features.engineer import (
     get_attn_static_columns,
 )
 from src.shared import feature_cache
-from src.shared.artifact_integrity import (
-    wrap_state_dict,
-    write_scaler_meta,
-)
-from src.shared.backtest import plot_weekly_accuracy, run_weekly_simulation
+from src.shared.backtest import run_weekly_simulation
 from src.shared.core_pool import lease_cores
 from src.shared.evaluation import (
     build_gate_info,
     compute_metrics,
     compute_ranking_metrics,
     compute_target_metrics,
-    plot_pred_vs_actual,
     print_comparison_table,
 )
 from src.shared.evaluation_cohorts import build_cohorts
@@ -74,7 +68,6 @@ from src.shared.training import (
     make_history_dataloaders,
     make_history_with_opp_dataloaders,
     make_nested_kick_dataloaders,
-    plot_training_curves,
 )
 from src.shared.utils import (
     cuda_enabled,
@@ -83,6 +76,15 @@ from src.shared.utils import (
     seed_everything,
     timed,
 )
+from src.training.context import (
+    current_context,
+    raw_data_dir,
+    runner_context,
+    training_entrypoint,
+    trial_memo,
+)
+from src.training.contracts import PreparedDataset, training_result
+from src.training.effects import save_artifacts, save_figures
 
 
 def _read_split(path: str) -> pd.DataFrame:
@@ -606,6 +608,7 @@ def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=Non
          pos_train, pos_val, pos_test_or_None, feature_cols)
     """
     pos = position
+    data_id = feature_cache.cache_key(position, train_df, val_df, test_df, cfg)
 
     # Filter to position
     pos_train = cfg["filter_fn"](train_df)
@@ -668,7 +671,8 @@ def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=Non
         else None
     )
 
-    return (
+    pos_train.attrs["prepared_data_id"] = data_id
+    return PreparedDataset(
         X_train,
         X_val,
         X_test,
@@ -678,7 +682,8 @@ def _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df=Non
         pos_train,
         pos_val,
         pos_test,
-        feature_cols,
+        tuple(feature_cols),
+        data_id,
     )
 
 
@@ -693,13 +698,21 @@ def _prepare_position_data(position, cfg, train_df, val_df, test_df=None):
 
     Bypass with ``FF_FEATURE_CACHE_DISABLE=1``.
     """
-    return feature_cache.load_or_compute(
-        position,
-        train_df,
-        val_df,
-        test_df,
-        cfg,
-        lambda: _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df),
+    for _attempt in range(3):
+        prepared = feature_cache.load_or_compute(
+            position,
+            train_df,
+            val_df,
+            test_df,
+            cfg,
+            lambda: _prepare_position_data_uncached(position, cfg, train_df, val_df, test_df),
+        )
+        if prepared.data_id == feature_cache.cache_key(position, train_df, val_df, test_df, cfg):
+            return prepared
+        # A cold loader may have materialized a side artifact, or an update
+        # landed during the split merges. Repeat with the actual new snapshot.
+    raise RuntimeError(
+        "Feature inputs changed repeatedly during preparation; retry with stable inputs"
     )
 
 
@@ -717,7 +730,10 @@ def _prepare_train_val(position, cfg, train_df, val_df):
     return X_train, X_val, y_train_dict, y_val_dict, pos_train, pos_val, feature_cols
 
 
-def build_train_matrix(position: str, cfg: dict) -> tuple[np.ndarray, dict, list[str]]:
+@runner_context
+def build_train_matrix(
+    position: str, cfg: dict, *, context=None
+) -> tuple[np.ndarray, dict, list[str]]:
     """Rebuild the training feature matrix + target dict for a position.
 
     Entry point for diagnostics that need the exact ``X_train`` the pipeline
@@ -730,8 +746,9 @@ def build_train_matrix(position: str, cfg: dict) -> tuple[np.ndarray, dict, list
     to whether val is present, so the work is cheap and the interface stays
     single-purpose.
     """
-    train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
-    val_df = _read_split(f"{SPLITS_DIR}/val.parquet")
+    split_dir = current_context().splits_dir if current_context() is not None else SPLITS_DIR
+    train_df = _read_split(f"{split_dir}/train.parquet")
+    val_df = _read_split(f"{split_dir}/val.parquet")
     X_train, _, y_train_dict, _, _, _, feature_cols = _prepare_train_val(
         position, cfg, train_df, val_df
     )
@@ -1043,16 +1060,24 @@ def _train_nested_attention_nn(
 
 
 def _splits_stat_key() -> tuple:
-    """(name, mtime_ns, size) of the three split parquets.
+    """Filesystem identity of the three split parquets.
 
     Cheap staleness guard for the per-worker trial-data memo: catches a
     splits rebuild mid-process without paying the per-trial parquet read +
     content hash the memo exists to skip.
     """
+    splits_dir = current_context().splits_dir if current_context() is not None else SPLITS_DIR
     return tuple(
-        (name, st.st_mtime_ns, st.st_size)
+        (
+            os.path.realpath(f"{splits_dir}/{name}"),
+            st.st_dev,
+            st.st_ino,
+            st.st_mtime_ns,
+            st.st_ctime_ns,
+            st.st_size,
+        )
         for name in ("train.parquet", "val.parquet", "test.parquet")
-        for st in (os.stat(f"{SPLITS_DIR}/{name}"),)
+        for st in (os.stat(f"{splits_dir}/{name}"),)
     )
 
 
@@ -1189,10 +1214,10 @@ def _train_attention_holdout(
     # Per-worker trial-data memo (see run_pipeline): the history/opp arrays
     # depend only on the prepared frames + the attn cfg below — never on
     # sampled trial hyperparams — so trials 2+ of a tune worker reuse them.
-    # The fingerprint (attn cfg + row counts) guards both cfg drift and a
+    # The fingerprint (attn cfg + prepared-data content) guards cfg drift and a
     # same-position different-frames caller; consumers are read-only
     # (tensors are index_select'd / narrow'd, never written).
-    memo = cfg.get("trial_data_memo")
+    memo = None if feature_cache._disabled() else trial_memo(cfg)
     attn_fp = None
     cached_arrays = None
     if memo is not None:
@@ -1203,7 +1228,18 @@ def _train_attention_holdout(
             "opp_max_seq_len": cfg.get("opp_attn_max_seq_len"),
             "opp_kind": cfg.get("opp_attn_kind", "defense"),
             "n_rows": (len(pos_train), len(pos_val), len(pos_test)),
+            "prepared_data_id": feature_cache.cache_key(
+                position, pos_train, pos_val, pos_test, cfg
+            ),
         }
+        if cfg.get("opp_attn_history_stats"):
+            attn_fp["opponent_source"] = (
+                feature_cache._file_fingerprint(
+                    f"{raw_data_dir(CACHE_DIR)}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+                )
+                if cfg.get("opp_attn_kind", "defense") == "offense"
+                else [feature_cache._df_fingerprint(frame) for frame in opp_source_frames]
+            )
         entry = memo.get(("attn_arrays", position))
         if entry is not None and entry["fp"] == attn_fp:
             cached_arrays = entry
@@ -1274,7 +1310,9 @@ def _train_attention_holdout(
         opp_attn_kind = cfg.get("opp_attn_kind", "defense")
         builder = OPP_ATTN_PER_GAME_BUILDERS[opp_attn_kind]
         if opp_attn_kind == "offense":
-            weekly_cache_path = f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+            weekly_cache_path = (
+                f"{raw_data_dir(CACHE_DIR)}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+            )
             opp_source_df = pd.read_parquet(weekly_cache_path)
             # The raw weekly cache is written unfiltered (src/data/loader.py
             # ``_fetch_weekly``), so it carries postseason rows. Every other
@@ -1485,7 +1523,8 @@ def _train_elasticnet(
     return model, test_preds, metrics
 
 
-def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42):
+@training_entrypoint
+def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42, *, context=None):
     """Run the full position model pipeline.
 
     Args:
@@ -1521,9 +1560,9 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     seed_everything(seed)
 
     pos = position
-    pos_lower = pos.lower()
     targets = cfg["targets"]
-    output_dir = f"{pos_lower}/outputs"
+    output_dir = str(context.output_dir(position))
+    splits_dir = context.splits_dir
 
     # Per-phase wall-clock breakdown returned in the result dict so the EC2
     # entrypoint (src/batch/train.py) can fold it into benchmark_metrics.json.
@@ -1536,33 +1575,49 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # dict post-deepcopy; absent everywhere else). Even an in-process
     # feature-cache LRU hit still pays the per-trial parquet re-read and frame
     # content-hashing — the memo skips both on trials 2+ of a worker. Guarded
-    # by a (mtime, size) stat of the split files so a splits rebuild
-    # mid-process invalidates. Disk-read path only: caller-passed frames are
+    # by split identity and the same recipe/side-input identity as the feature
+    # cache. Disk-read path only: caller-passed frames are
     # caller-owned (K/DST rebuild their own; the feature-cache LRU covers
     # their prepared tuple).
-    memo = cfg.get("trial_data_memo")
+    memo = None if feature_cache._disabled() else trial_memo(cfg)
     prepared = None
     frames_from_disk = train_df is None
+    preparation_id = (
+        feature_cache.preparation_identity(position, cfg)
+        if frames_from_disk and memo is not None
+        else None
+    )
+    splits_identity = _splits_stat_key() if frames_from_disk and memo is not None else None
     if frames_from_disk and memo is not None:
         entry = memo.get(("prepared", position))
-        if entry is not None and entry["splits_stat"] == _splits_stat_key():
+        if (
+            entry is not None
+            and entry["splits_stat"] == splits_identity
+            and entry.get("preparation_id") == preparation_id
+        ):
             train_df, val_df, test_df = entry["frames"]
             prepared = entry["prepared"]
             print(f"  [trial_memo] reusing prepared {position} data")
     if train_df is None:
         print("Loading general splits from disk...")
-        train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
-        val_df = _read_split(f"{SPLITS_DIR}/val.parquet")
-        test_df = _read_split(f"{SPLITS_DIR}/test.parquet")
+        train_df = _read_split(f"{splits_dir}/train.parquet")
+        val_df = _read_split(f"{splits_dir}/val.parquet")
+        test_df = _read_split(f"{splits_dir}/test.parquet")
 
     # --- Prepare position data ---
     print(f"Preparing {pos} data...")
     with timed("prepare_data", store=phase_seconds):
         if prepared is None:
             prepared = _prepare_position_data(position, cfg, train_df, val_df, test_df)
-            if frames_from_disk and memo is not None:
+            if (
+                frames_from_disk
+                and memo is not None
+                and preparation_id == feature_cache.preparation_identity(position, cfg)
+                and splits_identity == _splits_stat_key()
+            ):
                 memo[("prepared", position)] = {
-                    "splits_stat": _splits_stat_key(),
+                    "splits_stat": splits_identity,
+                    "preparation_id": preparation_id,
                     "frames": (train_df, val_df, test_df),
                     "prepared": prepared,
                 }
@@ -1827,7 +1882,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         timed("train_models_total", store=phase_seconds),
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="cpu-branch") as ex,
     ):
-        cpu_future = ex.submit(_cpu_branch)
+        cpu_future = ex.submit(copy_context().run, _cpu_branch)
         gpu_results = _gpu_branch()
         cpu_results = cpu_future.result()  # propagates exceptions from worker
 
@@ -1862,39 +1917,32 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     # and nn_test_preds. Split Batch branch runs opt into saving the partial
     # model artifacts they did train before returning the minimal result.
     if ridge_test_preds is None or nn_test_preds is None:
+        bundle_ids = {}
         artifact_branch = cfg.get("_artifact_branch")
         if artifact_branch in {"cpu", "nn"}:
+            if artifact_branch == "cpu" and ridge_model is None:
+                raise RuntimeError("CPU split branch did not train Ridge artifacts")
+            if artifact_branch == "nn" and (model is None or nn_scaler is None):
+                raise RuntimeError("NN split branch did not train base NN artifacts")
             with timed("save_artifacts", store=phase_seconds):
-                os.makedirs(f"{output_dir}/models", exist_ok=True)
-                if artifact_branch == "cpu":
-                    if ridge_model is None:
-                        raise RuntimeError("CPU split branch did not train Ridge artifacts")
-                    ridge_model.save(f"{output_dir}/models")
-                    if lgbm_model is not None:
-                        lgbm_model.save(f"{output_dir}/models")
-                else:
-                    if model is None or nn_scaler is None:
-                        raise RuntimeError("NN split branch did not train base NN artifacts")
-                    torch.save(
-                        wrap_state_dict(model.state_dict(), feature_cols, targets),
-                        f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
+                bundle_ids = context.emit_artifacts(
+                    lambda: save_artifacts(
+                        output_dir,
+                        pos,
+                        cfg,
+                        prepared,
+                        {
+                            "ridge": ridge_model,
+                            "nn": model,
+                            "attn_nn": attn_model,
+                            "lgbm": lgbm_model,
+                        },
+                        {"nn": nn_scaler, "attn_nn": attn_nn_scaler},
+                        _attn_saved_static_cols(cfg, attn_feature_cols)
+                        if attn_model is not None
+                        else (),
                     )
-                    joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
-                    write_scaler_meta(
-                        f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets
-                    )
-                    if attn_model is not None:
-                        attn_static_cols = _attn_saved_static_cols(cfg, attn_feature_cols)
-                        torch.save(
-                            wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
-                            f"{output_dir}/models/{pos_lower}_attention_nn.pt",
-                        )
-                        joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
-                        write_scaler_meta(
-                            f"{output_dir}/models/attention_nn_scaler_meta.json",
-                            attn_static_cols,
-                            targets,
-                        )
+                )
         result = {
             "ridge_metrics": ridge_metrics,
             "nn_metrics": nn_metrics,
@@ -1938,7 +1986,27 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 result[ranking_key] = ranking
                 print(f"{label} Top-12 Hit Rate: {ranking['season_avg_hit_rate']:.3f}")
         result["cohorts"] = build_cohorts(pos, ranked_test, prior_frames=(pos_train, pos_val))
-        return result
+        result["test_df"] = ranked_test
+        result["per_target_preds"] = {
+            family: predictions
+            for family, predictions in (
+                ("ridge", ridge_test_preds),
+                ("nn", nn_test_preds),
+                ("elasticnet", enet_test_preds),
+                ("attn_nn", attn_nn_test_preds),
+                ("lgbm", lgbm_test_preds),
+                ("tabpfn", tabpfn_test_preds),
+            )
+            if predictions is not None
+        }
+        return training_result(
+            result,
+            cfg,
+            prepared,
+            {"ridge": ridge_model, "nn": model, "attn_nn": attn_model, "lgbm": lgbm_model},
+            context,
+            bundle_ids,
+        )
 
     # --- Comparison ---
     comparison = {
@@ -2038,82 +2106,40 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         for model_name, summary in sim_results["season_summary"].items():
             print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
-    # --- Save outputs ---
+    models = {
+        "ridge": ridge_model,
+        "elasticnet": enet_model,
+        "nn": model,
+        "attn_nn": attn_model,
+        "lgbm": lgbm_model,
+    }
     with timed("save_artifacts", store=phase_seconds):
-        os.makedirs(f"{output_dir}/models", exist_ok=True)
-        os.makedirs(f"{output_dir}/figures", exist_ok=True)
-
-        ridge_model.save(f"{output_dir}/models")
-        if enet_model is not None:
-            enet_model.save(f"{output_dir}/models/elasticnet")
-        torch.save(
-            wrap_state_dict(model.state_dict(), feature_cols, targets),
-            f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
+        bundle_ids = context.emit_artifacts(
+            lambda: save_artifacts(
+                output_dir,
+                pos,
+                cfg,
+                prepared,
+                models,
+                {"nn": nn_scaler, "attn_nn": attn_nn_scaler},
+                _attn_saved_static_cols(cfg, attn_feature_cols) if attn_model is not None else (),
+            )
         )
-        joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
-        write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
-
-        if attn_model is not None:
-            # Persist the exact column list the attention scaler was fit on
-            # (flat path re-filter vs from-df passthrough — see helper).
-            attn_static_cols = _attn_saved_static_cols(cfg, attn_feature_cols)
-            torch.save(
-                wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
-                f"{output_dir}/models/{pos_lower}_attention_nn.pt",
-            )
-            joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
-            write_scaler_meta(
-                f"{output_dir}/models/attention_nn_scaler_meta.json",
-                attn_static_cols,
-                targets,
-            )
-
-        if lgbm_model is not None:
-            lgbm_model.save(f"{output_dir}/models")
-
     with timed("figures", store=phase_seconds):
-        plot_training_curves(
-            history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png"
-        )
-        if attn_history is not None:
-            plot_training_curves(
-                attn_history,
+        context.emit_report(
+            lambda: save_figures(
+                output_dir,
+                pos,
                 targets,
-                f"{output_dir}/figures/{pos_lower}_attention_training_curves.png",
+                feature_cols,
+                models,
+                history,
+                sim_results,
+                y_test_dict,
+                nn_test_preds,
+                attn_history,
             )
-        plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
-        plot_pred_vs_actual(
-            y_test_dict,
-            nn_test_preds,
-            targets,
-            f"{pos} Multi-Head NN",
-            f"{output_dir}/figures/{pos_lower}_pred_vs_actual_scatter.png",
         )
-
-        feature_importance = ridge_model.get_feature_importance(feature_cols)
-        fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
-        if len(targets) == 1:
-            axes = [axes]
-        for ax, (target, importance) in zip(axes, feature_importance.items(), strict=False):
-            importance.head(15).plot(kind="barh", ax=ax)
-            ax.set_title(f"Ridge: {target} Top-15 Features")
-            ax.set_xlabel("Absolute Coefficient")
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/figures/{pos_lower}_ridge_feature_importance.png", dpi=150)
-        plt.close()
-
-        if lgbm_model is not None:
-            lgbm_importance = lgbm_model.get_feature_importance(feature_cols)
-            fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
-            if len(targets) == 1:
-                axes = [axes]
-            for ax, (target, importance) in zip(axes, lgbm_importance.items(), strict=False):
-                importance.head(15).plot(kind="barh", ax=ax)
-                ax.set_title(f"LightGBM: {target} Top-15 Features")
-                ax.set_xlabel("Gain")
-            plt.tight_layout()
-            plt.savefig(f"{output_dir}/figures/{pos_lower}_lgbm_feature_importance.png", dpi=150)
-            plt.close()
 
     print(f"\n{pos} pipeline complete. Outputs saved to {output_dir}/")
     per_target_preds = {
@@ -2159,10 +2185,18 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         result["tabpfn_metrics"] = tabpfn_metrics
         result["tabpfn_ranking"] = tabpfn_ranking
     result["cohorts"] = build_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
-    return result
+    return training_result(
+        result,
+        cfg,
+        prepared,
+        {"ridge": ridge_model, "nn": model, "attn_nn": attn_model, "lgbm": lgbm_model},
+        context,
+        bundle_ids,
+    )
 
 
-def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
+@training_entrypoint
+def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, context=None):
     """Run expanding-window cross-validation, then final holdout evaluation.
 
     CV folds determine best Ridge alpha and report multi-season metrics for
@@ -2180,18 +2214,18 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     seed_everything(seed)
 
     pos = position
-    pos_lower = pos.lower()
     targets = cfg["targets"]
-    output_dir = f"{pos_lower}/outputs"
+    output_dir = str(context.output_dir(position))
+    splits_dir = context.splits_dir
 
     # --- Load data ---
     if full_df is None:
         print("Loading splits from disk and combining for CV...")
-        train_df = _read_split(f"{SPLITS_DIR}/train.parquet")
-        val_df = _read_split(f"{SPLITS_DIR}/val.parquet")
+        train_df = _read_split(f"{splits_dir}/train.parquet")
+        val_df = _read_split(f"{splits_dir}/val.parquet")
         full_df = pd.concat([train_df, val_df], ignore_index=True)
     if test_df is None:
-        test_df = _read_split(f"{SPLITS_DIR}/test.parquet")
+        test_df = _read_split(f"{splits_dir}/test.parquet")
 
     # --- Generate CV folds ---
     print(f"\n{'=' * 60}")
@@ -2353,6 +2387,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     final_train_df = full_df[full_df["season"].isin(final_train_seasons)].copy()
     final_val_df = full_df[full_df["season"].isin(final_val_seasons)].copy()
 
+    prepared = _prepare_position_data(position, cfg, final_train_df, final_val_df, test_df)
     (
         X_train,
         X_val,
@@ -2364,7 +2399,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         pos_val,
         pos_test,
         feature_cols,
-    ) = _prepare_position_data(position, cfg, final_train_df, final_val_df, test_df)
+    ) = prepared
 
     # Baseline
     baseline = SeasonAverageBaseline()
@@ -2581,76 +2616,31 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
     for model_name, summary in sim_results["season_summary"].items():
         print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
-    # Save outputs
-    os.makedirs(f"{output_dir}/models", exist_ok=True)
-    os.makedirs(f"{output_dir}/figures", exist_ok=True)
-
-    ridge_model.save(f"{output_dir}/models")
-    torch.save(
-        wrap_state_dict(model.state_dict(), feature_cols, targets),
-        f"{output_dir}/models/{pos_lower}_multihead_nn.pt",
-    )
-    joblib.dump(nn_scaler, f"{output_dir}/models/nn_scaler.pkl")
-    write_scaler_meta(f"{output_dir}/models/nn_scaler_meta.json", feature_cols, targets)
-
-    # Persist the attention NN too (mirrors run_pipeline) — without this a
-    # CV-built model dir is missing ``{pos}_attention_nn.pt`` and serving/upload
-    # for the attention model fails. ``attn_feature_cols`` returned by
-    # _train_attention_holdout is the FULL base feature list on the flat path
-    # (attn_static_from_df=False) while the scaler was fit on the
-    # get_attn_static_columns-filtered subset — resolve the exact fitted list
-    # before saving, exactly like run_pipeline, or the saved metadata
-    # over-reports n_features and trips assert_scaler_matches at load (#1432).
-    if attn_model is not None:
-        attn_static_cols = _attn_saved_static_cols(cfg, attn_feature_cols)
-        torch.save(
-            wrap_state_dict(attn_model.state_dict(), attn_static_cols, targets),
-            f"{output_dir}/models/{pos_lower}_attention_nn.pt",
+    models = {"ridge": ridge_model, "nn": model, "attn_nn": attn_model, "lgbm": lgbm_model}
+    bundle_ids = context.emit_artifacts(
+        lambda: save_artifacts(
+            output_dir,
+            pos,
+            cfg,
+            prepared,
+            models,
+            {"nn": nn_scaler, "attn_nn": attn_nn_scaler},
+            _attn_saved_static_cols(cfg, attn_feature_cols) if attn_model is not None else (),
         )
-        joblib.dump(attn_nn_scaler, f"{output_dir}/models/attention_nn_scaler.pkl")
-        write_scaler_meta(
-            f"{output_dir}/models/attention_nn_scaler_meta.json",
-            attn_static_cols,
+    )
+    context.emit_report(
+        lambda: save_figures(
+            output_dir,
+            pos,
             targets,
+            feature_cols,
+            models,
+            history,
+            sim_results,
+            y_test_dict,
+            nn_test_preds,
         )
-
-    if lgbm_model is not None:
-        lgbm_model.save(f"{output_dir}/models")
-
-    plot_training_curves(history, targets, f"{output_dir}/figures/{pos_lower}_training_curves.png")
-    plot_weekly_accuracy(sim_results, pos, f"{output_dir}/figures/{pos_lower}_weekly_mae.png")
-    plot_pred_vs_actual(
-        y_test_dict,
-        nn_test_preds,
-        targets,
-        f"{pos} Multi-Head NN",
-        f"{output_dir}/figures/{pos_lower}_pred_vs_actual_scatter.png",
     )
-
-    feature_importance = ridge_model.get_feature_importance(feature_cols)
-    fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
-    if len(targets) == 1:
-        axes = [axes]
-    for ax, (target, importance) in zip(axes, feature_importance.items(), strict=False):
-        importance.head(15).plot(kind="barh", ax=ax)
-        ax.set_title(f"Ridge: {target} Top-15 Features")
-        ax.set_xlabel("Absolute Coefficient")
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/figures/{pos_lower}_ridge_feature_importance.png", dpi=150)
-    plt.close()
-
-    if lgbm_model is not None:
-        lgbm_importance = lgbm_model.get_feature_importance(feature_cols)
-        fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 8))
-        if len(targets) == 1:
-            axes = [axes]
-        for ax, (target, importance) in zip(axes, lgbm_importance.items(), strict=False):
-            importance.head(15).plot(kind="barh", ax=ax)
-            ax.set_title(f"LightGBM: {target} Top-15 Features")
-            ax.set_xlabel("Gain")
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/figures/{pos_lower}_lgbm_feature_importance.png", dpi=150)
-        plt.close()
 
     print(f"\n{pos} CV pipeline complete. Outputs saved to {output_dir}/")
     per_target_preds = {
@@ -2686,4 +2676,11 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42):
         result["attn_nn_metrics"] = attn_nn_metrics
         result["attn_nn_ranking"] = attn_nn_ranking
     result["cohorts"] = build_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
-    return result
+    return training_result(
+        result,
+        cfg,
+        prepared,
+        {"ridge": ridge_model, "nn": model, "attn_nn": attn_model, "lgbm": lgbm_model},
+        context,
+        bundle_ids,
+    )

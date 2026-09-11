@@ -222,6 +222,7 @@ def _build_jobs(
             for variant in variants:
                 jobs.append(
                     AblationJob(
+                        context_aware=True,
                         position=position,
                         seed=seed,
                         variant=variant,

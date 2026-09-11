@@ -39,8 +39,8 @@ import numpy as np
 import pandas as pd
 
 from src.config import TEST_SEASONS
+from src.data.expert_sources import score_offensive_projections
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
-from src.serving.expert_sources import score_offensive_projections
 from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     TARGET_UNITS,
@@ -266,7 +266,7 @@ def _compute_season_block(
 
     nflcom_pred = _project_nflcom_to_ppr(nflcom_season, pos, scoring_format)
     if pos in {"QB", "RB", "WR", "TE"}:
-        from src.serving.expert_sources import project_expert_comparison
+        from src.data.expert_sources import project_expert_comparison
 
         nflcom_pred["nflcom_pred_total"] = project_expert_comparison(
             nflcom_season, pos, scoring_format, source="nflcom"

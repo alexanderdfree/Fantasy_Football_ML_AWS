@@ -1,5 +1,6 @@
 /* Thin fetch layer over the serving JSON API. Endpoints and key names are the
  * fixed contract shared with src/serving/routes.py — do not rename fields here. */
+import { contract, validateAPIResponse } from "./api-contract.js";
 
 export async function fetchJSON(url) {
     const resp = await fetch(url);
@@ -12,5 +13,5 @@ export async function fetchJSON(url) {
         err.status = resp.status;
         throw err;
     }
-    return resp.json();
+    return validateAPIResponse(url, await resp.json(), resp.headers.get(contract.version_header));
 }

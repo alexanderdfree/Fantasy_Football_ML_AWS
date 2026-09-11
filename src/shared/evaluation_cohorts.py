@@ -21,7 +21,6 @@ from src.shared.comparison_scoring import (
     score_actual_components,
     scoring_components,
 )
-from src.shared.evaluation import compute_metrics
 
 REFERENCE_FILENAME = "weekly_evaluation_reference_v1.parquet"
 REFERENCE_VERSION = "shared_components_v3"
@@ -69,8 +68,18 @@ def seasonal_top_mask(frame: pd.DataFrame, n: int, score: str = "fantasy_points"
     )
 
 
-def reference_path() -> Path:
-    return Path(CACHE_DIR) / REFERENCE_FILENAME
+def reference_path(*, cache_dir: str | Path | None = None) -> Path:
+    """Resolve this IO boundary against the explicit run's raw-data root.
+
+    Evaluation mathematics remains independent of execution context. Only
+    the optional local reference reader uses the legacy IO context bridge;
+    standalone callers can supply a directory directly.
+    """
+    if cache_dir is None:
+        from src.training.context import raw_data_dir
+
+        cache_dir = raw_data_dir(CACHE_DIR)
+    return Path(cache_dir) / REFERENCE_FILENAME
 
 
 @lru_cache(maxsize=4)
@@ -79,9 +88,9 @@ def _read_reference(path: str, mtime_ns: int, size: int) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-def load_reference() -> pd.DataFrame | None:
+def load_reference(*, cache_dir: str | Path | None = None) -> pd.DataFrame | None:
     """Read a locally hydrated reference; missing data is explicit, never fetched here."""
-    path = reference_path()
+    path = reference_path(cache_dir=cache_dir)
     try:
         stat = path.stat()
     except FileNotFoundError:
@@ -126,6 +135,8 @@ def reference_selection(position: str, frame: pd.DataFrame, reference: pd.DataFr
 
 def metric_block(frame: pd.DataFrame, columns: dict[str, str]) -> dict:
     """Compact JSON-safe metrics; unavailable forecasts are not zeros."""
+    from src.evaluation.metrics import compute_metrics
+
     models = {}
     for name, col in columns.items():
         if col not in frame:
@@ -184,7 +195,12 @@ def weekly_ranking_metrics(frame: pd.DataFrame, columns: dict[str, str], n=24) -
 
 
 def build_cohorts(
-    position: str, frame: pd.DataFrame | None, *, prior_frames=(), reference=None
+    position: str,
+    frame: pd.DataFrame | None,
+    *,
+    prior_frames=(),
+    reference=None,
+    reference_dir=None,
 ) -> dict:
     """Produce every named top-24 result, or a reason it cannot be calculated."""
     definitions = {
@@ -278,7 +294,9 @@ def build_cohorts(
             "models": {},
         }
     if reference is None:
-        reference = load_reference()
+        reference = (
+            load_reference() if reference_dir is None else load_reference(cache_dir=reference_dir)
+        )
     mask, meta = reference_selection(position, df, reference, 24)
     sub = df[mask]
     block["weekly_reference_top24"] = {

@@ -24,6 +24,8 @@ import pytest
 
 import src.serving.core as core
 import src.serving.routes as routes
+from src.prediction import frames as prediction_frames
+from src.prediction import predictor
 
 pytestmark = pytest.mark.integration
 
@@ -70,9 +72,12 @@ def _make_k_df(n: int = 6) -> pd.DataFrame:
 
 
 @pytest.fixture()
-def _stub_app(monkeypatch):
-    """Share the lightweight-model stubs with test_app_apply_position_models."""
+def _stub_app(monkeypatch, tmp_path):
+    """Stub predictor model IO while retaining real schema/scaler/history checks."""
     import src.serving.app as app_mod
+    from src.shared.artifact_integrity import wrap_state_dict
+
+    monkeypatch.chdir(tmp_path)
 
     class _FakeMultiTarget:
         def __init__(self, target_names, **kwargs):
@@ -89,24 +94,22 @@ def _stub_app(monkeypatch):
     dummy_scaler = StandardScaler()
     dummy_scaler.fit(np.zeros((2, 1), dtype=np.float32))
 
-    monkeypatch.setattr(core, "RidgeMultiTarget", _FakeMultiTarget)
-    monkeypatch.setattr(core, "LightGBMMultiTarget", _FakeMultiTarget)
-    monkeypatch.setattr(core.joblib, "load", lambda path: dummy_scaler)
-    monkeypatch.setattr(
-        core.torch,
-        "load",
-        lambda *a, **k: {"model_state": {}, "feature_columns_hash": "h"},
-    )
-    monkeypatch.setattr(core, "assert_scaler_matches", lambda *a, **k: None)
-    monkeypatch.setattr(core, "read_scaler_meta", lambda *a, **k: {})
-    monkeypatch.setattr(
-        core, "unwrap_state_dict", lambda checkpoint: (checkpoint.get("model_state", {}), "h")
-    )
-    monkeypatch.setattr(core, "scale_and_clip", lambda scaler, X: np.asarray(X, dtype=np.float32))
+    monkeypatch.setattr(predictor, "RidgeMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(predictor, "LightGBMMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(predictor.joblib, "load", lambda path: dummy_scaler)
+
+    def checkpoint(path, *args, **kwargs):
+        reg = core.POSITION_REGISTRY["QB"]  # Single-position registry fixture.
+        family = "attn_nn" if os.path.basename(path) == reg.get("attn_nn_file") else "nn"
+        schema = predictor.legacy_schema(reg, family)
+        return wrap_state_dict({}, schema.features, schema.targets)
+
+    monkeypatch.setattr(predictor.torch, "load", checkpoint)
 
     class _FakeNN:
         def __init__(self, *args, **kwargs):
             self.target_names = kwargs.get("target_names", [])
+            self.kick_dim = kwargs.get("kick_dim")
 
         def to(self, device):
             return self
@@ -117,50 +120,41 @@ def _stub_app(monkeypatch):
         def predict_numpy(self, *args, **kwargs):
             X = args[0]
             n = len(X)
+            if self.kick_dim is not None:
+                history, outer, inner = args[1:4]
+                assert history.shape[-1] == self.kick_dim
+                assert outer.shape == history.shape[:2]
+                assert inner.shape == history.shape[:3]
+                assert outer.dtype == inner.dtype == bool
             return {t: np.zeros(n, dtype=np.float32) for t in self.target_names}
 
-    monkeypatch.setattr(core, "MultiHeadNet", _FakeNN)
-    monkeypatch.setattr(core, "MultiHeadNetWithHistory", _FakeNN)
-    monkeypatch.setattr(core, "MultiHeadNetWithNestedHistory", _FakeNN)
+    monkeypatch.setattr(predictor, "MultiHeadNet", _FakeNN)
+    monkeypatch.setattr(predictor, "MultiHeadNetWithHistory", _FakeNN)
+    monkeypatch.setattr(predictor, "MultiHeadNetWithNestedHistory", _FakeNN)
 
     monkeypatch.setattr(
-        core,
+        prediction_frames,
         "build_position_features",
         lambda tr, va, te, reg, fc, full_train=None: (tr, va, te),
-    )
-    # K nested path calls k_features.build_nested_kick_history — stub to tiny
-    # tensors. Patch on the imported module alias so the call site resolves
-    # to our stub (the bare name is no longer an attribute on app_mod after
-    # the cross-position-collision cleanup in PR2).
-    monkeypatch.setattr(
-        core.k_features,
-        "build_nested_kick_history",
-        lambda df, **kw: (
-            np.zeros((len(df), 2, 3, 4), dtype=np.float32),
-            np.zeros((len(df), 2, 3), dtype=np.float32),
-            np.zeros((len(df), 2), dtype=np.float32),
-        ),
-    )
-    monkeypatch.setattr(
-        core,
-        "build_game_history_arrays",
-        lambda df, history_stats, max_seq_len: (
-            np.zeros((len(df), max_seq_len, max(1, len(history_stats))), dtype=np.float32),
-            np.zeros((len(df), max_seq_len), dtype=bool),
-        ),
-    )
-    monkeypatch.setattr(
-        core,
-        "get_attn_static_columns",
-        lambda feature_cols, allow: feature_cols[:1] if feature_cols else [],
     )
     return app_mod
 
 
 @pytest.mark.integration
 def test_apply_position_models_k_nested_attention_branch(_stub_app, monkeypatch):
-    """K's ``attn_history_structure == "nested"`` branch (lines 486-508) must
+    """K's ``attn_history_structure == "nested"`` branch must
     fire end-to-end, producing attn_nn_pred values on the results frame."""
+    from src.k import features as k_features
+
+    history_batches = []
+    build_history = k_features.build_nested_kick_history
+
+    def capture_history(*args, **kwargs):
+        batch = build_history(*args, **kwargs)
+        history_batches.append(batch)
+        return batch
+
+    monkeypatch.setattr(k_features, "build_nested_kick_history", capture_history)
     reg = {
         "targets": ["fg_yard_points", "pat_points", "fg_misses", "xp_misses"],
         "specific_features": [],
@@ -198,24 +192,27 @@ def test_apply_position_models_k_nested_attention_branch(_stub_app, monkeypatch)
             return True
 
     monkeypatch.setattr(core, "POSITION_REGISTRY", _Stub())
-    # K nested attention reads k_kicks_df out of _cache; stub with an empty DF
-    # so build_nested_kick_history has something to close over (our helper
-    # stub doesn't actually use the contents).
     _stub_app._cache.clear()
-    _stub_app._cache["k_kicks_df"] = pd.DataFrame()
 
     results = _make_results_frame(n=6)
     df = _make_k_df(n=6)
+    df["player_id"] = "K0"
+    results["player_id"] = "K0"
+    _stub_app._cache["k_kicks_df"] = df[["player_id", "season", "week"]].assign(
+        kick_distance=np.linspace(30.0, 45.0, len(df)), play_id=np.arange(len(df))
+    )
     core._apply_position_models(df, df, df, "K", results)
 
     # K's attention must populate attn_nn_pred for every row.
     assert results["attn_nn_pred"].notna().all()
+    assert len(history_batches) == 1
+    assert history_batches[0][0].shape == (6, 2, 3, 1)
+    assert np.any(history_batches[0][0]) and np.any(history_batches[0][1])
 
 
 @pytest.mark.integration
 def test_apply_position_models_k_nested_attention_missing_kicks_df_raises(_stub_app, monkeypatch):
-    """When k_kicks_df is absent from _cache, the nested-attention branch
-    raises RuntimeError — the outer except records the failure + NaN's preds."""
+    """Missing kick context degrades attention while other families still run."""
     reg = {
         "targets": ["fg_yard_points"],
         "specific_features": [],
@@ -257,6 +254,8 @@ def test_apply_position_models_k_nested_attention_missing_kicks_df_raises(_stub_
 
     # Ridge + NN still populated (their paths succeeded); attn NaN'd.
     assert results["attn_nn_pred"].isna().all()
+    assert results["ridge_pred"].notna().all() and results["nn_pred"].notna().all()
+    assert "kick history" in _stub_app._cache["position_load_errors"]["K_attn_nn"]
 
 
 @pytest.mark.integration
@@ -271,7 +270,7 @@ def test_apply_position_models_lgbm_load_failure_leaves_lgbm_pred_nan(monkeypatc
         def load(self, path):
             raise RuntimeError("lgbm missing")
 
-    monkeypatch.setattr(core, "LightGBMMultiTarget", _BadLGBM)
+    monkeypatch.setattr(predictor, "LightGBMMultiTarget", _BadLGBM)
 
     reg = {
         "targets": ["passing_yards"],
@@ -627,11 +626,11 @@ def test_load_dst_splits_filters_by_season(monkeypatch):
     )
 
     # DST data + features live on module aliases after PR2's collision cleanup.
-    def cached_dst_data(*, allow_scoring_fetch):
+    def build_data(*, allow_scoring_fetch):
         assert allow_scoring_fetch is False
         return dst_df
 
-    monkeypatch.setattr(core.dst_data, "build_data", cached_dst_data)
+    monkeypatch.setattr(core.dst_data, "build_data", build_data)
     monkeypatch.setattr(core.dst_features, "compute_features", lambda df: None)
 
     class _StubReg:

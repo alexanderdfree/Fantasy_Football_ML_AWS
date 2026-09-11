@@ -21,14 +21,11 @@ What it gives you over a bespoke loop:
    ``parallel_train``/``core_pool`` primitives — it does not re-implement them,
    and nothing lands in ``src/shared/`` (that fires a 6-position retrain).
 
-2. **Artifact isolation.** Every cell runs ``chdir``-ed into its own tmp dir with
-   ``data/`` symlinked in, so all the hard-coded ``{pos}/outputs`` writes land in
-   the tmp dir and the served artifacts are never touched (same lever as
-   ``tests/_pipeline_e2e_utils.run_pipeline_in_tmp``). The feature cache is
-   ``FF_FEATURE_CACHE_DISABLE``-d by default — the cache keys on data, not code,
-   so a re-run could silently reuse a sibling variant's features and report a
-   false ``Δ=0`` (the cache-confound footgun); each cell computes features once
-   anyway, so there is nothing to lose.
+2. **Artifact isolation.** Every production cell receives a RunContext with
+   private output locations and explicit input roots. It leaves process cwd
+   unchanged. Older injected callbacks use an explicit legacy cwd adapter.
+   ``FF_FEATURE_CACHE_DISABLE`` remains the default A/B protection even though
+   cache identity now includes code, ordered features and side inputs.
 
 0. **Opt-in stacked seeds.** ``--stacked-seeds`` trains each (position,
    variant)'s seeds as ONE vmap ensemble (~4.5×/host-thread; QB/RB/WR/TE,
@@ -96,11 +93,12 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from src.evaluation.records import record_for_result
 from src.tuning._execution import isolated_outputs, run_tasks
 
 ALL_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 DEFAULT_SEEDS = (42, 123, 7)  # 3-seed default for FP-MAE A/Bs (AGENTS.md)
-RIDGE_MODEL = "Ridge"  # cohort_analysis.MODELS key
+RIDGE_MODEL = "Ridge"  # evaluation.metrics.MODELS key
 _RIDGE_TOL = 1e-9  # |ΔRidge MAE| below this == data-identical
 _ENV_JOBS = "FF_AB_JOBS"
 _ENV_NICE = "FF_AB_NICE"
@@ -175,13 +173,13 @@ class Spec:
 def default_metric_fn(result: dict, position: str) -> dict[str, dict[str, float]]:
     """Per-model MAE / signed bias / RMSE / n on ``result["test_df"]``.
 
-    Reuses ``cohort_analysis.per_model_metrics`` (the same fantasy-point columns
+    Reuses ``evaluation.metrics.per_model_metrics`` (the same fantasy-point columns
     ``pred_{model}_total`` vs ``fantasy_points`` the rest of the project reports
     on) so every position — including K/DST, whose totals only exist post-pipeline
     on ``test_df`` — is covered uniformly. Override by defining ``metric_fn`` on
     the spec (e.g. a cohort/subgroup bias or ``rmse_gap_decomposition`` cut).
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     return per_model_metrics(df, available_models(df))
@@ -334,16 +332,18 @@ def _apply_config(variant: Variant, base_cfg: dict) -> dict:
 def _load_general_splits():
     """Read the general train/val/test splits the way ``run_pipeline`` does.
 
-    Called *inside* the isolated cwd so ``SPLITS_DIR`` (a relative path) resolves
-    through the symlinked ``data/``. Returns position-unfiltered frames — a
+    Resolve the input root from the current RunContext. Returns position-unfiltered frames — a
     frame-injector that needs within-position grouping does that itself.
     """
     from src.shared.pipeline import SPLITS_DIR, _read_split
+    from src.training.context import current_context
+
+    split_dir = current_context().splits_dir if current_context() is not None else SPLITS_DIR
 
     return (
-        _read_split(f"{SPLITS_DIR}/train.parquet"),
-        _read_split(f"{SPLITS_DIR}/val.parquet"),
-        _read_split(f"{SPLITS_DIR}/test.parquet"),
+        _read_split(f"{split_dir}/train.parquet"),
+        _read_split(f"{split_dir}/val.parquet"),
+        _read_split(f"{split_dir}/test.parquet"),
     )
 
 
@@ -357,11 +357,9 @@ def run_cell(
 ) -> dict:
     """Run one isolated cell and return its small result dict.
 
-    chdir into a private tmp dir with ``data/`` symlinked in, apply the variant
-    (config + optional frame injection), run the position pipeline, compute the
-    metric, then restore cwd and delete the tmp dir. The served ``{pos}/outputs``
-    are never touched. ``run_fn`` is injectable for tests; production resolves
-    ``src.{pos}.run_pipeline.run``.
+    Give the position pipeline an explicit private output root. Injected
+    pre-context callbacks retain the legacy cwd adapter. ``run_fn`` is
+    injectable for tests; production resolves ``src.{pos}.run_pipeline.run``.
     """
     pos = cell.position
     if run_fn is None:
@@ -371,13 +369,13 @@ def run_cell(
         base_cfg = importlib.import_module(f"src.{pos.lower()}.run_pipeline").CONFIG
 
     cfg = _apply_config(variant, base_cfg)
-    with isolated_outputs(data_dir):
+    parameters = inspect.signature(run_fn).parameters
+    context_aware = "context" in parameters
+    with isolated_outputs(data_dir, legacy_cwd=not context_aware, seed=cell.seed) as context:
         # K/DST build their own splits inside run(seed, config) and take no
         # train/val/test args; the skill positions take (train_df, val_df,
         # test_df, seed, config) and support frame injection.
-        accepts_frames = any(
-            p not in ("seed", "config") for p in inspect.signature(run_fn).parameters
-        )
+        accepts_frames = any(p not in ("seed", "config", "context") for p in parameters)
         if variant.frame_injector is not None and not accepts_frames:
             raise ValueError(
                 f"{pos} run() builds its own splits (no train/val/test args), so the "
@@ -389,9 +387,18 @@ def run_cell(
             train = val = test = None
             if variant.frame_injector is not None:
                 train, val, test = variant.frame_injector(*_load_general_splits())
-            result = run_fn(train, val, test, seed=cell.seed, config=cfg)
+            result = run_fn(
+                train,
+                val,
+                test,
+                seed=cell.seed,
+                config=cfg,
+                **({"context": context} if context_aware else {}),
+            )
         else:
-            result = run_fn(seed=cell.seed, config=cfg)
+            result = run_fn(
+                seed=cell.seed, config=cfg, **({"context": context} if context_aware else {})
+            )
         metrics = metric_fn(result, pos)
         ridge = metrics.get(RIDGE_MODEL, {}).get("mae")
         return {
@@ -401,6 +408,14 @@ def run_cell(
             "label": variant.label or cell.variant,
             "ok": True,
             "metrics": metrics,
+            "evaluation_record": record_for_result(
+                pos,
+                result,
+                source_ids=metrics,
+                execution_regime="eager",
+                metric_definition=f"{metric_fn.__module__}.{metric_fn.__qualname__}",
+                use_environment=True,
+            ).to_dict(),
             "ridge_mae": ridge,
             "error": None,
         }
@@ -491,7 +506,8 @@ def run_group_stacked(
     base_cfg = mod.CONFIG
     cfg = _apply_config(variant, base_cfg)
 
-    with isolated_outputs(data_dir):
+    context_aware = "context" in inspect.signature(run_fn).parameters
+    with isolated_outputs(data_dir, legacy_cwd=not context_aware, seed=group.seeds[0]) as context:
         frames = None
         if variant.frame_injector is not None:
             frames = variant.frame_injector(*_load_general_splits())
@@ -501,10 +517,22 @@ def run_group_stacked(
         seed0 = group.seeds[0]
         if frames is not None:
             result0 = run_fn(
-                frames[0].copy(), frames[1].copy(), frames[2].copy(), seed=seed0, config=cfg_a
+                frames[0].copy(),
+                frames[1].copy(),
+                frames[2].copy(),
+                seed=seed0,
+                config=cfg_a,
+                **({"context": context} if context_aware else {}),
             )
         else:
-            result0 = run_fn(None, None, None, seed=seed0, config=cfg_a)
+            result0 = run_fn(
+                None,
+                None,
+                None,
+                seed=seed0,
+                config=cfg_a,
+                **({"context": context} if context_aware else {}),
+            )
         # metric_fn is NOT called on the Phase-A result: its test_df has no
         # attention column yet, and a custom metric_fn may require it. Each
         # per-seed metrics_k below carries the (constant) Ridge value instead.
@@ -532,6 +560,14 @@ def run_group_stacked(
                     "label": variant.label or group.variant,
                     "ok": True,
                     "metrics": metrics_k,
+                    "evaluation_record": record_for_result(
+                        pos,
+                        {**result0, "test_df": df_k},
+                        source_ids=metrics_k,
+                        execution_regime="stacked",
+                        metric_definition=f"{metric_fn.__module__}.{metric_fn.__qualname__}",
+                        use_environment=True,
+                    ).to_dict(),
                     "ridge_mae": metrics_k.get(RIDGE_MODEL, {}).get("mae"),
                     "error": None,
                     "stacked": True,
@@ -575,8 +611,7 @@ def _cell_failed(cell: Cell, variant: Variant, exc: BaseException) -> dict:
 
 def run_sequential(spec: Spec, cells: list[Cell], data_dir: str) -> list[dict]:
     """Run cells one at a time, in-process. The low-core fallback and the
-    test/CI path; chdir isolation is naturally safe when only one cell runs at a
-    time."""
+    test/CI path; each cell still has its own RunContext."""
     results = []
     for i, cell in enumerate(cells, 1):
         variant = spec.variants[cell.variant]

@@ -6,11 +6,12 @@ identity** instead of the old fragile mtime comparison (which broke on
 ``rebase``/``stash pop``/``checkout`` and never proved the benchmark ran on
 the shipped code — the recorded ``git_hash`` was decorative).
 
-Manifest (version ``v1``): for position P, the sorted list of
+Manifest (version ``v2``): for position P, the sorted list of
 ``(path, git_blob_sha)`` pairs over every **tracked** file under
 ``src/{pos}/`` plus the global set (``src/shared/``, ``src/data/``,
-``src/features/``, ``src/config.py``, ``src/__init__.py``). The fingerprint
-is ``sha256("v1\\n" + one "path\\0sha\\n" line per pair)``.
+``src/features/``, ``src/prediction/``, ``src/training/``, ``src/evaluation/``,
+``src/config.py``, ``src/__init__.py``). The fingerprint
+is ``sha256("v2\\n" + one "path\\0sha\\n" line per pair)``.
 
 Two sources, identical output for identical content:
 
@@ -49,7 +50,7 @@ import subprocess
 import sys
 from collections.abc import Iterable
 
-FINGERPRINT_VERSION = "v1"
+FINGERPRINT_VERSION = "v2"
 
 # Must cover every path scope_positions._BENCH_SHARED_REGEX can match (the
 # soundness invariant above). Bump FINGERPRINT_VERSION when this set changes —
@@ -58,6 +59,11 @@ GLOBAL_PATHS: tuple[str, ...] = (
     "src/shared",
     "src/data",
     "src/features",
+    "src/contracts/feature_names.py",
+    "src/contracts/target_units.py",
+    "src/prediction",
+    "src/training",
+    "src/evaluation",
     "src/config.py",
     "src/__init__.py",
 )

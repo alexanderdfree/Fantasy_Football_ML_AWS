@@ -150,6 +150,15 @@ def _benchmark_row(entry: dict) -> dict:
     pr_number = entry.get("pr_number")
     return {
         "run_id": entry.get("run_id"),
+        **(
+            {
+                "training_run_id": entry["training_run_id"],
+                "validation_status": entry.get("validation_status", "accepted"),
+                "accepted_positions": entry.get("accepted_positions", list(by_pos)),
+            }
+            if entry.get("training_run_id")
+            else {}
+        ),
         "timestamp": entry.get("timestamp"),
         "git_hash": entry.get("git_hash"),
         "pr_number": int(pr_number) if isinstance(pr_number, int) else None,
@@ -202,6 +211,21 @@ def _load_benchmark_history_rows() -> list[dict]:
                 # A malformed file shouldn't poison the whole tab.
                 continue
             rows.append(_benchmark_row(entry))
+        # Retry progress can append another immutable presentation of one run.
+        # Keep separate runs/seeds, and never let late failed evidence replace
+        # a presentation with more canonical accepted positions.
+        presentations = {}
+        ungrouped = []
+        for row in rows:
+            run_id = row.get("training_run_id")
+            if not run_id:
+                ungrouped.append(row)
+                continue
+            priority = (len(row.get("accepted_positions", ())), row.get("timestamp") or "")
+            previous = presentations.get(run_id)
+            if previous is None or priority > previous[0]:
+                presentations[run_id] = (priority, row)
+        rows = ungrouped + [row for _, row in presentations.values()]
         rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
         _BENCHMARK_HISTORY_CACHE = (mtime, rows)
         return rows

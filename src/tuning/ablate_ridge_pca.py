@@ -169,8 +169,11 @@ def _execute_ridge_pca_job(job: AblationJob) -> dict[str, Any]:
     test — and stores both MAEs in ``metrics`` so the decision table can apply
     the consistent-improver rule without needing a second job.
     """
-    pca_n: int | None = job.base_cfg.get("_job_pca_n")  # sentinel injected by _build_jobs
-    cfg = _make_cfg(job.base_cfg, pca_n)
+    # The picklable job payload carries orchestration metadata that is not a
+    # training recipe field. Preserve it on the job, outside the typed runner.
+    base_cfg = dict(job.base_cfg)
+    pca_n: int | None = base_cfg.pop("_job_pca_n", None)
+    cfg = _make_cfg(base_cfg, pca_n)
 
     train = pd.read_parquet(f"{SPLITS_DIR}/train.parquet")
     val = pd.read_parquet(f"{SPLITS_DIR}/val.parquet")
@@ -236,6 +239,7 @@ def _build_jobs(
                 job_cfg["_job_pca_n"] = pca_n
                 jobs.append(
                     AblationJob(
+                        context_aware=True,
                         position=position,
                         seed=seed,
                         variant=variant_key,

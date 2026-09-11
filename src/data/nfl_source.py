@@ -117,6 +117,10 @@ def _native_int_seasons(seasons: list[int]) -> list[int]:
     return [int(s) for s in seasons]
 
 
+from src.data.providers.snapshot import snapshot_source  # noqa: E402
+
+
+@snapshot_source
 def weekly_data(seasons: list[int]) -> pd.DataFrame:
     df = _to_pandas(
         _nflreadpy.load_player_stats(_native_int_seasons(seasons), summary_level="week")
@@ -124,6 +128,7 @@ def weekly_data(seasons: list[int]) -> pd.DataFrame:
     return df.rename(columns=_WEEKLY_RENAME)
 
 
+@snapshot_source
 def rosters(seasons: list[int]) -> pd.DataFrame:
     df = _to_pandas(_nflreadpy.load_rosters(_native_int_seasons(seasons)))
     if "player_id" not in df.columns and "gsis_id" in df.columns:
@@ -131,6 +136,7 @@ def rosters(seasons: list[int]) -> pd.DataFrame:
     return df
 
 
+@snapshot_source
 def rosters_weekly(seasons: list[int]) -> pd.DataFrame:
     """Per-(player, season, week) roster snapshots with weekly ``status``.
 
@@ -147,35 +153,43 @@ def rosters_weekly(seasons: list[int]) -> pd.DataFrame:
     return df
 
 
+@snapshot_source
 def schedules(seasons: list[int]) -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_schedules(_native_int_seasons(seasons)))
 
 
+@snapshot_source
 def snap_counts(seasons: list[int]) -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_snap_counts(_native_int_seasons(seasons)))
 
 
+@snapshot_source
 def injuries(seasons: list[int]) -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_injuries(_native_int_seasons(seasons)))
 
 
+@snapshot_source
 def depth_charts(seasons: list[int]) -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_depth_charts(_native_int_seasons(seasons)))
 
 
+@snapshot_source
 def player_ids() -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_ff_playerids())
 
 
+@snapshot_source
 def player_metadata() -> pd.DataFrame:
     """NFL identity and documented name variants, independent of fantasy IDs."""
     return _to_pandas(_nflreadpy.load_players())
 
 
+@snapshot_source
 def teams() -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_teams())
 
 
+@snapshot_source
 def team_week_stats_release(season: int) -> pd.DataFrame:
     """One season of team-week stats from the nflverse ``stats_team`` release.
 
@@ -193,12 +207,14 @@ def team_week_stats_release(season: int) -> pd.DataFrame:
     return pd.read_parquet(url)
 
 
+@snapshot_source
 def pbp_data(seasons: list[int], cols: tuple[str, ...]) -> pd.DataFrame:
     df = _nflreadpy.load_pbp(_native_int_seasons(seasons))
     available = [c for c in cols if c in df.columns]
     return _to_pandas(df.select(available))
 
 
+@snapshot_source
 def ff_opportunity(seasons: list[int]) -> pd.DataFrame:
     """ff_opportunity expected-points per player-game (ffverse ``ep_weekly``
     model). gsis-keyed (``player_id``); ``*_exp`` columns are the modeled
@@ -206,6 +222,7 @@ def ff_opportunity(seasons: list[int]) -> pd.DataFrame:
     return _to_pandas(_nflreadpy.load_ff_opportunity(_native_int_seasons(seasons)))
 
 
+@snapshot_source
 def contracts() -> pd.DataFrame:
     """Historical player contracts (OTC via nflverse). One row per contract,
     all seasons (no season filter at the source); carries ``gsis_id`` +
@@ -253,6 +270,7 @@ def _validated_qbr_games(qbr: pd.DataFrame, schedule: pd.DataFrame) -> pd.DataFr
     return q.loc[valid].copy()
 
 
+@snapshot_source
 def qbr_weekly(seasons: list[int]) -> pd.DataFrame:
     """Maintained weekly QBR, validated against completed regular-season games."""
     seasons = _native_int_seasons(seasons)

@@ -288,14 +288,18 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
         "fetch_practice_report",
         lambda *args, **kwargs: SimpleNamespace(values={}, metadata={"unknown_players": 0}),
     )
-    monkeypatch.setattr(live.live_sources, "fetch_contract_features", lambda *args: None)
+    monkeypatch.setattr(
+        live.live_sources,
+        "fetch_contract_features",
+        lambda *args: pd.DataFrame(columns=live.live_sources.CONTRACT_FEATURE_COLUMNS),
+    )
     monkeypatch.setattr(
         live, "_fetch_upcoming_expert_frames", lambda *args, **kwargs: (None, None, None)
     )
     monkeypatch.setattr(live.core, "_ensure_base_data", lambda: None)
     monkeypatch.setattr(live.core, "_compute_models_fingerprint", lambda: "test-models")
     monkeypatch.setattr(live.core, "_degraded_positions", lambda: [])
-    monkeypatch.setattr(live.app_pkg, "_cache", {"k_kicks_df": pd.DataFrame()})
+    monkeypatch.setattr(live.app_pkg.current_state(), "cache", {"k_kicks_df": pd.DataFrame()})
     special = SimpleNamespace(digest="special", source_status={})
     monkeypatch.setattr(
         live.upcoming_special_teams, "prepare_special_teams", lambda *args, **kwargs: special

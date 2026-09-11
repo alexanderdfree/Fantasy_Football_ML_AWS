@@ -24,6 +24,34 @@ import numpy as np
 import pandas as pd
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def isolated_data_selection_environment(monkeypatch):
+    """Bootstrap may bind a release directly; each test owns that selection."""
+    for name in (
+        "FF_DATA_RELEASE",
+        "FF_DATASET_ID",
+        "FF_DATA_FORMAT",
+        "FF_BUILD_PLAN_ID",
+        "FF_REQUIRE_BUILD_PLAN",
+        "FF_CAPTURE_PROVIDER_SOURCES",
+    ):
+        # Register even initially absent keys before removing them. A plain
+        # delenv(..., raising=False) cannot undo later direct os.environ writes.
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+
+
+@pytest.fixture(autouse=True)
+def isolated_default_snapshot(monkeypatch):
+    """Legacy default-app tests still get an independent snapshot repository."""
+    import sys
+
+    state = sys.modules.get("src.serving.state")
+    if state is not None:
+        monkeypatch.setattr(state.DEFAULT_STATE, "snapshots", state.SnapshotRepository())
+
+
 # ---------------------------------------------------------------------------
 # Synthetic schedule data — only patched in when the real parquet is absent.
 #
@@ -403,8 +431,11 @@ def app_module(monkeypatch, tmp_path):
     """
     import src.serving.app as app_mod
     import src.serving.core as core
+    from src.serving.state import SnapshotRepository
 
-    monkeypatch.setattr(app_mod, "_cache", {})
+    monkeypatch.setattr(app_mod._default_state, "cache", {})
+    monkeypatch.setattr(app_mod._default_state, "snapshots", SnapshotRepository())
+    monkeypatch.setattr(app_mod._default_state, "wiki_cache", {})
     monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(tmp_path / "serving_cache"))
     return app_mod
 
@@ -426,6 +457,7 @@ def client_with_data(app_module, synthetic_cache):
     tests don't depend on on-disk artifacts.
     """
     app_module._cache.update(synthetic_cache)
+    app_module._default_state.publish()
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c

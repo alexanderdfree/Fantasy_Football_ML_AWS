@@ -41,14 +41,29 @@ gh variable set BATCH_ACTIVE --body "false"   # → use this trainer; leave at "
    nvidia-smi | head -3
    ```
 
-3. **Smoke test** (K is CPU-only and fast, ~30s):
+3. **Source-pinned smoke test**: use an image built with the ordered-publication
+   protocol. From a full repository checkout, register the selected image's
+   full source SHA before dispatch:
    ```
-   # inside SSM session:
+   python -m src.scripts.register_training_source --sha <full-image-source-sha> --bucket ff-predictor-training
+   ```
+   Resolve that SHA's ECR tag to its immutable digest. Inside the SSM session:
+   ```
+   export FF_TRAIN_IMAGE='<account>.dkr.ecr.<region>.amazonaws.com/ff-training@sha256:<digest>'
+   export FF_TRAIN_GIT_SHA='<full-image-source-sha>'
+   export FF_LEGACY_RUN_ID='ec2:manual:<unique-request-id>'
    /usr/local/bin/ff-train K 42
-   aws s3 ls s3://ff-predictor-training/models/K/
+   aws s3 ls s3://ff-predictor-training/models/releases/v3/K/
    ```
+   Reuse the request ID only for retries of the same request. The helper verifies
+   the baked source before GPU work and records the selected digest as
+   `FF_TRAIN_IMAGE_ID`. It never trains a mutable `:latest` reference.
 
-4. **CI end-to-end**: push any change matching the `train-ec2.yml` path filter; observe the workflow run, model freshness in S3, and logs in `/ff/training` CloudWatch log group.
+4. **CI end-to-end**: automatic runs select the completed image build's SHA;
+   manual dispatch requires `image_sha`. CI installs the current wrapper
+   atomically on existing warm hosts, reserves the stable
+   `ec2:<workflow-run-id>:<attempt>` intent, and verifies each run's own artifact
+   receipt before history/cache publication. Logs remain in `/ff/training`.
 
 ## Auto-shutdown
 

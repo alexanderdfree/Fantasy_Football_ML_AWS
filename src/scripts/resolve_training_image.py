@@ -48,18 +48,21 @@ def _definition(batch, name: str, revision: int) -> dict:
     return matches[0]
 
 
-def resolve_definition(batch, identifier: str) -> dict[str, str]:
+def resolve_definition(batch, identifier: str, *, include_image=False) -> dict[str, str]:
     """Read one already-selected immutable Batch revision and its source tag."""
     values = batch.describe_job_definitions(jobDefinitions=[identifier]).get("jobDefinitions", [])
     active = [value for value in values if value.get("status") == "ACTIVE"]
     if len(active) != 1:
         raise ValueError(f"Batch definition is not one active revision: {identifier}")
     value = active[0]
-    return {
+    result = {
         "image_sha": _image_sha(value),
         "job_definition": value.get("jobDefinitionArn")
         or f"{value['jobDefinitionName']}:{value['revision']}",
     }
+    if include_image:
+        result["image"] = value["containerProperties"]["image"]
+    return result
 
 
 def resolve_batch(
@@ -74,6 +77,7 @@ def resolve_batch(
     revision: str = "",
     cpu_revision: str = "",
     primary_cpu: bool = False,
+    include_definition: bool = False,
 ) -> dict[str, str]:
     if revision:
         if not str(revision).isdigit() or int(revision) < 1:
@@ -98,6 +102,11 @@ def resolve_batch(
     if sha and actual_sha != sha:
         raise ValueError(f"Batch image source {actual_sha} differs from requested {sha}")
     result = {"image_sha": actual_sha, "revision": str(definition["revision"]), "cpu_revision": ""}
+    if include_definition:
+        result.update(
+            job_definition=definition.get("jobDefinitionArn") or f"{name}:{definition['revision']}",
+            image=definition["containerProperties"]["image"],
+        )
     if split:
         revision = (
             int(cpu_revision) if cpu_revision else _revision(s3, bucket, actual_sha, cpu=True)
@@ -106,6 +115,9 @@ def resolve_batch(
         if _image_sha(cpu) != actual_sha:
             raise ValueError("GPU and CPU Batch revisions use different source images")
         result["cpu_revision"] = str(revision)
+        if include_definition:
+            result["cpu_job_definition"] = cpu.get("jobDefinitionArn") or f"{cpu_name}:{revision}"
+            result["cpu_image"] = cpu["containerProperties"]["image"]
     return result
 
 

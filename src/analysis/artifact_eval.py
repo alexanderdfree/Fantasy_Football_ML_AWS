@@ -11,20 +11,12 @@ on the test split, producing a ``test_df`` whose ``pred_{model}_total`` /
 ``pred_{model}_{target}`` columns match ``src.shared.pipeline`` exactly, so the
 diagnostics consume it unchanged.
 
-Design: it reuses the **same** primitives serving uses — ``INFERENCE_REGISTRY``
-(``reg``), ``build_position_features`` (so the feature path can't drift from
-training/serving), the ``artifact_integrity`` scaler checks, and the model
-``.load()`` / ``predict_numpy`` calls — so there is one inference contract, not a
-copy. The orchestration here mirrors ``src.serving.core._apply_position_models``;
-the intended follow-up is to extract that shared inner loop into one helper both
-serving and this module call (see PR description).
-
-v1 scope: Ridge + base NN + **flat** Attention NN (including the opponent-history
-side branch the skill positions use) + LightGBM. Only the nested per-kick (K)
-attention variant is skipped (its attn column is omitted; the diagnostics' own
-``available_models`` then degrades gracefully). Deterministic models (Ridge
-always; LightGBM with fixed seed) reproduce the served numbers exactly; NN/Attn
-match the served weights since they are loaded, not refit.
+Preparation and loading delegate to ``src.prediction.frames.predict_position``,
+the same adapter used by the serving artifact builder. Versioned bundles bind
+ordered inputs, fitted preprocessing and model construction; older artifacts
+use the explicit legacy registry adapter. Ridge, base NN, flat/opponent-history
+attention, nested K attention and LightGBM are supported. Predictions stay at
+their original precision here; the HTTP serializer rounds display values.
 
 Usage (library):
     from src.analysis.artifact_eval import build_test_df_from_artifacts
@@ -41,27 +33,11 @@ import argparse
 import json
 import os
 
-import joblib
 import numpy as np
 import pandas as pd
 import torch
 
-from src.config import MIN_GAMES_PER_SEASON
-from src.features.engineer import (
-    OPP_ATTN_PER_GAME_BUILDERS,
-    build_game_history_arrays,
-    build_opp_defense_history_arrays,
-    get_attn_static_columns,
-)
 from src.shared.aggregate_targets import predictions_to_fantasy_points
-from src.shared.artifact_integrity import (
-    assert_scaler_matches,
-    read_scaler_meta,
-    unwrap_state_dict,
-)
-from src.shared.feature_build import build_position_features, scale_and_clip
-from src.shared.models import LightGBMMultiTarget, RidgeMultiTarget
-from src.shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
 from src.shared.registry import INFERENCE_REGISTRY
 
 
@@ -93,13 +69,6 @@ def attach_predictions(
     pos_test[f"pred_{name}_total"] = total_fn(preds)
     for t in targets:
         pos_test[f"pred_{name}_{t}"] = preds[t]
-
-
-def _attn_is_supported(reg: dict) -> bool:
-    """v1 supports the flat attention branch (incl. the opponent-history side
-    branch used by the skill positions); the nested per-kick variant (K) is not
-    yet handled."""
-    return reg.get("attn_history_structure", "flat") != "nested"
 
 
 def _producer_model_dir(pos: str) -> str:
@@ -169,217 +138,62 @@ def resolve_model_dir(pos: str, reg: dict, override: str | None = None) -> str:
 
 
 def build_test_df_from_artifacts(
-    pos: str,
-    train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
-    test_df: pd.DataFrame,
+    pos,
+    train_df,
+    val_df,
+    test_df,
     *,
-    scoring_format: str = "ppr",
-    device: torch.device | None = None,
-    model_dir: str | None = None,
-) -> pd.DataFrame:
-    """Load ``pos``'s saved artifacts and return its test_df with per-row preds.
+    scoring_format="ppr",
+    device=None,
+    model_dir=None,
+    kick_history=None,
+    opponent_weekly=None,
+):
+    """Use the same prediction adapter as serving, including nested K history."""
+    from src.prediction.frames import predict_position
 
-    No retraining: each model is loaded from ``model_dir`` (resolved by
-    :func:`resolve_model_dir` — served path ``src/{pos}/outputs/models``, falling
-    back to the local producer path ``{pos}/outputs/models``) and run over the test
-    split. A non-existent ``model_dir`` raises loudly; *per-model* load failures
-    (a single model's file missing / scaler mismatch) are warned and skipped (that
-    column is omitted), matching serving's graceful degradation, and the
-    diagnostics' ``available_models`` keys off column presence.
-    """
-    reg = INFERENCE_REGISTRY[pos]
-    device = device or _device()
-    targets = list(reg["targets"])
-    model_dir = resolve_model_dir(pos, reg, model_dir)
+    reg = dict(INFERENCE_REGISTRY[pos])
+    reg["model_dir"] = resolve_model_dir(pos, reg, model_dir)
+    if pos == "K" and kick_history is None:
+        from src.k.data import load_kicks
 
-    pos_train = reg["filter_fn"](train_df)
-    pos_val = reg["filter_fn"](val_df)
-    pos_test = reg["filter_fn"](test_df)
-    if pos not in ("K", "DST"):
-        pos_train = reg["compute_targets_fn"](pos_train)
-        pos_val = reg["compute_targets_fn"](pos_val)
-        pos_test = reg["compute_targets_fn"](pos_test)
+        kick_history = load_kicks(pd.concat([train_df, val_df, test_df], ignore_index=True))
+    if (
+        reg.get("opp_attn_kind") == "offense"
+        and reg.get("opp_attn_history_stats")
+        and opponent_weekly is None
+    ):
+        from src.config import CACHE_DIR, SEASONS
 
-    # Mirror the train-only min-games filter that training + serving apply to
-    # pos_train BEFORE feature-building (src.serving.core._apply_position_models /
-    # src.shared.pipeline._prepare_position_data): the fill-means + StandardScaler
-    # are fit on pos_train, so an unfiltered train frame drifts those stats from
-    # the served artifacts and these preds stop reproducing the served numbers —
-    # this module's whole contract. val/test stay unfiltered, as in training. (#977)
-    min_games = reg.get("min_games_per_season")
-    if min_games is None:
-        min_games = MIN_GAMES_PER_SEASON
-    # Capture the pre-filter train so RB/WR's team-total / share / HHI / career
-    # features see the full player set, then return only the filtered rows —
-    # exactly as training + serving do (#574/#531). fill_nans + the scaler still
-    # fit on the filtered train (#569), so this stays faithful to the served
-    # artifacts (this module's contract).
-    full_train = pos_train
-    games_per_season = pos_train.groupby(["player_id", "season"])["week"].transform("count")
-    pos_train = pos_train[games_per_season >= min_games].copy()
-
-    feature_cols = reg["get_feature_columns_fn"]()
-    pos_train, pos_val, pos_test = build_position_features(
-        pos_train, pos_val, pos_test, reg, feature_cols, full_train=full_train
+        opponent_weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
+        if "season_type" in opponent_weekly:
+            opponent_weekly = opponent_weekly[opponent_weekly["season_type"].eq("REG")]
+    prediction = predict_position(
+        pos,
+        train_df,
+        val_df,
+        test_df,
+        reg,
+        kicks=kick_history,
+        opponent_weekly=opponent_weekly,
+        device=device or _device(),
     )
-    pos_test = pos_test.copy()
-    X_test = pos_test[feature_cols].values.astype(np.float32)
-    total_fn = _make_total_fn(pos, targets, reg, scoring_format)
-
-    def _warn(model: str, exc: Exception) -> None:
-        print(
-            f"[artifact_eval] {pos} {model} load/predict failed (model_dir={model_dir!r}): "
-            f"{exc!r} — column omitted"
+    result = prediction.frame.copy()
+    for family, predictions in prediction.raw.items():
+        result[f"pred_{family}_total"] = prediction.totals[family][scoring_format]
+        for target in reg["targets"]:
+            result[f"pred_{family}_{target}"] = predictions[target]
+    result.attrs["prediction_errors"] = prediction.errors
+    result.attrs["model_bundle_ids"] = prediction.bundle_ids
+    for family, error in prediction.errors.items():
+        print(f"[artifact_eval] {family}: {error}")
+    try:
+        validate_reconstruction(
+            pos, result, model_dir=reg["model_dir"], scoring_format=scoring_format
         )
-
-    # --- Ridge (deterministic; reproduces the served numbers exactly) ---------
-    try:
-        ridge = RidgeMultiTarget(target_names=targets)
-        ridge.load(model_dir)
-        attach_predictions(pos_test, "ridge", ridge.predict(X_test), targets, total_fn)
-    except Exception as e:  # noqa: BLE001 - graceful per-model degradation (mirrors serving)
-        _warn("ridge", e)
-
-    # --- Base NN --------------------------------------------------------------
-    try:
-        nn_scaler = joblib.load(f"{model_dir}/nn_scaler.pkl")
-        nn_meta = read_scaler_meta(f"{model_dir}/nn_scaler_meta.json")
-        ckpt = torch.load(f"{model_dir}/{reg['nn_file']}", map_location=device, weights_only=True)
-        state_dict, scaler_hash = unwrap_state_dict(ckpt)
-        assert_scaler_matches(
-            pos, nn_scaler, scaler_hash, nn_meta, feature_cols, targets, scaler_label="nn_scaler"
-        )
-        x_scaled = scale_and_clip(nn_scaler, X_test)
-        model = MultiHeadNet(
-            input_dim=len(feature_cols), target_names=targets, **reg["nn_kwargs"]
-        ).to(device)
-        model.load_state_dict(state_dict)
-        attach_predictions(pos_test, "nn", model.predict_numpy(x_scaled, device), targets, total_fn)
-    except Exception as e:  # noqa: BLE001
-        _warn("nn", e)
-
-    # --- Attention NN (flat variant only in v1) -------------------------------
-    if reg.get("train_attention_nn", False) and reg.get("attn_nn_file"):
-        if not _attn_is_supported(reg):
-            print(
-                f"[artifact_eval] {pos}: nested/opp-history attention not supported in v1; "
-                "attn_nn column omitted."
-            )
-        else:
-            try:
-                if reg.get("attn_static_from_df", False):
-                    attn_static_cols = list(reg.get("attn_static_features", []))
-                    x_attn = pos_test[attn_static_cols].to_numpy(dtype=np.float32)
-                else:
-                    attn_static_cols = get_attn_static_columns(
-                        feature_cols, reg.get("attn_static_features", [])
-                    )
-                    col_set = set(attn_static_cols)
-                    idx = [i for i, c in enumerate(feature_cols) if c in col_set]
-                    x_attn = X_test[:, idx]
-
-                attn_scaler = joblib.load(f"{model_dir}/attention_nn_scaler.pkl")
-                attn_meta = read_scaler_meta(f"{model_dir}/attention_nn_scaler_meta.json")
-                ckpt = torch.load(
-                    f"{model_dir}/{reg['attn_nn_file']}", map_location=device, weights_only=True
-                )
-                state_dict, scaler_hash = unwrap_state_dict(ckpt)
-                assert_scaler_matches(
-                    pos,
-                    attn_scaler,
-                    scaler_hash,
-                    attn_meta,
-                    attn_static_cols,
-                    targets,
-                    scaler_label="attention_nn_scaler",
-                )
-                x_attn_scaled = scale_and_clip(attn_scaler, x_attn)
-                max_seq_len = reg.get("attn_max_seq_len", 17)
-                hist, mask = build_game_history_arrays(
-                    pos_test,
-                    history_stats=list(reg.get("attn_history_stats", [])),
-                    max_seq_len=max_seq_len,
-                )
-
-                # Opponent-history side branch — live for the skill positions
-                # (kind "defense", aggregated over the all-position concat). DST's
-                # "offense" kind needs the weekly cache parquet; if it's absent the
-                # enclosing except omits the attn column (graceful).
-                opp_history_stats = reg.get("opp_attn_history_stats") or []
-                opp_hist = opp_mask = None
-                opp_game_dim = None
-                if opp_history_stats:
-                    opp_kind = reg.get("opp_attn_kind", "defense")
-                    builder = OPP_ATTN_PER_GAME_BUILDERS[opp_kind]
-                    if opp_kind == "offense":
-                        from src.config import CACHE_DIR, SEASONS
-
-                        opp_source_df = pd.read_parquet(
-                            f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet"
-                        )
-                        # Match training/serving: the raw weekly cache carries
-                        # postseason rows; drop them so the opp-offense aggregates
-                        # reproduce the REG-only path the model trained on (#424).
-                        if "season_type" in opp_source_df.columns:
-                            opp_source_df = opp_source_df[
-                                opp_source_df["season_type"] == "REG"
-                            ].copy()
-                    else:
-                        opp_source_df = pd.concat([train_df, val_df, test_df], ignore_index=True)
-                    opp_per_game = builder(opp_source_df)
-                    opp_hist, opp_mask = build_opp_defense_history_arrays(
-                        pos_test,
-                        opp_per_game,
-                        opp_history_stats,
-                        reg.get("opp_attn_max_seq_len", max_seq_len),
-                    )
-                    opp_game_dim = opp_hist.shape[2]
-
-                model = MultiHeadNetWithHistory(
-                    static_dim=len(attn_static_cols),
-                    game_dim=hist.shape[2],
-                    target_names=targets,
-                    opp_game_dim=opp_game_dim,
-                    **reg["attn_nn_kwargs_static"],
-                ).to(device)
-                model.load_state_dict(state_dict)
-                if opp_game_dim is not None:
-                    preds = model.predict_numpy(
-                        x_attn_scaled,
-                        hist,
-                        mask,
-                        device,
-                        X_opp_history=opp_hist,
-                        opp_history_mask=opp_mask,
-                    )
-                else:
-                    preds = model.predict_numpy(x_attn_scaled, hist, mask, device)
-                attach_predictions(pos_test, "attn_nn", preds, targets, total_fn)
-            except Exception as e:  # noqa: BLE001
-                _warn("attn_nn", e)
-
-    # --- LightGBM (QB/RB/WR/TE only) ------------------------------------------
-    if reg.get("train_lightgbm", False):
-        try:
-            lgbm = LightGBMMultiTarget(target_names=targets)
-            lgbm.load(model_dir)
-            attach_predictions(pos_test, "lgbm", lgbm.predict(X_test), targets, total_fn)
-        except Exception as e:  # noqa: BLE001
-            _warn("lgbm", e)
-
-    # Self-check: does the loaded deterministic Ridge still reproduce its recorded
-    # training MAE on these splits? A large divergence means the saved artifact and
-    # the current data/splits are different vintages — the artifact is STALE and its
-    # reconstructed predictions will silently corrupt downstream diagnostics (the QB
-    # incident: Ridge reconstruct 6.74 vs recorded 5.88 → a spurious −3.46 "elite
-    # under-leveling"). Warn-only here so it never breaks an operator's run.
-    try:
-        validate_reconstruction(pos, pos_test, model_dir=model_dir, scoring_format=scoring_format)
-    except Exception as e:  # noqa: BLE001 - a self-check must never break reconstruction
-        print(f"[artifact_eval] {pos}: reconstruction self-check errored (non-fatal): {e}")
-
-    return pos_test
+    except Exception as exc:
+        print(f"[artifact_eval] {pos}: reconstruction self-check errored: {exc}")
+    return result
 
 
 # --- Stale-artifact (Ridge-tell) drift check ---------------------------------- #

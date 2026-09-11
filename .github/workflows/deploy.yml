@@ -27,6 +27,7 @@ on:
       - "Dockerfile"
       - ".dockerignore"
       - "requirements.txt"
+      - "requirements-serving.txt"
       - ".github/workflows/deploy.yml"
       - "!src/batch/**"
       - "!src/tuning/**"
@@ -40,10 +41,9 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Serialize this production service across refs and refresh-only data-pin
-  # updates. The data producer runs outside this lock, so a deployment can
-  # wait for publication without blocking the matching refresh workflow.
-  group: ecs-fantasy-cluster-fantasy-service
+  # Every ref targets the same service and ALB readiness settings. Serialize
+  # those mutations across refs and let incomplete rollouts restore health.
+  group: deploy-fantasy-service
   cancel-in-progress: false
 
 env:
@@ -52,8 +52,6 @@ env:
   ECS_CLUSTER: fantasy-cluster
   ECS_SERVICE: fantasy-service
   TASK_FAMILY: fantasy-predictor
-  S3_BUCKET: ff-predictor-training
-  UV_INDEX_STRATEGY: unsafe-best-match
   # Public serving URL for the post-deploy cache-warm probe (plain HTTPS GET
   # to /warm; see the final step). Fresh tasks hydrate the S3 cache at boot
   # when models are unchanged — this just warms any worker that raced traffic.
@@ -106,7 +104,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ hashFiles('requirements.txt', 'Dockerfile') }}
+          key: buildx-${{ runner.os }}-${{ hashFiles('requirements-serving.txt', 'Dockerfile') }}
           restore-keys: |
             buildx-${{ runner.os }}-
 
@@ -133,71 +131,20 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-      - name: Wait for compatible published training data
-        id: data-release
-        timeout-minutes: 62
-        run: |
-          python3 -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
-            --revision "$GITHUB_SHA" --timeout-seconds 3600
-
-      # A new cache protocol/schema must be available before fresh tasks boot.
-      # Build on CI when needed; a valid existing generation skips inference.
-      # This is a required gate: a cache miss must not move expensive six-position
-      # feature building and inference into both serving workers during rollout.
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
-        with:
-          enable-cache: true
-          cache-dependency-glob: "requirements*.txt"
-
-      - name: Install cache builder dependencies
-        run: uv pip install --system -r requirements-dev.txt
-
-      - name: Prepare verified serving cache before rollout
-        timeout-minutes: 30
-        env:
-          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
-          FF_MODEL_S3_PREFIX: models
-          FF_DATA_RELEASE: ${{ steps.data-release.outputs.release_id }}
-          FF_DEVICE: cpu
-        run: python -m src.scripts.build_serving_cache --reuse-valid
-
       - name: Pull current task definition
         # Start from the live task def (preserves the real ARNs / env / secrets /
-        # log config), swap the image below — but source cpu/memory from the
-        # in-repo infra/aws/task-definition.json so serving capacity is codified
-        # in git rather than drifting on whatever the last register-task-definition
-        # set. The prediction-cache recompute needs 8 GB headroom: on a cold /
-        # fingerprint-drifted boot both gunicorn workers recompute concurrently
-        # and OOM'd the 4 GB task (2026-06-15 incident; see ADR-0018). Only the
-        # two scalar capacity fields are read from the file (the rest of it is a
-        # placeholder setup template), so this never reintroduces __PLACEHOLDER__s.
-        env:
-          DATA_RELEASE: ${{ steps.data-release.outputs.release_id }}
-          DATA_PRODUCER: ${{ steps.data-release.outputs.producer_sha256 }}
+        # log config). Explicitly compose the capacity/platform, readiness probe
+        # and artifact-only policy owned by the repository. Copying only CPU and
+        # memory would retain a live /health override of the image's /ready probe.
         run: |
-          aws ecs describe-task-definition --task-definition $TASK_FAMILY \
-            --query 'taskDefinition' --output json \
-          | jq 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
-          > task-definition.json
-          cpu=$(jq -r '.cpu' infra/aws/task-definition.json)
-          mem=$(jq -r '.memory' infra/aws/task-definition.json)
-          jq --arg cpu "$cpu" --arg mem "$mem" '.cpu = $cpu | .memory = $mem' \
-            task-definition.json > task-definition.pinned.json
-          mv task-definition.pinned.json task-definition.json
-          # Pin the exact checked snapshot: boot must not resolve a newer,
-          # incompatible global current pointer after this gate completes.
-          jq --arg release "$DATA_RELEASE" --arg producer "$DATA_PRODUCER" '
-            .containerDefinitions |= map(if .name == "fantasy-predictor" then
-              .environment = ((.environment // [] | map(select(.name != "FF_DATA_RELEASE" and .name != "FF_DATA_PRODUCER_SHA256"))) +
-                [{name:"FF_DATA_RELEASE",value:$release},{name:"FF_DATA_PRODUCER_SHA256",value:$producer}])
-              else . end)
-          ' task-definition.json > task-definition.data.json
-          mv task-definition.data.json task-definition.json
-          echo "Pinned serving capacity from infra/aws/task-definition.json: cpu=$cpu memory=$mem"
+          current_task=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          test -n "$current_task" && test "$current_task" != "None"
+          echo "FF_ORIGINAL_TASK_DEFINITION=$current_task" >> "$GITHUB_ENV"
+          aws ecs describe-task-definition --task-definition "$current_task" \
+            --query 'taskDefinition' --output json > task-definition.json
+          python -m src.artifacts.deployment --live task-definition.json \
+            --desired infra/aws/task-definition.json --output task-definition.json
 
       - name: Update image in task definition
         id: render-task-def
@@ -208,68 +155,39 @@ jobs:
           container-name: fantasy-predictor
           image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
-      # Tune the ALB target group so each rolling deploy isn't held up by
-      # AWS defaults that were built for stateful long-poll services. Idempotent —
-      # no-op when already set. Runs *before* the deploy so the about-to-drain
-      # task uses the shorter deregistration delay.
-      #
-      #   - deregistration_delay.timeout_seconds = 30   (default 300)
-      #     Old-task drain. Flask request p99 is <1s; 30s is generous and saves
-      #     ~270s per rolling redeploy.
-      #   - HealthyThresholdCount         = 2          (default 5)
-      #   - HealthCheckIntervalSeconds    = 10         (default 30)
-      #     Mark a fresh task healthy after ~20s instead of 5×30s=150s, saving
-      #     ~130s on the new-task half of the rollout.
-      #
-      # Target-group ARN is discovered from the service so this stays in sync
-      # with whatever target group the service is actually attached to.
-      - name: Tune ALB target group for fast rolling deploys
+      - name: Require a compatible published serving snapshot
+        # Verify the source the rendered container will actually consume.
+        env:
+          FF_RENDERED_TASK_DEFINITION: ${{ steps.render-task-def.outputs.task-definition }}
         run: |
-          TG_ARN=$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --query 'services[0].loadBalancers[0].targetGroupArn' \
-            --output text)
-          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
-            echo "ERROR: could not resolve target group for $ECS_SERVICE"
-            exit 1
-          fi
-          echo "Tuning target group: $TG_ARN"
-          aws elbv2 modify-target-group-attributes \
-            --target-group-arn "$TG_ARN" \
-            --region "$AWS_REGION" \
-            --attributes Key=deregistration_delay.timeout_seconds,Value=30 \
-            --no-cli-pager > /dev/null
-          aws elbv2 modify-target-group \
-            --target-group-arn "$TG_ARN" \
-            --region "$AWS_REGION" \
-            --healthy-threshold-count 2 \
-            --health-check-interval-seconds 10 \
-            --no-cli-pager > /dev/null
+          python -m src.artifacts.serving_snapshot wait \
+            --task-definition "$FF_RENDERED_TASK_DEFINITION" --bind-data --timeout 2400
 
       - name: Deploy to ECS
-        # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: aws-actions/amazon-ecs-deploy-task-definition@c465972ecbd160473f22e683363b422a5412a3de  # v2.6.3
-        with:
-          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          # Don't block the workflow on full service stability — push the new
-          # task def + deployment and return. The ECS deployment circuit breaker
-          # (enabled on the service, rollback=true) still guards prod: a task set
-          # that can't pass ELB health checks is rolled back automatically. This
-          # trades the (up to 20 min) in-workflow stability wait for a faster
-          # "deploy to live ASAP" turnaround; confirm a rollout via
-          # `aws ecs describe-services` if you need the post-deploy status.
-          wait-for-service-stability: false
-          force-new-deployment: true
+        # Old images return /ready 404; new images return 503 until hydrated.
+        # The helper temporarily accepts 200,404, verifies the exact new revision
+        # and container health, then tightens to 200. Failure restores prior health.
+        env:
+          FF_RENDERED_TASK_DEFINITION: ${{ steps.render-task-def.outputs.task-definition }}
+        run: |
+          python -m src.artifacts.deployment deploy \
+            --task-definition "$FF_RENDERED_TASK_DEFINITION" \
+            --expected-current-task "$FF_ORIGINAL_TASK_DEFINITION" \
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --region "$AWS_REGION" \
+            --state serving-rollout.json --timeout 1200
+
+      - name: Restore health settings after incomplete rollout
+        if: failure() || cancelled()
+        run: |
+          python -m src.artifacts.deployment restore \
+            --state serving-rollout.json --region "$AWS_REGION"
 
       - name: Warm serving cache
         # Belt-and-suspenders after the rollout: fresh tasks already hydrate
         # the S3 prediction cache at boot (D14) when models are unchanged, but
         # a few /warm probes ensure every gunicorn worker across the
-        # desiredCount=2 tasks is warm before traffic. Never block the deploy
-        # on a warm miss — post_fork + lazy compute remain the backstop.
+        # desiredCount=2 tasks have hydrated. ALB/container readiness already
+        # gates traffic; these probes are advisory and never run model inference.
         continue-on-error: true
         run: |
           warm_url="${SERVICE_URL%/}/warm"

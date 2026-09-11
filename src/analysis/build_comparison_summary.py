@@ -1,6 +1,6 @@
 """Generate the committed expert-comparison summary for the serving "Comparison" tab.
 
-Writes ``src/serving/comparison_experts.json`` — for each position, the
+Writes ``src/prediction/comparison_experts.json`` — for each position, the
 ``{mae, rmse, r2, n}`` of each EXPERT (NFL.com, RotoWire via Sleeper, ESPN) scored
 against actuals, on (a) all matched player-weeks, (b) the top-30-per-position
 subset, and (c) the top-12-per-position subset (each ranked by actual fantasy
@@ -47,10 +47,10 @@ from src.analysis.analysis_nflcom_baseline import (
 )
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS
+from src.data.espn_projections import ESPN_NOTE, load_espn_with_gsis_id
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.dst.data import build_data as build_dst_data
 from src.dst.targets import compute_targets as compute_dst_targets
-from src.serving.espn_projections import ESPN_NOTE, load_espn_with_gsis_id
 from src.shared.comparison_scoring import score_actual_components
 from src.shared.evaluation import compute_metrics
 
@@ -80,7 +80,7 @@ _ROTOWIRE_NOTE = (
 
 # Repo root = three levels up from this file (src/analysis/build_comparison_summary.py).
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-OUTPUT_PATH_DEFAULT = os.path.join(_REPO_ROOT, "src", "serving", "comparison_experts.json")
+OUTPUT_PATH_DEFAULT = os.path.join(_REPO_ROOT, "src", "prediction", "comparison_experts.json")
 
 
 def _round_metrics(actual: np.ndarray, pred: np.ndarray) -> dict | None:

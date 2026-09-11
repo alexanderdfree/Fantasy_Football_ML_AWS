@@ -10,6 +10,7 @@ from src.data.cache_io import atomic_write_parquet
 from src.data.release import DataReleaseError, assert_source_fetch_allowed
 from src.k.config import POSITION_CONFIG
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
+from src.training.context import raw_data_dir
 
 SEASONS = POSITION_CONFIG.seasons
 MIN_GAMES = POSITION_CONFIG.min_games
@@ -112,7 +113,7 @@ def reconstruct_kicker_weekly_from_pbp(
     # effect (using `cache_dir: str = CACHE_DIR` as a default would freeze
     # the value at function-definition time).
     if cache_dir is None:
-        cache_dir = CACHE_DIR
+        cache_dir = raw_data_dir(CACHE_DIR)
     if not seasons:
         # Empty-seasons guard (mirrors reconstruct_kicker_kicks_from_pbp) so the
         # seasons[0]/[-1] cache-path build below can't IndexError. (#409)
@@ -331,7 +332,7 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
     Both parquet inputs already belong to the shared raw-data cache.
     """
     signature = f"{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}"
-    snaps = pd.read_parquet(f"{CACHE_DIR}/snap_counts_{signature}.parquet")
+    snaps = pd.read_parquet(f"{raw_data_dir(CACHE_DIR)}/snap_counts_{signature}.parquet")
     snaps = snaps.loc[
         snaps["season"].isin(SEASONS)
         # A failed PBP season is missing data, not a season of zero attempts.
@@ -343,7 +344,7 @@ def _restore_no_attempt_games(k_df: pd.DataFrame) -> pd.DataFrame:
     if snaps.empty:
         return k_df
 
-    rosters = pd.read_parquet(f"{CACHE_DIR}/rosters_{signature}.parquet")
+    rosters = pd.read_parquet(f"{raw_data_dir(CACHE_DIR)}/rosters_{signature}.parquet")
     # Resolve identities entirely from the already-synced roster cache. A live
     # player-ID lookup here would make offline/cache-hit K loading depend on
     # a new external service. Keep all roster positions until after matching:
@@ -473,7 +474,7 @@ def load_data(
     if weekly_seasons:
         if weekly is None:
             weekly = pd.read_parquet(
-                f"{CACHE_DIR}/weekly_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
+                f"{raw_data_dir(CACHE_DIR)}/weekly_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
             )
         k_weekly = weekly[
             (weekly["position"] == "K")
@@ -548,7 +549,7 @@ def load_data(
     # for pre-2017 rows.
     if schedules is None:
         schedules = pd.read_parquet(
-            f"{CACHE_DIR}/schedules_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
+            f"{raw_data_dir(CACHE_DIR)}/schedules_{GLOBAL_SEASONS[0]}_{GLOBAL_SEASONS[-1]}.parquet"
         )
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
     has_venue = {"roof", "surface"}.issubset(schedules_reg.columns)
@@ -682,7 +683,7 @@ def _load_backfill_pbp(season: int) -> pd.DataFrame:
     This small raw dependency is prewarmed into the same data release as the
     splits. Injected live PBP bypasses it and retains its caller's cutoff.
     """
-    path = f"{CACHE_DIR}/kicker_backfill_pbp_v1_{season}.parquet"
+    path = f"{raw_data_dir(CACHE_DIR)}/kicker_backfill_pbp_v1_{season}.parquet"
     required = {
         "season",
         "season_type",
@@ -914,7 +915,7 @@ def reconstruct_kicker_kicks_from_pbp(
     # effect (mirrors reconstruct_kicker_weekly_from_pbp; a ``cache_dir: str =
     # CACHE_DIR`` default would freeze the value at function-definition time).
     if cache_dir is None:
-        cache_dir = CACHE_DIR
+        cache_dir = raw_data_dir(CACHE_DIR)
     if not seasons:
         return pd.DataFrame(columns=_KICKS_SCHEMA)
 

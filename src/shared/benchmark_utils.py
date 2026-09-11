@@ -189,6 +189,12 @@ def summarize_pipeline_result(position: str, result: dict) -> dict:
     from src.shared.evaluation_cohorts import build_cohorts
 
     summary["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
+    from src.evaluation.records import record_for_result
+
+    summary["evaluation_record"] = (
+        result.get("evaluation_record")
+        or record_for_result(position, result, cohorts=summary["cohorts"]).to_dict()
+    )
     return summary
 
 

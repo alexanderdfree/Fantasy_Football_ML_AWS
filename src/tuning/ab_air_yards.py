@@ -120,7 +120,7 @@ def metric_fn(result, position):
     identical across arms. ``corr`` (pred-vs-actual on the slice) is the closable edge;
     overall ``mae`` feeds the harness Ridge sentinel.
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

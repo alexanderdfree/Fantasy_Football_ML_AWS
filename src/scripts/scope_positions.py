@@ -66,7 +66,9 @@ ALL_POSITIONS: tuple[str, ...] = ("QB", "RB", "WR", "TE", "K", "DST")
 # change — previously only src/config.py matched, so an edit to src/__init__.py
 # silently scoped to no positions and skipped the retrain.
 _GLOBAL_REGEX = re.compile(
-    r"^src/(shared|data|features)/"
+    r"^src/shared/(?!model_sync\.py$|artifact_gc\.py$)"
+    r"|^src/(data|features|prediction|training|evaluation)/"
+    r"|^src/contracts/feature_names\.py$"
     r"|^src/batch/(?!.*(?:tune|ablate)|(?:launch|benchmark)\.py$|build_and_push\.sh$)"
     r"|^src/(__init__|config)\.py$"
     r"|^requirements\.txt$"
@@ -112,13 +114,18 @@ def compute_positions(changed_files: Iterable[str]) -> list[str]:
 # is inside that position's fingerprint manifest" is pinned by
 # tests/scripts/test_bench_fingerprint.py against
 # src.scripts.bench_fingerprint.GLOBAL_PATHS.
-_BENCH_SHARED_REGEX = re.compile(r"^src/(shared|data|features)/|^src/(__init__|config)\.py$")
+_BENCH_SHARED_REGEX = re.compile(
+    r"^src/shared/(?!model_sync\.py$|artifact_gc\.py$)"
+    r"|^src/(data|features|prediction|training|evaluation)/|^src/(__init__|config)\.py$"
+)
 # Exempt-visibility: report EVERY src/batch/** + requirements.txt path (not
 # just the _GLOBAL_REGEX-matching subset) — the lookahead-excluded batch files
 # (launch.py / benchmark.py / *tune* / *ablate* / build_and_push.sh) are just
 # as un-gated locally, and a silent drop would contradict the "exempt paths
 # are reported, never silent" contract.
-_BENCH_EXEMPT_REGEX = re.compile(r"^src/batch/|^requirements\.txt$")
+_BENCH_EXEMPT_REGEX = re.compile(
+    r"^src/(batch|artifacts|orchestration|contracts)/|^src/shared/(model_sync|artifact_gc)\.py$|^requirements\.txt$"
+)
 
 
 def compute_benchmark_scope(changed_files: Iterable[str]) -> dict:
@@ -147,7 +154,9 @@ _TEST_DOCS_REGEX = re.compile(
     r"\.md$|^docs/|^benchmark_history/|^\.github/ISSUE_TEMPLATE/|^\.gitignore$|^LICENSE"
 )
 _TEST_GLOBAL_REGEX = re.compile(
-    r"^src/(shared|data|features)/"
+    r"^src/shared/(?!model_sync\.py$|artifact_gc\.py$)"
+    r"|^src/(data|features|prediction|training|evaluation)/"
+    r"|^src/contracts/feature_names\.py$"
     r"|^src/(__init__|config)\.py$"
     r"|^conftest\.py$"
     r"|^tests/(conftest\.py|_pipeline_e2e_utils\.py|__init__\.py|fixtures/)"
@@ -159,11 +168,16 @@ _TEST_GLOBAL_REGEX = re.compile(
 # (tests/test_app*.py) that were tipping the `shared` shard over the runner's RAM
 # under -n auto. Split into its own matrix shard (#1056). Anchored so a deeper
 # look-alike path (tests/sub/test_app_x.py) can't spuriously match.
-_TEST_SERVING_REGEX = re.compile(r"^src/serving/" r"|^tests/test_app[^/]*\.py$")
+# Tests in the serving package directory belong to this same shard.
+_TEST_SERVING_REGEX = re.compile(
+    r"^src/(serving|artifacts|contracts)/|^src/shared/(model_sync|artifact_gc)\.py$"
+    r"|^tests/serving/|^tests/test_app[^/]*\.py$"
+)
 _TEST_SHARED_REGEX = re.compile(
-    r"^src/(batch|scripts|benchmarking|tuning|analysis)/"
+    r"^src/(batch|scripts|benchmarking|tuning|analysis|artifacts|orchestration|contracts)/"
+    r"|^src/shared/(model_sync|artifact_gc)\.py$"
     r"|^tests/(?!test_app[^/]*\.py$)[^/]+\.py$"
-    r"|^tests/(analysis|batch|hooks|scripts|integration|shared|tuning)/"
+    r"|^tests/(analysis|batch|hooks|scripts|integration|shared|tuning|artifacts|orchestration)/"
 )
 _TEST_PER_POSITION_REGEX = {
     pos: re.compile(rf"^(src/{pos.lower()}/|tests/{pos.lower()}/)") for pos in ALL_POSITIONS
@@ -177,7 +191,7 @@ def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
       1. Strip docs/license-only paths. If nothing remains → [].
       2. Any global trigger (shared code, infra, deps, test plumbing) → all 8.
       3. Per-position: src/{pos}/ or tests/{pos}/ → that position.
-      4. Serving: src/serving/ or tests/test_app*.py → 'serving'.
+      4. Serving: src/serving/, tests/serving/ or tests/test_app*.py → 'serving'.
       5. Cross-cutting dirs (src/batch, src/scripts, src/benchmarking, src/tuning,
          src/analysis, other top-level tests/*.py, tests/{analysis,batch,scripts,
          integration,shared,tuning}/) → 'shared'.

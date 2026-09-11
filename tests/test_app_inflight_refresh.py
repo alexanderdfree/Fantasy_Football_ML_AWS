@@ -21,7 +21,7 @@ from src.serving import app
 @pytest.fixture(autouse=True)
 def _reset_cache(monkeypatch):
     """Each test gets a fresh _cache and a no-op _ensure_base_data."""
-    monkeypatch.setattr(app, "_cache", {})
+    monkeypatch.setattr(app._default_state, "cache", {})
     monkeypatch.setattr(core, "_ensure_base_data", lambda: None)
     # Pre-populate the minimum cache shape _ensure_position_loaded expects.
     app._cache["splits"] = {pos: (None, None, None) for pos in ("QB", "RB", "WR", "TE", "K", "DST")}

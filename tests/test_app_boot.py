@@ -286,7 +286,7 @@ def boot_env(tmp_path, monkeypatch):
 
     # Reset the module cache so _load_base_data_locked actually runs (the
     # early-return on _cache["base_loaded"] would otherwise skip everything).
-    monkeypatch.setattr(app_mod, "_cache", {})
+    monkeypatch.setattr(app_mod._default_state, "cache", {})
 
     # Hardcoded "data/splits/*.parquet" literals in _load_base_data_locked
     # mean we have to point the process's cwd at tmp_path. monkeypatch.chdir
@@ -665,7 +665,7 @@ class TestLoadBaseDataLocked:
                 _make_dst_split(seed=6, season=2025),
             ),
         )
-        monkeypatch.setattr(app_mod, "_cache", {})
+        monkeypatch.setattr(app_mod._default_state, "cache", {})
         monkeypatch.chdir(tmp_path)
 
         core._load_base_data_locked()

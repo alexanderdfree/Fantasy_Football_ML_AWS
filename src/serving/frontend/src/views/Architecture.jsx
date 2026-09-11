@@ -19,6 +19,9 @@ const ARCH_CATEGORY_LABELS = {
     contextual: "Contextual",
     weather_vegas: "Weather / Vegas",
     attention_history: "Attention history (per-game inputs)",
+    attention_static: "Attention static inputs",
+    opponent_history: "Opponent history inputs",
+    kick_history: "Per-kick history inputs",
     other: "Other",
 };
 
@@ -42,6 +45,7 @@ function fmtNum(v, digits = 4) {
 }
 
 const ARCH_COLUMNS = [
+    { key: "metadata_source", label: "Source", render: (p) => p.metadata_source === "bundle" ? `Served ${p.metadata_family} bundle` : "Configured fallback" },
     { key: "targets",            label: "Targets",    render: (p) => fmtList(p.targets) },
     { key: "backbone_layers",    label: "Backbone",   render: (p) => fmtLayers(p.backbone_layers) },
     { key: "head_hidden",        label: "Head",       render: (p) => fmtNum(p.head_hidden) },
@@ -63,9 +67,9 @@ const ARCH_DIAGRAM = `MultiHeadNet (dense)
     Input (static features)
       └─ Shared backbone: [Linear → BatchNorm1d → ReLU → Dropout] × N
          └─ Per-target head: Linear → ReLU → Linear → (optional clamp ≥ 0)
-      └─ "total" output = sum of target heads
+      └─ Fantasy points = position-specific scoring of raw target heads
 
-MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
+MultiHeadNetWithHistory (attention — QB / RB / WR / TE / DST)
     Static features ─────────────────────────────┐
     Game history [B, seq_len, game_dim]          │
      └─ GameEncoder: Linear → ReLU               │
@@ -73,7 +77,7 @@ MultiHeadNetWithHistory (attention — QB / RB / WR / TE)
      └─ AttentionPool: learned queries,          │
         multi-head scaled dot-product attn ──────┤
                                                  ▼
-                    Concat [static_dim + n_heads * d_model]
+                    Static features + per-target history summaries
                      └─ Shared backbone (BatchNorm + Dropout)
                      └─ Per-target heads (GatedTDHead on TD-count targets)`;
 
@@ -116,10 +120,18 @@ function ArchFeatureAccordion({ pos, p }) {
                 <span className="arch-pos-count">{p.feature_count} features</span>
             </summary>
             <div className="arch-accordion-body">
+                <p className="arch-metadata-source">{p.metadata_note || "Configured recipe; served bundle metadata is unavailable."}</p>
                 <div className="arch-accordion-meta">
                     <span><strong>Targets:</strong> {fmtList(p.targets)}</span>
                     {overrideStr != null && <>{" · "}<span><strong>Head overrides:</strong> {overrideStr}</span></>}
                 </div>
+                {Object.entries(p.models || {}).map(([family, model]) => (
+                    <div className="feature-category" key={family}>
+                        <div className="feature-category-title">{family} · {model.architecture?.class || "Saved estimator"}</div>
+                        <p>Bundle {model.bundle_id?.slice(0, 12)} · {(model.inputs?.features || []).length} static inputs</p>
+                        <p>{fmtList(model.inputs?.features)}</p>
+                    </div>
+                ))}
                 {Object.keys(ARCH_CATEGORY_LABELS)
                     .filter((key) => features[key] && features[key].length)
                     .map((key) => (
@@ -167,13 +179,13 @@ export function ArchitectureView(props) {
     return (
         <section id="view-model-architecture" className="view active">
             <ApproachBanner icon="layers" title="Per-Position Multi-Head Neural Networks">
-                Each position has a dedicated multi-target model that predicts raw NFL stats (yards, TD counts, receptions, etc.), with a deterministic aggregator converting predictions to fantasy points under any scoring format. Compared against Ridge regression, an attention-based game-history variant, and LightGBM where applicable. Config and features below are loaded live from the Python config modules.
+                Each position predicts raw NFL stats, then converts them to fantasy points. Settings and inputs below come from the bundles that produced the served predictions when available. Configured fallback rows are labeled explicitly.
             </ApproachBanner>
 
-            <div className="section-header">Neural Network Architecture</div>
+            <div className="section-header">Neural Network Reference</div>
             <pre className="arch-diagram">{ARCH_DIAGRAM}</pre>
 
-            <div className="section-header">Training Loop</div>
+            <div className="section-header">Training Loop Reference</div>
             <ul className="arch-bullets">
                 <li><strong>Optimizer:</strong> <code>AdamW</code> with per-position LR and weight decay.</li>
                 <li><strong>Loss:</strong> <code>MultiTargetLoss</code> — per-target Huber or Poisson NLL (DST's four rare counts) + optional BCE on the TD gate logit.</li>

@@ -233,11 +233,11 @@ jobs:
           # vCPUs — no oversubscription. If `shared` (heaviest) regresses to OOM, drop just it
           # back to `jobs=2`.
           if [ "$shard" = "serving" ]; then
-            # Serving suite (tests/test_app*, ~219 Flask/model-LOADING tests), own shard
+            # Serving suite (tests/test_app* and tests/serving/), own shard
             # (#1056). No module-scoped trained fixtures and no pipeline TRAINING -> not an OOM
             # source; -n auto + worksteal is safe (sidesteps the loadfile replacement-worker
             # KeyError) and proven green.
-            echo "paths=tests/test_app*.py" >> "$GITHUB_OUTPUT"
+            echo "paths=tests/test_app*.py tests/serving/" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.serving --cov=src" >> "$GITHUB_OUTPUT"
             echo "dist=worksteal" >> "$GITHUB_OUTPUT"
             echo "jobs=auto" >> "$GITHUB_OUTPUT"
@@ -245,7 +245,7 @@ jobs:
             # tests/ root + shared/batch/scripts; ignore per-position dirs (own shards) AND
             # the serving suite (its own shard). loadfile keeps tests/test_pipeline_e2e.py
             # (module fixture, 6 pipelines) on ONE worker so each position trains once.
-            echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst --ignore-glob=tests/test_app*.py" >> "$GITHUB_OUTPUT"
+            echo "paths=tests/ --ignore=tests/qb --ignore=tests/rb --ignore=tests/wr --ignore=tests/te --ignore=tests/k --ignore=tests/dst --ignore=tests/serving --ignore-glob=tests/test_app*.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src" >> "$GITHUB_OUTPUT"
             echo "dist=loadfile" >> "$GITHUB_OUTPUT"
             echo "jobs=auto" >> "$GITHUB_OUTPUT"

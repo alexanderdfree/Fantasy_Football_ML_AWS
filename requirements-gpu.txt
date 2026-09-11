@@ -1,12 +1,4 @@
-# Local NVIDIA-CUDA dev + training environment (Windows 11 / Linux + NVIDIA GPU).
-# GPU analog of requirements-dev.txt: same tooling, but pulls the CUDA 13.0 torch
-# build (Blackwell / sm_120, e.g. RTX 5080) instead of the CPU wheel.
-# Use ONLY on a CUDA box. macOS/CPU dev and CI keep using requirements-dev.txt.
-# Keep the tool pins below in sync with requirements-dev.txt.
-# NOTE: torch 2.12.x dropped the cu128 wheel; cu130 (CUDA 13.0) is its
-# Blackwell-capable successor (sm_120). cu130 also covers Turing->Blackwell
-# (sm_75->sm_120), so since 2026-06-22 it is ALSO the AWS Batch training wheel
-# (src/batch/requirements.txt) — local dev and Batch now share the cu130 build.
+# Generated from pyproject.toml; run python -m src.packaging.dependencies.
 -r requirements.txt
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.14.0+cu130
@@ -15,4 +7,4 @@ pytest-timeout>=2.4.0
 pytest-cov>=7.1.0
 pytest-xdist>=3.8.0
 ruff==0.16.6
-optuna==5.0.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches requirements-dev.txt
+optuna==5.0.0

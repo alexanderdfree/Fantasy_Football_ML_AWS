@@ -9,7 +9,10 @@ import tarfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from botocore.exceptions import ClientError
+
+pytestmark = pytest.mark.unit
 
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
@@ -237,18 +240,50 @@ class TestLaunchArgParsing:
 
 
 class TestUploadData:
-    def test_publishes_sealed_inputs_and_pins_release(self, monkeypatch):
+    @pytest.fixture(autouse=True)
+    def clean_selection(self, monkeypatch):
+        for name in ("FF_DATA_RELEASE", "FF_DATASET_ID", "FF_DATA_FORMAT"):
+            monkeypatch.setenv(name, "")
+            monkeypatch.delenv(name)
+
+    def test_unsealed_inputs_never_publish_mutable_files(self, monkeypatch, tmp_path):
+        from src.batch import launch
+
+        monkeypatch.chdir(tmp_path)
+        s3 = mock.Mock()
+        with pytest.raises(RuntimeError, match="Unsealed"):
+            launch.upload_data("bucket", s3_client=s3)
+        s3.upload_file.assert_not_called()
+        s3.put_object.assert_not_called()
+
+    @pytest.mark.parametrize("force", [False, True])
+    def test_upload_sealed_complete_release_and_bind_aliases(self, monkeypatch, tmp_path, force):
+        import pandas as pd
+
         from src.batch import launch
         from src.data import release
+        from tests.test_data_release import FakeS3
 
-        publish = mock.Mock(return_value="a" * 64)
-        monkeypatch.setattr(release, "publish_release", publish)
-        # Register an undo even when the key started absent: upload_data pins it.
-        monkeypatch.setenv("FF_DATA_RELEASE", "")
-        s3 = mock.Mock()
-        assert launch.upload_data("my-bucket", s3_client=s3, force=True) == "a" * 64
-        publish.assert_called_once_with(s3, "my-bucket", force=True)
-        assert os.environ["FF_DATA_RELEASE"] == "a" * 64
+        raw, splits = tmp_path / "data/raw", tmp_path / "data/splits"
+        raw.mkdir(parents=True)
+        splits.mkdir(parents=True)
+        for name in release.SPLIT_NAMES:
+            pd.DataFrame({"season": [2024]}).to_parquet(splits / name)
+        pd.DataFrame({"season": [2024]}).to_parquet(raw / "weekly.parquet")
+        monkeypatch.setattr(release, "verify_historical_loader_inputs", lambda *_: None)
+        monkeypatch.chdir(tmp_path)
+        release.seal_inputs()
+        s3 = FakeS3()
+        selected = launch.upload_data("bucket", s3_client=s3, force=force)
+        assert os.environ["FF_DATA_RELEASE"] == os.environ["FF_DATASET_ID"] == selected
+        assert os.environ["FF_DATA_FORMAT"] == "data-release-v1"
+        assert not any(
+            key in s3.objects
+            for key in ("data/train.parquet", "data/val.parquet", "data/test.parquet")
+        )
+        _, manifest = release.resolve_release(s3, "bucket", release_id=selected)
+        assert len(manifest["files"]) == 4
+        assert all(f"data/releases/{selected}/{name}" in s3.read_keys for name in manifest["files"])
 
 
 # ---------------------------------------------------------------------------
@@ -256,14 +291,49 @@ class TestUploadData:
 # ---------------------------------------------------------------------------
 
 
+def _revision(name):
+    return name if name.rsplit(":", 1)[-1].isdigit() else name + ":1"
+
+
+def _verified_binding():
+    # These tests cover job submission, not the separately tested AWS resolver.
+    from src.batch import launch
+
+    sha = os.environ.get("FF_TRAIN_GIT_SHA", "")
+    return {
+        "image_sha": sha,
+        "gpu_definition": _revision(launch._job_definition_for("QB", "nn")),
+        "cpu_definition": _revision(launch._job_definition_for("QB", "cpu"))
+        if launch.JOB_DEFINITION_CPU
+        else "",
+        "gpu_image": "image:" + sha,
+        "cpu_image": "image:" + sha,
+    }
+
+
+def _submit_verified(*args, **kwargs):
+    from src.batch import launch
+
+    return launch.submit_job(*args, **kwargs, binding=_verified_binding())
+
+
 class TestSubmitJob:
+    @pytest.fixture(autouse=True)
+    def identified_request(self, monkeypatch):
+        monkeypatch.delenv("FF_BUILD_PLAN_ID", raising=False)
+        monkeypatch.delenv("FF_DATASET_ID", raising=False)
+        monkeypatch.delenv("FF_REQUIRE_BUILD_PLAN", raising=False)
+        monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+        monkeypatch.setenv("FF_LEGACY_RUN_ID", "unit-submit-request")
+        monkeypatch.setenv("FF_TRAIN_GIT_SHA", "a" * 40)
+
     def test_submit_returns_job_id(self):
         from src.batch.launch import submit_job
 
         mock_batch = mock.MagicMock()
         mock_batch.submit_job.return_value = {"jobId": "abc-123"}
 
-        pos, job_id = submit_job("RB", seed=42, batch_client=mock_batch)
+        pos, job_id = _submit_verified("RB", seed=42, batch_client=mock_batch)
         assert pos == "RB"
         assert job_id == "abc-123"
 
@@ -273,18 +343,18 @@ class TestSubmitJob:
         mock_batch = mock.MagicMock()
         mock_batch.submit_job.return_value = {"jobId": "xyz"}
 
-        submit_job("WR", seed=99, batch_client=mock_batch)
+        _submit_verified("WR", seed=99, batch_client=mock_batch)
 
         call_kwargs = mock_batch.submit_job.call_args.kwargs
         assert call_kwargs["jobQueue"] == JOB_QUEUE
-        assert call_kwargs["jobDefinition"] == JOB_DEFINITION
+        assert call_kwargs["jobDefinition"] == _revision(JOB_DEFINITION)
         overrides = call_kwargs["containerOverrides"]
         assert overrides["command"] == ["--position", "WR", "--seed", "99"]
 
     def test_submit_forwards_train_git_sha_when_set(self):
         """FF_TRAIN_GIT_SHA is appended to the container environment so
         train.py can stamp it into benchmark_metrics.json."""
-        with mock.patch.dict(os.environ, {"FF_TRAIN_GIT_SHA": "deadbeefcafebabe"}):
+        with mock.patch.dict(os.environ, {"FF_TRAIN_GIT_SHA": "d" * 40}):
             import importlib
 
             import src.batch.launch as mod
@@ -292,17 +362,15 @@ class TestSubmitJob:
             mod = importlib.reload(mod)
             mock_batch = mock.MagicMock()
             mock_batch.submit_job.return_value = {"jobId": "x"}
-            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            _submit_verified("QB", seed=42, batch_client=mock_batch)
             env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
             sha_entry = next((e for e in env_vars if e["name"] == "FF_TRAIN_GIT_SHA"), None)
-            assert sha_entry == {"name": "FF_TRAIN_GIT_SHA", "value": "deadbeefcafebabe"}
+            assert sha_entry == {"name": "FF_TRAIN_GIT_SHA", "value": "d" * 40}
         # Reset module-level constants for downstream tests.
         importlib.reload(__import__("src.batch.launch", fromlist=[""]))
 
-    def test_submit_omits_train_git_sha_when_unset(self):
-        """Empty FF_TRAIN_GIT_SHA (workflow_dispatch / local) → no env entry,
-        so train.py's ``metrics["git_sha"]`` stays absent and benchmark.py's
-        coherency check skips."""
+    def test_submit_rejects_train_git_sha_when_unset(self):
+        """Anonymous publishing cannot submit a job without a verifiable source."""
         import importlib
 
         with mock.patch.dict(os.environ, {"FF_TRAIN_GIT_SHA": ""}):
@@ -311,9 +379,9 @@ class TestSubmitJob:
             mod = importlib.reload(mod)
             mock_batch = mock.MagicMock()
             mock_batch.submit_job.return_value = {"jobId": "x"}
-            mod.submit_job("QB", seed=42, batch_client=mock_batch)
-            env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
-            assert not any(e["name"] == "FF_TRAIN_GIT_SHA" for e in env_vars)
+            with pytest.raises(RuntimeError, match="FF_TRAIN_GIT_SHA"):
+                _submit_verified("QB", seed=42, batch_client=mock_batch)
+            mock_batch.submit_job.assert_not_called()
         importlib.reload(__import__("src.batch.launch", fromlist=[""]))
 
     def test_submit_forwards_cuda_graph_when_set(self):
@@ -328,7 +396,7 @@ class TestSubmitJob:
             mod = importlib.reload(mod)
             mock_batch = mock.MagicMock()
             mock_batch.submit_job.return_value = {"jobId": "x"}
-            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            _submit_verified("QB", seed=42, batch_client=mock_batch)
             env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
             entry = next((e for e in env_vars if e["name"] == "FF_CUDA_GRAPH"), None)
             assert entry == {"name": "FF_CUDA_GRAPH", "value": "1"}
@@ -348,7 +416,7 @@ class TestSubmitJob:
             mod = importlib.reload(mod)
             mock_batch = mock.MagicMock()
             mock_batch.submit_job.return_value = {"jobId": "x"}
-            mod.submit_job("QB", seed=42, batch_client=mock_batch)
+            _submit_verified("QB", seed=42, batch_client=mock_batch)
             env_vars = mock_batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
             assert not any(e["name"] == "FF_CUDA_GRAPH" for e in env_vars)
         importlib.reload(__import__("src.batch.launch", fromlist=[""]))
@@ -361,8 +429,8 @@ class TestSubmitJob:
         mock_batch.submit_job.return_value = {"jobId": "id"}
 
         with mock.patch("src.batch.launch.time.time", return_value=1_700_000_000):
-            submit_job("RB", batch_client=mock_batch)
-            submit_job("RB", batch_client=mock_batch)
+            _submit_verified("RB", batch_client=mock_batch)
+            _submit_verified("RB", batch_client=mock_batch)
 
         names = [c.kwargs["jobName"] for c in mock_batch.submit_job.call_args_list]
         assert len(set(names)) == 2, f"Job names collided: {names}"
@@ -380,12 +448,12 @@ class TestSubmitJob:
             mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
             mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
         ):
-            mod.submit_job("K", batch_client=mock_batch)
-            mod.submit_job("QB", batch_client=mock_batch)
+            _submit_verified("K", batch_client=mock_batch)
+            _submit_verified("QB", batch_client=mock_batch)
 
         defs = [c.kwargs["jobDefinition"] for c in mock_batch.submit_job.call_args_list]
-        assert defs[0] == "cpu-def"  # K routed to CPU
-        assert defs[1] == mod.JOB_DEFINITION  # QB stays on GPU
+        assert defs[0] == "cpu-def:1"  # K routed to CPU
+        assert defs[1] == _revision(mod.JOB_DEFINITION)  # QB stays on GPU
 
     def test_partial_cpu_config_falls_back_to_gpu(self):
         """A partial CPU config (def set, queue unset) must NOT route a CPU
@@ -411,8 +479,8 @@ class TestSubmitJob:
             mock.patch.object(mod, "JOB_DEFINITION_CPU", "cpu-def"),
             mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
         ):
-            mod.submit_job("K", batch_client=mock_batch)
-            mod.submit_job("QB", batch_client=mock_batch)
+            _submit_verified("K", batch_client=mock_batch)
+            _submit_verified("QB", batch_client=mock_batch)
 
         queues = [c.kwargs["jobQueue"] for c in mock_batch.submit_job.call_args_list]
         assert queues[0] == "cpu-queue"
@@ -429,7 +497,7 @@ class TestSubmitJob:
             mock.patch.object(mod, "JOB_DEFINITION_CPU", None),
             mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
         ):
-            mod.submit_job("K", batch_client=mock_batch)
+            _submit_verified("K", batch_client=mock_batch)
 
         assert mock_batch.submit_job.call_args.kwargs["jobQueue"] == mod.JOB_QUEUE
 
@@ -441,9 +509,11 @@ class TestSubmitJob:
         mock_batch.submit_job.return_value = {"jobId": "id"}
 
         with mock.patch.object(mod, "JOB_DEFINITION_CPU", None):
-            mod.submit_job("K", batch_client=mock_batch)
+            _submit_verified("K", batch_client=mock_batch)
 
-        assert mock_batch.submit_job.call_args.kwargs["jobDefinition"] == mod.JOB_DEFINITION
+        assert mock_batch.submit_job.call_args.kwargs["jobDefinition"] == _revision(
+            mod.JOB_DEFINITION
+        )
 
     def test_submit_split_cpu_uses_cpu_queue_def_and_command(self):
         import src.batch.launch as mod
@@ -456,7 +526,7 @@ class TestSubmitJob:
             mock.patch.object(mod, "JOB_DEFINITION_CPU_REVISION", "5"),
             mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
         ):
-            key, job_id = mod.submit_job(
+            key, job_id = _submit_verified(
                 "WR",
                 seed=42,
                 batch_client=mock_batch,
@@ -499,7 +569,9 @@ class TestSubmitJob:
             mock.patch.object(mod, "JOB_DEFINITION_CPU_REVISION", "2"),
             mock.patch.object(mod, "JOB_QUEUE_CPU", "cpu-queue"),
         ):
-            job_ids = mod._submit_split_for_position("WR", 42, "run-123", mock_batch)
+            job_ids = mod._submit_split_for_position(
+                "WR", 42, "run-123", mock_batch, binding=_verified_binding()
+            )
 
         assert job_ids == {
             ("WR", "nn"): "nn-job",

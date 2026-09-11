@@ -1,12 +1,18 @@
 import SwiftUI
 
-/// Comparison sources: our four models, then the two expert projection sources.
+/// Display attributes for source IDs supplied by the comparison response.
 struct CmpSource: Identifiable {
     let key: String
     let label: String
     let color: Color
     let isModel: Bool
     var id: String { key }
+
+    static func resolve(_ key: String, comparison: Comparison) -> CmpSource {
+        if let known = cmpSources.first(where: { $0.key == key }) { return known }
+        return CmpSource(key: key, label: comparison.expertsMeta?[key]?.label ?? key,
+                         color: FFColor.textSecondary, isModel: false)
+    }
 }
 
 let cmpSources: [CmpSource] =
@@ -14,6 +20,7 @@ let cmpSources: [CmpSource] =
     + [
         CmpSource(key: "nflcom", label: "NFL.com", color: FFColor.textSecondary, isModel: false),
         CmpSource(key: "rotowire", label: "RotoWire", color: FFColor.textSecondary, isModel: false),
+        CmpSource(key: "espn", label: "ESPN", color: FFColor.textSecondary, isModel: false),
     ]
 
 private func valueIsBest(_ value: Double?, _ best: Double?) -> Bool {
@@ -21,7 +28,7 @@ private func valueIsBest(_ value: Double?, _ best: Double?) -> Bool {
     return abs(value - best) < 1e-9
 }
 
-/// Our models vs experts (NFL.com, RotoWire). PPR-pinned; MAE/RMSE/R² toggle.
+/// Our models vs experts, preserving server scoring and cohort semantics.
 struct ComparisonView: View {
     @State private var store = ComparisonStore()
     @State private var metric: MetricKind = .mae
@@ -29,22 +36,23 @@ struct ComparisonView: View {
     var body: some View {
         LoadStateView(state: store.state, retry: { Task { await store.load() } }) { comparison in
             List {
-                Section("All rostered players") {
-                    ForEach(Position.displayOrder) { pos in
-                        ComparisonPositionGroup(comparison: comparison, subset: "all", position: pos, metric: metric)
+                ForEach(comparison.displayedSubsets, id: \.self) { subset in
+                    Section {
+                        ForEach(Position.displayOrder) { pos in
+                            ComparisonPositionGroup(comparison: comparison, subset: subset, position: pos, metric: metric)
+                        }
+                    } header: {
+                        Text(comparison.subsetTitle(subset))
+                    } footer: {
+                        if let definition = comparison.cohortDefinitions?[subset] {
+                            Text(definition)
+                        }
                     }
+                    .listRowBackground(FFColor.bgSecondary)
                 }
-                .listRowBackground(FFColor.bgSecondary)
-
-                Section("Top 30 per position") {
-                    ForEach(Position.displayOrder) { pos in
-                        ComparisonPositionGroup(comparison: comparison, subset: "top30", position: pos, metric: metric)
-                    }
-                }
-                .listRowBackground(FFColor.bgSecondary)
 
                 if comparison.expertReliability != nil {
-                    Section("Reliability — residual σ (2025)") {
+                    Section("Historical reliability — residual σ (2025)") {
                         ForEach(Position.displayOrder) { pos in
                             ReliabilityGroup(comparison: comparison, position: pos)
                         }
@@ -53,7 +61,7 @@ struct ComparisonView: View {
                 }
 
                 if let intervals = comparison.intervals {
-                    Section("80% prediction intervals") {
+                    Section("Historical prediction intervals") {
                         IntervalsSection(intervals: intervals)
                     }
                     .listRowBackground(FFColor.bgSecondary)
@@ -90,11 +98,17 @@ struct ComparisonView: View {
     @ViewBuilder
     private func aboutNotes(_ comparison: Comparison) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            note("Seasons", "Trained 2012–2023, validated 2024, tested 2025. Every number here is on the held-out 2025 season; experts are scored on 2025 too.")
-            note("Scoring", "Full PPR. Projections and actuals run through the same formula — apples-to-apples.")
-            if let n = comparison.expertsMeta?["nflcom"]?.note { note("NFL.com", n) }
-            if let n = comparison.expertsMeta?["rotowire"]?.note { note("RotoWire", n) }
-            note("Caveat", "Each source is scored on the players it actually projects, so this is an approximate scoreboard, not a strictly paired test.")
+            note("Scoring", ScoringFormat(rawValue: comparison.scoring)?.displayName ?? comparison.scoring)
+            note("Actuals", comparison.actualBasisDescription)
+            note("Coverage", comparison.sampleBasisDescription)
+            if comparison.isUnavailable {
+                note("Availability", "Model comparison data is unavailable.")
+            }
+            ForEach((comparison.expertsMeta ?? [:]).keys.sorted(), id: \.self) { key in
+                if let text = comparison.expertsMeta?[key]?.note {
+                    note(CmpSource.resolve(key, comparison: comparison).label, text)
+                }
+            }
         }
         .padding(.vertical, 4)
     }
@@ -106,7 +120,7 @@ struct ComparisonView: View {
     }
 }
 
-/// One position's accuracy row set (our 4 models + 2 experts), best cell tinted.
+/// One position's accuracy rows, source coverage, and shared scoring components.
 struct ComparisonPositionGroup: View {
     let comparison: Comparison
     let subset: String
@@ -114,27 +128,58 @@ struct ComparisonPositionGroup: View {
     let metric: MetricKind
 
     var body: some View {
-        let values = cmpSources.compactMap {
+        let sources = comparison.sourceKeys(subset: subset, position: position.rawValue)
+            .map { CmpSource.resolve($0, comparison: comparison) }
+        let coverage = comparison.coverage?[subset]?[position.rawValue]
+        let components = coverage?.scoringComponents ?? comparison.scoringComponents?[position.rawValue]
+        let values = sources.compactMap {
             comparison.cell(subset: subset, position: position.rawValue, source: $0.key)?.value(metric)
         }
         let best = metric.best(of: values)
 
         DisclosureGroup {
-            ForEach(cmpSources) { source in
+            Text(coverage?.summary ?? "Coverage metadata unavailable")
+                .font(.caption2).foregroundStyle(FFColor.textSecondary)
+            if let missing = coverage?.missingReferenceWeeks, missing > 0 {
+                Text("Missing pregame reference for \(missing) evaluation weeks")
+                    .font(.caption2).foregroundStyle(FFColor.textSecondary)
+            }
+            if let components, !components.isEmpty {
+                Text("Scored components: " + components.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: ", "))
+                    .font(.caption2).foregroundStyle(FFColor.textSecondary)
+            }
+            let excluded = comparison.excludedComponents?[position.rawValue] ?? [:]
+            ForEach(excluded.keys.sorted(), id: \.self) { component in
+                Text("Excluded " + component.replacingOccurrences(of: "_", with: " ") + ": " + (excluded[component] ?? ""))
+                    .font(.caption2).foregroundStyle(FFColor.textSecondary)
+            }
+            ForEach(sources) { source in
                 let value = comparison.cell(subset: subset, position: position.rawValue, source: source.key)?.value(metric)
-                HStack {
-                    Circle().fill(source.color).frame(width: 8, height: 8)
-                    Text(source.label).font(.caption).foregroundStyle(FFColor.textPrimary)
-                    Spacer()
-                    Text(value.map { metric.format($0) } ?? "—")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(valueIsBest(value, best) ? FFColor.accent : FFColor.textPrimary)
-                        .fontWeight(valueIsBest(value, best) ? .bold : .regular)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Circle().fill(source.color).frame(width: 8, height: 8)
+                        Text(source.label).font(.caption).foregroundStyle(FFColor.textPrimary)
+                        Spacer()
+                        Text(value.map { metric.format($0) } ?? "—")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(valueIsBest(value, best) ? FFColor.accent : FFColor.textPrimary)
+                            .fontWeight(valueIsBest(value, best) ? .bold : .regular)
+                    }
+                    if let reason = comparison.exclusionReason(subset: subset, position: position.rawValue, source: source.key) {
+                        Text("Excluded: " + reason).font(.caption2).foregroundStyle(FFColor.textMuted)
+                    } else if let count = coverage?.sourceN?[source.key] {
+                        Text("\(count) forecasts before shared filtering").font(.caption2).foregroundStyle(FFColor.textMuted)
+                    }
                 }
             }
         } label: {
             HStack {
-                PositionBadge(position: position.rawValue)
+                VStack(alignment: .leading, spacing: 2) {
+                    PositionBadge(position: position.rawValue)
+                    if let coverage {
+                        Text(coverage.summary).font(.caption2).foregroundStyle(FFColor.textMuted)
+                    }
+                }
                 Spacer()
                 if let best { Text(metric.format(best)).font(.caption.monospacedDigit()).foregroundStyle(FFColor.accent) }
             }
@@ -161,12 +206,17 @@ struct ReliabilityGroup: View {
             return Cell(source: source, sigma: m?.sigma, bias: m?.bias, n: m?.n, totalsOnly: false)
         }
         let cell = comparison.expertReliability?.positions[position.rawValue]?[source.key] ?? nil
+        // This archived block used 2025 held-out model residuals. Keep expert
+        // residuals on that same season instead of substituting all-season data.
         let season = cell?.perSeason?["2025"]
         return Cell(source: source, sigma: season?.sigma, bias: season?.bias, n: season?.n, totalsOnly: cell?.totalsOnly ?? false)
     }
 
     var body: some View {
-        let cells = cmpSources.map(resolve)
+        let cells = cmpSources.filter { source in
+            if source.isModel { return comparison.modelReliability(position: position.rawValue, model: source.key) != nil }
+            return comparison.expertReliability?.positions[position.rawValue]?[source.key] != nil
+        }.map(resolve)
         let best = cells.compactMap(\.sigma).min()
 
         DisclosureGroup {

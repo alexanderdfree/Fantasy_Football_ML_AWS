@@ -41,6 +41,11 @@ struct LeadersView: View {
         @Bindable var leaders = leaders
         let rows = leaders.filteredSorted(store.players(app.scoring), search: search)
         return List {
+            if store.isStale {
+                Text("Showing saved predictions. Refresh could not reach the latest data.")
+                    .font(.caption).foregroundStyle(FFColor.textSecondary)
+                    .listRowBackground(FFColor.bgSecondary)
+            }
             if !store.degradedPositions.isEmpty {
                 DegradedBanner(positions: store.degradedPositions)
                     .listRowInsets(EdgeInsets(top: 4, leading: FFSpacing.lg, bottom: 4, trailing: FFSpacing.lg))

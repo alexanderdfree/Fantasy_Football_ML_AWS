@@ -87,7 +87,8 @@ def cv_pipeline_run(synthetic_cv_splits, tmp_path_factory):
         np.random.seed(42)
         torch.manual_seed(42)
         t0 = time.time()
-        result = run_cv_pipeline("QB", cfg, full_df.copy(), test_df.copy(), seed=42)
+        # Attach fixture wall-clock metadata to a detached compatibility mapping.
+        result = run_cv_pipeline("QB", cfg, full_df.copy(), test_df.copy(), seed=42).copy()
         result["_elapsed"] = time.time() - t0
         return result
     finally:

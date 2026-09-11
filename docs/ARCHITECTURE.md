@@ -40,6 +40,13 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 
 ## 2. System Overview
 
+ADR-0027 adds explicit ownership across this flow: identified datasets and build
+plans feed training; versioned bundles feed the shared predictor; CI publishes a
+complete immutable serving generation. Production ECS hydrates that generation
+without model training or inference. The diagram below describes the model
+families and deployment split; the [current contracts](adr/0027-versioned-prediction-and-execution-contracts.md)
+define publication, request consistency and migration behavior.
+
 ```
                     ┌─────────────────────────┐
   nflverse API ───▶ │ Data ingest + features  │ ─┐
@@ -71,7 +78,19 @@ The architecture changelog lives under [docs/adr/](adr/): recent changes in [adr
 
 > **Rollback path:** the warm-EC2 implementation ([docs/ec2_design.md](ec2_design.md)) stays provisioned and is reactivated by `gh variable set BATCH_ACTIVE --body "false"` on the next push. D13 explains why the active default flipped to Batch; D7/D9 cover the warm-EC2 fallback.
 
-A training run is triggered by a push to `main`, which invokes [`.github/workflows/train-batch.yml`](../.github/workflows/train-batch.yml) (when `BATCH_ACTIVE=true`): the workflow submits six Batch jobs in parallel against the `ff-gpu-spot` Compute Environment — one per position on its own Spot host, drawn from the single diversified g6.xlarge + g5.xlarge pool under `SPOT_PRICE_CAPACITY_OPTIMIZED` (D13) — blocks until they terminate, verifies fresh `manifest.json` entries landed in S3 per position (the legacy `model.tar.gz` mirror was removed in D13 layer C — freshness is now checked against the manifest and the artifact tarball each manifest points at), and commits a fresh `benchmark_history/{run_id}.json`. When `BATCH_ACTIVE != 'true'` the [warm-EC2 trainer](../.github/workflows/train-ec2.yml) fires instead and loops the six positions sequentially via SSM. The Flask service is built separately and deployed to ECS on every push to `main`; it reads pre-baked models from S3 and serves projections through a dashboard.
+A training run triggered by a push to `main` uses
+[train-batch.yml](../.github/workflows/train-batch.yml) when `BATCH_ACTIVE=true`.
+The workflow selects an immutable dataset and a build plan, submits position
+jobs to the Spot fleet, and verifies each plan's exact output receipt before
+recording benchmark history. Full and split CPU/NN jobs share those identities;
+split-job merging rejects incompatible inputs. D13 describes the fleet design.
+When `BATCH_ACTIVE != 'true'`, the
+[warm-EC2 trainer](../.github/workflows/train-ec2.yml) retains its legacy input
+selection. Both paths build the historical serving generation before rollout.
+The separately built Flask service on ECS downloads verified generation files,
+hydrates request snapshots and exposes the dashboard. `/ready` requires a
+completed artifact; `/health` remains a liveness probe. See
+[the build-plan runbook](training-build-plans.md) for input and output contracts.
 
 ---
 
@@ -93,10 +112,10 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D8 | [Two Docker images](adr/0008-two-docker-images.md) | Accepted |
 | D9 | [Warm training host](adr/0009-warm-training-host.md) | Accepted |
 | D10 | [Trunk-based CI/CD with test-gated deploys](adr/0010-trunk-based-ci-cd-with-test-gated-deploys.md) | Accepted |
-| D11 | [Smoke-test gate + ordered artifact publication (manifest v3)](adr/0011-smoke-test-gate-always-stable-artifact.md) | Accepted |
+| D11 | [Smoke-test gate + always-stable artifact (manifest v2)](adr/0011-smoke-test-gate-always-stable-artifact.md) | Accepted |
 | D12 | [Training-step perf composition (torch.compile rejected on T4)](adr/0012-training-step-perf-composition.md) | Accepted |
 | D13 | [Spot fan-out via AWS Batch (overrides D7 when BATCH_ACTIVE=true)](adr/0013-spot-fan-out-via-aws-batch.md) | Accepted |
-| D14 | [Serving prediction-cache + post_fork pre-warm](adr/0014-serving-prediction-cache-post-fork-pre-warm.md) | Accepted |
+| D14 | [Serving prediction-cache + post_fork pre-warm](adr/0014-serving-prediction-cache-post-fork-pre-warm.md) | Superseded by D27 |
 | D15 | [Attention-NN hyperparameter tuning via Optuna + Batch Spot fan-out](adr/0015-attention-nn-hyperparameter-tuning-via-optuna-batch-spot-fan-out.md) | Accepted |
 | D16 | [External opportunity / quality / value signals (ff_opportunity, ESPN QBR, contracts)](adr/0016-external-opportunity-quality-value-signals.md) | Accepted |
 | D17 | [Platform autodetection & per-arch optimization policy](adr/0017-platform-autodetection-per-arch-optimization-policy.md) | Accepted |
@@ -109,6 +128,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D24 | [Shared comparison truth and pregame evaluation cohorts](adr/0024-fair-comparison-and-evaluation-cohorts.md) | Accepted |
 | D25 | [Scoped agent guidance and incident retrieval](adr/0025-scoped-agent-guidance-and-incident-retrieval.md) | Accepted |
 | D26 | [Coherent training-data releases and isolated live overlays](adr/0026-coherent-training-data-releases.md) | Accepted |
+| D27 | [Versioned prediction, execution and serving contracts](adr/0027-versioned-prediction-and-execution-contracts.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 

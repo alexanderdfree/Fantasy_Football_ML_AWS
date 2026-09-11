@@ -36,19 +36,36 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import POSITIONS, SCORING_PPR, SEASONS, SPLITS_DIR, TEST_SEASONS  # noqa: E402
+from src.evaluation.metrics import (
+    ACTUAL as ACTUAL,
+)
+from src.evaluation.metrics import (
+    MODELS as MODELS,
+)
+from src.evaluation.metrics import (
+    available_models as available_models,
+)
+from src.evaluation.metrics import (
+    best_model as best_model,
+)
+from src.evaluation.metrics import (
+    bias_corrected_mae as bias_corrected_mae,
+)
+from src.evaluation.metrics import (
+    bucket_model_table as bucket_model_table,
+)
+from src.evaluation.metrics import compute_metrics
+from src.evaluation.metrics import (
+    per_model_metrics as per_model_metrics,
+)
+from src.evaluation.metrics import (
+    prediction_columns as _prediction_columns,
+)
 from src.rb.data import compute_team_rb_totals  # noqa: E402
 from src.shared.error_analysis import compute_stratum_metrics  # noqa: E402
-from src.shared.evaluation import compute_metrics  # noqa: E402
 from src.shared.feature_build import rolling_agg, safe_divide  # noqa: E402
 
-ACTUAL = "fantasy_points"
 TRUE_COL = ACTUAL
-MODELS = {
-    "Ridge": "pred_ridge_total",
-    "NN": "pred_nn_total",
-    "Attention NN": "pred_attn_nn_total",
-    "LightGBM": "pred_lgbm_total",
-}
 LGBM = "LightGBM"
 PEERS = ["Ridge", "NN", "Attention NN"]
 
@@ -184,100 +201,6 @@ def _flag(n: int) -> str:
 # --------------------------------------------------------------------------- #
 # Shared model/error helpers
 # --------------------------------------------------------------------------- #
-def available_models(df: pd.DataFrame, models: dict[str, str] | None = None) -> dict[str, str]:
-    """Subset of ``models`` whose prediction column is present in ``df``."""
-    models = models or MODELS
-    return {name: col for name, col in models.items() if col in df.columns}
-
-
-def _prediction_columns(df: pd.DataFrame) -> dict[str, str]:
-    """Dynamic prediction-column discovery with the historical short NN label."""
-    try:
-        from src.analysis.significance import pred_columns_from_test_df
-
-        cols = pred_columns_from_test_df(df)
-        if cols:
-            return {"NN" if name == "Neural Net" else name: col for name, col in cols.items()}
-    except Exception:
-        pass
-    return available_models(df)
-
-
-def per_model_metrics(
-    df: pd.DataFrame, models: dict[str, str] | None = None, actual: str = ACTUAL
-) -> dict[str, dict[str, float]]:
-    """MAE / signed bias / RMSE / n for each model on ``df``.
-
-    Bias = mean(pred - actual): positive means over-prediction.
-    """
-    models = models or available_models(df)
-    if len(df) == 0:
-        return {
-            name: {"mae": float("nan"), "bias": float("nan"), "rmse": float("nan"), "n": 0}
-            for name in models
-        }
-    y = df[actual].to_numpy(dtype=float)
-    out: dict[str, dict[str, float]] = {}
-    for name, col in models.items():
-        p = df[col].to_numpy(dtype=float)
-        m = compute_metrics(y, p)
-        out[name] = {
-            "mae": m["mae"],
-            "bias": float(np.mean(p - y)),
-            "rmse": m["rmse"],
-            "n": int(len(df)),
-        }
-    return out
-
-
-def bucket_model_table(
-    df: pd.DataFrame,
-    bucket_col: str,
-    models: dict[str, str] | None = None,
-    *,
-    actual: str = ACTUAL,
-) -> pd.DataFrame:
-    """Uniform per-model MAE/RMSE/bias/n by bucket plus dMAE vs global."""
-    models = models or _prediction_columns(df)
-    global_metrics = per_model_metrics(df, models, actual)
-    out = []
-    for name, col in models.items():
-        for bucket, sub in df.groupby(bucket_col, observed=True, sort=True):
-            m = per_model_metrics(sub, {name: col}, actual)[name]
-            out.append(
-                {
-                    "model": name,
-                    "bucket": str(bucket),
-                    "n": int(m["n"]),
-                    "mae": m["mae"],
-                    "dmae": m["mae"] - global_metrics[name]["mae"],
-                    "rmse": m["rmse"],
-                    "bias": m["bias"],
-                }
-            )
-    return pd.DataFrame(out)
-
-
-def bias_corrected_mae(
-    df: pd.DataFrame, y_true_col: str, y_pred_col: str, group_col: str
-) -> pd.Series:
-    """Per-group mean(|error - mean(error)|), the bias-removed MAE."""
-    tmp = df[[group_col, y_true_col, y_pred_col]].dropna().copy()
-    tmp["_e"] = tmp[y_pred_col] - tmp[y_true_col]
-    centered = tmp["_e"] - tmp.groupby(group_col, observed=True)["_e"].transform("mean")
-    tmp["_abs_centered"] = centered.abs()
-    return tmp.groupby(group_col, observed=True)["_abs_centered"].mean()
-
-
-def best_model(df: pd.DataFrame, models: dict[str, str] | None = None) -> tuple[str | None, float]:
-    """Lowest-overall-MAE model present on ``df``."""
-    models = models or available_models(df)
-    best_name, best_mae = None, float("inf")
-    for name, col in models.items():
-        mae = (df[col] - df[ACTUAL]).abs().mean()
-        if mae < best_mae:
-            best_name, best_mae = name, mae
-    return best_name, (best_mae if best_name is not None else float("nan"))
 
 
 # --------------------------------------------------------------------------- #

@@ -437,12 +437,12 @@ class TestGracefulDegradation:
     def test_joblib_load_failure_bubbles_up_as_json(self, client, app_module, monkeypatch):
         """If joblib.load raises (e.g. corrupted model artifact) during data
         build, the error must bubble up as structured JSON rather than HTML."""
-        import joblib
+        from src.serving import core
 
         def _joblib_boom(*args, **kwargs):
             raise OSError("simulated joblib failure")
 
-        monkeypatch.setattr(joblib, "load", _joblib_boom)
+        monkeypatch.setattr(core, "_get_data", _joblib_boom)
 
         # _get_data will try to read parquet splits (may fail earlier). Either
         # way the global /api/ error handler should turn the exception into

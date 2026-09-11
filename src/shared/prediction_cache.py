@@ -1,8 +1,11 @@
-"""Immutable prediction-cache generations and single-object S3 transport.
+"""Legacy immutable prediction-cache transport, isolated from schema-9 serving.
 
 Readers resolve the local pointer once. Writers finish a private generation
 before atomically replacing it. Old generations remain until task replacement
 so another worker's open/read-in-progress generation is never removed.
+This compatibility utility uses a private legacy-v1 directory. The active
+serving publisher/consumer is src.artifacts.serving_snapshot; the two protocols
+must never replace the same current.json pointer.
 """
 
 from __future__ import annotations
@@ -40,13 +43,13 @@ def _manifest_bytes(files: dict[str, bytes]) -> bytes:
 
 def current_generation(cache_dir: str | Path) -> Path | None:
     """Resolve a committed directory; legacy loose files are never trusted."""
-    root = Path(cache_dir)
+    root = Path(cache_dir) / "legacy-v1"
     try:
         pointer = json.loads((root / _POINTER).read_bytes())
         generation = pointer["generation"]
         if not isinstance(generation, str) or not re.fullmatch(r"[a-f0-9]{64}", generation):
             return None
-        if is_invalidated(root, generation):
+        if is_invalidated(cache_dir, generation):
             return None
         directory = root / "generations" / generation
         manifest = (directory / _MANIFEST).read_bytes()
@@ -59,14 +62,14 @@ def current_generation(cache_dir: str | Path) -> Path | None:
 
 def is_invalidated(cache_dir: str | Path, generation: str) -> bool:
     """Shared invalidation survives worker replacement without deleting readers' files."""
-    return (Path(cache_dir) / _INVALIDATED / generation).exists()
+    return (Path(cache_dir) / "legacy-v1" / _INVALIDATED / generation).exists()
 
 
 def invalidate_generation(cache_dir: str | Path, generation: str) -> None:
     """Invalidate this exact generation, regardless of a newer current pointer."""
     if not re.fullmatch(r"[a-f0-9]{64}", generation):
         raise ValueError("Invalid prediction cache generation ID")
-    directory = Path(cache_dir) / _INVALIDATED
+    directory = Path(cache_dir) / "legacy-v1" / _INVALIDATED
     directory.mkdir(parents=True, exist_ok=True)
     (directory / generation).touch()
 
@@ -92,12 +95,12 @@ def read_generation(cache_dir: str | Path) -> tuple[Path, dict[str, bytes]]:
 
 def publish_generation(cache_dir: str | Path, files: dict[str, bytes]) -> Path:
     """Commit complete immutable bytes, then switch the pointer in one rename."""
-    root = Path(cache_dir)
+    root = Path(cache_dir) / "legacy-v1"
     parent = root / "generations"
     parent.mkdir(parents=True, exist_ok=True)
     manifest = _manifest_bytes(files)
     generation = hashlib.sha256(manifest).hexdigest()
-    if is_invalidated(root, generation):
+    if is_invalidated(cache_dir, generation):
         raise ValueError("Cannot publish an invalidated prediction cache generation")
     directory = parent / generation
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=parent))
@@ -116,7 +119,7 @@ def publish_generation(cache_dir: str | Path, files: dict[str, bytes]) -> Path:
         with tempfile.NamedTemporaryFile(dir=root, prefix=".current-", delete=False) as stream:
             pointer_tmp = Path(stream.name)
             stream.write(json.dumps({"generation": generation}).encode())
-        if is_invalidated(root, generation):
+        if is_invalidated(cache_dir, generation):
             raise ValueError("Prediction cache generation was invalidated before publication")
         os.replace(pointer_tmp, root / _POINTER)
     finally:

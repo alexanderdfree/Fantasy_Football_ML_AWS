@@ -6,30 +6,31 @@ Usage:
     python src/batch/launch.py --wait false            # fire and forget
     python src/batch/launch.py --dry-run               # print plan, touch nothing
     python src/batch/launch.py --wait-timeout 1800     # override 3h default
-    python src/batch/launch.py --force-upload          # compatibility flag; publish verified release
-    python src/batch/launch.py --skip-upload           # pin published release (CI)
+    python src/batch/launch.py --force-upload          # skip ETag dedup
+    python src/batch/launch.py --skip-upload           # assume S3 current (CI)
 
-Source identity (required except for --dry-run):
-    FF_TRAIN_GIT_SHA    Full SHA of the selected training image.
-    FF_JOB_DEFINITION_REVISION    Numeric revision registered for that image.
-    FF_JOB_DEFINITION_CPU_REVISION    Also required when using CPU/split jobs.
-    The launcher registers ancestry before submitting jobs. A name already
-    suffixed with :<revision> is also accepted as an explicit revision pin.
+Publishing requires FF_BUILD_PLAN_ID or an explicit FF_LEGACY_RUN_ID, together
+with FF_TRAIN_GIT_SHA (the actual image's full 40-character source SHA). Register
+the source with src.scripts.register_training_source before launching legacy jobs.
 
-Other configuration (environment variables, optional):
+Config (other environment variables are optional):
     FF_S3_BUCKET        (default: ff-predictor-training)
     FF_JOB_QUEUE        (default: ff-training-queue)
     FF_JOB_QUEUE_CPU    (optional)                          CPU split queue
     FF_JOB_DEFINITION   (default: ff-training-job)          GPU job definition
     FF_JOB_DEFINITION_CPU  (optional)                       CPU split job definition
+    FF_JOB_DEFINITION_REVISION       (optional)             GPU job-def revision pin
+    FF_JOB_DEFINITION_CPU_REVISION   (optional)             CPU job-def revision pin
     FF_WAIT_TIMEOUT     (default: 10800, i.e. 3h)
     FF_BATCH_LIFECYCLE_FILE  (optional)   write per-job orchestration-vs-run
                                           timing ledger JSON to this path
 """
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 import tarfile
 import tempfile
@@ -48,6 +49,7 @@ S3_BUCKET = os.environ.get("FF_S3_BUCKET", "ff-predictor-training")
 JOB_QUEUE = os.environ.get("FF_JOB_QUEUE", "ff-training-queue")
 JOB_QUEUE_CPU = os.environ.get("FF_JOB_QUEUE_CPU", "") or None
 JOB_DEFINITION = os.environ.get("FF_JOB_DEFINITION", "ff-training-job")
+TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
 # CPU job definition used by split cpu/merge branches. Legacy full-mode K/DST
 # routing still honors it when explicitly set, but production leaves it unset
 # unless --split is active so the full path remains GPU-backed.
@@ -63,12 +65,6 @@ JOB_DEFINITION_CPU_REVISION = os.environ.get("FF_JOB_DEFINITION_CPU_REVISION", "
 # against the same revision — the latest one — which means a workflow run
 # triggered by image A can silently train image B's code.
 JOB_DEFINITION_REVISION = os.environ.get("FF_JOB_DEFINITION_REVISION", "") or None
-# Thread the image's commit SHA through to the containers so train.py can
-# stamp it into benchmark_metrics.json. benchmark.py uses it to verify all
-# six positions in a run reflect the same image (catches the lingering
-# manifest-write race when two train-batch runs land in quick succession,
-# even after Layer A pins the job-def revision). Required for job submission.
-TRAIN_GIT_SHA = os.environ.get("FF_TRAIN_GIT_SHA", "") or None
 # Optional breadcrumb file recording the submitted Batch job ids. Set by
 # train-batch.yml so its post-timeout recovery step can re-check the SAME jobs
 # via `aws batch describe-jobs` after wait_for_jobs gives up — on 2026-06-08
@@ -152,6 +148,27 @@ def _cloudwatch_url(log_stream_name: str) -> str:
     )
 
 
+def _file_md5(path: str, chunk_size: int = 1024 * 1024) -> str:
+    """Stream-hash a file; returns hex digest (matches S3 ETag for single-part)."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _s3_object_etag(s3_client, bucket: str, key: str):
+    """Return the S3 object's ETag (minus quotes) or None if the object doesn't exist."""
+    try:
+        resp = s3_client.head_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    return resp.get("ETag", "").strip('"')
+
+
 def upload_data(s3_bucket, s3_client=None, force: bool = False):
     """Publish sealed raw dependencies and splits as one verified release.
 
@@ -162,8 +179,9 @@ def upload_data(s3_bucket, s3_client=None, force: bool = False):
 
     s3 = s3_client or boto3.client("s3", region_name=AWS_REGION)
     release_id = publish_release(s3, s3_bucket, force=force)
-    os.environ["FF_DATA_RELEASE"] = release_id
-    return release_id
+    from src.orchestration.datasets import bind_data_release
+
+    return bind_data_release(release_id)
 
 
 def pin_data_release(s3_client=None, *, prefix="data", source_ref=None):
@@ -178,9 +196,14 @@ def pin_data_release(s3_client=None, *, prefix="data", source_ref=None):
     )
 
     selected = os.environ.get("FF_DATA_RELEASE")
+    dataset = os.environ.get("FF_DATASET_ID")
+    if dataset and selected != dataset:
+        raise RuntimeError("FF_DATA_RELEASE and FF_DATASET_ID disagree")
     if selected == "legacy":
         print("WARNING: explicit legacy data selected; raw/split generation is unverified")
-        return "legacy"
+        from src.orchestration.datasets import bind_data_release
+
+        return bind_data_release("legacy")
     s3 = s3_client or boto3.client("s3", region_name=AWS_REGION)
     if source_ref:
         from src.scripts.wait_data_release import producer_hashes_at_revision
@@ -199,8 +222,9 @@ def pin_data_release(s3_client=None, *, prefix="data", source_ref=None):
             )
     else:
         release_id, _ = resolve_compatible_release(s3, S3_BUCKET, expected, prefix=prefix)
-    os.environ["FF_DATA_RELEASE"] = release_id
-    return release_id
+    from src.orchestration.datasets import bind_data_release
+
+    return bind_data_release(release_id)
 
 
 def resolve_launch_binding(batch, s3, positions, *, split=False, gpu_only=False):
@@ -217,21 +241,24 @@ def resolve_launch_binding(batch, s3, positions, *, split=False, gpu_only=False)
         batch,
         s3,
         S3_BUCKET,
-        sha=TRAIN_GIT_SHA or "",
+        sha=os.environ.get("FF_TRAIN_GIT_SHA") or TRAIN_GIT_SHA or "",
         split=use_cpu and not only_cpu,
         name=JOB_DEFINITION_CPU if only_cpu else JOB_DEFINITION,
         cpu_name=JOB_DEFINITION_CPU or "ff-training-cpu-job",
         revision=(JOB_DEFINITION_CPU_REVISION if only_cpu else JOB_DEFINITION_REVISION) or "",
         cpu_revision=JOB_DEFINITION_CPU_REVISION or "",
         primary_cpu=only_cpu,
+        include_definition=True,
     )
     return {
         "image_sha": selected["image_sha"],
-        "gpu_definition": f"{JOB_DEFINITION}:{selected['revision']}" if not only_cpu else "",
+        "gpu_image": selected["image"] if not only_cpu else "",
+        "cpu_image": selected["image"] if only_cpu else selected.get("cpu_image", ""),
+        "gpu_definition": selected["job_definition"] if not only_cpu else "",
         "cpu_definition": (
-            f"{JOB_DEFINITION_CPU}:{selected['revision']}"
+            selected["job_definition"]
             if only_cpu
-            else f"{JOB_DEFINITION_CPU}:{selected['cpu_revision']}"
+            else selected["cpu_job_definition"]
             if use_cpu
             else ""
         ),
@@ -261,9 +288,19 @@ def _bound_definition(binding, position, branch="full"):
 
 
 def data_release_environment() -> list[dict[str, str]]:
-    """Forward the launcher's selected release into every worker."""
+    """Forward one canonical release into every normal, tuning and A/B worker."""
+    from src.orchestration.datasets import bind_data_release
+
     selected = os.environ.get("FF_DATA_RELEASE")
-    return [{"name": "FF_DATA_RELEASE", "value": selected}] if selected else []
+    if not selected:
+        return []
+    bind_data_release(selected)
+    names = (
+        ("FF_DATA_RELEASE",)
+        if selected == "legacy"
+        else ("FF_DATA_RELEASE", "FF_DATASET_ID", "FF_DATA_FORMAT")
+    )
+    return [{"name": name, "value": os.environ[name]} for name in names]
 
 
 def _job_definition_for(position: str, branch: str = "full") -> str:
@@ -319,13 +356,48 @@ def _job_queue_for(position: str, branch: str = "full") -> str:
     return JOB_QUEUE
 
 
-def validate_submission_source(positions, *, split=False, binding=None):
-    """Reject unidentifiable images before allocating any training jobs."""
-    from src.shared.artifact_publication import source_key
+def require_training_identity(*, allow_unresolved_source=False):
+    """Reject anonymous publication before uploads/submissions can have effects."""
+    plan_id = os.environ.get("FF_BUILD_PLAN_ID")
+    run_id = os.environ.get("FF_LEGACY_RUN_ID")
+    source_sha = os.environ.get("FF_TRAIN_GIT_SHA", "")
+    if plan_id and run_id:
+        raise RuntimeError("Select FF_BUILD_PLAN_ID or FF_LEGACY_RUN_ID, not both")
+    if os.environ.get("FF_REQUIRE_BUILD_PLAN") == "1" and not plan_id:
+        raise RuntimeError("FF_BUILD_PLAN_ID is required before Batch submission")
+    if plan_id and not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise RuntimeError("Build-plan training requires its full FF_TRAIN_GIT_SHA source identity")
+    if not plan_id:
+        if (
+            not run_id
+            or not run_id.strip()
+            or (
+                not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+                and not (allow_unresolved_source and not source_sha)
+            )
+        ):
+            raise RuntimeError(
+                "Training requires FF_BUILD_PLAN_ID or explicit FF_LEGACY_RUN_ID "
+                "and FF_TRAIN_GIT_SHA (full 40-character image source SHA)"
+            )
+        if (
+            os.environ.get("FF_DATASET_ID")
+            and os.environ.get("FF_DATA_RELEASE") != os.environ["FF_DATASET_ID"]
+        ):
+            raise RuntimeError("FF_DATA_RELEASE and FF_DATASET_ID disagree")
+    return plan_id, run_id, source_sha
 
-    source_sha = binding["image_sha"] if binding else TRAIN_GIT_SHA
-    source_key("models", source_sha or "")
-    branches = ("nn", "cpu", "merge") if split else ("full",)
+
+def validate_submission_source(positions, *, split=False, binding=None, branch=None):
+    """Require an identified request and pinned executable before allocating jobs."""
+    plan_id, _, source_sha = require_training_identity()
+    if plan_id:
+        # The immutable plan supplies and authenticates exact job definitions
+        # during submission, rather than consulting mutable launcher defaults.
+        return
+    if binding is not None and binding["image_sha"] != source_sha:
+        raise RuntimeError("Selected Batch image differs from the declared source SHA")
+    branches = (branch,) if branch is not None else ("nn", "cpu", "merge") if split else ("full",)
     for position in positions:
         for branch in branches:
             definition = (
@@ -342,6 +414,55 @@ def validate_submission_source(positions, *, split=False, binding=None):
                 )
 
 
+def register_submission_source(s3_client):
+    """Register the selected executable's full ancestry before legacy jobs start."""
+    plan_id, _, source_sha = require_training_identity()
+    if not plan_id:
+        from src.artifacts.source import register_source
+
+        register_source(
+            s3_client,
+            S3_BUCKET,
+            os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
+            source_sha,
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+        )
+
+
+def prepare_submission(
+    positions,
+    s3_client,
+    batch_client,
+    *,
+    split=False,
+    skip_upload=True,
+    force=False,
+    expected_source=None,
+):
+    """Bind actual image and one data release before registration/submission."""
+    plan_id, _, _ = require_training_identity(allow_unresolved_source=True)
+    if plan_id:
+        from src.orchestration.build_plan import load_plan, verify_plan_data_environment
+
+        plan = load_plan(s3_client, S3_BUCKET, plan_id)
+        verify_plan_data_environment(plan)
+        return None  # The immutable plan supplies every exact job revision.
+    binding = resolve_launch_binding(batch_client, s3_client, positions, split=split)
+    if expected_source and binding["image_sha"] != expected_source:
+        raise RuntimeError("Requested history SHA differs from the selected image")
+    os.environ["FF_TRAIN_GIT_SHA"] = binding["image_sha"]
+    validate_submission_source(positions, split=split, binding=binding)
+    if skip_upload:
+        pin_data_release(s3_client, source_ref=binding["image_sha"])
+    else:
+        if os.environ.get("FF_DATA_RELEASE"):
+            raise RuntimeError("An explicit release is already pinned; use --skip-upload")
+        validate_local_publish(binding["image_sha"])
+        upload_data(S3_BUCKET, s3_client=s3_client, force=force)
+        pin_data_release(s3_client, source_ref=binding["image_sha"])
+    return binding
+
+
 def submit_job(
     position,
     seed=42,
@@ -350,34 +471,81 @@ def submit_job(
     branch: str = "full",
     split_run_id: str | None = None,
     depends_on: list[dict] | None = None,
-    binding: dict | None = None,
     history_run_id: str | None = None,
+    binding: dict | None = None,
 ):
     """Submit a single Batch job. Returns (position-or-branch-key, job_id)."""
+    plan_id, run_id, source_sha = require_training_identity()
     batch = batch_client or boto3.client("batch", region_name=AWS_REGION)
     # int-seconds timestamp collides if two launches happen in the same second;
     # a short uuid suffix makes the name unique without sacrificing readability.
     timestamp = int(time.time())
     suffix = uuid.uuid4().hex[:6]
-    job_definition = (
-        _bound_definition(binding, position, branch)
-        if binding
-        else _job_definition_for(position, branch=branch)
-    )
+    job_definition = _job_definition_for(position, branch=branch)
     job_queue = _job_queue_for(position, branch=branch)
     environment = [
         {"name": "S3_BUCKET", "value": S3_BUCKET},
         {"name": "S3_DATA_PREFIX", "value": "data"},
         {"name": "LOG_EVERY", "value": "1"},
     ]
-    environment.extend(data_release_environment())
     if history_run_id:
         environment.append({"name": "FF_BENCHMARK_RUN_ID", "value": history_run_id})
-    source_sha = binding["image_sha"] if binding else TRAIN_GIT_SHA
     if source_sha:
         # Stamped into benchmark_metrics.json by train.py; benchmark.py uses
         # it to surface per-position SHA divergence across a single run.
         environment.append({"name": "FF_TRAIN_GIT_SHA", "value": source_sha})
+    if plan_id:
+        from src.orchestration.build_plan import (
+            load_plan,
+            plan_data_format,
+            verify_plan_data_environment,
+        )
+
+        plan = load_plan(boto3.client("s3"), S3_BUCKET, plan_id)
+        verify_plan_data_environment(plan)
+        if (
+            plan["git_sha"] != source_sha
+            or seed != plan["seed"]
+            or position not in plan["positions"]
+        ):
+            raise RuntimeError("Submission code, seed or position does not match build plan")
+        use_cpu = branch in {"cpu", "merge"} or (
+            branch == "full"
+            and position in CPU_ONLY_POSITIONS
+            and JOB_DEFINITION_CPU
+            and JOB_QUEUE_CPU
+        )
+        definition = plan["job_definitions"]["cpu" if use_cpu else "gpu"]
+        job_definition = definition["arn"]
+        if plan_data_format(plan) == "data-release-v1":
+            environment.extend(
+                item for item in data_release_environment() if item["name"] != "FF_DATASET_ID"
+            )
+        environment.extend(
+            [
+                {"name": "FF_BUILD_PLAN_ID", "value": plan_id},
+                {"name": "FF_DATASET_ID", "value": plan["dataset_id"]},
+                {"name": "FF_TRAIN_IMAGE_ID", "value": definition["image"]},
+                {"name": "FF_REQUIRE_BUILD_PLAN", "value": "1"},
+            ]
+        )
+    elif run_id:
+        binding = binding or resolve_launch_binding(
+            batch, boto3.client("s3"), [position], split=branch != "full"
+        )
+        validate_submission_source([position], binding=binding, branch=branch)
+        if not os.environ.get("FF_DATA_RELEASE"):
+            raise RuntimeError("Select a compatible FF_DATA_RELEASE before submitting training")
+        environment.extend(data_release_environment())
+        job_definition = _bound_definition(binding, position, branch)
+        role = "cpu" if job_definition == binding.get("cpu_definition") else "gpu"
+        image_id = binding.get(role + "_image")
+        declared_image = os.environ.get("FF_TRAIN_IMAGE_ID")
+        if declared_image and declared_image != image_id:
+            raise RuntimeError("Declared training image differs from the selected Batch revision")
+        if image_id:
+            environment.append({"name": "FF_TRAIN_IMAGE_ID", "value": image_id})
+        environment.append({"name": "FF_LEGACY_RUN_ID", "value": run_id})
     if FF_CUDA_GRAPH:
         # Override only — graphs autodetect ON for sm_80+ in the container, so a
         # value is needed only to force the eager path (forward "0"). K's nested
@@ -446,9 +614,9 @@ def _submit_split_for_position(
     seed: int,
     split_run_id: str,
     batch_client=None,
-    binding=None,
     *,
     history_run_id=None,
+    binding=None,
 ):
     """Submit NN, CPU, and merge jobs for one split position."""
     _, nn_job_id = submit_job(
@@ -659,21 +827,17 @@ def wait_for_jobs(job_ids, timeout_seconds=None, batch_client=None):
 def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
     """Download model artifacts from S3 back to local position dirs.
 
-    Resolves the per-position artifact via ``models/{POS}/releases/manifest.json`` rather
-    than the legacy ``models/{POS}/model.tar.gz`` mirror, which was removed in
-    the parallel-train-batch race fix (two concurrent runs writing the same
-    legacy key were last-write-wins). Walks ``stable → current → previous``,
-    matching the ``src/batch/benchmark.py::download_metrics`` chain so a
-    post-train ``launch.py`` invocation pulls the same artifact CI just
-    benchmarked.
+    Identified plan/legacy runs require their own checksum-verified receipts;
+    missing or invalid receipts raise without falling back to a mutable head.
+    Calling this retrieval helper without a run identity explicitly retrieves
+    the latest available ``stable → current → previous`` manifest artifact.
 
     If stopped_at_by_pos is provided (position -> ms-epoch stoppedAt), warn
     loudly when the resolved entry's S3 LastModified is older than the job
     finish — that means we're pulling a stale artifact from a prior run.
 
-    Missing manifest and "all entries failed" both surface a per-position
-    skip rather than raising, preserving the original "one bad position
-    shouldn't kill a six-position download" behaviour.
+    In latest-retrieval mode, a missing manifest or "all entries failed"
+    surfaces a per-position skip rather than raising.
     """
     from src.shared.model_sync import load_manifest
 
@@ -684,6 +848,38 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
     for pos in positions:
         local_model_dir = os.path.join(pos.lower(), "outputs", "models")
         os.makedirs(local_model_dir, exist_ok=True)
+        plan_id = os.environ.get("FF_BUILD_PLAN_ID")
+        run_id = os.environ.get("FF_LEGACY_RUN_ID")
+        if plan_id or run_id:
+            from pathlib import Path
+
+            from src.artifacts.receipts import download_receipt_artifact, download_run_artifact
+
+            if plan_id and run_id:
+                raise RuntimeError("Select FF_BUILD_PLAN_ID or FF_LEGACY_RUN_ID, not both")
+            source_sha = require_training_identity()[2] if run_id else None
+            with tempfile.TemporaryDirectory(prefix="launch-receipt-") as temp:
+                archive_path = Path(temp) / "model.tar.gz"
+                if plan_id:
+                    download_receipt_artifact(s3, S3_BUCKET, plan_id, pos, archive_path)
+                else:
+                    download_run_artifact(
+                        s3,
+                        S3_BUCKET,
+                        s3_prefix,
+                        source_sha,
+                        pos,
+                        run_id,
+                        archive_path,
+                        expected_dataset_id=(
+                            os.environ.get("FF_DATA_RELEASE")
+                            if os.environ.get("FF_DATA_RELEASE") != "legacy"
+                            else None
+                        ),
+                    )
+                with tarfile.open(archive_path, "r:gz") as archive:
+                    archive.extractall(local_model_dir, filter="data")
+            continue
 
         try:
             manifest = load_manifest(s3, S3_BUCKET, s3_prefix, pos)
@@ -692,7 +888,7 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
             continue
         if manifest is None:
             print(
-                f"[{pos}] No manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/releases/manifest.json, skipping"
+                f"[{pos}] No manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/manifest.json, skipping"
             )
             continue
 
@@ -814,6 +1010,17 @@ def _write_job_ids_file(path, expected_positions, job_ids):
         "expected_positions": list(expected_positions),
         "jobs": {_job_label(key): job_id for key, job_id in job_ids.items()},
     }
+    if os.environ.get("FF_BUILD_PLAN_ID"):
+        payload.update(
+            build_plan_id=os.environ["FF_BUILD_PLAN_ID"], dataset_id=os.environ["FF_DATASET_ID"]
+        )
+    elif os.environ.get("FF_LEGACY_RUN_ID"):
+        payload.update(
+            legacy_run_id=os.environ["FF_LEGACY_RUN_ID"],
+            git_sha=os.environ["FF_TRAIN_GIT_SHA"],
+        )
+    if os.environ.get("FF_DATA_RELEASE"):
+        payload["data_release"] = os.environ["FF_DATA_RELEASE"]
     try:
         with open(path, "w") as f:
             json.dump(payload, f, indent=2)
@@ -822,12 +1029,11 @@ def _write_job_ids_file(path, expected_positions, job_ids):
         print(f"WARNING: could not write job-ids file {path}: {e!r}")
 
 
-def _append_benchmark_history(positions, *, note, git_hash=None, run_id=None, data_release=None):
-    """Collect the registered run locally after waiting, as a convenience.
+def _append_benchmark_history(positions, *, note, run_id=None):
+    """Collect this run locally; completing jobs publish its S3 row independently.
 
-    Completing jobs publish the S3 row independently; this local copy is not
-    required for the website or for runs that outlive the launcher's wait.
-    Never affects the launch exit code.
+    This convenience copy is not required for late results to reach the website
+    and never affects the launch exit code.
     """
     if not positions:
         return
@@ -836,12 +1042,15 @@ def _append_benchmark_history(positions, *, note, git_hash=None, run_id=None, da
         # module-level import here would be circular.
         from src.batch.benchmark import record_benchmark_run
 
-        metadata = {"git_hash": git_hash} if git_hash else {}
-        if run_id:
-            metadata["run_id"] = run_id
-        if data_release is not None:
-            metadata["data_release"] = data_release
-        record_benchmark_run(positions, backend="batch", note=note, **metadata)
+        _, _, source_sha = require_training_identity()
+        record_benchmark_run(
+            positions,
+            backend="batch",
+            note=note,
+            git_hash=source_sha,
+            run_id=run_id,
+            data_release=os.environ.get("FF_DATA_RELEASE"),
+        )
     except Exception as e:  # noqa: BLE001 — append is a convenience, not a gate
         print(f"[benchmark_history] auto-append skipped: {e!r}")
 
@@ -875,13 +1084,13 @@ def main():
     parser.add_argument(
         "--force-upload",
         action="store_true",
-        help="Compatibility flag; release publication always verifies every file",
+        help="Upload data splits even if S3 ETag matches the local file",
     )
     parser.add_argument(
         "--skip-upload",
         action="store_true",
         help=(
-            "Skip publication and pin the existing verified S3 data release. "
+            "Skip uploading data/splits/*.parquet (assume S3 already current). "
             "Used by CI (train-batch.yml) where the runner has no local data."
         ),
     )
@@ -929,34 +1138,25 @@ def main():
         _print_plan(args.positions, args.seed, split=args.split, split_run_id=split_run_id)
         return
 
+    try:
+        _, _, source_sha = require_training_identity(allow_unresolved_source=True)
+    except RuntimeError as error:
+        parser.error(str(error))
+
     # Shared boto3 clients — boto3 clients are thread-safe, no need per-thread.
     s3_client = boto3.client("s3", region_name=AWS_REGION)
     batch_client = boto3.client("batch", region_name=AWS_REGION)
-
-    binding = resolve_launch_binding(batch_client, s3_client, args.positions, split=args.split)
-    try:
-        validate_submission_source(args.positions, split=args.split, binding=binding)
-    except RuntimeError as exc:
-        parser.error(str(exc))
-    if not args.skip_upload:
-        validate_local_publish(binding["image_sha"])
-
-    # Register the pinned image's immutable ancestry before any job can publish.
-    from src.shared.artifact_publication import register_source
-
-    register_source(
+    binding = prepare_submission(
+        args.positions,
         s3_client,
-        S3_BUCKET,
-        os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
-        binding["image_sha"],
+        batch_client,
+        split=args.split,
+        skip_upload=args.skip_upload,
+        force=args.force_upload,
     )
-    if args.skip_upload:
-        print("Skipping publication (--skip-upload); pinning the verified S3 data release.\n")
-    else:
-        print("Publishing sealed raw inputs and splits to S3...")
-        upload_data(S3_BUCKET, s3_client=s3_client, force=args.force_upload)
+    register_submission_source(s3_client)
+    source_sha = os.environ["FF_TRAIN_GIT_SHA"]
 
-    selected_release = pin_data_release(s3_client, source_ref=binding["image_sha"])
     history_run_id = None
     if append_history:
         history_run_id = create_run(
@@ -964,10 +1164,13 @@ def main():
             S3_BUCKET,
             args.positions,
             run_id=args.history_run_id,
-            git_sha=binding["image_sha"],
-            data_release=selected_release,
+            git_sha=source_sha,
             pr_number=args.pr_number,
             seed=args.seed,
+            build_plan_id=os.environ.get("FF_BUILD_PLAN_ID"),
+            dataset_id=os.environ.get("FF_DATASET_ID"),
+            legacy_run_id=os.environ.get("FF_LEGACY_RUN_ID"),
+            data_release=os.environ.get("FF_DATA_RELEASE"),
         )
         print(f"Training history run: {history_run_id}")
 
@@ -990,8 +1193,8 @@ def main():
                     args.seed,
                     split_run_id,
                     batch_client,
-                    binding,
                     history_run_id=history_run_id,
+                    binding=binding,
                 ): pos
                 for pos in args.positions
             }
@@ -1002,8 +1205,8 @@ def main():
                     pos,
                     args.seed,
                     batch_client,
-                    binding=binding,
                     history_run_id=history_run_id,
+                    binding=binding,
                 ): pos
                 for pos in args.positions
             }
@@ -1072,11 +1275,7 @@ def main():
         download_artifacts(succeeded, stopped_at_by_pos=stopped_at_by_pos, s3_client=s3_client)
         if append_history and args.collect_history.lower() == "true":
             _append_benchmark_history(
-                args.positions,
-                note="Standalone Batch run",
-                git_hash=binding["image_sha"],
-                run_id=history_run_id,
-                data_release=selected_release,
+                args.positions, note="Standalone Batch run", run_id=history_run_id
             )
 
     print("\nAll done.")

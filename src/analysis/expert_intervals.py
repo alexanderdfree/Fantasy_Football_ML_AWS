@@ -38,7 +38,7 @@ Methodology caveats (carried through to the output + the serving UI):
   - **NFL.com has no DST; RotoWire has no K** — those cells are emitted as ``None``.
 
 No model training, no retrain trigger (analysis-only). Writes the committed
-``src/serving/expert_intervals.json`` consumed by the Comparison tab.
+``src/prediction/expert_intervals.json`` consumed by the Comparison tab.
 
 Operator usage:
   python -m src.analysis.expert_intervals
@@ -148,7 +148,7 @@ _ROTOWIRE_NOTE = (
 
 # Repo root = two levels up from src/analysis/expert_intervals.py.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-OUTPUT_PATH_DEFAULT = os.path.join(_REPO_ROOT, "src", "serving", "expert_intervals.json")
+OUTPUT_PATH_DEFAULT = os.path.join(_REPO_ROOT, "src", "prediction", "expert_intervals.json")
 
 
 # ---------- Quantile fit + apply ---------------------------------------------

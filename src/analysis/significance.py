@@ -49,6 +49,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import TOP_K_RANKING  # noqa: E402
+from src.evaluation.metrics import CANONICAL_PRED_COLUMNS as CANONICAL_PRED_COLUMNS
+from src.evaluation.metrics import pred_columns_from_test_df as pred_columns_from_test_df
 from src.shared.position import Position  # noqa: E402
 from src.shared.utils import seed_everything  # noqa: E402
 
@@ -59,14 +61,6 @@ OUT_DIR = PROJECT_ROOT / "analysis_output"
 # subset whose column is actually present is used — ElasticNet / Attention NN /
 # LightGBM are conditional on the position's config. Only ``Season Avg`` is
 # wired in as a baseline.
-CANONICAL_PRED_COLUMNS: dict[str, str] = {
-    "Season Avg": "pred_baseline",
-    "Ridge": "pred_ridge_total",
-    "Neural Net": "pred_nn_total",
-    "ElasticNet": "pred_enet_total",
-    "Attention NN": "pred_attn_nn_total",
-    "LightGBM": "pred_lgbm_total",
-}
 DEFAULT_BASELINES: tuple[str, ...] = ("Season Avg",)
 
 
@@ -538,11 +532,6 @@ def compact_significance(result: dict) -> dict | None:
         if vs_base is not None:
             out["best_vs_baseline"] = vs_base
     return out
-
-
-def pred_columns_from_test_df(test_df: pd.DataFrame) -> dict[str, str]:
-    """Reconstruct the model-name -> column map from whichever ``pred_*`` columns landed."""
-    return {name: col for name, col in CANONICAL_PRED_COLUMNS.items() if col in test_df.columns}
 
 
 def run_for_position(

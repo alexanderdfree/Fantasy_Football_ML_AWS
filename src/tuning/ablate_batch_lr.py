@@ -238,6 +238,7 @@ def _build_jobs(
                 variant = VARIANTS[variant_key]
                 preflight.append(
                     AblationJob(
+                        context_aware=True,
                         position=position,
                         seed=seeds[0],
                         variant=variant_key,
@@ -253,6 +254,7 @@ def _build_jobs(
                 variant = VARIANTS[variant_key]
                 experiment.append(
                     AblationJob(
+                        context_aware=True,
                         position=position,
                         seed=seed,
                         variant=variant_key,

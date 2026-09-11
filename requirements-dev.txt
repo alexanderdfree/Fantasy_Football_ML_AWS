@@ -1,3 +1,4 @@
+# Generated from pyproject.toml; run python -m src.packaging.dependencies.
 -r requirements.txt
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.14.0
@@ -6,4 +7,4 @@ pytest-timeout>=2.4.0
 pytest-cov>=7.1.0
 pytest-xdist>=3.8.0
 ruff==0.16.6
-optuna==5.0.0  # src/tuning/tune_lgbm.py + tune_nn.py + tests/tuning/ — matches src/batch/requirements.txt
+optuna==5.0.0

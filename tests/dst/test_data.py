@@ -11,6 +11,29 @@ from src.dst.data import filter_to_position
 
 
 @pytest.mark.unit
+def test_build_data_passes_context_root_to_team_stats_loader(tmp_path, monkeypatch):
+    from src.dst import data
+    from src.training.context import RunContext, use_context
+
+    class ReachedTeamStats(Exception):
+        pass
+
+    ambient = tmp_path / "ambient"
+    context = RunContext(tmp_path / "outputs", tmp_path / "isolated-data")
+    monkeypatch.setattr(data.config, "CACHE_DIR", str(ambient))
+
+    def load(seasons, cache_dir=None):
+        assert cache_dir == str(context.raw_root), "ambient/default cache must not be used"
+        raise ReachedTeamStats
+
+    monkeypatch.setattr(data, "load_team_week_stats", load)
+    with use_context(context), pytest.raises(ReachedTeamStats):
+        data.build_data(
+            weekly=pd.DataFrame(), schedules=pd.DataFrame(), scoring_events=pd.DataFrame()
+        )
+
+
+@pytest.mark.unit
 class TestFilterToDST:
     """D/ST data is team-level and pre-built; filter_to_position is identity (copy)."""
 

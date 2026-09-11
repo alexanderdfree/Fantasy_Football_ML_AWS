@@ -544,6 +544,9 @@ export function HistoryView({ scoring, search, theme, onPlayer, activateView }) 
                                         <td className="col-history-pr">
                                             {expandable && <span className="history-caret">▸</span>}
                                             <HistoryIdCell repoSlug={data.repoSlug} row={row} />
+                                            {row.validation_status === "validation_failed" && (
+                                                <small className="history-link-disabled" title="These metrics came from a model that failed validation; it was not accepted or deployed."> Validation failed</small>
+                                            )}
                                         </td>
                                         <td className="col-history-ts">{formatHistoryTimestamp(row.timestamp)}</td>
                                         {columns.map(c => (

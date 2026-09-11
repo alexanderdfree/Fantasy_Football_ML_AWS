@@ -79,12 +79,12 @@ from src.analysis.significance import (
 )
 from src.analysis.sleeper_loader import load_sleeper_with_gsis_id
 from src.config import TEST_SEASONS, TOP_K_RANKING
-from src.data.nflcom_loader import load_nflcom_with_gsis_id
-from src.serving.espn_projections import (
+from src.data.espn_projections import (
     ESPN_NOTE,
     load_espn_with_gsis_id,
 )
-from src.serving.expert_sources import project_expert_comparison, score_offensive_projections
+from src.data.expert_sources import project_expert_comparison, score_offensive_projections
+from src.data.nflcom_loader import load_nflcom_with_gsis_id
 from src.shared.aggregate_targets import (
     DST_TARGETS,
     predictions_to_fantasy_points,

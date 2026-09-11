@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import pickle
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 import pytest
 
@@ -66,6 +71,19 @@ def _clear_cache(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 class TestCacheKey:
+    @pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+    def test_production_recipes_have_stable_complete_identity(self, position):
+        from src.shared.registry import get_config
+
+        cfg = get_config(position)
+        df = _toy_df()
+        assert feature_cache._config_fingerprint(cfg)["feature_cols"] == list(
+            cfg["get_feature_columns_fn"]()
+        )
+        assert feature_cache.cache_key(position, df, df, None, cfg) == feature_cache.cache_key(
+            position, df.copy(), df.copy(), None, cfg
+        )
+
     def test_same_inputs_yield_same_key(self):
         df = _toy_df()
         cfg = _toy_cfg()
@@ -98,6 +116,81 @@ class TestCacheKey:
         k_none = feature_cache.cache_key("RB", df, df, None, cfg)
         k_empty = feature_cache.cache_key("RB", df, df, df.iloc[:0], cfg)
         assert k_none != k_empty
+
+    def test_resolved_feature_columns_and_order_invalidate(self):
+        columns = ["a"]
+        cfg = _toy_cfg()
+        cfg["get_feature_columns_fn"] = lambda: list(columns)
+        df = _toy_df()
+
+        def compute():
+            return tuple(columns)
+
+        assert feature_cache.load_or_compute("RB", df, df, None, cfg, compute) == ("a",)
+        columns.append("b")
+        assert feature_cache.load_or_compute("RB", df, df, None, cfg, compute) == ("a", "b")
+        columns.reverse()
+        assert feature_cache.load_or_compute("RB", df, df, None, cfg, compute) == ("b", "a")
+
+    def test_same_named_changed_callback_invalidates(self):
+        df = _toy_df()
+        cfg = _toy_cfg()
+        before = feature_cache.cache_key("RB", df, df, None, cfg)
+        namespace = {}
+        exec("def filter_fn(df):\n    return df.iloc[1:]", namespace)
+        replacement = namespace["filter_fn"]
+        replacement.__qualname__ = cfg["filter_fn"].__qualname__
+        replacement.__module__ = cfg["filter_fn"].__module__
+        cfg["filter_fn"] = replacement
+        assert feature_cache.cache_key("RB", df, df, None, cfg) != before
+
+    def test_helper_source_change_invalidates(self, tmp_path, monkeypatch):
+        source = tmp_path / "helper.py"
+        source.write_text("def helper(): return 1\n")
+        monkeypatch.setattr(feature_cache, "_PREPARATION_SOURCES", (str(source),))
+        df, cfg = _toy_df(), _toy_cfg()
+        before = feature_cache.cache_key("RB", df, df, None, cfg)
+        source.write_text("def helper(): return 2\n")
+        assert feature_cache.cache_key("RB", df, df, None, cfg) != before
+
+    @pytest.mark.parametrize("kind", ["schedules", "team_stats"])
+    def test_side_input_content_change_invalidates_with_same_stat(
+        self, kind, tmp_path, monkeypatch
+    ):
+        from src.shared import team_box_score, weather_features
+
+        monkeypatch.setattr(weather_features, "CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(weather_features, "SEASONS", [2025])
+        monkeypatch.setattr(team_box_score, "CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(team_box_score, "SEASONS", [2025])
+        path = tmp_path / f"{kind}_2025_2025.parquet"
+        path.write_bytes(b"old snapshot")
+        stat = path.stat()
+        df, cfg = _toy_df(), _toy_cfg()
+        before = feature_cache.cache_key("RB", df, df, None, cfg)
+        path.write_bytes(b"new snapshot")
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        assert path.stat().st_size == stat.st_size
+        assert feature_cache.cache_key("RB", df, df, None, cfg) != before
+
+    def test_frame_schema_and_index_invalidate(self):
+        df, cfg = _toy_df(), _toy_cfg()
+        before = feature_cache.cache_key("RB", df, df, None, cfg)
+        assert feature_cache.cache_key("RB", df.astype({"a": "float64"}), df, None, cfg) != before
+        reindexed = df.set_axis([3, 4, 5])
+        assert feature_cache.cache_key("RB", reindexed, df, None, cfg) != before
+
+    def test_training_hyperparameters_do_not_invalidate(self):
+        df, cfg = _toy_df(), _toy_cfg()
+        before = feature_cache.cache_key("RB", df, df, None, cfg)
+        cfg.update(nn_lr=0.123, nn_epochs=999, attn_static_features=["b"])
+        assert feature_cache.cache_key("RB", df, df, None, cfg) == before
+
+    def test_numpy_runtime_change_invalidates(self, monkeypatch):
+        df, cfg = _toy_df(), _toy_cfg()
+        before = feature_cache.cache_key("RB", df, df, None, cfg)
+        monkeypatch.setattr(feature_cache.np, "__version__", "different-runtime")
+        assert feature_cache.cache_key("RB", df, df, None, cfg) != before
 
 
 @pytest.mark.unit
@@ -167,3 +260,56 @@ class TestLoadOrCompute:
 
         v = feature_cache.load_or_compute("RB", df, df, None, cfg, lambda: ("recovered",))
         assert v == ("recovered",)
+
+    def test_disabled_does_not_resolve_identity(self, monkeypatch):
+        monkeypatch.setenv("FF_FEATURE_CACHE_DISABLE", "1")
+        monkeypatch.setattr(feature_cache, "cache_key", lambda *args: pytest.fail("cache used"))
+        assert feature_cache.load_or_compute(
+            "RB", _toy_df(), _toy_df(), None, {}, lambda: (1,)
+        ) == (1,)
+
+    def test_side_input_created_during_compute_is_not_cached(self, monkeypatch):
+        identity = {"snapshot": None}
+        monkeypatch.setattr(feature_cache, "_side_input_fingerprint", lambda: dict(identity))
+        df, cfg = _toy_df(), _toy_cfg()
+        old_key = feature_cache.cache_key("RB", df, df, None, cfg)
+
+        def compute():
+            identity["snapshot"] = "created"
+            return ("value",)
+
+        assert feature_cache.load_or_compute("RB", df, df, None, cfg, compute) == ("value",)
+        assert feature_cache._lru_get(old_key) is None
+        assert not feature_cache._cache_path("RB", old_key).exists()
+
+    def test_concurrent_writers_use_unique_temporary_files(self, monkeypatch):
+        df, cfg = _toy_df(), _toy_cfg()
+        barrier = threading.Barrier(2)
+        original_dump = pickle.dump
+        temporary_names = []
+
+        def synchronized_dump(value, stream, **kwargs):
+            temporary_names.append(stream.name)
+            barrier.wait(timeout=10)
+            original_dump(value, stream, **kwargs)
+
+        monkeypatch.setattr(feature_cache.pickle, "dump", synchronized_dump)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    feature_cache.load_or_compute,
+                    "RB",
+                    df,
+                    df,
+                    None,
+                    cfg,
+                    lambda value=value: (value,),
+                )
+                for value in ("first", "second")
+            ]
+            assert {future.result() for future in futures} == {("first",), ("second",)}
+        assert len(set(temporary_names)) == 2
+        path = feature_cache._cache_path("RB", feature_cache.cache_key("RB", df, df, None, cfg))
+        with path.open("rb") as stream:
+            assert pickle.load(stream) in {("first",), ("second",)}
+        assert not list(path.parent.glob("*.tmp"))

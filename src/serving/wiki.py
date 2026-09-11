@@ -243,7 +243,7 @@ def _render_wiki_doc(slug: str) -> str:
     ``("wiki", slug)`` keys, and Python dict insert/get for distinct keys
     is atomic at the bytecode level.
     """
-    from src.serving import app as app_pkg
+    from src.serving import state as app_pkg
 
     cache_key = ("wiki", slug)
     meta = WIKI_DOCS[slug]
@@ -267,7 +267,7 @@ def _render_wiki_doc(slug: str) -> str:
         # ``open`` below, which raises a clear error the route turns into a 500.
         current_mtime = None
     with app_pkg._wiki_cache_lock:
-        cached = app_pkg._cache.get(cache_key)
+        cached = app_pkg._wiki_cache.get(cache_key)
         if cached is not None and current_mtime is not None and cached[0] == current_mtime:
             return cached[1]
     with open(abs_path, encoding="utf-8") as f:
@@ -300,5 +300,5 @@ def _render_wiki_doc(slug: str) -> str:
             render_mtime = os.stat(abs_path).st_mtime
         except OSError:
             render_mtime = current_mtime
-        app_pkg._cache[cache_key] = (render_mtime, html)
+        app_pkg._wiki_cache[cache_key] = (render_mtime, html)
     return html

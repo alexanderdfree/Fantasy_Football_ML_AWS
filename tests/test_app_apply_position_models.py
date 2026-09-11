@@ -1,23 +1,19 @@
-"""Coverage tests for ``app.py::_apply_position_models``.
+"""Coverage tests for the serving writer and its shared prediction adapter.
 
-The serving path in ``_apply_position_models`` loads Ridge + NN (+ attention
-+ LightGBM) model artifacts from disk and writes per-position predictions
-into the shared results DataFrame. It's the largest single uncovered block
-in ``app.py`` (~220 stmts) because real artifacts only exist post-training.
+``core._apply_position_models`` selects a canonical registered position, delegates
+to prediction.frames/predictor, and writes predictions into shared serving state.
 
 These tests stub the model loaders with lightweight fakes:
 
 - ``RidgeMultiTarget`` / ``LightGBMMultiTarget`` → fake classes whose
   ``.load()`` / ``.predict()`` return per-target zero arrays.
 - ``joblib.load`` → tiny ``StandardScaler`` fitted on a throwaway matrix.
-- ``torch.load`` → ``{"model_state": {}, "feature_columns_hash": "..."}``.
+- ``torch.load`` → a real integrity envelope around an empty state dictionary.
 - ``MultiHeadNet`` / ``MultiHeadNetWithHistory`` / ``MultiHeadNetWithNestedHistory``
   → fake classes whose ``.load_state_dict`` no-ops and ``.predict_numpy``
   returns the target → zeros dict shape.
-- ``assert_scaler_matches`` → no-op (integrity check is tested separately
-  in ``tests/shared/test_model_sync.py``).
-
-The goal is branch coverage of the function body, not numerical correctness.
+Real schema/scaler validation, scaling, history construction, and scoring remain
+active. These are serving branch tests, not numerical model-quality tests.
 """
 
 from __future__ import annotations
@@ -31,6 +27,39 @@ import torch
 
 import src.serving.core as core
 import src.serving.routes as routes
+from src.prediction import frames as prediction_frames
+from src.prediction import predictor
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["../attacker", "/tmp/model", "QB/../../other", "qb", ""])
+def test_model_selection_rejects_unregistered_names_before_artifact_lookup(monkeypatch, position):
+    class Registry:
+        def __getitem__(self, key):
+            pytest.fail(f"Unregistered name reached artifact lookup: {key}")
+
+    monkeypatch.setattr(core, "POSITION_REGISTRY", Registry())
+    with pytest.raises(ValueError, match="Unknown model position"):
+        core._apply_position_models(None, None, None, position, None)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", core._ALL_POSITIONS)
+def test_model_selection_uses_the_registered_name_before_artifact_lookup(monkeypatch, position):
+    class ReachedRegistry(Exception):
+        pass
+
+    class Registry:
+        def __getitem__(self, key):
+            assert any(key is known for known in core._ALL_POSITIONS)
+            assert key == position
+            raise ReachedRegistry
+
+    monkeypatch.setattr(core, "POSITION_REGISTRY", Registry())
+    requested = (position + " ").strip()
+    with pytest.raises(ReachedRegistry):
+        core._apply_position_models(None, None, None, requested, None)
+
 
 # Reuse QB as the canonical "flat-history" position + DST for adjustment_fn.
 # The function's per-position branches are structurally identical aside from
@@ -98,12 +127,17 @@ def _make_df(n: int = 12) -> pd.DataFrame:
 
 
 @pytest.fixture()
-def _mocked_app(monkeypatch):
-    """Stub every model loader in ``app.py`` with lightweight fakes.
+def _mocked_app(monkeypatch, tmp_path):
+    """Stub model IO/estimators at their current predictor-owned boundaries.
 
     Returns the module under test for direct function invocation.
     """
     import src.serving.app as app_mod
+    from src.shared.artifact_integrity import wrap_state_dict
+
+    # Missing descriptors/sidecars intentionally exercise the supported legacy
+    # reader. Never discover a developer's real model artifacts through these paths.
+    monkeypatch.chdir(tmp_path)
 
     # Fake Ridge/LGBM: zero predictions for every target.
     class _FakeMultiTarget:
@@ -117,8 +151,8 @@ def _mocked_app(monkeypatch):
             n = len(X)
             return {t: np.zeros(n, dtype=np.float32) for t in self.target_names}
 
-    monkeypatch.setattr(core, "RidgeMultiTarget", _FakeMultiTarget)
-    monkeypatch.setattr(core, "LightGBMMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(predictor, "RidgeMultiTarget", _FakeMultiTarget)
+    monkeypatch.setattr(predictor, "LightGBMMultiTarget", _FakeMultiTarget)
 
     # Fake scaler loader — returns a StandardScaler fitted on a 1-feature dummy.
     from sklearn.preprocessing import StandardScaler
@@ -129,23 +163,16 @@ def _mocked_app(monkeypatch):
     def _fake_joblib_load(path):
         return dummy_scaler
 
-    monkeypatch.setattr(core.joblib, "load", _fake_joblib_load)
+    monkeypatch.setattr(predictor.joblib, "load", _fake_joblib_load)
 
-    # Fake torch.load — returns an empty state-dict checkpoint.
-    monkeypatch.setattr(
-        core.torch,
-        "load",
-        lambda *args, **kwargs: {"model_state": {}, "feature_columns_hash": "dead"},
-    )
+    # The real unwrap/matching/scaling code runs against this valid fixture envelope.
+    def _fake_torch_load(path, *args, **kwargs):
+        reg = core.POSITION_REGISTRY["QB"]
+        family = "attn_nn" if Path(path).name == reg.get("attn_nn_file") else "nn"
+        schema = predictor.legacy_schema(reg, family)
+        return wrap_state_dict({}, schema.features, schema.targets)
 
-    # Skip scaler-matches integrity check (covered elsewhere).
-    monkeypatch.setattr(core, "assert_scaler_matches", lambda *a, **k: None)
-    monkeypatch.setattr(core, "read_scaler_meta", lambda *a, **k: {})
-    monkeypatch.setattr(
-        core, "unwrap_state_dict", lambda checkpoint: (checkpoint.get("model_state", {}), "hash")
-    )
-    # scale_and_clip just pads/clips the input — passthrough is fine here.
-    monkeypatch.setattr(core, "scale_and_clip", lambda scaler, X: np.asarray(X, dtype=np.float32))
+    monkeypatch.setattr(predictor.torch, "load", _fake_torch_load)
 
     # Fake NN classes: .predict_numpy returns target → zeros.
     class _FakeNN:
@@ -164,9 +191,9 @@ def _mocked_app(monkeypatch):
             n = len(X)
             return {t: np.zeros(n, dtype=np.float32) for t in self.target_names}
 
-    monkeypatch.setattr(core, "MultiHeadNet", _FakeNN)
-    monkeypatch.setattr(core, "MultiHeadNetWithHistory", _FakeNN)
-    monkeypatch.setattr(core, "MultiHeadNetWithNestedHistory", _FakeNN)
+    monkeypatch.setattr(predictor, "MultiHeadNet", _FakeNN)
+    monkeypatch.setattr(predictor, "MultiHeadNetWithHistory", _FakeNN)
+    monkeypatch.setattr(predictor, "MultiHeadNetWithNestedHistory", _FakeNN)
 
     # Short-circuit build_position_features — keep the per-position DataFrame
     # as passed in, with a dummy numeric feature column.
@@ -177,24 +204,8 @@ def _mocked_app(monkeypatch):
                     df[col] = 0.0
         return tr, va, te
 
-    monkeypatch.setattr(core, "build_position_features", _fake_build_features)
+    monkeypatch.setattr(prediction_frames, "build_position_features", _fake_build_features)
 
-    # Feature history builders (attention path)
-    monkeypatch.setattr(
-        core,
-        "build_game_history_arrays",
-        lambda df, history_stats, max_seq_len: (
-            np.zeros((len(df), max_seq_len, max(1, len(history_stats))), dtype=np.float32),
-            np.zeros((len(df), max_seq_len), dtype=bool),
-        ),
-    )
-    monkeypatch.setattr(
-        core,
-        "get_attn_static_columns",
-        lambda feature_cols, allow: (
-            [c for c in feature_cols if c in set(allow)][:1] or feature_cols[:1]
-        ),
-    )
     return app_mod
 
 
@@ -288,6 +299,29 @@ def test_apply_position_models_qb_flat_path(_mocked_app, _qb_registry):
 
 
 @pytest.mark.integration
+def test_loader_fixtures_preserve_real_feature_integrity_checks(
+    _mocked_app, _qb_registry, monkeypatch
+):
+    """Wrong checkpoint columns must still reject NN while other families run."""
+    from src.shared.artifact_integrity import wrap_state_dict
+
+    monkeypatch.setattr(
+        predictor.torch,
+        "load",
+        lambda *args, **kwargs: wrap_state_dict({}, ["wrong_feature"], _qb_registry["targets"]),
+    )
+    results = _make_results_frame(n=6)
+    df = _make_df(n=6)
+    _mocked_app._cache.clear()
+    core._apply_position_models(df, df, df, "QB", results)
+
+    assert "feature_cols_hash mismatch" in _mocked_app._cache["position_load_errors"]["QB_nn"]
+    assert results["nn_pred"].isna().all()
+    assert results["ridge_pred"].notna().all()
+    assert results["lgbm_pred"].notna().all()
+
+
+@pytest.mark.integration
 def test_apply_position_models_applies_min_games_filter(monkeypatch):
     """Serving must replicate training's min-games filter on ``pos_train`` so
     the ``fill_nans`` train-means + the StandardScaler match what the loaded
@@ -311,7 +345,7 @@ def test_apply_position_models_applies_min_games_filter(monkeypatch):
         captured["full_train_ids"] = None if full_train is None else list(full_train["player_id"])
         raise _Stop
 
-    monkeypatch.setattr(core, "build_position_features", _capture_build)
+    monkeypatch.setattr(prediction_frames, "build_position_features", _capture_build)
 
     reg = {
         "targets": ["passing_yards"],
@@ -399,7 +433,12 @@ def test_inference_spec_min_games_and_k_all_features():
 @pytest.mark.integration
 def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
     """When reg['train_attention_nn'] is True, the attention branch fires."""
+    from unittest.mock import Mock
+
     import src.serving.app as app_mod
+
+    history_builder = Mock(wraps=predictor.build_game_history_arrays)
+    monkeypatch.setattr(predictor, "build_game_history_arrays", history_builder)
 
     reg = {
         "targets": ["passing_yards"],
@@ -439,11 +478,16 @@ def test_apply_position_models_with_attention(_mocked_app, monkeypatch):
 
     assert results["attn_nn_pred"].notna().all()
     assert results["lgbm_pred"].isna().all()  # lgbm disabled
+    history_builder.assert_called_once()
+    assert history_builder.call_args.kwargs == {
+        "history_stats": ["passing_yards"],
+        "max_seq_len": 17,
+    }
 
 
 @pytest.mark.integration
 def test_apply_position_models_with_adjustment_fn(_mocked_app, monkeypatch):
-    """``compute_adjustment_fn`` (used by DST) must get applied to totals."""
+    """The legacy ``compute_adjustment_fn`` compatibility path applies to totals."""
     import src.serving.app as app_mod
 
     reg = {
@@ -648,9 +692,6 @@ def test_health_route_degraded_returns_200_when_some_positions_loaded(monkeypatc
         body = resp.get_json()
         assert body["status"] == "degraded"
         assert "DST_ridge" in body["position_load_errors"]
-        assert body["position_load_errors"]["DST_ridge"] == (
-            "Position or model initialization failed"
-        )
         assert set(body["positions_loaded"]) == {"QB", "RB", "WR", "TE", "K"}
 
 
@@ -719,7 +760,7 @@ def test_apply_position_models_ridge_load_failure_records_and_nan_fills(_mocked_
         def load(self, path):
             raise RuntimeError("ridge artifact missing")
 
-    monkeypatch.setattr(core, "RidgeMultiTarget", _BadRidge)
+    monkeypatch.setattr(predictor, "RidgeMultiTarget", _BadRidge)
 
     # Minimal registry stub for QB. Attention + LGBM disabled so only Ridge
     # fails and NN still runs — confirms the function presses on after

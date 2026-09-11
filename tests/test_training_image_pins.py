@@ -63,14 +63,23 @@ def fake_docker(tmp_path):
 def test_generated_ec2_trainer_runs_resolved_digest_if_latest_moves(tmp_path):
     script = generated_script(tmp_path)
     env = fake_docker(tmp_path)
-    env.update(FF_TRAIN_IMAGE=IMAGE, FF_TRAIN_GIT_SHA=SHA, FF_DATA_RELEASE="release-a")
+    env.update(
+        FF_TRAIN_IMAGE=IMAGE,
+        FF_TRAIN_GIT_SHA=SHA,
+        FF_DATA_RELEASE="c" * 64,
+        FF_DATASET_ID="c" * 64,
+        FF_DATA_FORMAT="data-release-v1",
+        FF_LEGACY_RUN_ID="ec2:42:1",
+    )
     subprocess.run(["bash", str(script), "DST", "42"], env=env, check=True, capture_output=True)
     calls = [json.loads(line) for line in (tmp_path / "docker.log").read_text().splitlines()]
     assert ["pull", IMAGE] in calls
-    run = next(call for call in calls if call[0] == "run")
+    run = next(call for call in calls if "--gpus" in call)
     assert IMAGE in run and not any(":latest" in arg for arg in run)
     assert f"FF_TRAIN_GIT_SHA={SHA}" in run
-    assert "FF_DATA_RELEASE=release-a" in run
+    assert "FF_DATA_RELEASE=" + "c" * 64 in run
+    assert "FF_DATASET_ID=" + "c" * 64 in run
+    assert "FF_DATA_FORMAT=data-release-v1" in run
     assert run[-4:] == ["--position", "DST", "--seed", "42"]
 
 
@@ -86,12 +95,8 @@ def test_ec2_trainer_without_digest_pin_fails_before_docker(tmp_path, image):
 
 @pytest.mark.parametrize("old_source_override", [False, True])
 def test_warm_host_upgrade_honors_pin_and_is_idempotent(tmp_path, old_source_override):
-    patch_step = next(
-        s for s in steps("train-ec2.yml") if s["name"] == "Ensure feature-cache mount in ff-train"
-    )
-    patch = patch_step["run"][patch_step["run"].index("if ! grep -q '^IMAGE=") :].split(
-        "\nBASH", 1
-    )[0]
+    from src.scripts.ec2_wrapper import render_update
+
     script = tmp_path / "ff-train"
     old_retag = (
         'if [ -n "${FF_TRAIN_GIT_SHA:-}" ]; then\n  IMAGE="${IMAGE%:*}:$FF_TRAIN_GIT_SHA"\nfi\n'
@@ -101,20 +106,16 @@ def test_warm_host_upgrade_honors_pin_and_is_idempotent(tmp_path, old_source_ove
     script.write_text(
         '#!/bin/bash\nIMAGE="repository:latest"\n' + old_retag + 'printf "%s" "$IMAGE"\n'
     )
-    patch = patch.replace("/usr/local/bin/ff-train", str(script))
-    subprocess.run(["bash"], input=patch, text=True, check=True)
-    first = script.read_text()
-    subprocess.run(["bash"], input=patch, text=True, check=True)
-    assert script.read_text() == first
-    assert "IMAGE%:*" not in first
-    result = subprocess.run(
-        ["bash", str(script)],
-        env={**os.environ, "FF_TRAIN_IMAGE": IMAGE, "FF_TRAIN_GIT_SHA": SHA},
-        capture_output=True,
-        text=True,
-        check=True,
+    patch = render_update(
+        "us-east-1", "bucket", target=script, cache_dir=tmp_path / "cache", cache_owner=None
     )
-    assert result.stdout == IMAGE
+    subprocess.run(["sh"], input=patch, text=True, check=True)
+    first = script.read_bytes()
+    subprocess.run(["sh"], input=patch, text=True, check=True)
+    assert script.read_bytes() == first
+    assert b"IMAGE%:*" not in first
+    assert b"FF_DATASET_ID" in first and b"FF_TRAIN_IMAGE_ID" in first
+    assert subprocess.run(["bash", "-n", str(script)], capture_output=True).returncode == 0
 
 
 @pytest.mark.parametrize(
@@ -123,16 +124,17 @@ def test_warm_host_upgrade_honors_pin_and_is_idempotent(tmp_path, old_source_ove
 def test_workflow_gates_actual_resolved_image_and_forwards_same_sha(workflow, resolver_id):
     values = steps(workflow)
     resolver = next(s for s in values if s.get("id") == resolver_id)
-    gate = next(s for s in values if s.get("id") == "data-release")
+    gate_id = "data-release" if workflow == "train-ec2.yml" else "build_plan"
+    gate = next(s for s in values if s.get("id") == gate_id)
     train = next(s for s in values if s.get("id") == "train")
     assert values.index(resolver) < values.index(gate) < values.index(train)
-    expected = "${{ steps." + resolver_id + ".outputs.image_sha }}"
-    assert gate["env"]["HEAD_SHA"] == train["env"]["FF_TRAIN_GIT_SHA"] == expected
     if workflow == "train-ec2.yml":
+        expected = "${{ steps.image.outputs.image_sha }}"
+        assert gate["env"]["HEAD_SHA"] == train["env"]["FF_TRAIN_GIT_SHA"] == expected
         assert train["env"]["FF_TRAIN_IMAGE"] == "${{ steps.image.outputs.image_uri }}"
-        assert "FF_TRAIN_IMAGE='$FF_TRAIN_IMAGE' /usr/local/bin/ff-train" in train["run"]
+        assert "shlex.quote(os.environ[name])" in train["run"]
     else:
-        assert (
-            train["env"]["FF_JOB_DEFINITION_REVISION"] == "${{ steps.revision.outputs.revision }}"
-        )
+        assert gate["env"]["CODE_SHA"] == "${{ steps.revision.outputs.image_sha }}"
+        assert train["env"]["FF_TRAIN_GIT_SHA"] == "${{ steps.build_plan.outputs.git_sha }}"
+        assert train["env"]["FF_BUILD_PLAN_ID"] == "${{ steps.build_plan.outputs.build_plan_id }}"
         assert "using bare CPU job definition" not in train["run"]
