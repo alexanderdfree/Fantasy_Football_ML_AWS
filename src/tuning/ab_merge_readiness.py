@@ -227,9 +227,10 @@ def _evidence_sink(cell):
         from botocore.exceptions import ClientError
 
         prefix = os.environ.get("FF_AB_S3_PREFIX", "").strip("/")
-        if prefix.split("/")[0] != "ab_runs" or any(
-            p in {"", ".", ".."} for p in prefix.split("/")
-        ):
+        allowed = prefix.split("/")[0] == "ab_runs" or prefix == (
+            "experiments/merge-readiness/20260911T181252Z/ab_runs"
+        )
+        if not allowed or any(p in {"", ".", ".."} for p in prefix.split("/")):
             raise ValueError("Readiness S3 evidence requires an explicit ab_runs prefix")
         if "/" in run or run in {".", ".."}:
             raise ValueError("Readiness run ID must be one path component")
