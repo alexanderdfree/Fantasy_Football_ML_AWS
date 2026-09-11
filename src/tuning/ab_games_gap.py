@@ -62,6 +62,7 @@ from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
 SEEDS = [42, 123, 7]
+SUPPORTS_STACKED = False  # These metrics require eager per-model outputs and cohorts.
 
 GAP_COL = "career_weeks_since_last_game"
 ITT_COL = "itt_x_no_history"
@@ -167,7 +168,7 @@ def metric_fn(result, position):
     model, from the eager per-target ``pred_{model}_passing_yards`` columns) is
     the #1137 non-regression guard — present on QB cells only.
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

@@ -9,6 +9,9 @@
 ### [FIXED] Scheduled maintenance used the superseded cache and rollout protocols
 [Read the incident record](fixed-archive/maintenance-contract-consolidation-2026-09.md).
 
+### [FIXED] Consolidated research dataset, population and execution contracts
+[Read the incident record](fixed-archive/consolidated-research-review-followup.md).
+
 ### [FIXED] Expert forecasts lost scoring components outside the model target list
 [Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
 

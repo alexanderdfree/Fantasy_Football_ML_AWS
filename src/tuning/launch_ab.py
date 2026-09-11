@@ -513,6 +513,8 @@ def main() -> None:
         raise SystemExit("--image-sha is required when git HEAD cannot be resolved")
 
     spec = resolve_spec(args.spec, positions=args.positions, seeds=args.seeds, only=args.only)
+    if args.stacked_seeds and not spec.supports_stacked:
+        raise SystemExit(f"{spec.name} does not support stacked execution")
     cells = build_cells(spec)
     if len(cells) > args.max_cells:
         raise SystemExit(
