@@ -27,8 +27,14 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] Remote SessionStart installed outside the intended virtual environment
+[Read the incident record](fixed-archive/remote-session-bootstrap.md).
+
 ### [FIXED] macOS tests and benchmarks crashed with multiple OpenMP runtimes
 [Read the incident record](fixed-archive/macos-openmp-runtime-conflict.md).
+
+### [FIXED] Post-PR hook revived a merge bypass and omitted deletion verification
+[Read the incident record](fixed-archive/fixed-post-pr-hook-merge-gates.md).
 
 ### [FIXED] Startup guidance exceeded its load limit and duplicated stale decisions
 [Read the incident record](fixed-archive/context-consolidation-2026-09.md).

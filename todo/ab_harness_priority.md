@@ -49,9 +49,6 @@ subprocess-only break unit tests can't see — caught by the smoke, not CI.)
   *feature* itself has since shipped (`is_top_available` / `inherited_opportunity`,
   #1053 RB+WR, productionized via #1061), so the harness can now run it (RB/WR,
   frame-injection shape).
-- **Port the existing `ablate_*` scripts** (`ablate_rb_gate`, `ablate_injury_features`,
-  `ablate_backbone_norm`, …) onto the harness so they parallelize + isolate too. Mechanical; left out
-  here to keep the PR to the harness itself.
 
 ## Why (the anti-pattern this kills)
 That A/B was a hand-rolled `/tmp` script looping `for s in 42 123 7; do … done`:
@@ -132,5 +129,5 @@ The parallel + ablation machinery is already in the tree:
 - Smoke: 2 variants × 2 seeds × 1 position completes with **served `{pos}/outputs` untouched** + a clean
   ±std table.
 
-- 2026-06-11: stacked seed-ensemble prototype built ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py), Lever C in gpu_launch_bound_levers.md) — one host thread trains N seeds via torch.func vmap; pending GPU speedup gate, then an opt-in `--stacked-seeds` harness mode (group cells by position×variant; one full run for deterministic models + per-seed stacked attention).
+- 2026-06-11: stacked seed-ensemble prototype built ([src/tuning/ab_ensemble_seeds.py](../src/tuning/ab_ensemble_seeds.py), Lever C in gpu_launch_bound_levers.md) — one host thread trains N seeds via torch.func vmap. Harness integration and the CUDA default subsequently shipped in #1150 and #1165; see [ab_harness.py](../src/tuning/ab_harness.py) for the current execution modes.
 - 2026-06-11: **AWS Batch execution path built** (ADR-0020) — `python -m src.tuning.launch_ab --spec <spec>` (or the `ab-batch.yml` dispatch workflow) runs any harness spec on the GPU Spot fleet, the production metric path (L4/sm_89, FP16, CUDA graphs autodetect-ON). One Spot job per position rides the `--mode=tune` env dispatch (`FF_TUNE_AB_SPEC` → [src/tuning/ab_batch.py](../src/tuning/ab_batch.py)); cells run sequentially in-container with per-cell S3 checkpoint/resume under `ab_runs/{run_id}/`; the launcher collects and feeds the harness's own `aggregate()`/`print_report()`. Branch A/Bs: dispatch `batch-image.yml` on the branch first (non-main builds push only the SHA tag and register no job definitions); the launcher clones `ff-ab-job` to pin the image. Closes the "prior-season A/B had to run ~80 min FP32/eager on a Mac" gap.

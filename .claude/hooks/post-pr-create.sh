@@ -64,15 +64,18 @@ if [[ "$branch" =~ ^audit-.*/tier- ]]; then
 6. Do NOT auto-merge — this is a solve-issues autonomous-fix PR. After steps 1-5:
    a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`.
    b. Show the user the final diff (\`gh pr diff <N>\`) and any \`regress-risk-high\` benchmark deltas from the PR body, then ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
-   c. Only after the user approves: \`gh pr merge <N> --squash\`, then \`git push origin --delete <branch-name>\` (do NOT use \`--delete-branch\` — it fails in worktrees)."
+   c. Only after the user approves: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see agent-guides/delivery.md#pr-and-merge-gates).
+   d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
+   e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
 else
   step6="
 
 6. Otherwise, auto-merge:
    a. Resolve the PR number with \`gh pr view --json number\` and the branch name with \`git branch --show-current\`. Hold onto both before the merge step in case the worktree HEAD changes.
-   b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. (Exception: the documented \`Run Tests\` silent-stop anomaly — see CLAUDE.md's CI section; fall back to local \`pytest\` + manual \`gh pr merge --admin\` only if the user confirms.)
-   c. Merge: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see CLAUDE.md's worktree section).
-   d. Delete the remote branch: \`git push origin --delete <branch-name>\`."
+   b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. Exception: only for the documented \`Run Tests\` silent-stop anomaly in agent-guides/operations.md#ci-training, and only with user confirmation, run local \`pytest\` and require it to pass before continuing to the normal merge step. This does not authorize bypassing branch protection or a different failing/pending check.
+   c. Merge: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see agent-guides/delivery.md#pr-and-merge-gates).
+   d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
+   e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
 fi
 
 ctx_tail="

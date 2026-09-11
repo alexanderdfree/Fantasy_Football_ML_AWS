@@ -21,6 +21,20 @@ remains historical evidence.
 | ADR-0025's inherit-only Codex configuration prescription | Superseded by repository defaults in PR #1548. Resolve effective project/user/runtime settings; this follow-up does not change configuration. |
 | Startup reminder to compare full-fantasy actuals | Superseded by the shared-component comparison decision merged in PR #1549 during this follow-up. The [cohort section](../agent-guides/validation.md#evaluation-cohorts) retains that decision; no evaluation code changes here. |
 
+## Continuation after PR #1553
+
+Baseline: `586a08da`, 2026-09-10. These deletions remove recommendations already
+superseded at that revision; pending feature experiments and historical results
+remain in their existing records.
+
+| Removed or consolidated material | Retained source or reason |
+|---|---|
+| TODO/A-B plan's ablation migration and pending stacked-mode build | Delivered by #1048, #1150 and #1165; current `ablation_runner` isolation/dispatch and `ab_harness` stacking implement them. Role-inheritance follow-up remains. |
+| FantasyPros historical prototype and FFToday build recommendations | The [research correction](new-sources-research-2026-06.md) rejects the survivorship-biased FantasyPros pool; FFToday shipped in #1376/#1477. Dated source observations and B2/iso-edge work remain. |
+| Automatic xdist-race/raw-copy diagnosis and arbitrary Miniforge gate equivalence | [Environment guide](../agent-guides/environment.md) points to the actual tool resolver and [ordering-pollution incident](fixed-archive/fixed-xdist-race-unit-flake-from-import-copies-of-load-schedules-bypassed-th-c98863be.md). |
+| Repeated infrastructure snapshots and Claude workflow/memory recitals | [Operations](../agent-guides/operations.md) and [Claude reference](../agent-guides/providers/claude.md) retain their contracts and route to current code, shared gates and dated evidence. |
+| Hook's bypass fallback and incomplete deletion sequence | [Focused incident](fixed-archive/fixed-post-pr-hook-merge-gates.md) records the correction and executable ordinary/audit workflow tests. |
+
 ## Guidance destinations
 
 | Original source | Retained destination | Disposition |

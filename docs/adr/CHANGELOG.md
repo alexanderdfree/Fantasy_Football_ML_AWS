@@ -11,6 +11,8 @@
 
 - 2026-09-10 · Isolate training history by run, publish from completing jobs beyond the workflow wait, and refresh the History view · (PR pending) · → ADR-0013, ADR-0023
 - 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR #1554) · → ADR-0017
+- 2026-09-10 · Remove superseded research/environment prescriptions and enforce shared gates in emitted post-PR instructions · (PR #1557) · → ADR-0025
+
 - 2026-09-10 · Delete superseded recommendations and consolidate agent rules and memory retrieval pointers · (PR #1553) · → ADR-0025
 - 2026-09-10 · Verify live injury/roster snapshots, publish availability transitions, expose freshness/coverage, recover upstream QBR and current player metadata, revalidate browser projections · (PR pending) · → ADR-0018
 
