@@ -9,7 +9,9 @@ import pytest
 from sklearn.preprocessing import StandardScaler
 
 from src.shared.feature_build import (
+    BOUNDED_FLAG_DOMAINS,
     FEATURE_CLIP,
+    apply_bounded_flag_scaling,
     build_position_features,
     fill_nans_with_train_means,
     scale_and_clip,
@@ -52,6 +54,142 @@ class TestScaleAndClip:
         expected = np.clip(scaler.fit_transform(X), lo, hi)
         got = scale_and_clip(StandardScaler(), X, fit=True)
         np.testing.assert_allclose(got, expected)
+
+
+# ---------------------------------------------------------------------------
+# apply_bounded_flag_scaling
+# ---------------------------------------------------------------------------
+
+
+def _flag_matrix(n: int = 2000, seed: int = 0):
+    """(X, cols) with a realistic ~4%-prevalence game_status / practice_status."""
+    rng = np.random.default_rng(seed)
+    gs = np.where(rng.random(n) < 0.04, 0.5, 1.0)
+    ps = np.where(rng.random(n) < 0.05, 1.0, 2.0)
+    X = np.column_stack([rng.standard_normal(n), gs, ps, rng.standard_normal(n)])
+    return X, ["other_a", "game_status", "practice_status", "other_b"]
+
+
+@pytest.mark.unit
+class TestApplyBoundedFlagScaling:
+    def test_reports_the_columns_it_overrode(self):
+        X, cols = _flag_matrix()
+        scaler = StandardScaler().fit(X)
+        assert apply_bounded_flag_scaling(scaler, cols) == ["game_status", "practice_status"]
+
+    def test_no_flag_columns_is_a_reported_noop(self):
+        """A whitelist without either flag must report an empty list, not fail.
+
+        The return value is what an A/B arm asserts on — a silent no-op arm
+        would otherwise read as a genuine "no effect" result.
+        """
+        rng = np.random.default_rng(0)
+        X = rng.standard_normal((100, 3))
+        scaler = StandardScaler().fit(X)
+        before = scaler.scale_.copy()
+        assert apply_bounded_flag_scaling(scaler, ["a", "b", "c"]) == []
+        np.testing.assert_array_equal(scaler.scale_, before)
+
+    def test_maps_semantic_domain_onto_unit_range(self):
+        X, cols = _flag_matrix()
+        scaler = StandardScaler().fit(X)
+        apply_bounded_flag_scaling(scaler, cols)
+        # healthy / Questionable / Doubtful / Out and full / limited / DNP.
+        probe = np.array(
+            [
+                [0.0, 1.0, 2.0, 0.0],
+                [0.0, 0.5, 1.0, 0.0],
+                [0.0, 0.1, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 0.0],
+            ]
+        )
+        out = scaler.transform(probe)
+        np.testing.assert_allclose(out[:, 1], [1.0, 0.0, -0.8, -1.0], atol=1e-12)
+        np.testing.assert_allclose(out[:, 2], [1.0, 0.0, -1.0, -1.0], atol=1e-12)
+
+    def test_never_clips_and_keeps_the_tiers_distinct(self):
+        """The bug this fixes: z-scoring collapses Q/Doubtful/Out onto the clip."""
+        X, cols = _flag_matrix()
+        probe = np.array([[0.0, 1.0, 2.0, 0.0], [0.0, 0.5, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
+
+        plain = StandardScaler().fit(X)
+        baseline = scale_and_clip(plain, probe)
+        # Baseline: Questionable and Out are both pinned to the clip floor.
+        assert baseline[1, 1] == FEATURE_CLIP[0]
+        assert baseline[2, 1] == FEATURE_CLIP[0]
+
+        fixed = StandardScaler().fit(X)
+        apply_bounded_flag_scaling(fixed, cols)
+        out = scale_and_clip(fixed, probe)
+        assert out[1, 1] > out[2, 1]  # Questionable is distinguishable from Out
+        assert np.all(np.abs(out[:, 1]) < abs(FEATURE_CLIP[0]))
+
+    def test_leaves_other_columns_bit_identical(self):
+        X, cols = _flag_matrix()
+        plain = StandardScaler().fit(X)
+        fixed = StandardScaler().fit(X)
+        apply_bounded_flag_scaling(fixed, cols)
+        np.testing.assert_array_equal(plain.transform(X)[:, [0, 3]], fixed.transform(X)[:, [0, 3]])
+
+    def test_var_stays_consistent_with_scale(self):
+        X, cols = _flag_matrix()
+        scaler = StandardScaler().fit(X)
+        apply_bounded_flag_scaling(scaler, cols)
+        np.testing.assert_allclose(scaler.var_, scaler.scale_**2)
+
+    def test_rejects_an_unfitted_scaler(self):
+        with pytest.raises(ValueError, match="fitted StandardScaler"):
+            apply_bounded_flag_scaling(StandardScaler(), ["game_status"])
+
+    def test_rejects_a_misaligned_column_list(self):
+        """Wrong-length columns would silently rescale the wrong coordinate."""
+        X, cols = _flag_matrix()
+        scaler = StandardScaler().fit(X)
+        with pytest.raises(ValueError, match="column order would be misaligned"):
+            apply_bounded_flag_scaling(scaler, cols[:-1])
+
+    def test_domains_are_the_documented_constants(self):
+        assert BOUNDED_FLAG_DOMAINS == {"game_status": (0.5, 0.5), "practice_status": (1.0, 1.0)}
+
+    def test_target_range_scales_the_mapped_domain(self):
+        """range=4.0 maps the domain onto exactly +/-FEATURE_CLIP — the largest
+        provably clip-free magnitude, and the arm that isolates the clip fix
+        from the ~5x magnitude reduction range=1.0 also applies."""
+        X, cols = _flag_matrix()
+        probe = np.array([[0.0, 1.0, 2.0, 0.0], [0.0, 0.5, 1.0, 0.0], [0.0, 0.0, 0.0, 0.0]])
+
+        scaler = StandardScaler().fit(X)
+        apply_bounded_flag_scaling(scaler, cols, target_range=4.0)
+        out = scaler.transform(probe)
+        np.testing.assert_allclose(out[:, 1], [4.0, 0.0, -4.0], atol=1e-12)
+        np.testing.assert_allclose(out[:, 2], [4.0, 0.0, -4.0], atol=1e-12)
+        # Exactly at the bound, so the clip is still a no-op.
+        np.testing.assert_array_equal(scale_and_clip(scaler, probe), out)
+
+    def test_wider_range_restores_near_unit_variance(self):
+        """The point of the range axis: range=1.0 leaves the column ~5x quieter
+        than a standardized feature, range=4.0 nearly restores unit variance."""
+        X, cols = _flag_matrix()
+        stds = {}
+        for rng_val in (1.0, 4.0):
+            scaler = StandardScaler().fit(X)
+            apply_bounded_flag_scaling(scaler, cols, target_range=rng_val)
+            stds[rng_val] = scaler.transform(X)[:, 1].std()
+        assert stds[1.0] < 0.35
+        assert 0.7 < stds[4.0] < 1.3
+        np.testing.assert_allclose(stds[4.0] / stds[1.0], 4.0, rtol=1e-9)
+
+    def test_rejects_a_range_that_would_reintroduce_clipping(self):
+        X, cols = _flag_matrix()
+        scaler = StandardScaler().fit(X)
+        with pytest.raises(ValueError, match="exceeds FEATURE_CLIP"):
+            apply_bounded_flag_scaling(scaler, cols, target_range=FEATURE_CLIP[1] + 0.5)
+
+    def test_rejects_a_non_positive_range(self):
+        X, cols = _flag_matrix()
+        scaler = StandardScaler().fit(X)
+        with pytest.raises(ValueError, match="must be positive"):
+            apply_bounded_flag_scaling(scaler, cols, target_range=0.0)
 
 
 # ---------------------------------------------------------------------------

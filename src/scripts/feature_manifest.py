@@ -163,6 +163,19 @@ IGNORED_FIELDS: frozenset[str] = frozenset(
         "nn_batch_size",
         "nn_patience",
         "nn_use_amp",
+        # Scaler-stat override for bounded ordinal flags. Ignored deliberately:
+        # it adds/removes/renames no feature and changes no parameter shape —
+        # it only rewrites two of the fitted StandardScaler's (mean_, scale_)
+        # entries, which this manifest does not model.
+        #
+        # Note what does NOT cover it: assert_scaler_matches compares
+        # n_features + a sha256 of the ordered *column names* + target names, so
+        # it is blind to fitted statistics. What makes that safe is artifact
+        # co-location, not a hash — nn_scaler.pkl ships in the same tarball as
+        # the checkpoint it was fit alongside, so serving cannot pair a
+        # knob-on checkpoint with a knob-off scaler without a hand-mixed
+        # artifact promotion.
+        "nn_bounded_flag_range",
         "scheduler_type",
         "cosine_t0",
         "cosine_t_mult",
