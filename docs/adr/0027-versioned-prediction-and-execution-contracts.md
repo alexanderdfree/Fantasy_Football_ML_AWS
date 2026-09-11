@@ -209,6 +209,11 @@ evidence, not asserted as timeless performance guarantees here.
 
 ## Changelog
 
+- 2026-09-11: Enforce nested source isolation and thread capture propagation;
+  bind evaluation identities to raw truth and pre-fill availability; preserve
+  native/shared row semantics and client request ownership during migration.
+  Update strict-recipe and partial-result E2Es (PR #1566 review follow-up).
+
 - 2026-09-11: Rebase the ownership migration on the consolidated evaluation contract; preserve full forecasts, shared comparison totals, source eligibility and DST exclusions in the offline builders and client metadata.
 
 - 2026-09-10: Separate the serving dependency subset and artifact reader from historical/live prediction construction; verify both directions in fresh interpreters and the built image.

@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-11 · Repair data isolation, observation provenance and client boundaries after consolidation · (PR #1566 follow-up) · → ADR-0027
+
 - 2026-09-11 · Repair finite paired offline scoring and incomplete provider cache boundaries · (PR #1574 follow-up) · → ADR-0024
 
 - 2026-09-10 · Remove repository Codex model, reasoning, and context pins; inherit personal defaults and session selections · (PR #1579) · → ADR-0025

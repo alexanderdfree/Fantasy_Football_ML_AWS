@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Consolidated data isolation, truth provenance and client boundaries
+[Read the incident record](fixed-archive/consolidated-contract-review-followup.md).
+
 ### [FIXED] Consolidated offline comparison and provider-cache boundaries
 [Read the incident record](fixed-archive/consolidated-evaluation-review-followup.md).
 

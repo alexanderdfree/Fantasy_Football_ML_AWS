@@ -63,11 +63,25 @@
     "attn_nn",
     "lgbm"
   ],
+  "nullable_comparison_prediction_fields": [
+    "ridge_comparison_pred",
+    "nn_comparison_pred",
+    "attn_nn_comparison_pred",
+    "lgbm_comparison_pred",
+    "nflcom_comparison_pred",
+    "rotowire_comparison_pred",
+    "espn_comparison_pred"
+  ],
   "nullable_prediction_fields": [
     "ridge_pred",
     "nn_pred",
     "attn_nn_pred",
     "lgbm_pred"
+  ],
+  "optional_row_comparison_metadata": [
+    "comparison_actual",
+    "comparison_actual_basis",
+    "comparison_excluded_sources"
   ],
   "positions": [
     "QB",
