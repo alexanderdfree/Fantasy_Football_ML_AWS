@@ -15,8 +15,6 @@
 - 2026-09-10 · Preserve sparse inheritance magnitude and correct truncated-NB reception expectations with artifact compatibility · (PR pending) · → ADR-0005
 
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
-
-- 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
 - 2026-09-10 · Exclude non-shared DST points allowed, enforce NFL.com source eligibility, and pair offline comparison cohorts · (PR pending) · → ADR-0024
 - 2026-09-10 · Correct Timeline scoring and source populations, retain K/DST comparisons, and report fixed per-model records · (PR #1573) · → ADR-0024
 - 2026-09-10 · Add opt-in AWS daily/intraday inference and weekly data correction workflows with staged activation, shared publication leases, and public freshness verification · (PR pending) · → ADR-0028
