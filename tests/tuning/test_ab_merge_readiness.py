@@ -173,6 +173,27 @@ def test_spec_keeps_existing_grid_and_rejects_stacking(monkeypatch):
         spec.corrected({})
 
 
+def test_output_sink_accepts_authorized_experiment_but_rejects_path_escape(monkeypatch):
+    import boto3
+
+    calls = []
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        lambda name: SimpleNamespace(put_object=lambda **kwargs: calls.append(kwargs)),
+    )
+    monkeypatch.setenv("FF_AB_RUN_ID", "test-run")
+    monkeypatch.setenv("S3_BUCKET", "test-bucket")
+    prefix = "experiments/merge-readiness/20260911T181252Z/ab_runs"
+    monkeypatch.setenv("FF_AB_S3_PREFIX", prefix)
+    spec._evidence_sink("WR-corrected-42")("manifest-abc.json", b"{}")
+    assert calls[0]["Key"] == f"{prefix}/test-run/readiness/WR-corrected-42/manifest-abc.json"
+    for invalid in (f"{prefix}/../models", "ab_runs/../models", "ab_runs//models", "models"):
+        monkeypatch.setenv("FF_AB_S3_PREFIX", invalid)
+        with pytest.raises(ValueError, match="explicit ab_runs"):
+            spec._evidence_sink("WR-corrected-42")
+
+
 def test_complete_callback_writes_replay_manifest_and_numeric_aggregate(tmp_path, monkeypatch):
     from src.analysis import artifact_eval
     from src.qb.run_pipeline import CONFIG
