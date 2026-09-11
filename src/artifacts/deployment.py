@@ -357,7 +357,10 @@ def deploy(
             taskDefinition=expected,
             forceNewDeployment=True,
         )
-        deadline = clock() + timeout
+        # A controller can supply its remaining invocation budget. Resolve it
+        # after remote preparation/update, not before those calls consume time.
+        wait_budget = timeout() if callable(timeout) else timeout
+        deadline = clock() + wait_budget
         while not _expected_release_ready(aws, state):
             remaining = deadline - clock()
             if remaining <= 0:

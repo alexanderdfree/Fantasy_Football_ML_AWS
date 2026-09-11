@@ -338,7 +338,7 @@ def activate_data(s3, ecs, settings, result):
     if manifest["data_producer_sha256"] != result["request"]["producer_sha"]:
         raise ValueError("Candidate data was built by another producer")
     timeout = settings.get("rollout_timeout", 600)
-    if timeout <= 0:
+    if (timeout() if callable(timeout) else timeout) <= 0:
         raise RuntimeError("Insufficient invocation time for a recoverable serving rollout")
     build, content = staged_cache(s3, bucket, result)
     backup_key = run_key(result["run_id"], "activation-backup.json")
@@ -558,7 +558,7 @@ def handler(event, context):
         "service": os.environ["ECS_SERVICE"],
         "url": os.environ["SERVICE_URL"],
         "mode": os.environ["MAINTENANCE_MODE"],
-        "rollout_timeout": min(
+        "rollout_timeout": lambda: min(
             600,
             (context.get_remaining_time_in_millis() / 1000 if context is not None else 900) - 180,
         ),
