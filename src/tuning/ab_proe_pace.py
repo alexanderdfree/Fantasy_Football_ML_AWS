@@ -45,6 +45,7 @@ from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["QB", "RB", "WR", "TE"]  # frame injection is QB/RB/WR/TE-only
 SEEDS = [42, 123, 7]
+SUPPORTS_STACKED = False  # These metrics require eager per-model outputs and cohorts.
 
 # nflfastR columns the builder needs; pbp_data() drops absent columns silently,
 # so _build_team_week_table gates on them loudly instead.
@@ -149,8 +150,9 @@ def _build_team_week_table(seasons: list[int], cache_dir: str | None = None) -> 
     from src.data import nfl_source
     from src.data.cache_io import atomic_write_parquet
     from src.data.external_sources import _seasons_cache_signature
+    from src.training.context import raw_data_dir
 
-    cache_dir = cache_dir or CACHE_DIR
+    cache_dir = cache_dir or raw_data_dir(CACHE_DIR)
     os.makedirs(cache_dir, exist_ok=True)
     sig = _seasons_cache_signature(sorted(set(int(s) for s in seasons)))
     cache_path = f"{cache_dir}/proe_pace_teamweek_{_CACHE_VERSION}_{sig}.parquet"
@@ -238,7 +240,7 @@ def _regret(df: pd.DataFrame, col: str, n: int) -> float:
 
 
 def metric_fn(result: dict, position: str) -> dict[str, dict[str, float]]:
-    from src.analysis.cohort_analysis import MODELS, available_models, per_model_metrics
+    from src.evaluation.metrics import MODELS, available_models, per_model_metrics
     from src.shared.evaluation import compute_ranking_metrics
 
     df = result["test_df"]

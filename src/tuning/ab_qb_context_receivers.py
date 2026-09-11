@@ -63,6 +63,7 @@ from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["WR", "TE", "RB"]
 SEEDS = [42, 123, 7]
+SUPPORTS_STACKED = False  # These metrics require eager per-model outputs and cohorts.
 
 _QB = "QB"
 # Prior-role proxy: ff-opportunity expected fantasy points — the proxy the QB inheritance A/B
@@ -125,6 +126,7 @@ def _team_qb_context(df: pd.DataFrame, outmap: dict) -> pd.DataFrame:
 def _build_outmap(train, val, test) -> dict:
     """(season, team, week) -> {gsis_ids of Out/Doubtful QBs} from the injury report."""
     from src.data import nfl_source
+    from src.data.identity import schedule_team_code_normalization
 
     seasons = sorted({int(s) for df in (train, val, test) for s in df["season"].unique()})
     inj = nfl_source.injuries(seasons)
@@ -132,7 +134,7 @@ def _build_outmap(train, val, test) -> dict:
     outmap: dict = {}
     for s, t, w, g in zip(
         out["season"].astype(int),
-        out["team"],
+        out["team"].replace(schedule_team_code_normalization()),
         out["week"].astype(int),
         out["gsis_id"].astype(str),
         strict=True,
@@ -177,7 +179,7 @@ def _make_whitelister(cols):
 # Metric — per-model overall MAE/bias/RMSE + qbout-cohort bias/MAE/n
 # --------------------------------------------------------------------------- #
 def metric_fn(result, position):
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

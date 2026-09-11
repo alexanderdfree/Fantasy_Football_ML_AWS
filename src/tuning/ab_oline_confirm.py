@@ -25,6 +25,12 @@ RotoWire slate: pre-built data/raw/rotowire_slate_ppr_2018_2025.parquet (Sleeper
 projections × the rosters sleeper→gsis bridge; on S3, synced into the container),
 read in metric_fn — no in-container crosswalk fetch.
 
+This is a historical replay tool. The legacy slate's scoring-component and
+capture-time provenance are not certified by this module. Its results do not
+establish a fair effect under today's shared-component or model-selection
+policy; verify the archive's basis before using a replay to justify activation.
+All variants stay opt-in and run eagerly so their model/cohort outputs agree.
+
 Fleet (rolling-origin RETRAINS need GPU; ADR-0020 branch flow):
     python -m src.tuning.launch_ab --spec src.tuning.ab_oline_confirm --dry-run
     # smoke ONE cell first:
@@ -46,6 +52,7 @@ from src.tuning.ab_oline_continuity import _mut_whitelist
 
 POSITIONS = ["QB", "RB", "TE"]  # where the E2 screen moved a head (WR flat, dropped)
 SEEDS = [42]  # the 4 rolling origins provide the replication, not seeds
+SUPPORTS_STACKED = False  # Preserve eager per-origin model fits and metrics.
 _ORIGINS = (2022, 2023, 2024, 2025)
 _LINEUP_N = {"QB": 12, "RB": 24, "WR": 30, "TE": 12}
 _MIN_TRAIN = 2013
@@ -57,10 +64,9 @@ _ROTOWIRE_SLATE = "rotowire_slate_ppr_2018_2025.parquet"  # under CACHE_DIR (dat
 # --------------------------------------------------------------------------- #
 def _make_injector(test_season: int, with_e2: bool):
     def _inject(train, val, test):
-        from src.benchmarking.benchmark import _load_full_featured_frame
         from src.data.split import rolling_origin_folds
 
-        full = _load_full_featured_frame()
+        full = pd.concat([train, val, test], ignore_index=True)
         _, tr, va, te = rolling_origin_folds(
             full, test_seasons=[test_season], min_train_season=_MIN_TRAIN
         )[0]
@@ -78,8 +84,7 @@ def _make_injector(test_season: int, with_e2: bool):
 # --------------------------------------------------------------------------- #
 def _regret(df: pd.DataFrame, col: str, n: int) -> float:
     regrets = []
-    for _, g in df.groupby("week"):
-        gg = g[g[col].notna()]
+    for _, gg in df.groupby(["season", "week"]):
         if len(gg) < n:
             continue
         opt = gg.nlargest(n, "fantasy_points")["fantasy_points"].sum()
@@ -91,20 +96,26 @@ def _regret(df: pd.DataFrame, col: str, n: int) -> float:
 def metric_fn(result: dict, position: str) -> dict[str, dict[str, float]]:
     from src.config import CACHE_DIR
     from src.shared.evaluation import compute_ranking_metrics
+    from src.shared.evaluation_cohorts import regular_season_rows
+    from src.training.context import raw_data_dir
 
-    df = result["test_df"].copy()
+    df = regular_season_rows(result["test_df"]).copy()
     df = df[df["fantasy_points"].notna()].copy()
     df["player_id"] = df["player_id"].astype(str)
+    if df.empty or df["season"].nunique() != 1:
+        raise ValueError("O-line confirmation requires one nonempty regular-season origin")
     season = int(df["season"].iloc[0])
     n = _LINEUP_N[position]
 
-    rw = pd.read_parquet(f"{CACHE_DIR}/{_ROTOWIRE_SLATE}")
+    rw = pd.read_parquet(f"{raw_data_dir(CACHE_DIR)}/{_ROTOWIRE_SLATE}")
     rw = rw[(rw["position"] == position) & (rw["season"] == season)][
         ["player_id", "season", "week", "rotowire_pred"]
     ].copy()
     rw["player_id"] = rw["player_id"].astype(str)
-    df = df.merge(rw, on=["player_id", "season", "week"], how="left")
-    slate = df[df["rotowire_pred"].notna()]  # shared slate: identical rows for every arm
+    df = df.merge(rw, on=["player_id", "season", "week"], how="left", validate="one_to_one")
+    compared = ["fantasy_points", "pred_attn_nn_total", "pred_lgbm_total", "rotowire_pred"]
+    df[compared] = df[compared].apply(pd.to_numeric, errors="coerce")
+    slate = df.loc[np.isfinite(df[compared]).all(axis=1)].copy()
 
     # Ridge overall MAE (sentinel feed; not constrained here — origins differ, so
     # every variant's expect_ridge_identical is None).
@@ -123,6 +134,7 @@ def metric_fn(result: dict, position: str) -> dict[str, dict[str, float]]:
             "hit12": rank.get("season_avg_hit_rate", float("nan")),
             "spearman": rank.get("season_avg_spearman", float("nan")),
             "slate_n": float(len(slate)),
+            "slate_available": float(bool(len(slate))),
             "season": float(season),
         }
     return out
