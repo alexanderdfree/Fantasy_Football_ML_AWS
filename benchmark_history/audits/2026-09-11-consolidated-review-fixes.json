@@ -357,5 +357,135 @@
     "Archived identity lookups do not newly certify pregame publication timing.",
     "No new GPU training, AWS rehearsal, activation or merge.",
     "Single-seed CPU checks do not establish accuracy neutrality; prior NN tradeoffs remain documented."
-  ]
+  ],
+  "leaf_validation": {
+    "n_cells": 11,
+    "all_passed": true,
+    "required_cohort_blocks_available": 44,
+    "network_attempts": 0,
+    "read_events": 102,
+    "cells": [
+      {
+        "label": "nn_WR",
+        "source_ref": "724fbf7f79e9971999d098211df0847135c6bcdf",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 2768,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "nn_DST",
+        "source_ref": "724fbf7f79e9971999d098211df0847135c6bcdf",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 544,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "flags_WR",
+        "source_ref": "646728a51b2ddea094e7fbb48cee68aace9926b7",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 2768,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "flags_QB",
+        "source_ref": "646728a51b2ddea094e7fbb48cee68aace9926b7",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "maintenance_QB",
+        "source_ref": "78aeb689943114300f2cb8ce5f9d701bbc3bd998",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "evaluation_QB",
+        "source_ref": "fea23a66bcaa6b2cdb368e38d0360aaff50dc1da",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "rmse_RB",
+        "source_ref": "4f14a7daa2d49c8d11ddb5a2410bbca16cdd9111",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 1759,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": "fantasy_rmse_ppr"
+      },
+      {
+        "label": "rmse_QB",
+        "source_ref": "4f14a7daa2d49c8d11ddb5a2410bbca16cdd9111",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": "fantasy_rmse_ppr"
+      },
+      {
+        "label": "rmse_WR",
+        "source_ref": "4f14a7daa2d49c8d11ddb5a2410bbca16cdd9111",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 2768,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": "fantasy_rmse_ppr"
+      },
+      {
+        "label": "qb_QB",
+        "source_ref": "66278abda8e5fcef0b98a924c217bd435d2a3b40",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "combined_QB",
+        "source_ref": "ad6a607c30b6c192694c786db933139d13aabcd0",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      }
+    ]
+  }
 }
