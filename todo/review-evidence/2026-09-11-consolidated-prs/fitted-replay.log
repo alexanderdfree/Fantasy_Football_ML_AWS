@@ -1,0 +1,593 @@
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:103: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_carry_L3"] = safe_divide(rush_yds_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:120: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["completion_pct_L3"] = safe_divide(completions_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:121: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_attempt_L3"] = safe_divide(pass_yds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["td_rate_L3"] = safe_divide(pass_tds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["int_rate_L3"] = safe_divide(ints_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:124: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["sack_rate_L3"] = safe_divide(sacks_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:128: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["qb_rushing_share_L3"] = safe_divide(rush_yds_roll, total_yds)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:130: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["passing_epa_per_dropback_L3"] = safe_divide(pass_epa_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["deep_ball_rate_L3"] = safe_divide(air_yds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:132: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["pass_first_down_rate_L3"] = safe_divide(pass_first_downs_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:133: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_epa_per_carry_L3"] = safe_divide(rush_epa_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rush_first_down_rate_L3"] = safe_divide(rush_first_downs_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_rate_L3"] = safe_divide(pass_yac_roll, pass_yds_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:136: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["sack_damage_per_dropback_L3"] = safe_divide(sack_yds_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:107: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:125: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:129: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:120: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["completion_pct_L3"] = safe_divide(completions_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:121: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_attempt_L3"] = safe_divide(pass_yds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["td_rate_L3"] = safe_divide(pass_tds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["int_rate_L3"] = safe_divide(ints_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:124: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["sack_rate_L3"] = safe_divide(sacks_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:128: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["qb_rushing_share_L3"] = safe_divide(rush_yds_roll, total_yds)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:130: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["passing_epa_per_dropback_L3"] = safe_divide(pass_epa_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["deep_ball_rate_L3"] = safe_divide(air_yds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:132: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["pass_first_down_rate_L3"] = safe_divide(pass_first_downs_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:133: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_epa_per_carry_L3"] = safe_divide(rush_epa_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rush_first_down_rate_L3"] = safe_divide(rush_first_downs_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_rate_L3"] = safe_divide(pass_yac_roll, pass_yds_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:136: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["sack_damage_per_dropback_L3"] = safe_divide(sack_yds_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:120: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["completion_pct_L3"] = safe_divide(completions_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:121: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_attempt_L3"] = safe_divide(pass_yds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["td_rate_L3"] = safe_divide(pass_tds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["int_rate_L3"] = safe_divide(ints_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:124: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["sack_rate_L3"] = safe_divide(sacks_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:128: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["qb_rushing_share_L3"] = safe_divide(rush_yds_roll, total_yds)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:130: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["passing_epa_per_dropback_L3"] = safe_divide(pass_epa_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["deep_ball_rate_L3"] = safe_divide(air_yds_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:132: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["pass_first_down_rate_L3"] = safe_divide(pass_first_downs_roll, attempts_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:133: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_epa_per_carry_L3"] = safe_divide(rush_epa_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rush_first_down_rate_L3"] = safe_divide(rush_first_downs_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_rate_L3"] = safe_divide(pass_yac_roll, pass_yds_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:136: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["sack_damage_per_dropback_L3"] = safe_divide(sack_yds_roll, dropbacks)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:72: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["is_rookie"] = values["is_rookie"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:73: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rookie_early"] = values["rookie_early"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["season_starts_to_date"] = values["_game_idx"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:72: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["is_rookie"] = values["is_rookie"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:73: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rookie_early"] = values["rookie_early"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["season_starts_to_date"] = values["_game_idx"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:72: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["is_rookie"] = values["is_rookie"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:73: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rookie_early"] = values["rookie_early"].to_numpy(dtype=float)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["season_starts_to_date"] = values["_game_idx"].to_numpy(dtype=float)
+WARNING: 429 QB rows have target decomposition discrepancy > 0.01 pts
+INFO: 429 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 40 QB rows have target decomposition discrepancy > 0.01 pts
+INFO: 40 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 43 QB rows have target decomposition discrepancy > 0.01 pts
+INFO: 43 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_carry_share_L3"] = safe_divide(player_carries_roll, team_rb_carries_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:138: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_target_share_L3"] = safe_divide(player_targets_roll, team_rb_targets_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:149: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_carry_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:152: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:156: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_carry_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:159: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:169: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["game_carry_hhi"] = df["game_carry_hhi"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:170: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["game_target_hhi"] = df["game_target_hhi"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:171: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_carry_hhi_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:174: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_target_hhi_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:182: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["_game_opp_idx"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:193: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_game_opp_idx"] = df["_game_opp_idx"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:194: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:200: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_epa_per_attempt_L3"] = safe_divide(rushing_epa_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:205: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_first_down_rate_L3"] = safe_divide(rush_fd_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:208: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:211: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:214: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:220: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:254: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:262: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_yards_per_carry"] = ypc.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:103: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_carry_L3"] = safe_divide(rush_yds_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:107: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:125: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:129: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_carry_share_L3"] = safe_divide(player_carries_roll, team_rb_carries_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:138: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_target_share_L3"] = safe_divide(player_targets_roll, team_rb_targets_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:149: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_carry_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:152: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:156: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_carry_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:159: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:169: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["game_carry_hhi"] = df["game_carry_hhi"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:170: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["game_target_hhi"] = df["game_target_hhi"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:171: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_carry_hhi_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:174: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_target_hhi_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:182: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["_game_opp_idx"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:193: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_game_opp_idx"] = df["_game_opp_idx"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:194: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:200: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_epa_per_attempt_L3"] = safe_divide(rushing_epa_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:205: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_first_down_rate_L3"] = safe_divide(rush_fd_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:74: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:75: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_target_L3"] = safe_divide(recv_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:76: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:77: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:208: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:91: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:95: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:211: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:214: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:220: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:254: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:262: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_yards_per_carry"] = ypc.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:103: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_carry_L3"] = safe_divide(rush_yds_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:107: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:125: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:129: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_carry_share_L3"] = safe_divide(player_carries_roll, team_rb_carries_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:138: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_target_share_L3"] = safe_divide(player_targets_roll, team_rb_targets_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:149: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_carry_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:152: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:156: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_carry_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:159: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:169: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["game_carry_hhi"] = df["game_carry_hhi"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:170: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["game_target_hhi"] = df["game_target_hhi"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:171: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_carry_hhi_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:174: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_rb_target_hhi_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:182: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["_game_opp_idx"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:193: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_game_opp_idx"] = df["_game_opp_idx"].values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:194: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:200: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_epa_per_attempt_L3"] = safe_divide(rushing_epa_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:205: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["rushing_first_down_rate_L3"] = safe_divide(rush_fd_roll, carries_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:208: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:211: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:214: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:220: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:254: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/rb/features.py:262: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_yards_per_carry"] = ypc.where(
+WARNING: 156 RB rows have target decomposition discrepancy > 0.01 pts
+INFO: 189 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 17 RB rows have target decomposition discrepancy > 0.01 pts
+INFO: 19 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 15 RB rows have target decomposition discrepancy > 0.01 pts
+INFO: 20 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:99: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_wr_target_share_L3"] = safe_divide(player_tgt_roll, team_wr_tgt_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:101: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:102: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:119: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:127: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_opportunity_index"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_target_share_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:143: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:74: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:75: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_target_L3"] = safe_divide(recv_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:76: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:77: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:91: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:95: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:99: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_wr_target_share_L3"] = safe_divide(player_tgt_roll, team_wr_tgt_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:101: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:102: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:119: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:127: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_opportunity_index"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_target_share_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:143: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:74: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:75: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_target_L3"] = safe_divide(recv_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:76: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:77: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:91: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:95: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:99: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_wr_target_share_L3"] = safe_divide(player_tgt_roll, team_wr_tgt_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:101: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:102: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:119: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:127: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_opportunity_index"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_target_share_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/wr/features.py:143: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+WARNING: 243 WR rows have target decomposition discrepancy > 0.01 pts
+INFO: 361 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 24 WR rows have target decomposition discrepancy > 0.01 pts
+INFO: 34 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 28 WR rows have target decomposition discrepancy > 0.01 pts
+INFO: 43 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:62: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:63: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:64: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:77: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:81: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:85: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_te_target_share_L3"] = safe_divide(player_tgt_roll, team_te_tgt_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:87: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:88: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:89: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:90: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["td_rate_per_target_L3"] = safe_divide(recv_tds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:107: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+  WARNING: [train] 0 rows have no team box-score match and 4640 rows have no opponent box-score match (filled with 0)
+  WARNING: [val] 0 rows have no team box-score match and 545 rows have no opponent box-score match (filled with 0)
+  WARNING: [train] 0 rows have no team box-score match and 4640 rows have no opponent box-score match (filled with 0)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:110: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:115: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_opportunity_index"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:119: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_target_share_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:62: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:63: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:64: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:77: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:81: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:85: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_te_target_share_L3"] = safe_divide(player_tgt_roll, team_te_tgt_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:87: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:88: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:89: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:90: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["td_rate_per_target_L3"] = safe_divide(recv_tds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:107: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:110: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:115: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_opportunity_index"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:119: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_target_share_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:62: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yards_per_reception_L3"] = safe_divide(recv_yds_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:63: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["reception_rate_L3"] = safe_divide(rec_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:64: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["yac_per_reception_L3"] = safe_divide(yac_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:77: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["_team_changed"] = (
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:81: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df_merged["stint_id"] = df_merged.groupby(["player_id", "season"])["_team_changed"].cumsum()
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:85: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["team_te_target_share_L3"] = safe_divide(player_tgt_roll, team_te_tgt_roll).values
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:87: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_epa_per_target_L3"] = safe_divide(recv_epa_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:88: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["receiving_first_down_rate_L3"] = safe_divide(recv_fd_roll, rec_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:89: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["air_yards_per_target_L3"] = safe_divide(air_yds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:90: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["td_rate_per_target_L3"] = safe_divide(recv_tds_roll, tgt_roll)
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:107: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_share"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:110: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_target_hhi"] = df.groupby(["recent_team", "season", "week"])[
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:115: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["game_opportunity_index"] = np.divide(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:119: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["opportunity_index_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["redzone_target_share_L3"] = rolling_agg(
+/Users/alex/.codex/worktrees/992b/Final-Project/src/te/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df["prior_season_mean_catch_rate"] = catch_rate.where(
+WARNING: 110 TE rows have target decomposition discrepancy > 0.01 pts
+INFO: 111 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 10 TE rows have target decomposition discrepancy > 0.01 pts
+INFO: 11 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+WARNING: 10 TE rows have target decomposition discrepancy > 0.01 pts
+INFO: 10 rows differ from nflverse fantasy_points_ppr by > 0.5 pts
+[
+  {
+    "position": "QB",
+    "ok": true,
+    "rows": 687,
+    "columns": 28,
+    "max_abs_delta": 0.0,
+    "bit_identical": true,
+    "bundle_ids": {
+      "ridge": "6a2907b35ae59265acd1276444fa1db49c998a64a9c456ac363da6dda784e53b",
+      "nn": "9d879f853e78b66ffda03db5902d8ce13eaa40f7d22333adba9181acf7ac6dde",
+      "attn_nn": "edef47f87ee2731d5ce204ad79b487d6bf641f35ce0f5b6434b171b2736e990c",
+      "lgbm": "441d4125a680704ec88a36ac22a869b16a71b78cd73074d09f77d55639505733"
+    },
+    "ambient_backbone_norm": "layer",
+    "saved_backbone_norms": {
+      "nn": "batch",
+      "attn_nn": "batch"
+    }
+  },
+  {
+    "position": "RB",
+    "ok": true,
+    "rows": 1759,
+    "columns": 28,
+    "max_abs_delta": 0.0,
+    "bit_identical": true,
+    "bundle_ids": {
+      "ridge": "7b2b40d0356e2aed1fe1091386d85711281bf5a15e62879de89bef3d8594e7e2",
+      "nn": "e87bfb18ddaf8e86fb771b93592f897d812432c2289dde9f659c4e3333f88614",
+      "attn_nn": "c91e6a361ba4eb10ba4c2a45ecc836d3208d80fad59d4f4aab75f10239730f29",
+      "lgbm": "020e7dbc0dd9c9f629ab96b098b71f19213af6728e2db96c83d61d69d184ab88"
+    },
+    "ambient_backbone_norm": "layer",
+    "saved_backbone_norms": {
+      "nn": "batch",
+      "attn_nn": "batch"
+    }
+  },
+  {
+    "position": "WR",
+    "ok": true,
+    "rows": 2768,
+    "columns": 20,
+    "max_abs_delta": 0.0,
+    "bit_identical": true,
+    "bundle_ids": {
+      "ridge": "2dfd7bae642d012cefe437a49d86bb9bc00824384df4ecf7cd5ec7ccf9d0996f",
+      "nn": "ad427f58f8d6c96751324f8e9b34da86d7ec51a147826f99decf17b25abcd8a2",
+      "attn_nn": "b327f256cffbabfb661595048cb56d08a020a07387054c85f6cd2c95f26d2a44",
+      "lgbm": "2a47bcdef40a4682fb09105d60499f5061a045be957f05ef46d82d1219a35376"
+    },
+    "ambient_backbone_norm": "layer",
+    "saved_backbone_norms": {
+      "nn": "batch",
+      "attn_nn": "batch"
+    }
+  },
+  {
+    "position": "TE",
+    "ok": true,
+    "rows": 1660,
+    "columns": 20,
+    "max_abs_delta": 0.0,
+    "bit_identical": true,
+    "bundle_ids": {
+      "ridge": "a2e4987a70dd81d06a5abea09757e4bcf53bb30619844ee7dcdcc456af091e55",
+      "nn": "292ea46771ca1163371cf015bbf99e6151270d87a0409427ac92dbe6139730e0",
+      "attn_nn": "28ffad5e02eaabeb4b998dab763a6478da4ed31e2df5dd74225c86d3c3eb7752",
+      "lgbm": "c7e7eacc6909c34933cc81928ea6b71cc18005555ba6673c3773701443811aae"
+    },
+    "ambient_backbone_norm": "layer",
+    "saved_backbone_norms": {
+      "nn": "batch",
+      "attn_nn": "batch"
+    }
+  },
+  {
+    "position": "K",
+    "ok": true,
+    "rows": 543,
+    "columns": 20,
+    "max_abs_delta": 0.0,
+    "bit_identical": true,
+    "bundle_ids": {
+      "ridge": "5fb2791296777b27a7e456c22de72952e04ae513b7660d34a6b8cbdf0e23f2c2",
+      "nn": "2d982171e15a6f057b09cdb43c379e84ef6c7a887a829887f459c826f5f832d4",
+      "attn_nn": "5e40da919147c90399c5a7ade37e20f81d257637d0a42bcce0cc8db4b69efe3c",
+      "lgbm": "398f5aa6bdcaf731de05329116e0008fefd1486f44435a85b5931150dbdc4940"
+    },
+    "ambient_backbone_norm": "layer",
+    "saved_backbone_norms": {
+      "nn": "batch",
+      "attn_nn": "batch"
+    }
+  },
+  {
+    "position": "DST",
+    "ok": true,
+    "rows": 544,
+    "columns": 44,
+    "max_abs_delta": 0.0,
+    "bit_identical": true,
+    "bundle_ids": {
+      "ridge": "dd17fda00081df0c02569b6a900d4d0f4fb65d5a3baf9e7ad9c0d1cc6bc16710",
+      "nn": "02f94ced4f4e284114da082ed105383d448145852f006c02c9ffc0b3b958e602",
+      "attn_nn": "87ea0dd62ec0e0375f781b9f6a5af1760f37b397e8ebe751ce6f90c3f3a3a5bf",
+      "lgbm": "0b38909c4ed0f16fbac0810d5e00171badc1600ebac31aa689d9e04317bc86ea"
+    },
+    "ambient_backbone_norm": "layer",
+    "saved_backbone_norms": {
+      "nn": "batch",
+      "attn_nn": "batch"
+    }
+  }
+]

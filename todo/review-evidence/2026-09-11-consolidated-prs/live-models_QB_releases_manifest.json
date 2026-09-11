@@ -1,0 +1,41 @@
+{
+  "current": {
+    "bytes": 626570,
+    "key": "models/QB/releases/history/2026-09-10T20-39-08Z-c1e081b65f2a41a6a7672194827186a0-346276c/model.tar.gz",
+    "sha7": "346276c",
+    "source_order": 1508,
+    "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+    "uploaded_at": "2026-09-10T20-39-08Z"
+  },
+  "history": [
+    "models/QB/releases/history/2026-09-10T20-39-08Z-c1e081b65f2a41a6a7672194827186a0-346276c/model.tar.gz",
+    "models/QB/releases/history/2026-09-10T20-38-45Z-c70ce865aae74132b27ccc7c7bb73c06-a41a5fd/model.tar.gz",
+    "models/QB/releases/history/2026-09-10T13-33-17Z-3e6494e705674fbb912f2993328ef8ec-cdd4ebe/model.tar.gz",
+    "models/QB/releases/history/2026-09-10T12-55-16Z-8cf5fa98f3b0469998bc47174ca524e0-2b735b9/model.tar.gz",
+    "models/QB/releases/history/2026-09-10T12-47-08Z-d5606fe4ca8348c7873347789439f09a-ac06069/model.tar.gz"
+  ],
+  "previous": {
+    "bytes": 635442,
+    "key": "models/QB/releases/history/2026-09-10T20-38-45Z-c70ce865aae74132b27ccc7c7bb73c06-a41a5fd/model.tar.gz",
+    "sha7": "a41a5fd",
+    "source_order": 1507,
+    "source_sha": "a5fa4761000693b75d946367497fd15a31e85bca",
+    "uploaded_at": "2026-09-10T20-38-45Z"
+  },
+  "publication_source": {
+    "source_order": 1508,
+    "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+  },
+  "retired": [
+    "models/QB/releases/history/2026-07-13T10-48-58Z-81baf56d85fb412c83f510caff57db7f-7431d27/model.tar.gz"
+  ],
+  "schema_version": 3,
+  "stable": {
+    "bytes": 626570,
+    "key": "models/QB/releases/history/2026-09-10T20-39-08Z-c1e081b65f2a41a6a7672194827186a0-346276c/model.tar.gz",
+    "sha7": "346276c",
+    "source_order": 1508,
+    "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+    "uploaded_at": "2026-09-10T20-39-08Z"
+  }
+}

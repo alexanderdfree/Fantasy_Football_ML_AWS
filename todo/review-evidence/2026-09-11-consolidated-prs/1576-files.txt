@@ -1,0 +1,16 @@
+M	agent-guides/modeling.md
+A	benchmark_history/2026-09-10T23-46-39_c924a1c5_qb_role_native_seed42.json
+A	benchmark_history/2026-09-10T23-49-26_c924a1c5_qb_role_native_seed123.json
+A	benchmark_history/2026-09-10T23-49-27_c924a1c5_qb_role_native_seed7.json
+M	docs/adr/0004-attention-over-game-history.md
+M	docs/adr/CHANGELOG.md
+M	src/features/engineer.py
+M	src/prediction/upcoming.py
+M	tests/test_app_upcoming_week.py
+M	tests/test_availability_population.py
+M	todo/fixed-archive.md
+A	todo/fixed-archive/qb-role-reconstruction.md
+A	todo/qb-role-reconstruction-validation.md
+A	todo/validation/qb-role-reconstruction/2026-09-10T23-50-11_c924a1c5_qb_role_replay_seed123.json
+A	todo/validation/qb-role-reconstruction/2026-09-10T23-50-13_c924a1c5_qb_role_replay_seed42.json
+A	todo/validation/qb-role-reconstruction/2026-09-10T23-50-58_c924a1c5_qb_role_replay_seed7.json

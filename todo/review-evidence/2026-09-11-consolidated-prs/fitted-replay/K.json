@@ -1,0 +1,101 @@
+{
+  "position": "K",
+  "ok": true,
+  "rows": 543,
+  "columns": 20,
+  "max_abs_delta": 0.0,
+  "bit_identical": true,
+  "bundle_ids": {
+    "ridge": "5fb2791296777b27a7e456c22de72952e04ae513b7660d34a6b8cbdf0e23f2c2",
+    "nn": "2d982171e15a6f057b09cdb43c379e84ef6c7a887a829887f459c826f5f832d4",
+    "attn_nn": "5e40da919147c90399c5a7ade37e20f81d257637d0a42bcce0cc8db4b69efe3c",
+    "lgbm": "398f5aa6bdcaf731de05329116e0008fefd1486f44435a85b5931150dbdc4940"
+  },
+  "ambient_backbone_norm": "layer",
+  "saved_backbone_norms": {
+    "nn": "batch",
+    "attn_nn": "batch"
+  },
+  "details": {
+    "pred_ridge_fg_yard_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_pat_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_fg_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_xp_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_fg_yard_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_pat_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_fg_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_xp_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_fg_yard_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_pat_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_fg_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_xp_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_fg_yard_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_pat_points": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_fg_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_xp_misses": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    }
+  }
+}

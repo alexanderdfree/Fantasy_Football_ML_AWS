@@ -1,0 +1,40 @@
+import json
+from pathlib import Path
+
+import boto3
+from botocore.exceptions import ClientError
+
+out = Path('/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911')
+session = boto3.Session(region_name='us-east-1')
+ecs = session.client('ecs')
+s3 = session.client('s3')
+elb = session.client('elbv2')
+service = ecs.describe_services(cluster='fantasy-cluster', services=['fantasy-service'])['services'][0]
+task = ecs.describe_task_definition(taskDefinition=service['taskDefinition'])['taskDefinition']
+app = next(c for c in task['containerDefinitions'] if c['name'] == 'fantasy-predictor')
+allowed = {'FF_MODEL_S3_BUCKET', 'FF_MODEL_S3_PREFIX', 'FF_ALLOW_RUNTIME_INFERENCE', 'FF_DATA_RELEASE', 'FF_DATASET_ID', 'FF_DATA_PRODUCER_SHA256', 'FF_SERVING_SNAPSHOT_GENERATION'}
+environment = {e['name']: e['value'] for e in app.get('environment', []) if e['name'] in allowed}
+bucket = environment['FF_MODEL_S3_BUCKET']
+prefix = environment.get('FF_MODEL_S3_PREFIX', 'models')
+summary = {'task': service['taskDefinition'], 'image': app['image'], 'task_role': task['taskRoleArn'], 'environment': environment, 'health_check': app.get('healthCheck'), 'target_groups': [], 'objects': {}}
+for lb in service['loadBalancers']:
+    group = elb.describe_target_groups(TargetGroupArns=[lb['targetGroupArn']])['TargetGroups'][0]
+    summary['target_groups'].append({k: group.get(k) for k in ('TargetGroupArn', 'HealthCheckPath', 'Matcher', 'HealthCheckIntervalSeconds')})
+keys = [f'{prefix}/predictions_cache/current.json', 'data/manifest.json']
+for pos in ('QB', 'RB', 'WR', 'TE', 'K', 'DST'):
+    keys.extend([f'{prefix}/releases/v3/{pos}/manifest.json', f'{prefix}/{pos}/releases/manifest.json'])
+for key in keys:
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        payload = response['Body'].read()
+        value = json.loads(payload)
+        (out / ('live-' + key.replace('/', '_'))).write_bytes(payload)
+        selected = {k: value.get(k) for k in ('schema_version', 'generation', 'release_id', 'data_producer_sha256', 'publication_source', 'source_frontier', 'promotion_mode') if k in value}
+        if 'stable' in value:
+            selected['stable'] = {k: (value['stable'] or {}).get(k) for k in ('key', 'git_sha', 'sha7', 'smoke_passed', 'dataset_id')}
+            selected['history_count'] = len(value.get('history', []))
+        summary['objects'][key] = {'bytes': len(payload), 'etag': response['ETag'], 'modified': str(response['LastModified']), **selected}
+    except ClientError as error:
+        summary['objects'][key] = {'error': error.response['Error']['Code']}
+(out / 'live-preflight.json').write_text(json.dumps(summary, indent=2))
+print(json.dumps(summary, indent=2))

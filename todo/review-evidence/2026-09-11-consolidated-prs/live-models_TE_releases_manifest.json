@@ -1,0 +1,41 @@
+{
+  "current": {
+    "bytes": 341835,
+    "key": "models/TE/releases/history/2026-09-10T20-39-10Z-6c69ffc8f1e145af8e9946414d869ec4-53bce15/model.tar.gz",
+    "sha7": "53bce15",
+    "source_order": 1508,
+    "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+    "uploaded_at": "2026-09-10T20-39-10Z"
+  },
+  "history": [
+    "models/TE/releases/history/2026-09-10T20-39-10Z-6c69ffc8f1e145af8e9946414d869ec4-53bce15/model.tar.gz",
+    "models/TE/releases/history/2026-09-10T20-38-47Z-17e5b27eb2184bcaa461825a902ecff3-6b6781d/model.tar.gz",
+    "models/TE/releases/history/2026-09-10T13-33-07Z-0900024117824955a65bf6132310b38c-5344aa5/model.tar.gz",
+    "models/TE/releases/history/2026-09-10T12-52-15Z-01db1bb1f4b14c0e833a9ef4830cbf87-1a8bf59/model.tar.gz",
+    "models/TE/releases/history/2026-09-10T12-47-00Z-ef94938ba67c4144805b11fc63e7c273-4e67a73/model.tar.gz"
+  ],
+  "previous": {
+    "bytes": 326256,
+    "key": "models/TE/releases/history/2026-09-10T20-38-47Z-17e5b27eb2184bcaa461825a902ecff3-6b6781d/model.tar.gz",
+    "sha7": "6b6781d",
+    "source_order": 1507,
+    "source_sha": "a5fa4761000693b75d946367497fd15a31e85bca",
+    "uploaded_at": "2026-09-10T20-38-47Z"
+  },
+  "publication_source": {
+    "source_order": 1508,
+    "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+  },
+  "retired": [
+    "models/TE/releases/history/2026-07-13T10-49-09Z-8355325bd8bf4c179c9bd9bed181ad3b-32d23c3/model.tar.gz"
+  ],
+  "schema_version": 3,
+  "stable": {
+    "bytes": 341835,
+    "key": "models/TE/releases/history/2026-09-10T20-39-10Z-6c69ffc8f1e145af8e9946414d869ec4-53bce15/model.tar.gz",
+    "sha7": "53bce15",
+    "source_order": 1508,
+    "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+    "uploaded_at": "2026-09-10T20-39-10Z"
+  }
+}

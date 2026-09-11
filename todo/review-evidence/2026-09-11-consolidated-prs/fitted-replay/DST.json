@@ -1,0 +1,197 @@
+{
+  "position": "DST",
+  "ok": true,
+  "rows": 544,
+  "columns": 44,
+  "max_abs_delta": 0.0,
+  "bit_identical": true,
+  "bundle_ids": {
+    "ridge": "dd17fda00081df0c02569b6a900d4d0f4fb65d5a3baf9e7ad9c0d1cc6bc16710",
+    "nn": "02f94ced4f4e284114da082ed105383d448145852f006c02c9ffc0b3b958e602",
+    "attn_nn": "87ea0dd62ec0e0375f781b9f6a5af1760f37b397e8ebe751ce6f90c3f3a3a5bf",
+    "lgbm": "0b38909c4ed0f16fbac0810d5e00171badc1600ebac31aa689d9e04317bc86ea"
+  },
+  "ambient_backbone_norm": "layer",
+  "saved_backbone_norms": {
+    "nn": "batch",
+    "attn_nn": "batch"
+  },
+  "details": {
+    "pred_ridge_def_sacks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_def_ints": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_def_fumble_rec": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_def_fumbles_forced": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_def_safeties": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_def_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_def_blocked_kicks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_special_teams_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_points_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_yards_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_sacks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_ints": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_fumble_rec": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_fumbles_forced": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_safeties": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_def_blocked_kicks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_special_teams_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_points_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_yards_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_sacks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_ints": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_fumble_rec": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_fumbles_forced": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_safeties": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_def_blocked_kicks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_special_teams_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_points_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_yards_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_sacks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_ints": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_fumble_rec": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_fumbles_forced": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_safeties": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_def_blocked_kicks": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_special_teams_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_points_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_yards_allowed": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    }
+  }
+}

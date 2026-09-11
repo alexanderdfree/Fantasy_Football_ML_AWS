@@ -1,0 +1,108 @@
+bringing up nodes...
+bringing up nodes...
+
+F..FFF                                                                   [100%]
+=================================== FAILURES ===================================
+__________ test_maintenance_accepts_the_model_keys_its_base_publishes __________
+[gw0] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+    def test_maintenance_accepts_the_model_keys_its_base_publishes():
+        s3 = S3()
+        for position in storage.POSITIONS:
+            key = new_history_key('models', position, '2026-09-11T00-00-00Z', 'a' * 7)
+            manifest = build_manifest(key, 'a' * 7, 3, '2026-09-11T00:00:00Z', smoke_passed=True)
+            storage.put_json(s3, 'bucket', manifest_key('models', position), manifest)
+>       pins = storage.model_pins(s3, 'bucket')
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/tmp/consolidated-review.gmcnjD/test_review_maintenance.py:15:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+s3 = <tests.maintenance.test_contracts.S3 object at 0x11b23d970>
+bucket = 'bucket'
+
+    def model_pins(s3, bucket: str) -> dict:
+        """Resolve every stable artifact once, including its consumed manifest ETag."""
+        from src.artifacts.model_sync import load_manifest_snapshot, manifest_key
+
+        pins = {}
+        for pos in POSITIONS:
+            key = manifest_key("models", pos)
+            manifest, etag = load_manifest_snapshot(s3, bucket, "models", pos)
+            entry = (manifest or {}).get("stable") or {}
+            if not str(entry.get("key", "")).startswith(f"models/{pos}/") or not etag:
+>               raise ValueError(f"No verified stable manifest for {pos}")
+E               ValueError: No verified stable manifest for QB
+
+src/maintenance/storage.py:83: ValueError
+_ test_ci_snapshot_publications_participate_in_the_shared_lease[train-ec2.yml] _
+[gw2] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+filename = 'train-ec2.yml'
+
+    @pytest.mark.parametrize('filename', ['train-batch.yml', 'train-ec2.yml', 'refresh-splits.yml'])
+    def test_ci_snapshot_publications_participate_in_the_shared_lease(filename):
+        from pathlib import Path
+        import yaml
+        workflow = yaml.safe_load((Path('.github/workflows') / filename).read_text())
+        checked = 0
+        for job_name, job in workflow['jobs'].items():
+            owned = False
+            for step in job.get('steps', []):
+                command = step.get('run', '')
+                if 'src.maintenance.coordination acquire' in command:
+                    owned = True
+                if 'src.maintenance.coordination release' in command:
+                    owned = False
+                if 'src.prediction.build_snapshot' in command and '--stage-directory' not in command:
+                    checked += 1
+>                   assert owned, f'{filename}/{job_name}: snapshot publication occurs outside the configured lease'
+E                   AssertionError: train-ec2.yml/train: snapshot publication occurs outside the configured lease
+E                   assert False
+
+/tmp/consolidated-review.gmcnjD/test_review_maintenance.py:35: AssertionError
+_ test_ci_snapshot_publications_participate_in_the_shared_lease[train-batch.yml] _
+[gw1] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+filename = 'train-batch.yml'
+
+    @pytest.mark.parametrize('filename', ['train-batch.yml', 'train-ec2.yml', 'refresh-splits.yml'])
+    def test_ci_snapshot_publications_participate_in_the_shared_lease(filename):
+        from pathlib import Path
+        import yaml
+        workflow = yaml.safe_load((Path('.github/workflows') / filename).read_text())
+        checked = 0
+        for job_name, job in workflow['jobs'].items():
+            owned = False
+            for step in job.get('steps', []):
+                command = step.get('run', '')
+                if 'src.maintenance.coordination acquire' in command:
+                    owned = True
+                if 'src.maintenance.coordination release' in command:
+                    owned = False
+                if 'src.prediction.build_snapshot' in command and '--stage-directory' not in command:
+                    checked += 1
+>                   assert owned, f'{filename}/{job_name}: snapshot publication occurs outside the configured lease'
+E                   AssertionError: train-batch.yml/train: snapshot publication occurs outside the configured lease
+E                   assert False
+
+/tmp/consolidated-review.gmcnjD/test_review_maintenance.py:35: AssertionError
+__ test_experiment_metrics_do_not_reintroduce_analysis_entrypoint_dependency ___
+[gw1] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+    def test_experiment_metrics_do_not_reintroduce_analysis_entrypoint_dependency():
+        for path in (ROOT / "src/tuning").glob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.ImportFrom) and node.module == "src.analysis.cohort_analysis":
+>                   assert not (
+                        {alias.name for alias in node.names} & {"available_models", "per_model_metrics"}
+                    )
+E                   AssertionError: assert not ({'available_models', 'per_model_metrics'} & {'available_models', 'per_model_metrics'})
+
+tests/shared/test_package_boundaries.py:70: AssertionError
+=========================== short test summary info ============================
+FAILED ::test_maintenance_accepts_the_model_keys_its_base_publishes - ValueEr...
+FAILED ::test_ci_snapshot_publications_participate_in_the_shared_lease[train-ec2.yml]
+FAILED ::test_ci_snapshot_publications_participate_in_the_shared_lease[train-batch.yml]
+FAILED tests/shared/test_package_boundaries.py::test_experiment_metrics_do_not_reintroduce_analysis_entrypoint_dependency
+4 failed, 2 passed in 4.09s

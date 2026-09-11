@@ -1,0 +1,21 @@
+import concurrent.futures
+import json
+from pathlib import Path
+import boto3
+
+root = Path('/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911')
+s3 = boto3.client('s3', region_name='us-east-1')
+keys = set()
+for path in root.glob('live-models_*_releases_manifest.json'):
+    manifest = json.loads(path.read_text())
+    keys.update(manifest.get('history', []))
+    for name in ('current', 'stable', 'previous', 'previous_stable'):
+        if manifest.get(name):
+            keys.add(manifest[name]['key'])
+def inspect(key):
+    r = s3.head_object(Bucket='ff-predictor-training', Key=key)
+    return {'key':key,'bytes':r['ContentLength'],'etag':r['ETag']}
+with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+    result = list(pool.map(inspect, sorted(keys)))
+(root/'legacy-inventory.json').write_text(json.dumps(result,indent=2))
+print(json.dumps({'objects':len(result),'total_bytes':sum(x['bytes'] for x in result),'max_bytes':max(x['bytes'] for x in result),'path':str(root/'legacy-inventory.json')}))

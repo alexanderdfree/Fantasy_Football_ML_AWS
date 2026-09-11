@@ -1,0 +1,63 @@
+{
+  "production_writes": 0,
+  "tested_code": "2335b132a5f8e0a2da94672c7e343d9051305afb",
+  "source_basis": "ccab867901e3c3e89177460032953860addc42cf",
+  "outcomes": [
+    {
+      "position": "QB",
+      "ok": true,
+      "copied": 5,
+      "frontier": {
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+        "source_order": 1508
+      }
+    },
+    {
+      "position": "RB",
+      "ok": true,
+      "copied": 5,
+      "frontier": {
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+        "source_order": 1508
+      }
+    },
+    {
+      "position": "WR",
+      "ok": true,
+      "copied": 5,
+      "frontier": {
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+        "source_order": 1508
+      }
+    },
+    {
+      "position": "TE",
+      "ok": true,
+      "copied": 5,
+      "frontier": {
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+        "source_order": 1508
+      }
+    },
+    {
+      "position": "K",
+      "ok": true,
+      "copied": 5,
+      "frontier": {
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+        "source_order": 1508
+      }
+    },
+    {
+      "position": "DST",
+      "ok": true,
+      "copied": 5,
+      "frontier": {
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+        "source_order": 1508
+      }
+    }
+  ],
+  "missing_git_sha": 0,
+  "non_main_git_sha": []
+}

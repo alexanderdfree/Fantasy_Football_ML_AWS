@@ -1,0 +1,21 @@
+{
+  "status": "paused",
+  "branch": "codex/review-consolidated-20260911",
+  "source_base": "a90ff165ddbdf16b33ade393a03084ffcdf42dd9",
+  "checkpoint": "/Users/alex/.codex/worktrees/992b/Final-Project/todo/consolidated-pr-review-checkpoint-2026-09-11.md",
+  "evidence": "/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911",
+  "production_writes": false,
+  "merges": false,
+  "fixed_review_threads": 3,
+  "confirmed_findings": [
+    "F1: #1577 rejects canonical v3 artifact keys",
+    "F2: #1577 Batch/EC2 cache publication runs outside lease",
+    "F3: #1479 imports violate #1566 boundary"
+  ],
+  "fitted_replay_values": 191844,
+  "full_review_complete": false,
+  "checkpoint_commit": "daa5e86eaa818d34fc050b717957675b9bb9f3df",
+  "tracked_evidence": "todo/review-evidence/2026-09-11-consolidated-prs",
+  "source_archives_suffix": ".py.txt",
+  "large_inputs_in_git": false
+}

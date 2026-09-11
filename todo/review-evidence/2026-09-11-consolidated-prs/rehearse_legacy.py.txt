@@ -1,0 +1,62 @@
+import concurrent.futures
+import hashlib
+import io
+import json
+import subprocess
+import tarfile
+from pathlib import Path
+
+import boto3
+from botocore.exceptions import ClientError
+from src.artifacts import publication, model_sync
+
+root = Path('/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911')
+archive_root = root / 'legacy-archives'
+archive_root.mkdir(exist_ok=True)
+s3 = boto3.client('s3', region_name='us-east-1')
+inventory = json.loads((root / 'legacy-inventory.json').read_text())
+def capture(item):
+    key = item['key']
+    target = archive_root / (hashlib.sha256(key.encode()).hexdigest() + '.tar.gz')
+    if not target.exists():
+        response = s3.get_object(Bucket='ff-predictor-training', Key=key, IfMatch=item['etag'])
+        target.write_bytes(response['Body'].read())
+    payload = target.read_bytes()
+    if len(payload) != item['bytes']:
+        raise ValueError('Archive size changed')
+    with tarfile.open(fileobj=io.BytesIO(payload), mode='r:gz') as archive:
+        try:
+            stream = archive.extractfile('benchmark_metrics.json')
+        except KeyError:
+            stream = None
+        metrics = json.load(stream) if stream else {}
+    return {**item, 'local': str(target), 'git_sha': metrics.get('git_sha'), 'source_sha': metrics.get('source_sha'), 'metrics_keys': sorted(metrics), 'sha256': hashlib.sha256(payload).hexdigest()}
+with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+    captures = list(pool.map(capture, inventory))
+(root/'legacy-captures.json').write_text(json.dumps(captures, indent=2))
+
+class Replay:
+    def get_object(self, *, Bucket, Key):
+        path = root / ('live-' + Key.replace('/', '_'))
+        if not path.exists():
+            path = next((Path(x['local']) for x in captures if x['key'] == Key), None)
+        if path is None or not path.exists():
+            raise ClientError({'Error': {'Code': 'NoSuchKey'}}, 'GetObject')
+        payload = path.read_bytes()
+        return {'Body': io.BytesIO(payload), 'ETag': hashlib.md5(payload).hexdigest()}
+    def put_object(self, **kwargs):
+        raise AssertionError('Dry-run must not publish')
+
+# Model the first squash after today's main, without inventing a production source record.
+lineage = subprocess.check_output(['git', 'rev-list', '--first-parent', 'origin/main'], text=True).splitlines()
+source = {'source_sha': lineage[0], 'source_order': len(lineage), 'lineage': lineage}
+outcomes = []
+for pos in ('QB', 'RB', 'WR', 'TE', 'K', 'DST'):
+    try:
+        migrated = publication.protect_legacy(Replay(), 'ff-predictor-training', 'models', pos, source, dry_run=True)
+        outcomes.append({'position': pos, 'ok': True, 'copied': len(migrated.get('legacy_keys', {})), 'frontier': migrated.get('source_frontier')})
+    except Exception as error:
+        outcomes.append({'position': pos, 'ok': False, 'error': str(error)})
+report = {'production_writes': 0, 'tested_code': subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(), 'source_basis': source['source_sha'], 'outcomes': outcomes, 'missing_git_sha': sum(x['git_sha'] is None for x in captures), 'non_main_git_sha': sorted({x['git_sha'] for x in captures if x['git_sha'] and x['git_sha'] not in lineage})}
+(root / 'legacy-rehearsal.json').write_text(json.dumps(report, indent=2))
+print(json.dumps(report, indent=2))

@@ -1,0 +1,34 @@
+import concurrent.futures
+import hashlib
+import json
+import shutil
+from pathlib import Path
+import boto3
+
+root = Path('/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911')
+manifest = json.loads((root/'live-data-release.json').read_text())
+release_id = json.loads((root/'live-data_manifest.json').read_text())['release_id']
+destination = root/'production-data'
+candidates = [Path('/private/tmp/design-main1564-validation.84Item/candidate_build/data'), Path('/Users/alex/compsci372/Final-Project/data')]
+s3 = boto3.client('s3', region_name='us-east-1')
+def capture(item):
+    name, meta = item
+    dest = destination/name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    for candidate in [dest, *(p/name for p in candidates)]:
+        if candidate.is_file() and candidate.stat().st_size == meta['bytes']:
+            with candidate.open('rb') as stream:
+                digest=hashlib.file_digest(stream,'sha256').hexdigest()
+            if digest==meta['sha256']:
+                if candidate != dest: shutil.copyfile(candidate,dest)
+                return 'local'
+    payload=s3.get_object(Bucket='ff-predictor-training',Key=f'data/releases/{release_id}/{name}')['Body'].read()
+    assert len(payload)==meta['bytes'] and hashlib.sha256(payload).hexdigest()==meta['sha256']
+    dest.write_bytes(payload)
+    return 'downloaded'
+with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+    outcomes=list(pool.map(capture,manifest['files'].items()))
+from src.maintenance.readiness import archive_checks
+checks=archive_checks(destination/'raw')
+(root/'production-archive-readiness.json').write_text(json.dumps(checks,indent=2))
+print(json.dumps({'release_id':release_id,'files':len(outcomes),'local':outcomes.count('local'),'downloaded':outcomes.count('downloaded'),'readiness':{k:v['readiness'] for k,v in checks.items()}},indent=2))

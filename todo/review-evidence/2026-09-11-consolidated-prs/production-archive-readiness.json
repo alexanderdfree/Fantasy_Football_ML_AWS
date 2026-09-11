@@ -1,0 +1,480 @@
+{
+  "player_stats": {
+    "publication_expectation": "Nightly after completed games; recheck Thursday for NFL stat corrections",
+    "required_archive_columns": [
+      "player_id",
+      "season",
+      "week",
+      "recent_team"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "weekly_2012_2025.parquet",
+    "coverage": {
+      "rows": 252157,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22,
+      "expected_team_games": 7326,
+      "missing_team_games": 0,
+      "missing_game_sample": []
+    }
+  },
+  "team_stats": {
+    "publication_expectation": "Nightly after completed games; recheck Thursday for NFL stat corrections",
+    "required_archive_columns": [
+      "season",
+      "week",
+      "team"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "team_stats_2012_2025.parquet",
+    "coverage": {
+      "rows": 7658,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22,
+      "expected_team_games": 7326,
+      "missing_team_games": 0,
+      "missing_game_sample": []
+    }
+  },
+  "pbp": {
+    "publication_expectation": "Nightly after completed games; recheck Thursday for NFL stat corrections",
+    "required_archive_columns": [
+      "player_id",
+      "season",
+      "week"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "redzone_pbp_v2_2012_2025.parquet",
+    "coverage": {
+      "rows": 70378,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 18
+    }
+  },
+  "rosters": {
+    "publication_expectation": "Daily, normally after 07:00 UTC",
+    "required_archive_columns": [
+      "player_id",
+      "season",
+      "team"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "rosters_2012_2025.parquet",
+    "coverage": {
+      "rows": 39605,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22
+    }
+  },
+  "weekly_rosters": {
+    "publication_expectation": "Daily, normally after 07:00 UTC",
+    "required_archive_columns": [
+      "player_id",
+      "season",
+      "week",
+      "team"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "rosters_weekly_2012_2025.parquet",
+    "coverage": {
+      "rows": 593677,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22
+    }
+  },
+  "snap_counts": {
+    "publication_expectation": "Provider-dependent; nflverse checks at 00/06/12/18 UTC",
+    "required_archive_columns": [
+      "season",
+      "week",
+      "team",
+      "pfr_player_id"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "snap_counts_2012_2025.parquet",
+    "coverage": {
+      "rows": 324611,
+      "seasons_present": [
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22
+    }
+  },
+  "depth_charts": {
+    "publication_expectation": "Daily, normally after 07:00 UTC; timestamped source since 2025",
+    "required_archive_columns": [
+      "gsis_id",
+      "season",
+      "week"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "depth_charts_v3_2012_2025.parquet",
+    "coverage": {
+      "rows": 473033,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 18
+    }
+  },
+  "injuries": {
+    "publication_expectation": "Historical archive; live reports use ESPN/NFL.com below",
+    "required_archive_columns": [
+      "gsis_id",
+      "season",
+      "week"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "injuries_2012_2025.parquet",
+    "coverage": {
+      "rows": 76469,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22
+    }
+  },
+  "qbr": {
+    "publication_expectation": "After completed games; live unqualified appearances may require ESPN recovery",
+    "required_archive_columns": [
+      "player_id",
+      "season",
+      "week",
+      "qbr_total"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "qbr_weekly_v2_2012_2025.parquet",
+    "coverage": {
+      "rows": 7326,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 18
+    }
+  },
+  "contracts": {
+    "publication_expectation": "Provider updates following signings; check daily for revisions",
+    "required_archive_columns": [
+      "player_id",
+      "season"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "contracts_2012_2025.parquet",
+    "coverage": {
+      "rows": 66444,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": []
+    }
+  },
+  "players": {
+    "publication_expectation": "Provider identity updates; check daily",
+    "required_archive_columns": [
+      "gsis_id",
+      "display_name"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "player_metadata_v1.parquet",
+    "coverage": {
+      "rows": 24823
+    }
+  },
+  "player_ids": {
+    "publication_expectation": "Provider identity crosswalk updates; check daily",
+    "required_archive_columns": [
+      "gsis_id",
+      "pfr_id"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "player_id_bridge_v2.parquet",
+    "coverage": {
+      "rows": 12492
+    }
+  },
+  "opportunity": {
+    "publication_expectation": "Provider-dependent after games; unpublished live seasons remain unavailable",
+    "required_archive_columns": [
+      "player_id",
+      "season",
+      "week",
+      "pass_yards_gained_exp"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "ff_opportunity_2012_2025.parquet",
+    "coverage": {
+      "rows": 76200,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22
+    }
+  },
+  "schedules": {
+    "publication_expectation": "Approximately every five minutes during the season",
+    "required_archive_columns": [
+      "season",
+      "week",
+      "game_type",
+      "home_team",
+      "away_team",
+      "home_score",
+      "away_score"
+    ],
+    "scope": "pinned_historical_archive",
+    "readiness": "ready",
+    "schema": {
+      "status": "valid",
+      "missing_columns": []
+    },
+    "file": "schedules_2012_2025.parquet",
+    "coverage": {
+      "rows": 3829,
+      "seasons_present": [
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "missing_required_seasons": [],
+      "latest_observed_week": 22
+    }
+  }
+}

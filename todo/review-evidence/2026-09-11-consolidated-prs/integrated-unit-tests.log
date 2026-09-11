@@ -1,0 +1,489 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+.....................................................................FF. [ 43%]
+........F............................................................... [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................F............... [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+.....................s..................................s............... [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+...........................F............................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 81%]
+..........................F............................................. [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+..........................................                               [100%]
+=================================== FAILURES ===================================
+_____________ test_coordinator_reclaims_cores_on_abrupt_disconnect _____________
+[gw1] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+tmp_path = PosixPath('/private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pytest-of-alex/pytest-1017/popen-gw1/test_coordinator_reclaims_core0')
+
+    def test_coordinator_reclaims_cores_on_abrupt_disconnect(tmp_path):
+        """A worker that dies mid-lease (socket closes without releasing) must not leak cores."""
+>       addr, set_active, stop = start_coordinator([0, 1], str(tmp_path))
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/shared/test_core_pool.py:153:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src/shared/core_pool.py:228: in start_coordinator
+    server = _ThreadingUnixServer(addr, _Handler)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:457: in __init__
+    self.server_bind()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <src.shared.core_pool._ThreadingUnixServer object at 0x15dd7ba40>
+
+    def server_bind(self):
+        """Called by constructor to bind the socket.
+
+        May be overridden.
+
+        """
+        if self.allow_reuse_address and hasattr(socket, "SO_REUSEADDR"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Since Linux 6.12.9, SO_REUSEPORT is not allowed
+        # on other address families than AF_INET/AF_INET6.
+        if (
+            self.allow_reuse_port and hasattr(socket, "SO_REUSEPORT")
+            and self.address_family in (socket.AF_INET, socket.AF_INET6)
+        ):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+>       self.socket.bind(self.server_address)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:478: PermissionError
+___________________ test_coordinator_grant_release_roundtrip ___________________
+[gw3] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+tmp_path = PosixPath('/private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pytest-of-alex/pytest-1017/popen-gw3/test_coordinator_grant_release0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x338250dd0>
+
+    def test_coordinator_grant_release_roundtrip(tmp_path, monkeypatch):
+>       addr, set_active, stop = start_coordinator([0, 1, 2, 3], str(tmp_path))
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/shared/test_core_pool.py:136:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src/shared/core_pool.py:228: in start_coordinator
+    server = _ThreadingUnixServer(addr, _Handler)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:457: in __init__
+    self.server_bind()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <src.shared.core_pool._ThreadingUnixServer object at 0x3382534a0>
+
+    def server_bind(self):
+        """Called by constructor to bind the socket.
+
+        May be overridden.
+
+        """
+        if self.allow_reuse_address and hasattr(socket, "SO_REUSEADDR"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Since Linux 6.12.9, SO_REUSEPORT is not allowed
+        # on other address families than AF_INET/AF_INET6.
+        if (
+            self.allow_reuse_port and hasattr(socket, "SO_REUSEPORT")
+            and self.address_family in (socket.AF_INET, socket.AF_INET6)
+        ):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+>       self.socket.bind(self.server_address)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:478: PermissionError
+____________________ test_coordinator_blocks_until_release _____________________
+[gw3] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+tmp_path = PosixPath('/private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pytest-of-alex/pytest-1017/popen-gw3/test_coordinator_blocks_until_0')
+
+    def test_coordinator_blocks_until_release(tmp_path):
+>       addr, set_active, stop = start_coordinator([0], str(tmp_path))  # a single core
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/shared/test_core_pool.py:168:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src/shared/core_pool.py:228: in start_coordinator
+    server = _ThreadingUnixServer(addr, _Handler)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:457: in __init__
+    self.server_bind()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <src.shared.core_pool._ThreadingUnixServer object at 0x33822ac60>
+
+    def server_bind(self):
+        """Called by constructor to bind the socket.
+
+        May be overridden.
+
+        """
+        if self.allow_reuse_address and hasattr(socket, "SO_REUSEADDR"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Since Linux 6.12.9, SO_REUSEPORT is not allowed
+        # on other address families than AF_INET/AF_INET6.
+        if (
+            self.allow_reuse_port and hasattr(socket, "SO_REUSEPORT")
+            and self.address_family in (socket.AF_INET, socket.AF_INET6)
+        ):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+>       self.socket.bind(self.server_address)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:478: PermissionError
+__ test_experiment_metrics_do_not_reintroduce_analysis_entrypoint_dependency ___
+[gw3] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+    def test_experiment_metrics_do_not_reintroduce_analysis_entrypoint_dependency():
+        for path in (ROOT / "src/tuning").glob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if isinstance(node, ast.ImportFrom) and node.module == "src.analysis.cohort_analysis":
+>                   assert not (
+                        {alias.name for alias in node.names} & {"available_models", "per_model_metrics"}
+                    )
+E                   AssertionError: assert not ({'available_models', 'per_model_metrics'} & {'available_models', 'per_model_metrics'})
+
+tests/shared/test_package_boundaries.py:70: AssertionError
+_____________ test_real_http_short_response_is_retried_through_eof _____________
+[gw2] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x33e36b6b0>
+good = {'available': True, 'generated_at': '2026-09-09T12:00:00+00:00', 'season': 2026, 'week': 1, ...}
+
+    def test_real_http_short_response_is_retried_through_eof(monkeypatch, good):
+        body = encoded(good)
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body[:-10] if len(requests) == 1 else body)
+                self.close_connection = True
+
+            def log_message(self, *args):
+                pass
+
+>       server = HTTPServer(("127.0.0.1", 0), Handler)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_app_upcoming_transfer.py:343:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:457: in __init__
+    self.server_bind()
+/Users/alex/miniforge3/lib/python3.12/http/server.py:136: in server_bind
+    socketserver.TCPServer.server_bind(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <http.server.HTTPServer object at 0x33e36b770>
+
+    def server_bind(self):
+        """Called by constructor to bind the socket.
+
+        May be overridden.
+
+        """
+        if self.allow_reuse_address and hasattr(socket, "SO_REUSEADDR"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Since Linux 6.12.9, SO_REUSEPORT is not allowed
+        # on other address families than AF_INET/AF_INET6.
+        if (
+            self.allow_reuse_port and hasattr(socket, "SO_REUSEPORT")
+            and self.address_family in (socket.AF_INET, socket.AF_INET6)
+        ):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+>       self.socket.bind(self.server_address)
+E       PermissionError: [Errno 1] Operation not permitted
+
+/Users/alex/miniforge3/lib/python3.12/socketserver.py:478: PermissionError
+_ test_reference_ranks_shared_components_while_display_preserves_full_forecasts _
+[gw2] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+    def test_reference_ranks_shared_components_while_display_preserves_full_forecasts():
+        frame = pd.DataFrame(
+            [
+                {
+                    "player_id": "rush",
+                    "season": 2025,
+                    "week": 3,
+                    "position": "WR",
+                    "receiving_yards": 10,
+                    "rushing_yards": 100,
+                },
+                {
+                    "player_id": "receive",
+                    "season": 2025,
+                    "week": 3,
+                    "position": "WR",
+                    "receiving_yards": 60,
+                    "rushing_yards": 0,
+                },
+            ]
+        ).assign(receiving_tds=0, receptions=0, fumbles_lost=0, nflcom_projected_pts=0)
+>       reference = build_reference(
+            [2025], nflcom_loader=lambda seasons: frame, rotowire_loader=lambda seasons: frame
+        )
+
+tests/test_expert_scoring_components.py:179:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src/scripts/build_evaluation_reference.py:42: in build_reference
+    raw[source.name] = source.load(supported) if supported else None
+                       ^^^^^^^^^^^^^^^^^^^^^^
+src/data/espn_projections.py:244: in load_espn_with_gsis_id
+    frame = load_espn_projections(seasons, cache_dir, force_refresh, weeks=weeks, reader=reader)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/data/espn_projections.py:228: in load_espn_projections
+    frame = pd.concat(pool.map(load_season, seasons), ignore_index=True)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/lib/python3.12/site-packages/pandas/core/reshape/concat.py:407: in concat
+    objs, keys, ndims = _clean_keys_and_objs(objs, keys)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/lib/python3.12/site-packages/pandas/core/reshape/concat.py:805: in _clean_keys_and_objs
+    objs = list(objs)
+           ^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/concurrent/futures/_base.py:619: in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/concurrent/futures/_base.py:317: in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/Users/alex/miniforge3/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+/Users/alex/miniforge3/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/data/espn_projections.py:219: in load_season
+    reader(espn_live._fantasy_projections_url(season, 1), headers=headers), season
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+url = 'https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2025/segments/0/leaguedefaults/3?view=kona_player_info&scoringPeriodId=1'
+headers = {'X-Fantasy-Filter': '{"players": {"limit": 1500, "sortPercOwned": {"sortAsc": false, "sortPriority": 1}}}'}
+
+    def _get_json(url: str, headers: dict[str, str] | None = None) -> dict:
+        """GET ``url`` and parse JSON, with timeout + retries. Raises on final fail.
+
+        Deliberately sends NO custom ``User-Agent`` (urllib's honest default,
+        ``Python-urllib/3.x``, goes out instead). ESPN's WAF started 403-ing both
+        the old custom UA (``ff-predictor/1.0``) and spoofed-browser UAs from
+        non-browser clients in 2026-08 — every scheduled CI build silently served
+        a frozen artifact for 20 days — while honest tool UAs (``Python-urllib``,
+        ``curl``, ``python-requests``) pass. Don't "improve" this back to a
+        custom or browser UA. ``headers`` is for endpoint-specific extras (the
+        fantasy API's ``X-Fantasy-Filter``) and must never smuggle a User-Agent in.
+        """
+        last_err: Exception | None = None
+        for attempt in range(_RETRIES):
+            try:
+                req = urllib.request.Request(url, headers=headers or {})
+                with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+                last_err = e
+                if attempt < _RETRIES - 1:
+                    time.sleep(_RETRY_BACKOFF_S * (attempt + 1))
+>       raise RuntimeError(f"ESPN GET failed after {_RETRIES} tries: {url} ({last_err!r})")
+E       RuntimeError: ESPN GET failed after 3 tries: https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/2025/segments/0/leaguedefaults/3?view=kona_player_info&scoringPeriodId=1 (URLError(gaierror(8, 'nodename nor servname provided, or not known')))
+
+src/data/espn_live.py:221: RuntimeError
+=============================== warnings summary ===============================
+tests/dst/test_training.py: 2 warnings
+tests/k/test_training.py: 2 warnings
+tests/qb/test_training.py: 2 warnings
+tests/rb/test_training.py: 2 warnings
+tests/shared/test_cuda_graph.py: 2 warnings
+tests/shared/test_trainer_scheduler_perbatch.py: 2 warnings
+tests/shared/test_training_history.py: 10 warnings
+tests/te/test_training.py: 2 warnings
+tests/tuning/test_tune_nn.py: 2 warnings
+tests/wr/test_training.py: 2 warnings
+  /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/lib/python3.12/site-packages/torch/utils/data/dataloader.py:759: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+    super().__init__(loader)
+
+tests/rb/test_models.py: 2 warnings
+tests/shared/test_models.py: 15 warnings
+  /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/lib/python3.12/site-packages/mord/threshold_based.py:132: OptimizeWarning: Unknown solver options: disp
+    sol = optimize.minimize(obj_margin, x0, method='L-BFGS-B',
+
+tests/shared/test_models.py::TestLightGBMMultiTarget::test_with_validation_set
+tests/shared/test_models.py::TestLightGBMMultiTarget::test_with_validation_set
+tests/shared/test_models.py::TestLightGBMMultiTarget::test_with_validation_set
+  /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/lib/python3.12/site-packages/lightgbm/sklearn.py:1106: LGBMDeprecationWarning: The argument 'eval_set' is deprecated, use 'eval_X' and 'eval_y' instead.
+    eval_set = _validate_eval_set_Xy(eval_set=eval_set, eval_X=eval_X, eval_y=eval_y)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:120: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["completion_pct_L3"] = safe_divide(completions_roll, attempts_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:121: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["yards_per_attempt_L3"] = safe_divide(pass_yds_roll, attempts_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:122: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["td_rate_L3"] = safe_divide(pass_tds_roll, attempts_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:123: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["int_rate_L3"] = safe_divide(ints_roll, attempts_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:124: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["sack_rate_L3"] = safe_divide(sacks_roll, dropbacks)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:128: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["qb_rushing_share_L3"] = safe_divide(rush_yds_roll, total_yds)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:130: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["passing_epa_per_dropback_L3"] = safe_divide(pass_epa_roll, dropbacks)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:131: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["deep_ball_rate_L3"] = safe_divide(air_yds_roll, attempts_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:132: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["pass_first_down_rate_L3"] = safe_divide(pass_first_downs_roll, attempts_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:133: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["rushing_epa_per_carry_L3"] = safe_divide(rush_epa_roll, carries_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["rush_first_down_rate_L3"] = safe_divide(rush_first_downs_roll, carries_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:135: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["yac_rate_L3"] = safe_divide(pass_yac_roll, pass_yds_roll)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:136: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["sack_damage_per_dropback_L3"] = safe_divide(sack_yds_roll, dropbacks)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:72: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["is_rookie"] = values["is_rookie"].to_numpy(dtype=float)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:73: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["rookie_early"] = values["rookie_early"].to_numpy(dtype=float)
+
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+tests/shared/test_pipeline_branches.py::test_build_train_matrix_loads_synthetic_splits
+  /Users/alex/.codex/worktrees/992b/Final-Project/src/qb/features.py:78: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+    df["season_starts_to_date"] = values["_game_idx"].to_numpy(dtype=float)
+
+tests/test_app_upcoming_transfer.py::test_master_releases_lock_while_forked_worker_retains_descriptor
+  /Users/alex/.codex/worktrees/992b/Final-Project/tests/test_app_upcoming_transfer.py:308: DeprecationWarning: This process (pid=84140) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/shared/test_core_pool.py::test_coordinator_reclaims_cores_on_abrupt_disconnect
+FAILED tests/shared/test_core_pool.py::test_coordinator_grant_release_roundtrip
+FAILED tests/shared/test_core_pool.py::test_coordinator_blocks_until_release
+FAILED tests/shared/test_package_boundaries.py::test_experiment_metrics_do_not_reintroduce_analysis_entrypoint_dependency
+FAILED tests/test_app_upcoming_transfer.py::test_real_http_short_response_is_retried_through_eof
+FAILED tests/test_expert_scoring_components.py::test_reference_ranks_shared_components_while_display_preserves_full_forecasts
+6 failed, 5146 passed, 2 skipped, 97 warnings in 66.70s (0:01:06)

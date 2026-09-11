@@ -1,0 +1,40 @@
+bringing up nodes...
+bringing up nodes...
+
+...F................................................................     [100%]
+=================================== FAILURES ===================================
+__________ test_maintenance_accepts_the_model_keys_its_base_publishes __________
+[gw0] darwin -- Python 3.12.12 /private/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/pr-consolidation-0n9objn5/venv/bin/python
+
+    def test_maintenance_accepts_the_model_keys_its_base_publishes():
+        s3 = S3()
+        for position in storage.POSITIONS:
+            key = new_history_key('models', position, '2026-09-11T00-00-00Z', 'a' * 7)
+            manifest = build_manifest(key, 'a' * 7, 3, '2026-09-11T00:00:00Z', smoke_passed=True)
+            storage.put_json(s3, 'bucket', manifest_key('models', position), manifest)
+>       pins = storage.model_pins(s3, 'bucket')
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/tmp/consolidated-review.gmcnjD/test_review_maintenance.py:15:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+s3 = <tests.maintenance.test_contracts.S3 object at 0x147ff3110>
+bucket = 'bucket'
+
+    def model_pins(s3, bucket: str) -> dict:
+        """Resolve every stable artifact once, including its consumed manifest ETag."""
+        from src.artifacts.model_sync import load_manifest_snapshot, manifest_key
+
+        pins = {}
+        for pos in POSITIONS:
+            key = manifest_key("models", pos)
+            manifest, etag = load_manifest_snapshot(s3, bucket, "models", pos)
+            entry = (manifest or {}).get("stable") or {}
+            if not str(entry.get("key", "")).startswith(f"models/{pos}/") or not etag:
+>               raise ValueError(f"No verified stable manifest for {pos}")
+E               ValueError: No verified stable manifest for QB
+
+src/maintenance/storage.py:83: ValueError
+=========================== short test summary info ============================
+FAILED ::test_maintenance_accepts_the_model_keys_its_base_publishes - ValueEr...
+1 failed, 67 passed in 3.90s

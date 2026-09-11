@@ -1,0 +1,17 @@
+M	TODO.md
+A	src/tuning/ab_games_gap.py
+A	src/tuning/ab_oline_confirm.py
+A	src/tuning/ab_oline_continuity.py
+A	src/tuning/ab_proe_pace.py
+A	src/tuning/ab_qb_context_receivers.py
+A	tests/tuning/test_ab_games_gap.py
+A	tests/tuning/test_ab_oline_confirm.py
+A	tests/tuning/test_ab_oline_continuity.py
+A	tests/tuning/test_ab_proe_pace.py
+A	tests/tuning/test_ab_qb_context_receivers.py
+M	todo/expert-edge-action-plan.md
+A	todo/expert-gap-other-reasons-2026-08.md
+M	todo/fixed-archive.md
+A	todo/fixed-archive/oline-continuity-confirmation-2026-07.md
+A	todo/fixed-archive/proe-pace-rejection-2026-07.md
+A	todo/fixed-archive/week1-games-gap-rejection-2026-07.md

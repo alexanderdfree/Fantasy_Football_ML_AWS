@@ -1,0 +1,53 @@
+"""Independent integration probes against the reviewed PR, without live writes."""
+import pytest
+
+from src.artifacts.model_sync import build_manifest, manifest_key, new_history_key
+from src.maintenance import storage
+from tests.maintenance.test_contracts import S3
+
+
+def test_maintenance_accepts_the_model_keys_its_base_publishes():
+    s3 = S3()
+    for position in storage.POSITIONS:
+        key = new_history_key('models', position, '2026-09-11T00-00-00Z', 'a' * 7)
+        manifest = build_manifest(key, 'a' * 7, 3, '2026-09-11T00:00:00Z', smoke_passed=True)
+        storage.put_json(s3, 'bucket', manifest_key('models', position), manifest)
+    pins = storage.model_pins(s3, 'bucket')
+    assert set(pins) == set(storage.POSITIONS)
+
+
+@pytest.mark.parametrize('filename', ['train-batch.yml', 'train-ec2.yml', 'refresh-splits.yml'])
+def test_ci_snapshot_publications_participate_in_the_shared_lease(filename):
+    from pathlib import Path
+    import yaml
+    workflow = yaml.safe_load((Path('.github/workflows') / filename).read_text())
+    checked = 0
+    for job_name, job in workflow['jobs'].items():
+        owned = False
+        for step in job.get('steps', []):
+            command = step.get('run', '')
+            if 'src.maintenance.coordination acquire' in command:
+                owned = True
+            if 'src.maintenance.coordination release' in command:
+                owned = False
+            if 'src.prediction.build_snapshot' in command and '--stage-directory' not in command:
+                checked += 1
+                assert owned, f'{filename}/{job_name}: snapshot publication occurs outside the configured lease'
+    assert checked > 0
+
+
+def test_snapshot_can_change_while_the_maintenance_lease_is_held(tmp_path):
+    # Demonstrate why a lease only around the later ECS job does not coordinate
+    # the earlier canonical publisher. The publisher itself is CAS-only.
+    from src.artifacts import serving_snapshot
+    from src.maintenance.coordination import lease
+    from tests.maintenance.test_contracts import Dynamo
+    from tests.artifacts.test_serving_snapshot import MemoryS3, cache_directory
+    s3 = MemoryS3()
+    dynamo = Dynamo()
+    with lease(dynamo, 'table', 'serving-publication', seconds=900) as owned:
+        owned()
+        token = serving_snapshot.begin_build(s3, 'bucket')
+        result = serving_snapshot.publish(s3, 'bucket', cache_directory(tmp_path, 'ci'), token)
+        assert result['generation']
+        owned()

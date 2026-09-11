@@ -1,0 +1,93 @@
+"""Replay actual fitted artifacts through the shared frame/Predictor adapter."""
+import json
+import sys
+sys.path.insert(0, __import__("os").getcwd())
+import os
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import torch
+
+from src.prediction.frames import predict_position
+from src.shared.registry import get_inference_spec
+from src.training.context import RunContext, use_context
+from src.tuning._execution import run_tasks
+
+ROOT = Path('/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911/fitted-inputs')
+REPORT_ROOT = Path('/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911/fitted-replay')
+REPORT_ROOT.mkdir(exist_ok=True)
+RESULT_ROOT = ROOT / 'results/candidate'
+DATA_ROOT = ROOT / 'candidate_build/data'
+
+
+def replay(position):
+    case_root = ROOT / 'results' / 'candidate'
+    data_root = ROOT / 'candidate_build/data'
+    directory = case_root / position / 'seed42'
+    frames = [pd.read_parquet(directory / 'inputs' / f'{name}.parquet') for name in ('train', 'val', 'test')]
+    kicks_path = directory / 'inputs/kicks.parquet'
+    kicks = pd.read_parquet(kicks_path) if kicks_path.exists() else None
+    spec = dict(get_inference_spec(position))
+    spec['model_dir'] = str(directory / 'models')
+    opponent = None
+    if spec.get('opp_attn_kind') == 'offense':
+        from src.config import SEASONS
+        opponent = pd.read_parquet(data_root / 'raw' / f'weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet')
+        if 'season_type' in opponent:
+            opponent = opponent[opponent.season_type.eq('REG')]
+    context = RunContext(REPORT_ROOT / position / 'run', data_root, seed=42)
+    with use_context(context):
+        predictions = predict_position(position, *frames, spec, kicks=kicks, opponent_weekly=opponent,
+                                       device=torch.device('cpu'))
+    saved_norms = {family: json.loads((directory / 'models' / f'{family}.bundle.json').read_text())['architecture']['kwargs']['backbone_norm'] for family in ('nn', 'attn_nn')}
+    assert set(saved_norms.values()) == {'batch'}, saved_norms
+    if predictions.errors:
+        raise RuntimeError(f'{position} fitted model replay errors: {predictions.errors}')
+    keys = ['player_id', 'season', 'week']
+    actual = predictions.frame[keys].copy()
+    columns = []
+    for family, values in predictions.raw.items():
+        for target in spec["targets"]:
+            value = values[target]
+            column = f'pred_{family}_{target}'
+            actual[column] = value
+            columns.append(column)
+        column = f'pred_{family}_total'
+        actual[column] = predictions.totals[family]['ppr']
+        columns.append(column)
+    expected = pd.read_parquet(directory / 'test_predictions.parquet')
+    actual = actual.sort_values(keys).reset_index(drop=True)
+    expected = expected.sort_values(keys).reset_index(drop=True)
+    if not expected[keys].equals(actual[keys]):
+        raise RuntimeError(f'{position} fitted replay changed player-weeks')
+    details = {}
+    for column in columns:
+        a, b = expected[column].to_numpy(), actual[column].to_numpy()
+        details[column] = {'max_abs_delta': float(np.nanmax(np.abs(a-b))),
+                           'bit_identical': bool(np.array_equal(a,b,equal_nan=True))}
+        np.testing.assert_allclose(a,b,rtol=1e-6,atol=1e-6,err_msg=f'{position}/{column}')
+    result = {'position': position, 'ok': True, 'rows': len(actual), 'columns': len(columns),
+              'max_abs_delta': max(item['max_abs_delta'] for item in details.values()),
+              'bit_identical': all(item['bit_identical'] for item in details.values()),
+              'bundle_ids': predictions.bundle_ids, 'ambient_backbone_norm': os.environ.get('FF_NN_NORM'), 'saved_backbone_norms': saved_norms, 'details': details}
+    (REPORT_ROOT / f'{position}.json').write_text(json.dumps(result,indent=2))
+    return {key:value for key,value in result.items() if key!='details'}
+
+
+def failure(position, error):
+    result = {'position': position, 'ok': False, 'error': f'{type(error).__name__}: {error}'}
+    case_root = ROOT / 'results' / 'candidate'
+    (REPORT_ROOT / f'{position}.json').write_text(json.dumps(result,indent=2))
+    return result
+
+
+if __name__ == '__main__':
+    import sys
+    positions = sys.argv[1:]
+    results = run_tasks(positions, replay, max_workers=min(2,len(positions)), on_error=failure,
+                        environment={key:'1' for key in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS')})
+    (REPORT_ROOT / 'summary.json').write_text(json.dumps(results,indent=2))
+    print(json.dumps(results,indent=2))
+    if any(not result['ok'] for result in results):
+        raise SystemExit(1)

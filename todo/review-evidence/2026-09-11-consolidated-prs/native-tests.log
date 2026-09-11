@@ -1,0 +1,1141 @@
+⚙️  Generating plists...
+⚙️  Generating project...
+⚙️  Writing project...
+Created project at /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project FFPredictor.xcodeproj -scheme FFPredictor -destination "platform=iOS Simulator,id=939813AD-8C42-457B-8DD8-EB2F0D55F75B" -derivedDataPath /tmp/consolidated-review.gmcnjD/ios-derived CODE_SIGNING_ALLOWED=NO build-for-testing
+
+Build settings from command line:
+    CODE_SIGNING_ALLOWED = NO
+
+ComputePackagePrebuildTargetDependencyGraph
+
+Prepare packages
+
+CreateBuildRequest
+
+SendProjectDescription
+
+CreateBuildOperation
+
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (2 targets)
+    Target 'FFPredictorTests' in project 'FFPredictor'
+        ➜ Explicit dependency on target 'FFPredictor' in project 'FFPredictor'
+    Target 'FFPredictor' in project 'FFPredictor' (no dependencies)
+
+GatherProvisioningInputs
+
+CreateBuildDescription
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -v -E -dM -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -x c -c /dev/null
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Assets.xcassets
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+
+ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+
+Build description signature: a21a62f8bcc2a5d7b9fe90650ef9ac29
+Build description path: /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/XCBuildData/a21a62f8bcc2a5d7b9fe90650ef9ac29.xcbuilddata
+ClangStatCache /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -o /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache
+
+CreateBuildDirectory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    builtin-create-build-directory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products
+
+CreateBuildDirectory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    builtin-create-build-directory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex
+
+CreateBuildDirectory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    builtin-create-build-directory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+
+CreateBuildDirectory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    builtin-create-build-directory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator
+
+CreateBuildDirectory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/ExplicitPrecompiledModules
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    builtin-create-build-directory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/ExplicitPrecompiledModules
+
+CreateBuildDirectory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    builtin-create-build-directory /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor-53418692a707c9d42d7e5b0e4fe88f45-VFS-iphonesimulator/all-product-headers.yaml
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios/FFPredictor.xcodeproj
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor-53418692a707c9d42d7e5b0e4fe88f45-VFS-iphonesimulator/all-product-headers.yaml
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-project-headers.hmap (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-project-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-own-target-headers.hmap (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-own-target-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/empty-FFPredictorTests.plist (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/empty-FFPredictorTests.plist
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-generated-files.hmap (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-generated-files.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-non-framework-target-headers.hmap (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-non-framework-target-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-target-headers.hmap (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-target-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.hmap (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftFileList (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.LinkFileList (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.LinkFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_const_extract_protocols.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_const_extract_protocols.json
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftConstValuesFileList (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftConstValuesFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-OutputFileMap.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-OutputFileMap.json
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyStaticMetadataFileList (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyStaticMetadataFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyMetadataFileList (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyMetadataFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-OutputFileMap.json (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-OutputFileMap.json
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.LinkFileList (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.LinkFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftConstValuesFileList (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftConstValuesFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftFileList (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_const_extract_protocols.json (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_const_extract_protocols.json
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.hmap (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyStaticMetadataFileList (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyStaticMetadataFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyMetadataFileList (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyMetadataFileList
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-project-headers.hmap (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-project-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-own-target-headers.hmap (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-own-target-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-generated-files.hmap (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-generated-files.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-target-headers.hmap (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-target-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-non-framework-target-headers.hmap (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-non-framework-target-headers.hmap
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-DebugDylibPath-normal-arm64.txt (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-DebugDylibPath-normal-arm64.txt
+
+WriteAuxiliaryFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-DebugDylibInstallName-normal-arm64.txt (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    write-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-DebugDylibInstallName-normal-arm64.txt
+
+MkDir /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /bin/mkdir -p /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns
+
+MkDir /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /bin/mkdir -p /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+MkDir /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /bin/mkdir -p /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+MkDir /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /bin/mkdir -p /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app
+
+Ld /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/__preview.dylib normal (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios17.0-simulator -dynamiclib -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -O0 -L/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -install_name @rpath/FFPredictor.debug.dylib -Xlinker -dead_strip -rdynamic -Xlinker -no_deduplicate -Xlinker -objc_abi_version -Xlinker 2 -Xlinker -dependency_info -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_dependency_info.dat -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/__preview.dylib
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/libXCTestSwiftSupport.dylib /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/libXCTestBundleInject.dylib /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestBundleInject.dylib (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestBundleInject.dylib /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+MkDir /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/thinned (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /bin/mkdir -p /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/thinned
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/XCUnit.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCUnit.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCUnit.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+MkDir /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/unthinned (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /bin/mkdir -p /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/unthinned
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/XCUIAutomation.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCUIAutomation.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCUIAutomation.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/XCTestSupport.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestSupport.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestSupport.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+GenerateAssetSymbols /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Assets.xcassets (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/usr/bin/actool /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Assets.xcassets --compile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app --output-format human-readable-text --notices --warnings --export-dependency-info /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_dependencies --output-partial-info-plist /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist --app-icon AppIcon --compress-pngs --enable-on-demand-resources YES --development-region en --target-device iphone --minimum-deployment-target 17.0 --platform iphonesimulator --bundle-identifier me.alexfree.ffpredictor --generate-swift-asset-symbol-extensions NO --generate-swift-asset-symbols /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols.swift --generate-objc-asset-symbols /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols.h --generate-asset-symbol-index /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols-Index.plist
+/* com.apple.actool.compilation-results */
+/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols-Index.plist
+/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols.h
+/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols.swift
+
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/XCTestCore.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestCore.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTestCore.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/XCTest.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCTest.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/XCTest.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/XCTAutomationSupport.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks/Testing.framework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/Testing.framework (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -resolve-src-symlinks /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks/Testing.framework /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks
+
+CompileAssetCatalogVariant thinned /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Assets.xcassets (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/usr/bin/actool /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Assets.xcassets --compile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/thinned --output-format human-readable-text --notices --warnings --export-dependency-info /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_dependencies_thinned --output-partial-info-plist /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist_thinned --app-icon AppIcon --compress-pngs --enable-on-demand-resources YES --filter-for-thinning-device-configuration iPhone18,1 --filter-for-device-os-version 26.5 --development-region en --target-device iphone --minimum-deployment-target 17.0 --platform iphonesimulator
+/* com.apple.actool.compilation-results */
+/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist_thinned
+/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/thinned/AppIcon60x60@2x.png
+/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/thinned/Assets.car
+
+
+SwiftDriver FFPredictor normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-SwiftDriver -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name FFPredictor -Onone @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftFileList -DDEBUG -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /tmp/consolidated-review.gmcnjD/ios-derived/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -emit-localized-strings -emit-localized-strings-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64 -c -j12 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -output-file-map /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -sdk-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftmodule -validate-clang-modules-once -clang-build-session-file /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Session.modulevalidation -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_const_extract_protocols.json -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-generated-files.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-own-target-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-target-headers.hmap -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-project-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/include -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources-normal/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-Swift.h -working-directory /Users/alex/.codex/worktrees/992b/Final-Project/ios -experimental-emit-module-separately -disable-cmo
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/ptrauth-3ESV3TYNZKPTB66P2YUPOEHAO.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_stddef-2P464MW75KSU8KVK1KL0HAMA6.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/DeveloperToolsSupport-B16PX2SHT6SK3XOVLF4TB5CQB.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_SwiftConcurrencyShims-9CNX8YKKIYQIOLVNLW29QTM12.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/SwiftShims-4GL741HYR63BSV6SGN636QSQE.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_float-5P3HSZ93WJ4UF0L32MAFNATNH.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_AvailabilityInternal-2JRQGS8BCGFMB1MFO9CW7W8CM.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_stdbool-9F44UBUDW50ON1230EUEYGGDV.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/ptrcheck-FM3A3R379NR24XRDYVQFGI2K.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_stdarg-5ZQPJAUDVOX5O3MOFHV8EZDXO.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_DarwinFoundation1-BU9Y1RGMNBY8LBS2JW40Y4700.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_DarwinFoundation2-ND4MWV07FPJWWOMFYZRRUO8J.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_limits-14GYN232975NIBM2Y04O49QYG.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_tgmath-CN7QBPKQN6HXXIBZBTID79RD1.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/sys_types-27IBJQ3F66L7D08RYUIFR2UA6.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_stdint-754203N72YFOWOGFJP99LYUQY.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_intrinsics-5TPECMGSWWB1BWDMZEXV9J2RN.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_stdatomic-8W9VDCDP3SQE2ZI1EV80RBPXN.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_DarwinFoundation3-9F29SLNFWQ8NQL5H55QZP8RC9.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/_Builtin_inttypes-CS8FNPGY0UCJBOUEVN48EE7DN.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Darwin-3ASE2VB88FUICY31MWNGNXVTQ.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/simd-2AUCB3N5I1965RGXSDFW7JDZ7.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/MachO-3B4S9720DESY81WRMXKZ5WX4W.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/ObjectiveC-4SGVDM0EY391K8UUC0M23A64Q.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/os_object-4YS0JK4LBGK1L9A5JI9YYYM07.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/os_workgroup-5X87Z9KEY5WQ6960JND0SDM5G.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Spatial-1Q35CM9XUT82SC8CGLGZG4U9U.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Dispatch-AMEYYIF8449A2F7NOZOKZA1Q4.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/dnssd-2ZLZVR1YDBHFEY5SXYQ66R2GH.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreFoundation-C5JHXXFPM3OOSN04V58BF3TDS.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/XPC-AAAY1A25QU9KC0TDZS69KQ1WX.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/os-7VFETYL11OTI5F7Y3NM10379G.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CFNetwork-6GGDMTXTA9BQYQ6Q4PP88PMQZ.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreGraphics-9LJGYRC6UJQKJBY1HGH8BX3QH.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Security-5ILQXMKGK58IPGKH36EWQF70L.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Foundation-609A9DY2T7HLQQ41IZSCI6F56.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/ImageIO-4C7P0TSBJPWPYJSMAPE694MPM.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreText-EB3GAE0WF775JZL52K00D4PUJ.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/UIUtilities-AFTP0NPEDF4JE8DEUMB9TGOGF.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/FileProvider-5JGI7W0OPSADCVPRZ1XB9E7J2.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/UserNotifications-6RRKB1S6ZRKW9G3H6IHYSRKW9.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreTransferable-6XRY5P9CQTJWAE6Q49I70OA3I.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/OpenGLES-64IE5J2NMDDTHDFMHS6949IHY.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/IOSurface-4BP9LY21UHPNWLKPPY3GPB1LJ.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreData-D8GGVESLPTKT1IGZB1ZXLX2N3.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/DataDetection-AJ67TRLDQXF08TBAW2707GL94.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/OSLog-7KRILW76IROMHJVJFCEDM7NT1.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Network-EFE6482J84N9J9L5KTX082GVP.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Symbols-5ZH1SZOT14DWH2T5STPLGTZBX.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Accessibility-9CAXKBUXMB3R27R5IYNCOKA99.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/UniformTypeIdentifiers-CNG9HJH5QEEHP9HWYOHOL7U04.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Metal-BVWI39ERDVM435YJ7FS512I2S.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreVideo-S14FVKGQD5WF2PE1Y7GL95X4.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/QuartzCore-61T3OL6TK61KLPSBKPQM86VC1.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/CoreImage-2U1ILCZYOEJ38RHF454UC2D8C.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/SwiftUICore-AUI0AO2V51TLKZH8KPOU830UU.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/UIKit-257VWP9HV1JZFIR3X8ZJILYV1.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/WebKit-4I1YF4GA0U0MFRLMM8FXRCL57.pcm
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/SwiftUI-1G3FUKKD7PYFBSJQ66Y06IQCC.pcm
+
+SwiftEmitModule normal arm64 Emitting\ module\ for\ FFPredictor (in target 'FFPredictor' from project 'FFPredictor')
+
+EmitSwiftModule normal arm64 (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ WeeklyAccuracy.swift,\ Wiki.swift,\ WikiDocView.swift,\ WikiIndexView.swift,\ WikiStore.swift,\ GeneratedAssetSymbols.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/WeeklyAccuracy.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Wiki.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Wiki/WikiDocView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Wiki/WikiIndexView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/WikiStore.swift /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/WeeklyAccuracy.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Wiki.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Wiki/WikiDocView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Wiki/WikiIndexView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/WikiStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/GeneratedAssetSymbols.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ ToolbarMenus.swift,\ UpcomingPlayerCard.swift,\ UpcomingStore.swift,\ UpcomingView.swift,\ UpcomingWeek.swift,\ VegasLineView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ToolbarMenus.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Upcoming/UpcomingPlayerCard.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/UpcomingStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Upcoming/UpcomingView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/UpcomingWeek.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Upcoming/VegasLineView.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ToolbarMenus.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Upcoming/UpcomingPlayerCard.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/UpcomingStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Upcoming/UpcomingView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/UpcomingWeek.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Upcoming/VegasLineView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ SimpleResponses.swift,\ SkeletonList.swift,\ SnapshotCache.swift,\ SnapshotStore.swift,\ StatCard.swift,\ Theme.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/SimpleResponses.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/SkeletonList.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Persistence/SnapshotCache.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/SnapshotStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/StatCard.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/DesignSystem/Theme.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/SimpleResponses.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/SkeletonList.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Persistence/SnapshotCache.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/SnapshotStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/StatCard.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/DesignSystem/Theme.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ Metrics.swift,\ MetricsStore.swift,\ ModelArchitecture.swift,\ ModelChip.swift,\ MoreView.swift,\ PerformanceCharts.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Metrics.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/MetricsStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/ModelArchitecture.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ModelChip.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/More/MoreView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/PerformanceCharts.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Metrics.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/MetricsStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/ModelArchitecture.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ModelChip.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/More/MoreView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/PerformanceCharts.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ PositionBadge.swift,\ PositionBreakdownCard.swift,\ PositionDetails.swift,\ PositionPills.swift,\ RootView.swift,\ Routes.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/PositionBadge.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/PositionBreakdownCard.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/PositionDetails.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/PositionPills.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/App/RootView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/App/Routes.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/PositionBadge.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/PositionBreakdownCard.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/PositionDetails.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/PositionPills.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/App/RootView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/App/Routes.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ PerformanceView.swift,\ Player.swift,\ PlayerDetail.swift,\ PlayerDetailStore.swift,\ PlayerDetailView.swift,\ PlayerWeeklyChart.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/PerformanceView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Player.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/PlayerDetail.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/PlayerDetailStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Player/PlayerDetailView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Player/PlayerWeeklyChart.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/PerformanceView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Player.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/PlayerDetail.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/PlayerDetailStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Player/PlayerDetailView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Player/PlayerWeeklyChart.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ FFPredictorApp.swift,\ FeatureChips.swift,\ FlowLayout.swift,\ Formatters.swift,\ Headshot.swift,\ Health.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/App/FFPredictorApp.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/FeatureChips.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/FlowLayout.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/DesignSystem/Formatters.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/Headshot.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Health.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/App/FFPredictorApp.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/FeatureChips.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/FlowLayout.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/DesignSystem/Formatters.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/Headshot.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Health.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ HistoryStore.swift,\ HistoryView.swift,\ IntervalsSection.swift,\ JSONValue.swift,\ LeaderRow.swift,\ LeadersStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/HistoryStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/History/HistoryView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Comparison/IntervalsSection.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/JSONValue.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Leaders/LeaderRow.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/LeadersStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/HistoryStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/History/HistoryView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Comparison/IntervalsSection.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/JSONValue.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Leaders/LeaderRow.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/LeadersStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ ComparisonStore.swift,\ ComparisonView.swift,\ DegradedBanner.swift,\ EmptyStateView.swift,\ Endpoint.swift,\ Enums.swift,\ ErrorDeltaText.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/ComparisonStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Comparison/ComparisonView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/DegradedBanner.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/EmptyStateView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/Endpoint.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Enums.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ErrorDeltaText.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/ComparisonStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Comparison/ComparisonView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/DegradedBanner.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/EmptyStateView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/Endpoint.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Enums.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ErrorDeltaText.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ LeadersView.swift,\ ListStyling.swift,\ LoadState.swift,\ LoadStateView.swift,\ MetricCard.swift,\ MetricKind.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Leaders/LeadersView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ListStyling.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/LoadState.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/LoadStateView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/MetricCard.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/MetricKind.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Leaders/LeadersView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ListStyling.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/LoadState.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/LoadStateView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Performance/MetricCard.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/MetricKind.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ BandBar.swift,\ BenchmarkHistory.swift,\ Breakdown.swift,\ BreakdownTable.swift,\ Card.swift,\ ChartStyle.swift,\ Comparison.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Comparison/BandBar.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/BenchmarkHistory.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Breakdown.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Player/BreakdownTable.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/Card.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ChartStyle.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Comparison.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Comparison/BandBar.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/BenchmarkHistory.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Breakdown.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Player/BreakdownTable.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/Card.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Common/ChartStyle.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Models/Comparison.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftDriverJobDiscovery normal arm64 Emitting module for FFPredictor (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling HistoryStore.swift, HistoryView.swift, IntervalsSection.swift, JSONValue.swift, LeaderRow.swift, LeadersStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriver\ Compilation\ Requirements FFPredictor normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-Swift-Compilation-Requirements -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name FFPredictor -Onone @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftFileList -DDEBUG -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /tmp/consolidated-review.gmcnjD/ios-derived/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -emit-localized-strings -emit-localized-strings-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64 -c -j12 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -output-file-map /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -sdk-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftmodule -validate-clang-modules-once -clang-build-session-file /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Session.modulevalidation -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_const_extract_protocols.json -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-generated-files.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-own-target-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-target-headers.hmap -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-project-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/include -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources-normal/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-Swift.h -working-directory /Users/alex/.codex/worktrees/992b/Final-Project/ios -experimental-emit-module-separately -disable-cmo
+
+SwiftCompile normal arm64 Compiling\ APIClient.swift,\ APIError.swift,\ APIProviding.swift,\ AppConfig.swift,\ AppState.swift,\ ArchitectureStore.swift,\ ArchitectureView.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/APIClient.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/APIError.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/APIProviding.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/AppConfig.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/AppState.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/ArchitectureStore.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Architecture/ArchitectureView.swift (in target 'FFPredictor' from project 'FFPredictor')
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/APIClient.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/APIError.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/APIProviding.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Networking/AppConfig.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/AppState.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Stores/ArchitectureStore.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Sources/Views/Architecture/ArchitectureView.swift (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftDriverJobDiscovery normal arm64 Compiling ToolbarMenus.swift, UpcomingPlayerCard.swift, UpcomingStore.swift, UpcomingView.swift, UpcomingWeek.swift, VegasLineView.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling BandBar.swift, BenchmarkHistory.swift, Breakdown.swift, BreakdownTable.swift, Card.swift, ChartStyle.swift, Comparison.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling ComparisonStore.swift, ComparisonView.swift, DegradedBanner.swift, EmptyStateView.swift, Endpoint.swift, Enums.swift, ErrorDeltaText.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling PositionBadge.swift, PositionBreakdownCard.swift, PositionDetails.swift, PositionPills.swift, RootView.swift, Routes.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftMergeGeneratedHeaders /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/FFPredictor-Swift.h /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-Swift.h (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-swiftHeaderTool -arch arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-Swift.h -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/FFPredictor-Swift.h
+
+SwiftDriverJobDiscovery normal arm64 Compiling LeadersView.swift, ListStyling.swift, LoadState.swift, LoadStateView.swift, MetricCard.swift, MetricKind.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling Metrics.swift, MetricsStore.swift, ModelArchitecture.swift, ModelChip.swift, MoreView.swift, PerformanceCharts.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling SimpleResponses.swift, SkeletonList.swift, SnapshotCache.swift, SnapshotStore.swift, StatCard.swift, Theme.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriverJobDiscovery normal arm64 Compiling FFPredictorApp.swift, FeatureChips.swift, FlowLayout.swift, Formatters.swift, Headshot.swift, Health.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/arm64-apple-ios-simulator.swiftdoc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftdoc (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftdoc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/arm64-apple-ios-simulator.swiftdoc
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/arm64-apple-ios-simulator.abi.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.abi.json (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.abi.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/arm64-apple-ios-simulator.abi.json
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/arm64-apple-ios-simulator.swiftmodule /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftmodule (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftmodule /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/arm64-apple-ios-simulator.swiftmodule
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftsourceinfo (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftsourceinfo /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo
+
+SwiftDriverJobDiscovery normal arm64 Compiling PerformanceView.swift, Player.swift, PlayerDetail.swift, PlayerDetailStore.swift, PlayerDetailView.swift, PlayerWeeklyChart.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriver FFPredictorTests normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-SwiftDriver -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name FFPredictorTests -Onone @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftFileList -DDEBUG -plugin-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /tmp/consolidated-review.gmcnjD/ios-derived/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -Isystem /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib -F /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks -F /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/Developer/Library/Frameworks -c -j12 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -output-file-map /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -sdk-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftmodule -validate-clang-modules-once -clang-build-session-file /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Session.modulevalidation -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_const_extract_protocols.json -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-generated-files.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-own-target-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-target-headers.hmap -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-project-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/include -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources-normal/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-Swift.h -working-directory /Users/alex/.codex/worktrees/992b/Final-Project/ios -experimental-emit-module-separately -disable-cmo
+
+SwiftDriverJobDiscovery normal arm64 Compiling WeeklyAccuracy.swift, Wiki.swift, WikiDocView.swift, WikiIndexView.swift, WikiStore.swift, GeneratedAssetSymbols.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules/XCUIAutomation-633SHMBJ2P8B565CMQFGSIT3K.pcm
+
+LinkAssetCatalog /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Assets.xcassets (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-linkAssetCatalog --thinned /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/thinned --thinned-dependencies /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_dependencies_thinned --thinned-info-plist-content /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist_thinned --unthinned /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_output/unthinned --unthinned-dependencies /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_dependencies_unthinned --unthinned-info-plist-content /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist_unthinned --output /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app --plist-output /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist
+note: Emplaced /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/AppIcon60x60@2x.png (in target 'FFPredictor' from project 'FFPredictor')
+note: Emplaced /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Assets.car (in target 'FFPredictor' from project 'FFPredictor')
+
+ProcessInfoPlistFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Info.plist /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Info.plist (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-infoPlistUtility /Users/alex/.codex/worktrees/992b/Final-Project/ios/Resources/Info.plist -producttype com.apple.product-type.application -genpkginfo /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/assetcatalog_generated_info.plist -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Info.plist
+
+SwiftExplicitDependencyCompileModuleFromInterface arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules/XCUIAutomation-4ROT7VC1Q9NS.swiftmodule
+
+SwiftExplicitDependencyGeneratePcm arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules/XCTest-C9OKUATLZFT18TK2T4I9LNH1B.pcm
+
+SwiftExplicitDependencyCompileModuleFromInterface arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules/XCTest-1MOCC754MLMMU.swiftmodule
+
+SwiftDriverJobDiscovery normal arm64 Compiling APIClient.swift, APIError.swift, APIProviding.swift, AppConfig.swift, AppState.swift, ArchitectureStore.swift, ArchitectureView.swift (in target 'FFPredictor' from project 'FFPredictor')
+
+SwiftDriver\ Compilation FFPredictor normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-Swift-Compilation -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name FFPredictor -Onone @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftFileList -DDEBUG -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /tmp/consolidated-review.gmcnjD/ios-derived/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -emit-localized-strings -emit-localized-strings-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64 -c -j12 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -output-file-map /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -sdk-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftmodule -validate-clang-modules-once -clang-build-session-file /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Session.modulevalidation -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_const_extract_protocols.json -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-generated-files.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-own-target-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-all-target-headers.hmap -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-project-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/include -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources-normal/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-Swift.h -working-directory /Users/alex/.codex/worktrees/992b/Final-Project/ios -experimental-emit-module-separately -disable-cmo
+
+Ld /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor.debug.dylib normal (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios17.0-simulator -dynamiclib -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -O0 -L/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator -L/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator -F/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -filelist /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.LinkFileList -install_name @rpath/FFPredictor.debug.dylib -Xlinker -rpath -Xlinker /usr/lib/swift -Xlinker -rpath -Xlinker @executable_path/Frameworks -Xlinker -dead_strip -Xlinker -object_path_lto -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_lto.o -rdynamic -Xlinker -no_deduplicate -Xlinker -objc_abi_version -Xlinker 2 -Xlinker -dependency_info -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_dependency_info.dat -fobjc-link-runtime -L/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator -L/usr/lib/swift -Xlinker -add_ast_path -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.swiftmodule @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor-linker-args.resp -Xlinker -alias -Xlinker _main -Xlinker ___debug_main_executable_dylib_entry_point -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor.debug.dylib
+
+SwiftEmitModule normal arm64 Emitting\ module\ for\ FFPredictorTests (in target 'FFPredictorTests' from project 'FFPredictor')
+
+EmitSwiftModule normal arm64 (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ DecodingTests.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/DecodingTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/DecodingTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ ClientStoreTests.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/ClientStoreTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/ClientStoreTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftCompile normal arm64 Compiling\ APIClientTests.swift /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/APIClientTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+
+SwiftCompile normal arm64 /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/APIClientTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+
+
+SwiftDriverJobDiscovery normal arm64 Emitting module for FFPredictorTests (in target 'FFPredictorTests' from project 'FFPredictor')
+
+SwiftDriver\ Compilation\ Requirements FFPredictorTests normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-Swift-Compilation-Requirements -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name FFPredictorTests -Onone @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftFileList -DDEBUG -plugin-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /tmp/consolidated-review.gmcnjD/ios-derived/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -Isystem /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib -F /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks -F /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/Developer/Library/Frameworks -c -j12 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -output-file-map /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -sdk-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftmodule -validate-clang-modules-once -clang-build-session-file /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Session.modulevalidation -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_const_extract_protocols.json -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-generated-files.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-own-target-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-target-headers.hmap -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-project-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/include -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources-normal/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-Swift.h -working-directory /Users/alex/.codex/worktrees/992b/Final-Project/ios -experimental-emit-module-separately -disable-cmo
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/arm64-apple-ios-simulator.swiftmodule /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftmodule (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftmodule /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/arm64-apple-ios-simulator.swiftmodule
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/arm64-apple-ios-simulator.swiftdoc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftdoc (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftdoc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/arm64-apple-ios-simulator.swiftdoc
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/arm64-apple-ios-simulator.abi.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.abi.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.abi.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/arm64-apple-ios-simulator.abi.json
+
+SwiftMergeGeneratedHeaders /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources/FFPredictorTests-Swift.h /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-Swift.h (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-swiftHeaderTool -arch arm64 /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-Swift.h -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources/FFPredictorTests-Swift.h
+
+Copy /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftsourceinfo (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -rename /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftsourceinfo /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictorTests.swiftmodule/Project/arm64-apple-ios-simulator.swiftsourceinfo
+
+ConstructStubExecutorLinkFileList /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-ExecutorLinkFileList-normal-arm64.txt (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    construct-stub-executor-link-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor.debug.dylib /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libPreviewsJITStubExecutor_no_swift_entry_point.a /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libPreviewsJITStubExecutor.a --output /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-ExecutorLinkFileList-normal-arm64.txt
+note: Using stub executor library with Swift entry point. (in target 'FFPredictor' from project 'FFPredictor')
+
+Ld /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor normal (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios17.0-simulator -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -O0 -L/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -Xlinker -rpath -Xlinker @executable_path -Xlinker -rpath -Xlinker @executable_path/Frameworks -rdynamic -Xlinker -no_deduplicate -Xlinker -objc_abi_version -Xlinker 2 -e ___debug_blank_executor_main -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __debug_dylib -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-DebugDylibPath-normal-arm64.txt -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __debug_instlnm -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-DebugDylibInstallName-normal-arm64.txt -Xlinker -filelist -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor-ExecutorLinkFileList-normal-arm64.txt /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor.debug.dylib -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor
+
+CopySwiftLibs /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-swiftStdLibTool --copy --verbose --scan-executable /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor.debug.dylib --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/SystemExtensions --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Extensions --platform iphonesimulator --toolchain /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+Ignoring --strip-bitcode because --sign was not passed
+
+ExtractAppIntentsMetadata (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name FFPredictor --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk --xcode-version 17F113 --platform-family iOS --deployment-target 17.0 --bundle-identifier me.alexfree.ffpredictor --output /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app --target-triple arm64-apple-ios17.0-simulator --binary-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor --dependency-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor_dependency_info.dat --stringsdata-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftFileList --metadata-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyMetadataFileList --static-metadata-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyStaticMetadataFileList --swift-const-vals-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/Objects-normal/arm64/FFPredictor.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
+2026-09-11 02:24:13.240 appintentsmetadataprocessor[92187:13945119] Starting appintentsmetadataprocessor export
+2026-09-11 02:24:13.245 appintentsmetadataprocessor[92187:13945119] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+
+SwiftDriverJobDiscovery normal arm64 Compiling APIClientTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+
+AppIntentsSSUTraining (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsnltrainingprocessor --infoplist-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Info.plist --temp-dir-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/ssu --bundle-id me.alexfree.ffpredictor --product-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app --extracted-metadata-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Metadata.appintents --metadata-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictor.build/FFPredictor.DependencyMetadataFileList --source-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/Info.plist --archive-ssu-assets
+2026-09-11 02:24:13.269 appintentsnltrainingprocessor[92188:13945126] Parsing options for appintentsnltrainingprocessor
+2026-09-11 02:24:13.270 appintentsnltrainingprocessor[92188:13945126] Starting AppIntents SSU YAML Generation
+2026-09-11 02:24:13.272 appintentsnltrainingprocessor[92188:13945126] No AppShortcuts found - Skipping.
+
+SwiftDriverJobDiscovery normal arm64 Compiling ClientStoreTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+
+ProcessInfoPlistFile /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Info.plist /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/empty-FFPredictorTests.plist (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-infoPlistUtility /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/empty-FFPredictorTests.plist -producttype com.apple.product-type.bundle.unit-test -expandbuildsettings -format binary -platform iphonesimulator -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Info.plist
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/weeks.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/weeks.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/weeks.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/wiki_index.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/wiki_index.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/wiki_index.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/weekly_accuracy.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/weekly_accuracy.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/weekly_accuracy.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/upcoming_week.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/upcoming_week.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/upcoming_week.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/teams.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/teams.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/teams.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/snapshot.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/snapshot.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/snapshot.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/predictions_qb_w1.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/predictions_qb_w1.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/predictions_qb_w1.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/position_details.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/position_details.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/position_details.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/player.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/player.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/player.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/model_architecture.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/model_architecture.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/model_architecture.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/metrics.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/metrics.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/metrics.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/health.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/health.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/health.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/comparison_current.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/comparison_current.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/comparison_current.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/comparison.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/comparison.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/comparison.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/client_contract.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/client_contract.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/client_contract.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/breakdown.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/breakdown.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/breakdown.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+CpResource /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/benchmark_history.json /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/benchmark_history.json (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks /Users/alex/.codex/worktrees/992b/Final-Project/ios/Tests/Fixtures/benchmark_history.json /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+SwiftDriverJobDiscovery normal arm64 Compiling DecodingTests.swift (in target 'FFPredictorTests' from project 'FFPredictor')
+
+SwiftDriver\ Compilation FFPredictorTests normal arm64 com.apple.xcode.tools.swift.compiler (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-Swift-Compilation -- /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc -module-name FFPredictorTests -Onone @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftFileList -DDEBUG -plugin-path /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing -enable-bare-slash-regex -enable-experimental-feature DebugDescriptionMacro -sdk /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -target arm64-apple-ios17.0-simulator -g -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -Xfrontend -serialize-debugging-options -enable-testing -index-store-path /tmp/consolidated-review.gmcnjD/ios-derived/Index.noindex/DataStore -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -swift-version 5 -I /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -Isystem /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib -F /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -F /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks -F /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/Developer/Library/Frameworks -c -j12 -enable-batch-mode -incremental -Xcc -ivfsstatcache -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache -output-file-map /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-OutputFileMap.json -use-frontend-parseable-output -save-temps -no-color-diagnostics -explicit-module-build -module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -clang-scanner-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -sdk-module-cache-path /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex -serialize-diagnostics -emit-dependencies -emit-module -emit-module-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftmodule -validate-clang-modules-once -clang-build-session-file /tmp/consolidated-review.gmcnjD/ios-derived/ModuleCache.noindex/Session.modulevalidation -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/swift-overrides.hmap -emit-const-values -Xfrontend -const-gather-protocols-file -Xfrontend /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_const_extract_protocols.json -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-generated-files.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-own-target-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-all-target-headers.hmap -Xcc -iquote -Xcc /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests-project-headers.hmap -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/include -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources-normal/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources/arm64 -Xcc -I/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/DerivedSources -Xcc -DDEBUG\=1 -emit-objc-header -emit-objc-header-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-Swift.h -working-directory /Users/alex/.codex/worktrees/992b/Final-Project/ios -experimental-emit-module-separately -disable-cmo
+
+Ld /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/FFPredictorTests normal (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios17.0-simulator -bundle -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -O0 -L/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator -L/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -L/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib -F/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/EagerLinkingTBDs/Debug-iphonesimulator -F/tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator -iframework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/Library/Frameworks -iframework /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk/Developer/Library/Frameworks -filelist /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.LinkFileList -Xlinker -rpath -Xlinker /usr/lib/swift -Xlinker -rpath -Xlinker @loader_path/Frameworks -Xlinker -rpath -Xlinker @executable_path/Frameworks -Xlinker -dead_strip -bundle_loader /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor -Xlinker -object_path_lto -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_lto.o -rdynamic -Xlinker -no_deduplicate -Xlinker -objc_abi_version -Xlinker 2 -Xlinker -dependency_info -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_dependency_info.dat -fobjc-link-runtime -L/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/iphonesimulator -L/usr/lib/swift -Xlinker -add_ast_path -Xlinker /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.swiftmodule @/tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests-linker-args.resp -Xlinker -needed_framework -Xlinker XCTest -framework XCTest -Xlinker -needed-lXCTestSwiftSupport -lXCTestSwiftSupport /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/FFPredictor.debug.dylib -o /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/FFPredictorTests
+
+CopySwiftLibs /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-swiftStdLibTool --copy --verbose --scan-executable /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/FFPredictorTests --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Frameworks --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/PlugIns --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/SystemExtensions --scan-folder /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Extensions --platform iphonesimulator --toolchain /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Frameworks --strip-bitcode --scan-executable /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libXCTestSwiftSupport.dylib --strip-bitcode-tool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+Ignoring --strip-bitcode because --sign was not passed
+
+ExtractAppIntentsMetadata (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name FFPredictorTests --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk --xcode-version 17F113 --platform-family iOS --deployment-target 17.0 --bundle-identifier me.alexfree.ffpredictor.tests --output /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest --target-triple arm64-apple-ios17.0-simulator --binary-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/FFPredictorTests --dependency-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests_dependency_info.dat --stringsdata-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftFileList --metadata-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyMetadataFileList --static-metadata-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyStaticMetadataFileList --swift-const-vals-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/Objects-normal/arm64/FFPredictorTests.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
+2026-09-11 02:24:13.598 appintentsmetadataprocessor[92193:13945177] Starting appintentsmetadataprocessor export
+2026-09-11 02:24:13.600 appintentsmetadataprocessor[92193:13945177] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+
+AppIntentsSSUTraining (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsnltrainingprocessor --infoplist-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Info.plist --temp-dir-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/ssu --bundle-id me.alexfree.ffpredictor.tests --product-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest --extracted-metadata-path /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Metadata.appintents --metadata-file-list /tmp/consolidated-review.gmcnjD/ios-derived/Build/Intermediates.noindex/FFPredictor.build/Debug-iphonesimulator/FFPredictorTests.build/FFPredictorTests.DependencyMetadataFileList --source-file /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest/Info.plist --archive-ssu-assets
+2026-09-11 02:24:13.614 appintentsnltrainingprocessor[92194:13945178] Parsing options for appintentsnltrainingprocessor
+2026-09-11 02:24:13.615 appintentsnltrainingprocessor[92194:13945178] Starting AppIntents SSU YAML Generation
+2026-09-11 02:24:13.615 appintentsnltrainingprocessor[92194:13945178] No AppShortcuts found - Skipping.
+
+RegisterExecutionPolicyException /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-RegisterExecutionPolicyException /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+Touch /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest (in target 'FFPredictorTests' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /usr/bin/touch -c /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app/PlugIns/FFPredictorTests.xctest
+
+RegisterExecutionPolicyException /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-RegisterExecutionPolicyException /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app
+
+Validate /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    builtin-validationUtility /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app -shallow-bundle -infoplist-subpath Info.plist
+
+Touch /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app (in target 'FFPredictor' from project 'FFPredictor')
+    cd /Users/alex/.codex/worktrees/992b/Final-Project/ios
+    /usr/bin/touch -c /tmp/consolidated-review.gmcnjD/ios-derived/Build/Products/Debug-iphonesimulator/FFPredictor.app
+
+** TEST BUILD SUCCEEDED **
+
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project FFPredictor.xcodeproj -scheme FFPredictor -destination "platform=iOS Simulator,id=939813AD-8C42-457B-8DD8-EB2F0D55F75B" -derivedDataPath /tmp/consolidated-review.gmcnjD/ios-derived CODE_SIGNING_ALLOWED=NO test-without-building
+
+Build settings from command line:
+    CODE_SIGNING_ALLOWED = NO
+
+2026-09-11 02:24:35.871733-0400 FFPredictor[92476:13948544] [connection] nw_socket_handle_socket_event [C1:2] Socket SO_ERROR [61: Connection refused]
+2026-09-11 02:24:35.871887-0400 FFPredictor[92476:13948544] [connection] nw_endpoint_flow_failed_with_error [C1 127.0.0.1:9 in_progress socket-flow (satisfied (Path is satisfied), interface: lo0, proxy)] already failing, returning
+2026-09-11 02:24:35.872014-0400 FFPredictor[92476:13948544] [Default] Connection 1: received failure notification
+2026-09-11 02:24:35.872051-0400 FFPredictor[92476:13948544] [Default] Connection 1: failed to connect 1:61, reason -1
+2026-09-11 02:24:35.872096-0400 FFPredictor[92476:13948544] [Default] Connection 1: encountered error(1:61)
+2026-09-11 02:24:35.872216-0400 FFPredictor[92476:13948544] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C1] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:35.872255-0400 FFPredictor[92476:13948544] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C1] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:35.872289-0400 FFPredictor[92476:13948544] [connection] nw_connection_copy_connected_local_endpoint_block_invoke [C1] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection
+2026-09-11 02:24:35.872325-0400 FFPredictor[92476:13948544] [connection] nw_connection_copy_connected_remote_endpoint_block_invoke [C1] Client called nw_connection_copy_connected_remote_endpoint on unconnected nw_connection
+2026-09-11 02:24:35.872557-0400 FFPredictor[92476:13948544] [Default] Task <76401F7D-2100-44E2-A070-84878727001A>.<1> HTTP load failed, 0/0 bytes (error code: -1004 [1:61])
+2026-09-11 02:24:35.875430-0400 FFPredictor[92476:13948544] [Default] Task <76401F7D-2100-44E2-A070-84878727001A>.<1> finished with error [-1004] Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server." UserInfo={_kCFStreamErrorCodeKey=61, NSUnderlyingError=0x108784360 {Error Domain=kCFErrorDomainCFNetwork Code=-1004 "(null)" UserInfo={_NSURLErrorNWPathKey=satisfied (Path is satisfied), interface: lo0, proxy, _kCFStreamErrorCodeKey=61, _kCFStreamErrorDomainKey=1}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask <76401F7D-2100-44E2-A070-84878727001A>.<1>, _NSURLErrorRelatedURLSessionTaskErrorKey=(
+    "LocalDataTask <76401F7D-2100-44E2-A070-84878727001A>.<1>"
+), NSLocalizedDescription=Could not connect to the server., NSErrorFailingURLStringKey=http://127.0.0.1:9/health, NSErrorFailingURLKey=http://127.0.0.1:9/health, _kCFStreamErrorDomainKey=1}
+2026-09-11 02:24:36.002188-0400 FFPredictor[92476:13948546] [connection] nw_socket_handle_socket_event [C2:2] Socket SO_ERROR [61: Connection refused]
+2026-09-11 02:24:36.002349-0400 FFPredictor[92476:13948546] [connection] nw_endpoint_flow_failed_with_error [C2 127.0.0.1:9 in_progress socket-flow (satisfied (Path is satisfied), interface: lo0, proxy)] already failing, returning
+2026-09-11 02:24:36.002473-0400 FFPredictor[92476:13948546] [Default] Connection 2: received failure notification
+2026-09-11 02:24:36.002514-0400 FFPredictor[92476:13948546] [Default] Connection 2: failed to connect 1:61, reason -1
+2026-09-11 02:24:36.002564-0400 FFPredictor[92476:13948546] [Default] Connection 2: encountered error(1:61)
+2026-09-11 02:24:36.002679-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C2] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:36.002723-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C2] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:36.002767-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_connected_local_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection
+2026-09-11 02:24:36.002813-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_connected_remote_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_remote_endpoint on unconnected nw_connection
+2026-09-11 02:24:36.003189-0400 FFPredictor[92476:13948546] [Default] Task <46F562B7-9511-46A7-93F7-E70B3801103B>.<2> HTTP load failed, 0/0 bytes (error code: -1004 [1:61])
+2026-09-11 02:24:36.003342-0400 FFPredictor[92476:13948542] [Default] Task <46F562B7-9511-46A7-93F7-E70B3801103B>.<2> finished with error [-1004] Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server." UserInfo={_kCFStreamErrorCodeKey=61, NSUnderlyingError=0x108787ba0 {Error Domain=kCFErrorDomainCFNetwork Code=-1004 "(null)" UserInfo={_NSURLErrorNWPathKey=satisfied (Path is satisfied), interface: lo0, proxy, _kCFStreamErrorCodeKey=61, _kCFStreamErrorDomainKey=1}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask <46F562B7-9511-46A7-93F7-E70B3801103B>.<2>, _NSURLErrorRelatedURLSessionTaskErrorKey=(
+    "LocalDataTask <46F562B7-9511-46A7-93F7-E70B3801103B>.<2>"
+), NSLocalizedDescription=Could not connect to the server., NSErrorFailingURLStringKey=http://127.0.0.1:9/api/upcoming_week, NSErrorFailingURLKey=http://127.0.0.1:9/api/upcoming_week, _kCFStreamErrorDomainKey=1}
+2026-09-11 02:24:36.398968-0400 FFPredictor[92476:13948546] [connection] nw_socket_handle_socket_event [C3:2] Socket SO_ERROR [61: Connection refused]
+2026-09-11 02:24:36.399078-0400 FFPredictor[92476:13948546] [connection] nw_endpoint_flow_failed_with_error [C3 127.0.0.1:9 in_progress socket-flow (satisfied (Path is satisfied), interface: lo0, proxy)] already failing, returning
+2026-09-11 02:24:36.399207-0400 FFPredictor[92476:13948546] [Default] Connection 3: received failure notification
+2026-09-11 02:24:36.399260-0400 FFPredictor[92476:13948546] [Default] Connection 3: failed to connect 1:61, reason -1
+2026-09-11 02:24:36.399294-0400 FFPredictor[92476:13948546] [Default] Connection 3: encountered error(1:61)
+2026-09-11 02:24:36.399379-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C3] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:36.399415-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C3] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:36.399455-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_connected_local_endpoint_block_invoke [C3] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection
+2026-09-11 02:24:36.399489-0400 FFPredictor[92476:13948546] [connection] nw_connection_copy_connected_remote_endpoint_block_invoke [C3] Client called nw_connection_copy_connected_remote_endpoint on unconnected nw_connection
+2026-09-11 02:24:36.399669-0400 FFPredictor[92476:13948546] [Default] Task <A7491E2C-B5F6-44F7-9826-81259611BBC5>.<3> HTTP load failed, 0/0 bytes (error code: -1004 [1:61])
+2026-09-11 02:24:36.400337-0400 FFPredictor[92476:13948542] [Default] Task <A7491E2C-B5F6-44F7-9826-81259611BBC5>.<3> finished with error [-1004] Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server." UserInfo={_kCFStreamErrorCodeKey=61, NSUnderlyingError=0x108787180 {Error Domain=kCFErrorDomainCFNetwork Code=-1004 "(null)" UserInfo={_NSURLErrorNWPathKey=satisfied (Path is satisfied), interface: lo0, proxy, _kCFStreamErrorCodeKey=61, _kCFStreamErrorDomainKey=1}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask <A7491E2C-B5F6-44F7-9826-81259611BBC5>.<3>, _NSURLErrorRelatedURLSessionTaskErrorKey=(
+    "LocalDataTask <A7491E2C-B5F6-44F7-9826-81259611BBC5>.<3>"
+), NSLocalizedDescription=Could not connect to the server., NSErrorFailingURLStringKey=http://127.0.0.1:9/health, NSErrorFailingURLKey=http://127.0.0.1:9/health, _kCFStreamErrorDomainKey=1}
+2026-09-11 02:24:36.518211-0400 FFPredictor[92476:13948575] [connection] nw_socket_handle_socket_event [C4:2] Socket SO_ERROR [61: Connection refused]
+2026-09-11 02:24:36.518348-0400 FFPredictor[92476:13948575] [connection] nw_endpoint_flow_failed_with_error [C4 127.0.0.1:9 in_progress socket-flow (satisfied (Path is satisfied), interface: lo0, proxy)] already failing, returning
+2026-09-11 02:24:36.518449-0400 FFPredictor[92476:13948575] [Default] Connection 4: received failure notification
+2026-09-11 02:24:36.518488-0400 FFPredictor[92476:13948575] [Default] Connection 4: failed to connect 1:61, reason -1
+2026-09-11 02:24:36.518512-0400 FFPredictor[92476:13948575] [Default] Connection 4: encountered error(1:61)
+2026-09-11 02:24:36.518603-0400 FFPredictor[92476:13948575] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C4] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:36.518651-0400 FFPredictor[92476:13948575] [connection] nw_connection_copy_protocol_metadata_internal_block_invoke [C4] Client called nw_connection_copy_protocol_metadata_internal on unconnected nw_connection
+2026-09-11 02:24:36.518701-0400 FFPredictor[92476:13948575] [connection] nw_connection_copy_connected_local_endpoint_block_invoke [C4] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection
+2026-09-11 02:24:36.518726-0400 FFPredictor[92476:13948575] [connection] nw_connection_copy_connected_remote_endpoint_block_invoke [C4] Client called nw_connection_copy_connected_remote_endpoint on unconnected nw_connection
+2026-09-11 02:24:36.518935-0400 FFPredictor[92476:13948575] [Default] Task <E9BE4248-B0B8-4118-8A83-82BF0450623C>.<4> HTTP load failed, 0/0 bytes (error code: -1004 [1:61])
+2026-09-11 02:24:36.519052-0400 FFPredictor[92476:13948542] [Default] Task <E9BE4248-B0B8-4118-8A83-82BF0450623C>.<4> finished with error [-1004] Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server." UserInfo={_kCFStreamErrorCodeKey=61, NSUnderlyingError=0x108787990 {Error Domain=kCFErrorDomainCFNetwork Code=-1004 "(null)" UserInfo={_NSURLErrorNWPathKey=satisfied (Path is satisfied), interface: lo0, proxy, _kCFStreamErrorCodeKey=61, _kCFStreamErrorDomainKey=1}}, _NSURLErrorFailingURLSessionTaskErrorKey=LocalDataTask <E9BE4248-B0B8-4118-8A83-82BF0450623C>.<4>, _NSURLErrorRelatedURLSessionTaskErrorKey=(
+    "LocalDataTask <E9BE4248-B0B8-4118-8A83-82BF0450623C>.<4>"
+), NSLocalizedDescription=Could not connect to the server., NSErrorFailingURLStringKey=http://127.0.0.1:9/api/upcoming_week, NSErrorFailingURLKey=http://127.0.0.1:9/api/upcoming_week, _kCFStreamErrorDomainKey=1}
+Test Suite 'All tests' started at 2026-09-11 02:24:36.534.
+Test Suite 'FFPredictorTests.xctest' started at 2026-09-11 02:24:36.534.
+Test Suite 'APIClientTests' started at 2026-09-11 02:24:36.534.
+Test Case '-[FFPredictorTests.APIClientTests testCurrentAndLegacyVersionHeadersDecode]' started.
+Test Case '-[FFPredictorTests.APIClientTests testCurrentAndLegacyVersionHeadersDecode]' passed (0.007 seconds).
+Test Case '-[FFPredictorTests.APIClientTests testNotFoundRetainsFallbackSemantics]' started.
+Test Case '-[FFPredictorTests.APIClientTests testNotFoundRetainsFallbackSemantics]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.APIClientTests testUnknownMajorVersionIsNotDecoded]' started.
+Test Case '-[FFPredictorTests.APIClientTests testUnknownMajorVersionIsNotDecoded]' passed (0.001 seconds).
+Test Suite 'APIClientTests' passed at 2026-09-11 02:24:36.546.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.010 (0.012) seconds
+Test Suite 'ClientStoreTests' started at 2026-09-11 02:24:36.546.
+Test Case '-[FFPredictorTests.ClientStoreTests testComparisonRetryAfterFailureAndReuseAfterSuccess]' started.
+Test Case '-[FFPredictorTests.ClientStoreTests testComparisonRetryAfterFailureAndReuseAfterSuccess]' passed (0.005 seconds).
+Test Case '-[FFPredictorTests.ClientStoreTests testFailedLiveFallbackKeepsSavedRows]' started.
+Test Case '-[FFPredictorTests.ClientStoreTests testFailedLiveFallbackKeepsSavedRows]' passed (0.003 seconds).
+Test Case '-[FFPredictorTests.ClientStoreTests testFailedRefreshRetainsSavedSnapshotAndMarksItStale]' started.
+Test Case '-[FFPredictorTests.ClientStoreTests testFailedRefreshRetainsSavedSnapshotAndMarksItStale]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.ClientStoreTests testSnapshot404ReplacesSavedRowsWithLiveRows]' started.
+Test Case '-[FFPredictorTests.ClientStoreTests testSnapshot404ReplacesSavedRowsWithLiveRows]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.ClientStoreTests testSuccessfulRefreshClearsStaleStateAndPersistsBytes]' started.
+Test Case '-[FFPredictorTests.ClientStoreTests testSuccessfulRefreshClearsStaleStateAndPersistsBytes]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.ClientStoreTests testWarmingAndFailureAreDifferentUpcomingStates]' started.
+Test Case '-[FFPredictorTests.ClientStoreTests testWarmingAndFailureAreDifferentUpcomingStates]' passed (0.001 seconds).
+Test Suite 'ClientStoreTests' passed at 2026-09-11 02:24:36.560.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.012 (0.014) seconds
+Test Suite 'DecodingTests' started at 2026-09-11 02:24:36.560.
+Test Case '-[FFPredictorTests.DecodingTests testBenchmarkHistory]' started.
+Test Case '-[FFPredictorTests.DecodingTests testBenchmarkHistory]' passed (0.004 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testBreakdown]' started.
+Test Case '-[FFPredictorTests.DecodingTests testBreakdown]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testComparison]' started.
+Test Case '-[FFPredictorTests.DecodingTests testComparison]' passed (0.017 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testComparisonDoesNotInferNewSourceOrBasisMeaning]' started.
+Test Case '-[FFPredictorTests.DecodingTests testComparisonDoesNotInferNewSourceOrBasisMeaning]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testCurrentComparisonContractAcrossAllPositions]' started.
+Test Case '-[FFPredictorTests.DecodingTests testCurrentComparisonContractAcrossAllPositions]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testCurrentComparisonMissingCoverageAndZeroAreDistinct]' started.
+Test Case '-[FFPredictorTests.DecodingTests testCurrentComparisonMissingCoverageAndZeroAreDistinct]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testHealthTeamsWeeks]' started.
+Test Case '-[FFPredictorTests.DecodingTests testHealthTeamsWeeks]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testMetrics]' started.
+Test Case '-[FFPredictorTests.DecodingTests testMetrics]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testModelArchitecture]' started.
+Test Case '-[FFPredictorTests.DecodingTests testModelArchitecture]' passed (0.005 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testPlayerDetail]' started.
+Test Case '-[FFPredictorTests.DecodingTests testPlayerDetail]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testPositionDetails]' started.
+Test Case '-[FFPredictorTests.DecodingTests testPositionDetails]' passed (0.011 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testPredictions]' started.
+Test Case '-[FFPredictorTests.DecodingTests testPredictions]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testSharedServerFixturesPreserveScoringAndMissingValues]' started.
+Test Case '-[FFPredictorTests.DecodingTests testSharedServerFixturesPreserveScoringAndMissingValues]' passed (0.002 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testSnapshot]' started.
+Test Case '-[FFPredictorTests.DecodingTests testSnapshot]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testUpcomingWarming]' started.
+Test Case '-[FFPredictorTests.DecodingTests testUpcomingWarming]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testWeeklyAccuracy]' started.
+Test Case '-[FFPredictorTests.DecodingTests testWeeklyAccuracy]' passed (0.001 seconds).
+Test Case '-[FFPredictorTests.DecodingTests testWikiIndex]' started.
+Test Case '-[FFPredictorTests.DecodingTests testWikiIndex]' passed (0.002 seconds).
+Test Suite 'DecodingTests' passed at 2026-09-11 02:24:36.621.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.057 (0.061) seconds
+Test Suite 'FFPredictorTests.xctest' passed at 2026-09-11 02:24:36.621.
+	 Executed 26 tests, with 0 failures (0 unexpected) in 0.079 (0.087) seconds
+Test Suite 'All tests' passed at 2026-09-11 02:24:36.621.
+	 Executed 26 tests, with 0 failures (0 unexpected) in 0.079 (0.087) seconds
+2026-09-11 02:24:36.903 xcodebuild[92198:13945193] [MT] IDETestOperationsObserverDebug: 20.730 elapsed -- Testing started completed.
+2026-09-11 02:24:36.903 xcodebuild[92198:13945193] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-09-11 02:24:36.903 xcodebuild[92198:13945193] [MT] IDETestOperationsObserverDebug: 20.730 sec, +20.730 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/consolidated-review.gmcnjD/ios-derived/Logs/Test/Test-FFPredictor-2026.09.11_02-24-14--0400.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started

@@ -1,0 +1,37 @@
+
+> test
+> playwright test --workers=2
+
+[WebServer] (node:91845) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 9 tests using 2 workers
+
+✔ ready results revalidate every minute and preserve original generation times (3.203292ms)
+✔ background polling pauses while hidden and resumes immediately on return (0.231334ms)
+✔ focus, visible-page return and manual refresh revalidate; hidden-page events do not (2.032459ms)
+✔ a cached result is displayed immediately on remount and still revalidated (0.244875ms)
+✔ warming and failed requests retry after 30 seconds and recover automatically (0.203709ms)
+✔ transient errors and warming preserve last-good rows with a warning (0.212625ms)
+✔ verified offseason is rechecked, and unavailable data is never labeled offseason (0.149833ms)
+✔ overlapping refresh triggers share one request and unmount ignores its late result (0.191708ms)
+✔ a hung network request is aborted and schedules recovery (0.200958ms)
+✔ malformed success responses are errors and do not discard last-good rows (0.457709ms)
+✔ freshness advances with artifact age, including legacy payloads and cached server metadata (0.125334ms)
+✔ coverage distinguishes complete, degraded and unverified legacy artifacts (0.077125ms)
+✔ a current verified offseason is not an unverifiable projection, but old or invalid confirmations warn (0.093ms)
+(node:91846) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:91847) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  2 tests/contracts.spec.js:33:1 › history replaces a failed presentation when accepted results arrive (360ms)
+  ✓  1 tests/contracts.spec.js:59:1 › snapshot scoring switches and degraded forecasts preserve null versus zero (442ms)
+  ✓  3 tests/contracts.spec.js:71:1 › missing snapshot falls back to live predictions and scoring stays aligned (213ms)
+  ✓  4 tests/contracts.spec.js:79:1 › malformed snapshot cannot silently show an empty scoring format (264ms)
+  ✓  5 tests/contracts.spec.js:88:1 › player detail follows the selected scoring and renders the actual chart (269ms)
+  ✓  6 tests/contracts.spec.js:98:1 › server failures in player detail remain errors (266ms)
+  ✓  7 tests/contracts.spec.js:106:1 › comparison displays shared components, cohorts, ESPN and partial reference (169ms)
+  ✓  8 tests/contracts.spec.js:116:1 › unsupported contract versions surface a failure instead of fabricated rows (164ms)
+  ✓  9 tests/contracts.spec.js:123:1 › architecture displays the served bundle recipe and labels fallback positions (212ms)
+
+  9 passed (2.0s)

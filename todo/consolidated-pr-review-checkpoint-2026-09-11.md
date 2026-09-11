@@ -13,6 +13,10 @@ first production migration; clear #1534's three unresolved threads. Do not merge
 
 - Review worktree: `/Users/alex/.codex/worktrees/992b/Final-Project`.
 - Local checkpoint branch: `codex/review-consolidated-20260911`.
+- Git-tracked scripts, probes, assembly patches, logs and result metadata:
+  [review evidence](review-evidence/2026-09-11-consolidated-prs/README.md).
+  This handoff and its evidence are saved on the remote review branch; no PR
+  was opened or merged for the checkpoint.
 - Evidence directory: `/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911`.
 - The evidence directory is ignored by Git. It includes complete logs, captured
   production manifests, all 30 retained model archives, the 26-file production
@@ -122,7 +126,7 @@ Independent PR CI does not exercise this sibling combination. Update all four
 imports to the canonical metrics module, preserving any separately needed `MODELS`
 constant, and rerun the combined boundary/spec tests.
 
-All three findings are saved locally with executable probes and complete logs.
+All three findings are saved in Git with probe source archives and complete logs.
 They have not been posted as new GitHub review comments or fixed in PR branches.
 
 ## #1534 review threads — completed

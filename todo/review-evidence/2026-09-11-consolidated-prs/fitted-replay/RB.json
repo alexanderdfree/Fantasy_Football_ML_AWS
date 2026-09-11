@@ -1,0 +1,133 @@
+{
+  "position": "RB",
+  "ok": true,
+  "rows": 1759,
+  "columns": 28,
+  "max_abs_delta": 0.0,
+  "bit_identical": true,
+  "bundle_ids": {
+    "ridge": "7b2b40d0356e2aed1fe1091386d85711281bf5a15e62879de89bef3d8594e7e2",
+    "nn": "e87bfb18ddaf8e86fb771b93592f897d812432c2289dde9f659c4e3333f88614",
+    "attn_nn": "c91e6a361ba4eb10ba4c2a45ecc836d3208d80fad59d4f4aab75f10239730f29",
+    "lgbm": "020e7dbc0dd9c9f629ab96b098b71f19213af6728e2db96c83d61d69d184ab88"
+  },
+  "ambient_backbone_norm": "layer",
+  "saved_backbone_norms": {
+    "nn": "batch",
+    "attn_nn": "batch"
+  },
+  "details": {
+    "pred_ridge_rushing_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_rushing_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_rushing_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_rushing_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_rushing_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_rushing_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_rushing_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_rushing_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    }
+  }
+}

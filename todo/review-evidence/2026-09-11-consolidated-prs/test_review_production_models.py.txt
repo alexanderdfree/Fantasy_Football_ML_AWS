@@ -1,0 +1,6 @@
+import pytest
+from src.shared.smoke_test import run_smoke_test
+
+@pytest.mark.parametrize('position', ['QB','RB','WR','TE','K','DST'])
+def test_actual_stable_models_survive_the_consolidated_loader(position):
+    run_smoke_test(position, '/Users/alex/.codex/worktrees/992b/Final-Project/logs/consolidated-review-20260911/stable-models/'+position)

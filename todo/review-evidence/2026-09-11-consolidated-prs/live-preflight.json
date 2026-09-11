@@ -1,0 +1,169 @@
+{
+  "task": "arn:aws:ecs:us-east-1:432981645194:task-definition/fantasy-predictor:589",
+  "image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/fantasy-predictor:ccab867901e3c3e89177460032953860addc42cf",
+  "task_role": "arn:aws:iam::432981645194:role/fantasyTaskRole",
+  "environment": {
+    "FF_MODEL_S3_BUCKET": "ff-predictor-training",
+    "FF_DATA_RELEASE": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+    "FF_MODEL_S3_PREFIX": "models",
+    "FF_DATA_PRODUCER_SHA256": "bdae10360ba1037a6a78808243bff84549c1a1f9faa082cb7b9d0bc0f8e59425"
+  },
+  "health_check": {
+    "command": [
+      "CMD-SHELL",
+      "python -c \"import urllib.request; urllib.request.urlopen(\\\"http://localhost:8000/health\\\")\" || exit 1"
+    ],
+    "interval": 30,
+    "timeout": 5,
+    "retries": 3,
+    "startPeriod": 120
+  },
+  "target_groups": [
+    {
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:432981645194:targetgroup/fantasy-tg/2e46c8ec7650f003",
+      "HealthCheckPath": "/health",
+      "Matcher": {
+        "HttpCode": "200"
+      },
+      "HealthCheckIntervalSeconds": 10
+    }
+  ],
+  "objects": {
+    "models/predictions_cache/current.json": {
+      "error": "NoSuchKey"
+    },
+    "data/manifest.json": {
+      "bytes": 100,
+      "etag": "\"8eb4d00c73d14a3b8d83a2fbeced129a\"",
+      "modified": "2026-09-10 20:20:45+00:00",
+      "schema_version": 1,
+      "release_id": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340"
+    },
+    "models/releases/v3/QB/manifest.json": {
+      "error": "NoSuchKey"
+    },
+    "models/QB/releases/manifest.json": {
+      "bytes": 1765,
+      "etag": "\"a9a22fcb5260d2f84a624bf34ab46dc4\"",
+      "modified": "2026-09-10 20:39:09+00:00",
+      "schema_version": 3,
+      "publication_source": {
+        "source_order": 1508,
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+      },
+      "stable": {
+        "key": "models/QB/releases/history/2026-09-10T20-39-08Z-c1e081b65f2a41a6a7672194827186a0-346276c/model.tar.gz",
+        "git_sha": null,
+        "sha7": "346276c",
+        "smoke_passed": null,
+        "dataset_id": null
+      },
+      "history_count": 5
+    },
+    "models/releases/v3/RB/manifest.json": {
+      "error": "NoSuchKey"
+    },
+    "models/RB/releases/manifest.json": {
+      "bytes": 1765,
+      "etag": "\"b0db0287c8d30a7820a7ba3a425205f8\"",
+      "modified": "2026-09-10 20:37:33+00:00",
+      "schema_version": 3,
+      "publication_source": {
+        "source_order": 1508,
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+      },
+      "stable": {
+        "key": "models/RB/releases/history/2026-09-10T20-37-32Z-afe11034f74540cabd93edadd288eeae-18109eb/model.tar.gz",
+        "git_sha": null,
+        "sha7": "18109eb",
+        "smoke_passed": null,
+        "dataset_id": null
+      },
+      "history_count": 5
+    },
+    "models/releases/v3/WR/manifest.json": {
+      "error": "NoSuchKey"
+    },
+    "models/WR/releases/manifest.json": {
+      "bytes": 1765,
+      "etag": "\"7dacd7a3815d87d39896a3111e19310b\"",
+      "modified": "2026-09-10 20:37:44+00:00",
+      "schema_version": 3,
+      "publication_source": {
+        "source_order": 1508,
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+      },
+      "stable": {
+        "key": "models/WR/releases/history/2026-09-10T20-37-43Z-068e0b10a9864e1fb9abacfbf0a4d410-f4de464/model.tar.gz",
+        "git_sha": null,
+        "sha7": "f4de464",
+        "smoke_passed": null,
+        "dataset_id": null
+      },
+      "history_count": 5
+    },
+    "models/releases/v3/TE/manifest.json": {
+      "error": "NoSuchKey"
+    },
+    "models/TE/releases/manifest.json": {
+      "bytes": 1765,
+      "etag": "\"0a90e9f0dc0a5f497404c9ce2fdbee0e\"",
+      "modified": "2026-09-10 20:39:11+00:00",
+      "schema_version": 3,
+      "publication_source": {
+        "source_order": 1508,
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+      },
+      "stable": {
+        "key": "models/TE/releases/history/2026-09-10T20-39-10Z-6c69ffc8f1e145af8e9946414d869ec4-53bce15/model.tar.gz",
+        "git_sha": null,
+        "sha7": "53bce15",
+        "smoke_passed": null,
+        "dataset_id": null
+      },
+      "history_count": 5
+    },
+    "models/releases/v3/K/manifest.json": {
+      "error": "NoSuchKey"
+    },
+    "models/K/releases/manifest.json": {
+      "bytes": 1756,
+      "etag": "\"5a4b9214bf4021986c805fb13902acbe\"",
+      "modified": "2026-09-10 20:37:54+00:00",
+      "schema_version": 3,
+      "publication_source": {
+        "source_order": 1508,
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+      },
+      "stable": {
+        "key": "models/K/releases/history/2026-09-10T20-37-53Z-594b0c0794ca4d9d8f91a38fcc68933a-a4ca4fb/model.tar.gz",
+        "git_sha": null,
+        "sha7": "a4ca4fb",
+        "smoke_passed": null,
+        "dataset_id": null
+      },
+      "history_count": 5
+    },
+    "models/releases/v3/DST/manifest.json": {
+      "error": "NoSuchKey"
+    },
+    "models/DST/releases/manifest.json": {
+      "bytes": 1774,
+      "etag": "\"6cab565131775a2323e028e63f1d96dd\"",
+      "modified": "2026-09-10 20:39:10+00:00",
+      "schema_version": 3,
+      "publication_source": {
+        "source_order": 1508,
+        "source_sha": "b9d24f9259c7fd261ab1a4e77d4212d821726420"
+      },
+      "stable": {
+        "key": "models/DST/releases/history/2026-09-10T20-39-09Z-f548d7e051b54fc5adb5d1083f584373-e88f3cc/model.tar.gz",
+        "git_sha": null,
+        "sha7": "e88f3cc",
+        "smoke_passed": null,
+        "dataset_id": null
+      },
+      "history_count": 5
+    }
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "position": "WR",
+  "ok": true,
+  "rows": 2768,
+  "columns": 20,
+  "max_abs_delta": 0.0,
+  "bit_identical": true,
+  "bundle_ids": {
+    "ridge": "2dfd7bae642d012cefe437a49d86bb9bc00824384df4ecf7cd5ec7ccf9d0996f",
+    "nn": "ad427f58f8d6c96751324f8e9b34da86d7ec51a147826f99decf17b25abcd8a2",
+    "attn_nn": "b327f256cffbabfb661595048cb56d08a020a07387054c85f6cd2c95f26d2a44",
+    "lgbm": "2a47bcdef40a4682fb09105d60499f5061a045be957f05ef46d82d1219a35376"
+  },
+  "ambient_backbone_norm": "layer",
+  "saved_backbone_norms": {
+    "nn": "batch",
+    "attn_nn": "batch"
+  },
+  "details": {
+    "pred_ridge_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_ridge_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_attn_nn_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_receiving_tds": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_receiving_yards": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_receptions": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_fumbles_lost": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    },
+    "pred_lgbm_total": {
+      "max_abs_delta": 0.0,
+      "bit_identical": true
+    }
+  }
+}
