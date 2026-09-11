@@ -147,10 +147,15 @@ liveness/degradation contract; `/ready` requires a hydrated artifact and never
 trains/builds models. Deployment waits for a complete compatible S3 generation
 before replacing the service, including during the first migration. Batch,
 refresh and EC2 workflows build the historical serving cache before rollout.
-Rollout derives the bucket/prefix from the rendered task definition, temporarily
-accepts legacy `/ready` 404 responses at the ALB while the new container's strict
-readiness probe gates it, and verifies the exact new task revision/image before
-tightening the ALB matcher to 200. Failure restores the prior service and health
+Rollout derives the bucket/prefix from the rendered task definition and uses
+`/health?readiness=1` with an ALB matcher of 200 during mixed-version deployment.
+Legacy images ignore that query and preserve their existing health response;
+new images delegate it to strict artifact readiness. The legacy error handler
+can turn missing `/ready` routes into 500, so accepting 404 is not a safe bridge.
+After verifying the exact new task revision/image and container readiness, the
+helper switches the ALB path to `/ready`, still accepting only 200. AWS supports
+query strings in [ALB health-check paths](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html).
+Failure restores the prior service and health
 configuration; the transaction state also supports interrupted-step cleanup.
 
 ### Sources, evaluation and clients
@@ -208,6 +213,10 @@ Measured results and precise environment limits are recorded in the
 evidence, not asserted as timeless performance guarantees here.
 
 ## Changelog
+
+- 2026-09-11: Bridge legacy health checks through an explicit readiness query
+  while retaining a 200-only matcher and strict new-task artifact readiness
+  (PR #1577).
 
 - 2026-09-11: Enforce nested source isolation and thread capture propagation;
   bind evaluation identities to raw truth and pre-fill availability; preserve

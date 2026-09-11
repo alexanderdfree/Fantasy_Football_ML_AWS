@@ -19,7 +19,14 @@ def test_only_eligible_refreshes_share_the_pending_slot():
     eligibility = (
         "github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'"
     )
-    assert workflow["jobs"]["refresh"]["if"] == "${{ " + eligibility + " }}"
+    assert workflow["jobs"]["refresh"]["if"] == (
+        "${{ vars.AWS_MAINTENANCE_ACTIVE != 'true' && (" + eligibility + ") }}"
+    )
+    assert workflow["jobs"]["aws_refresh"]["if"] == (
+        "${{ vars.AWS_MAINTENANCE_ACTIVE == 'true' && github.event_name != 'schedule' && ("
+        + eligibility
+        + ") }}"
+    )
     assert workflow["concurrency"]["group"] == (
         "${{ (" + eligibility + ") && 'refresh-upcoming-week' || "
         "format('refresh-upcoming-week-skipped-{0}', github.run_id) }}"

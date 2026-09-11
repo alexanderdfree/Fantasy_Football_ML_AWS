@@ -346,6 +346,7 @@ def publish_release(
     repo_root=".",
     prefix="data",
     force=False,
+    promote=True,
 ) -> str:
     """Upload immutable inputs, then atomically publish their manifest pointer.
 
@@ -402,6 +403,16 @@ def publish_release(
     s3.put_object(
         Bucket=bucket, Key=f"{base}/manifest.json", Body=body, ContentType="application/json"
     )
+    if not promote:
+        print(f"Staged data release {release_id} ({len(files)} verified files)")
+        return release_id
+    promote_release(s3, bucket, release_id, manifest, prefix=prefix)
+    print(f"Published data release {release_id} ({len(files)} verified files)")
+    return release_id
+
+
+def promote_release(s3, bucket, release_id, manifest, *, prefix="data"):
+    """Advance already-verified inputs; callers serialize publication with other writers."""
     # Publish the producer-specific pointer before global current. Readers for
     # older code continue to find their verified recipe after a newer promotion.
     recipe = manifest["data_producer_sha256"]
@@ -417,8 +428,6 @@ def publish_release(
         Body=_json_bytes({"schema_version": SCHEMA_VERSION, "release_id": release_id}),
         ContentType="application/json",
     )
-    print(f"Published data release {release_id} ({len(files)} verified files)")
-    return release_id
 
 
 def resolve_release(

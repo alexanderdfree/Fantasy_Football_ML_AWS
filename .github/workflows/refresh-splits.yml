@@ -82,6 +82,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  FF_MAINTENANCE_LOCK_TABLE: ${{ vars.FF_MAINTENANCE_LOCK_TABLE }}
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
   ECS_CLUSTER: fantasy-cluster
@@ -194,48 +195,8 @@ jobs:
         env:
           NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
           FF_CAPTURE_PROVIDER_SOURCES: data/raw/provider_sources
-        run: |
-          python - <<'PY'
-          from src.config import CACHE_DIR, SEASONS
-          from src.data.cache_io import atomic_write_parquet
-          from src.data.external_sources import _seasons_cache_signature
-          from src.data import nfl_source
-          from src.data.loader import load_raw_data
-          from src.data.preprocessing import preprocess
-          from src.features.engineer import build_features
-          from src.data.split import temporal_split
-          from src.data.release import prewarm_training_dependencies, seal_inputs
-
-          # Raw injuries = the OUT-teammate out-set for the role-inheritance features
-          # (those teammates are absent from the weekly frame, so the out-set must come
-          # from the injury report). WEEKLY rosters add reserve / game-day-inactive
-          # players (status "RES" or "INA"), who are absent from BOTH the weekly frame
-          # AND the injury report, so a starter lost to IR or scratched is otherwise
-          # invisible to the vacancy signal (#1106). Must be rosters_weekly — the
-          # seasonal nfl_source.rosters frame also carries week/status columns but has
-          # only ~1 row per player-season, which silently registered ~no vacancies
-          # (caught 2026-06-11); the assert below makes that failure mode loud.
-          # build_features bakes is_top_available + inherited_opportunity into the splits.
-          # A fetch failure raises here, failing the step before any S3 upload.
-          injuries = nfl_source.injuries(list(SEASONS))
-          rosters = nfl_source.rosters_weekly(list(SEASONS))
-          # Preserve the exact full-roster inputs used by availability features,
-          # including active nonparticipants absent from weekly player stats.
-          signature = _seasons_cache_signature(SEASONS)
-          atomic_write_parquet(injuries, f"{CACHE_DIR}/injuries_{signature}.parquet", index=False)
-          atomic_write_parquet(rosters, f"{CACHE_DIR}/rosters_weekly_{signature}.parquet", index=False)
-          max_weeks = int(rosters.groupby("season")["week"].nunique().max())
-          assert max_weeks >= 5, (
-              f"rosters frame is not weekly-granular (max {max_weeks} distinct "
-              "weeks/season) — inheritance out-set would be silently empty"
-          )
-          df = build_features(
-              preprocess(load_raw_data()), injuries_df=injuries, rosters_df=rosters
-          )
-          temporal_split(df)
-          prewarm_training_dependencies()
-          seal_inputs()
-          PY
+        # CI and AWS use exactly the same production producer and season policy.
+        run: python -m src.data.maintenance_build
 
       - name: Verify engineered columns present
         # Gate the S3 upload behind a column-presence check: every column
@@ -360,6 +321,10 @@ jobs:
           path: data/splits/*.parquet
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Acquire maintenance publication lease
+        if: vars.FF_MAINTENANCE_LOCK_TABLE != ''
+        run: python3 -m src.maintenance.coordination acquire --owner "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
 
       - name: Upload to S3 with force
         id: publish
@@ -532,6 +497,10 @@ jobs:
           FF_DEVICE: cpu
         run: python -m src.prediction.build_snapshot
 
+      - name: Release maintenance publication lease
+        if: always() && vars.FF_MAINTENANCE_LOCK_TABLE != ''
+        run: python3 -m src.maintenance.coordination release --owner "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
+
       - name: Trigger retrain via image rebuild
         # Optional chain — if the operator wants the full
         # regen-splits-then-retrain flow in one click, this dispatches
@@ -643,6 +612,10 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Acquire maintenance publication lease
+        if: vars.FF_MAINTENANCE_LOCK_TABLE != ''
+        run: python3 -m src.maintenance.coordination acquire --owner "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
+
       - name: Advance only a compatible deployed data pin
         env:
           DATA_RELEASE: ${{ needs.refresh.outputs.release_id }}
@@ -655,3 +628,6 @@ jobs:
         run: |
           python3 -m src.artifacts.deployment restore \
             --state data-release-rollout.json --region "$AWS_REGION"
+      - name: Release maintenance publication lease
+        if: always() && vars.FF_MAINTENANCE_LOCK_TABLE != ''
+        run: python3 -m src.maintenance.coordination release --owner "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"

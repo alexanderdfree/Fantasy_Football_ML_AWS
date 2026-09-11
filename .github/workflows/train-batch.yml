@@ -48,6 +48,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  FF_MAINTENANCE_LOCK_TABLE: ${{ vars.FF_MAINTENANCE_LOCK_TABLE }}
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
   FF_BENCHMARK_RUN_ID: train-${{ github.run_id }}-${{ github.run_attempt }}
@@ -728,6 +729,10 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+      - name: Acquire maintenance publication lease
+        if: vars.FF_MAINTENANCE_LOCK_TABLE != ''
+        run: python3 -m src.maintenance.coordination acquire --owner "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
+
       - name: Advance verified serving data release
         env:
           DATA_RELEASE: ${{ needs.train.outputs.data_release }}
@@ -741,6 +746,10 @@ jobs:
           if [ -f data-release-rollout.json ]; then
             python3 -m src.artifacts.deployment restore --state data-release-rollout.json
           fi
+
+      - name: Release maintenance publication lease
+        if: always() && vars.FF_MAINTENANCE_LOCK_TABLE != ''
+        run: python3 -m src.maintenance.coordination release --owner "${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
 
   warm_cache:
     # Workers hydrate the verified artifact; serving performs no training-data

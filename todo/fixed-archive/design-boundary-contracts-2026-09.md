@@ -5,6 +5,17 @@
 corresponding tests. Foundation commit `911223e1`; complete integration is
 included in PR #1566.
 
+**Readiness migration follow-up (2026-09-11, PR #1577):** The deployed legacy image
+`13a5d4f7570677f2a7bbe27444caa22ea2d3107e` returned 200 from `/health`, but
+its missing `/ready` route became 500 when the non-API exception handler
+rethrew `NotFound`. The planned ALB `/ready` matcher `200,404` would remove
+healthy legacy targets before replacement tasks were hydrated. The rollout
+helper now uses `/health?readiness=1` with matcher 200: old images ignore the
+query; new `routes.health` delegates it to strict artifact readiness. Only
+after exact revision/image/container readiness does ALB switch to `/ready`.
+Tests cover the observed legacy 500, new missing/corrupt/revoked generations,
+new 404/500/503 failures, successful hydration, and prior-settings restoration.
+
 **What:** A repository-wide design audit reproduced four gaps: a changed feature
 projection reused the old cache entry; reordered history inputs passed shape/hash
 checks; concurrent publisher cleanup deleted another publisher's selected object;

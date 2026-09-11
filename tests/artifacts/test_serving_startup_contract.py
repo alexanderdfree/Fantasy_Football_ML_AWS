@@ -75,7 +75,8 @@ def test_alb_probe_excludes_a_live_but_not_ready_worker(monkeypatch, tmp_path):
     compatibility = updates[0]
     response = client.get(compatibility["HealthCheckPath"])
     assert str(response.status_code) not in compatibility["Matcher"]["HttpCode"].split(",")
-    assert "404" in compatibility["Matcher"]["HttpCode"].split(",")
+    assert compatibility["HealthCheckPath"] == "/health?readiness=1"
+    assert compatibility["Matcher"] == {"HttpCode": "200"}
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/deploy.yml").read_text())
     deployment_step = next(

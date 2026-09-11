@@ -159,14 +159,9 @@ def test_regen_step_calls_build_features():
         f"expected exactly 1 'Regenerate splits from nflverse + PBP' step, found {len(regen_steps)}"
     )
     run_body = regen_steps[0].get("run", "") or ""
-    assert "from src.features.engineer import build_features" in run_body, (
-        "Regenerate step must import build_features."
-    )
-    assert "build_features(" in run_body, (
-        "Regenerate step must call build_features() between preprocess() "
-        "and temporal_split() — otherwise the ~150 engineered cols are "
-        "absent from the parquet and the pipeline trains on constant zeros."
-    )
+    assert run_body.strip() == "python -m src.data.maintenance_build"
+    # The shared producer's real call order is exercised in
+    # tests/maintenance/test_worker.py, so CI and Fargate cannot drift apart.
 
 
 def test_verify_step_gates_s3_upload():

@@ -123,8 +123,10 @@ _HEALTH_FIELDS = (
     "Matcher",
 )
 _COMPATIBILITY_HEALTH = {
-    "HealthCheckPath": "/ready",
-    "Matcher": {"HttpCode": "200,404"},
+    # Legacy images ignore this query and keep their existing /health response;
+    # current images delegate it to /ready, rejecting unhydrated replacements.
+    "HealthCheckPath": "/health?readiness=1",
+    "Matcher": {"HttpCode": "200"},
     "HealthyThresholdCount": 2,
     "HealthCheckIntervalSeconds": 10,
 }
@@ -138,7 +140,10 @@ def _service(aws, cluster, service):
     return response["services"][0]
 
 
-def _save_state(path, state):
+def _save_state(path, state, on_state=None):
+    if on_state is not None:
+        # Remote controllers must durably record intent before the next mutation.
+        on_state(copy.deepcopy(state))
     path = Path(path)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(state, indent=2) + "\n")
@@ -201,7 +206,7 @@ def _expected_release_ready(aws, state):
     return True
 
 
-def restore_rollout(aws, state, *, state_path):
+def restore_rollout(aws, state, *, state_path, on_state=None):
     """Restore only this deployment's settings; never overwrite another revision."""
     if state.get("phase") in {"complete", "restored"}:
         return
@@ -255,7 +260,7 @@ def restore_rollout(aws, state, *, state_path):
         except Exception as error:
             failures.append(str(error))
     state["phase"] = "restore-failed" if failures else "restored"
-    _save_state(state_path, state)
+    _save_state(state_path, state, on_state)
     if failures:
         raise RuntimeError("Serving rollback restoration failed: " + "; ".join(failures))
 
@@ -272,6 +277,7 @@ def deploy(
     clock=time.monotonic,
     sleep=time.sleep,
     expected_current_task=None,
+    on_state=None,
 ):
     """Migrate readiness without making the still-running legacy image unhealthy."""
     container = _application_container(task_definition)
@@ -322,7 +328,7 @@ def deploy(
         "target_groups": recorded,
         "phase": "prepared",
     }
-    _save_state(state_path, state)
+    _save_state(state_path, state, on_state)
     try:
         for group in recorded:
             aws.call(
@@ -338,7 +344,7 @@ def deploy(
                 Attributes=[{"Key": "deregistration_delay.timeout_seconds", "Value": "30"}],
             )
         state["phase"] = "compatibility"
-        _save_state(state_path, state)
+        _save_state(state_path, state, on_state)
         # UpdateService has no revision CAS. Recheck after the intervening ALB
         # calls; a final read/update window still requires operator coordination.
         if _service(aws, cluster, service)["taskDefinition"] != before["taskDefinition"]:
@@ -353,7 +359,10 @@ def deploy(
             taskDefinition=expected,
             forceNewDeployment=True,
         )
-        deadline = clock() + timeout
+        # A controller can supply its remaining invocation budget. Resolve it
+        # after remote preparation/update, not before those calls consume time.
+        wait_budget = timeout() if callable(timeout) else timeout
+        deadline = clock() + wait_budget
         while not _expected_release_ready(aws, state):
             remaining = deadline - clock()
             if remaining <= 0:
@@ -368,10 +377,10 @@ def deploy(
                 Matcher={"HttpCode": "200"},
             )
         state["phase"] = "complete"
-        _save_state(state_path, state)
+        _save_state(state_path, state, on_state)
         return expected
     except BaseException:
-        restore_rollout(aws, state, state_path=state_path)
+        restore_rollout(aws, state, state_path=state_path, on_state=on_state)
         raise
 
 

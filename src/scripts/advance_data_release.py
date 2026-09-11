@@ -50,6 +50,8 @@ def advance_release(
     release_id,
     state_path="data-release-rollout.json",
     timeout=1200,
+    on_state=None,
+    expected_task_definition=None,
 ):
     selected, manifest = resolve_release(s3, bucket, release_id=release_id)
     recipe = manifest["data_producer_sha256"]
@@ -62,6 +64,8 @@ def advance_release(
             "reason": "a newer release of this producer is already published",
         }
     original_task = _service_task(ecs, cluster, service)
+    if expected_task_definition is not None and original_task != expected_task_definition:
+        raise RuntimeError("Running ECS task changed during maintenance preparation")
     task = ecs.call("ecs", "describe-task-definition", taskDefinition=original_task)[
         "taskDefinition"
     ]
@@ -84,8 +88,6 @@ def advance_release(
             "advanced": False,
             "reason": "new data recipe requires its matching code deployment",
         }
-    if old_release == selected:
-        return {"advanced": False, "reason": "running task already pins this release"}
     serving_bucket, prefix = deployment.serving_coordinates(task)
     if serving_bucket != bucket:
         raise RuntimeError("Running serving task reads a different bucket")
@@ -105,6 +107,11 @@ def advance_release(
         serving_snapshot.verify_data_release(s3, bucket, snapshot, expected_producer=recipe)
     except (ValueError, FileNotFoundError) as error:
         return {"advanced": False, "reason": f"matching serving snapshot is not ready: {error}"}
+    if (
+        old_release == selected
+        and env["FF_SERVING_SNAPSHOT_GENERATION"] == snapshot_pointer["generation"]
+    ):
+        return {"advanced": False, "reason": "running task already pins this release"}
     latest = json.loads(
         s3.get_object(Bucket=bucket, Key=f"data/by-producer/{recipe}/manifest.json")["Body"].read()
     )
@@ -124,6 +131,7 @@ def advance_release(
         state_path=state_path,
         expected_current_task=original_task,
         timeout=timeout,
+        on_state=on_state,
     )
     return {"advanced": True, "release_id": selected, "task_definition": new_task}
 
