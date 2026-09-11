@@ -63,20 +63,20 @@ pre-kickoff only 2024+ NFL.com / 2018+ RotoWire). Loader shipped + wired
 - (FantasyPros stays out: current-season-only pool, survivorship-biased history — see the
   [new-sources correction](new-sources-research-2026-06.md).)
 
-## Phase 2 — RB ordering research (highest-EV model lever): B2 PROE/pace screen
-The RB ordering edge + bust-avoidance concentrates in **established-alpha RBs** (D1, 4/4 seasons) and —
-unlike WR's external CB gap — may be forecastable from workload/role/game-script. Top candidate:
-**B2 team PROE + neutral pace** ([new-sources-research §B2](new-sources-research-2026-06.md) — $0,
-2013-verified from already-ingested PBP, leakage-clean with a season-to-date-through-W-1 group-shift lag).
-- Screen via `ab_harness` frame-injection (QB/RB/WR/TE), ≥3 seeds (5–8 if the delta sits in the band),
-  judged on **rank metrics** — NDCG / recall@k / mean-rank / lineup regret on the shared
-  RotoWire-covered slate + the D1 established-alpha and D4 culprit slices — **not MAE** (the edge being
-  chased is ordering). Batch-fleet path per ADR-0020 if no local GPU.
-- Ship gate: rank-metric win on RB (direction holds ≥2/3 seeds) with overall MAE flat → wire loader
-  (`src/data/`), `engineer.py` merge, `INCLUDE_FEATURES` + `ATTN_STATIC_FEATURES` (team-level
-  season-to-date rates are static-eligible; **not** a windowed player stat), fixtures, retrain PR with
-  benchmark evidence. Flat/negative → `[TESTED, REJECTED]` archive entry (draft-capital precedent).
-- Runner-up if B2 is flat: **E2 O-line continuity** (orthogonal, from already-ingested PFR snaps).
+## Phase 2 — archived team-context screens; activation remains separate
+
+- **PROE/pace:** the July 2026 screen was tested and rejected on the served rankers.
+  Keep [the spec](../src/tuning/ab_proe_pace.py) for reproducibility;
+  [the recorded result](fixed-archive/proe-pace-rejection-2026-07.md) closes the
+  original proposal unless new evidence justifies reopening it.
+- **O-line continuity:** rolling-origin confirmation supported TE in the recorded
+  regime, with mixed results elsewhere. [Evidence](fixed-archive/oline-continuity-confirmation-2026-07.md).
+  Production loaders/allowlists remain unchanged. Activation needs a separate
+  current-regime comparison and owner decision.
+- **Receiver QB context:** the [dated catalog](expert-gap-other-reasons-2026-08.md)
+  and [screen](../src/tuning/ab_qb_context_receivers.py) remain research tooling.
+  Recheck QB role/depth source semantics and run one real cell before fan-out;
+  historical gap measurements do not establish today's performance.
 
 ## Phase 3 — cohort-bias calibrations (bias, not MAE; judged on the tracked `cohorts` block)
 - ~~Games-gap A/B (`career_weeks_since_last_game`)~~ — **executed + tested-rejected on the fleet by
