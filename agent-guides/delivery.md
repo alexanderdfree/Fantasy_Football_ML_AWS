@@ -51,6 +51,8 @@
 - For stacked PRs, verify the GitHub base retarget before deleting the merged
   base, rebase to trigger CI after a base change, and give reviewers the explicit
   `gh pr diff`.
+  Required test/CodeQL workflows accept `main` and `codex/**` as PR bases; push
+  and production deployment/image triggers remain scoped to `main`.
 - Use `gh api --paginate` for a complete inventory (default pages missed findings
   in #319). Match image tags / `head_sha` to PRs with the **full SHA**; the workflow
   log's `HEAD is now at` identifies the executed revision.

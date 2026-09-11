@@ -4,16 +4,40 @@ Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies 
 
 ## CI & training
 
-- `tests.yml` — ruff + pytest on push/PR. Installs via `uv` (migrated in `3c897d8`) and shards pytest across `QB/RB/WR/TE/K/DST/serving/shared` matrix jobs (per-position paths under `tests/{pos}/`; the `shared` shard runs `tests/` excluding both the per-position dirs and the serving suite (`tests/test_app*.py`), which has its own `serving` shard). Each shard uploads coverage to Codecov under a matching flag; the project target is **80% per component/flag** (see [codecov.yml](../codecov.yml)). Diagnostic CLIs (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`, `src/wr/benchmark_ridge_variants.py`) are excluded from the coverage denominator. If `Run Tests` silently stops firing on rapid force-push cadence (occasional GitHub Actions bug), run `pytest` locally and merge with `gh pr merge --squash`.
-- `batch-image.yml` → `train-batch.yml` OR `train-ec2.yml` — image build triggers training; the `BATCH_ACTIVE` repo var (currently `true`, default since 2026-05-20) picks which fires. `true` → parallel Spot fan-out via `train-batch.yml` (six single-GPU Spot hosts from ONE diversified CE `ff-gpu-spot` listing `g6.xlarge`+`g5.xlarge` under `SPOT_PRICE_CAPACITY_OPTIMIZED`; a separate g5 fallback CE ordered behind g6 was reverted 2026-06-22 because a job-queue CE order only falls back on a misconfiguration, **never** on Spot capacity starvation — ADR-0013; one position per host; since 2026-06-11 `BATCH_SPLIT_ACTIVE=true` additionally splits each position into nn/cpu/merge jobs — NNs on the GPU queue, Ridge+LightGBM on the `ff-cpu-training-queue` c8a fleet, merge-only manifest promotion, validated Δ=0.0000 vs monolithic (ADR-0019); **measured 2026-05-21 ~10 min**, dominated by "Submit Batch jobs and wait", vs. the original ~25–30 min design estimate — the post-train "Refresh ECS service" rollover (the `ecs_rollout` job) runs as a **separate job off that critical path**: removed in PR #330 on the in-flight-poller theory, then **re-added** after the 2026-06-15 attn-NN staleness incident, since the poller hot-swaps a weight-only retrain but an **architecture-changing** retrain needs a clean boot-time reload or serving `load_state_dict`'s the old shape and silently NaN's that position for days (TODO.md fixed-archive); see [docs/batch_design.md](../docs/batch_design.md), D13). `false` (rollback) → warm-EC2 via `train-ec2.yml` (~120 min sequential; [docs/ec2_design.md](../docs/ec2_design.md), D7/D9). `workflow_dispatch` bypasses the gate (break-glass). Both paths share the `detect` job (diff the merge commit, retrain only changed positions); the path → positions mapping is centralized in [src/scripts/scope_positions.py](../src/scripts/scope_positions.py), contract-tested by [tests/scripts/test_scope_positions.py](../tests/scripts/test_scope_positions.py) — touch both when changing the global-trigger list. AWS quotas (raised 2026-06-11): G+VT OD = 24 vCPU (was 4; EC2 rollback path needs only one g6); Spot G+VT = 64 vCPU (was 24; one six-position fan-out uses 24, so two concurrent fan-outs or a tune fleet now fit — CEs raised to `maxvCpus=64` to match).
+- [tests.yml](../.github/workflows/tests.yml) runs ruff and pytest with `uv`,
+  position/serving/shared shards and per-shard coverage. The
+  [Codecov policy](../codecov.yml) owns the 80% component targets and diagnostic
+  CLI exclusions. If `Run Tests` silently stops firing after rapid force-push,
+  run `pytest` locally before an otherwise-authorized squash merge. Follow
+  [delivery gates](delivery.md#pr-and-merge-gates); this exception does not
+  authorize `--admin` or bypass another failing/pending check.
+- [batch-image.yml](../.github/workflows/batch-image.yml) builds the image;
+  `BATCH_ACTIVE` selects [Batch](../.github/workflows/train-batch.yml) versus
+  [EC2 rollback](../.github/workflows/train-ec2.yml). `BATCH_SPLIT_ACTIVE`
+  selects NN/CPU/merge branches versus monolithic Batch jobs. An unset split
+  flag selects monolithic mode; `workflow_dispatch` is the explicit break-glass
+  path around the normal backend-selection gate. Verify the live variables
+  and artifact state before reporting which route ran.
+- [scope_positions.py](../src/scripts/scope_positions.py) owns retrain scope for
+  both backends. Update [its contract tests](../tests/scripts/test_scope_positions.py)
+  when changing the global-trigger list. [ADR-0019](../docs/adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md#decision)
+  preserves the split-job and merge-only publication contract.
+- The GPU fleet uses **one diversified CE**, with GPU instance types and capacity limits configured
+  by [infra/batch/setup.sh](../infra/batch/setup.sh). Queue-order fallback is
+  not a remedy for Spot-capacity starvation. [ADR-0013](../docs/adr/0013-spot-fan-out-via-aws-batch.md#changelog)
+  retains the two-CE reversal, dated quota changes and timing measurements;
+  [the Batch runbook](../docs/batch_design.md) and [EC2 runbook](../docs/ec2_design.md)
+  hold the operational details. Verify current cloud quotas before sizing a run.
+- Preserve the post-train `ecs_rollout`: weight-only polling cannot reload an
+  architecture-changing checkpoint safely. The
+  [serving-staleness incident](../todo/fixed-archive/fixed-attention-nn-mae-rmse-missing-for-qb-rb-wr-te-in-the-comparison-model-5a0bb8e1.md)
+  retains the removal/reinstatement history and NaN failure evidence.
 - `deploy.yml` — ECS Flask deploy.
 
-The operational observations below are dated recall. Verify live flags, quotas and artifacts before relying on their recorded values.
+Use current workflow/configuration for behavior and live state for deployment facts. Historical measurements belong in the linked decisions and incidents.
 
 ### Project facts & infrastructure
-- **AWS GPU quota (us-east-1, raised 2026-06-11):** G+VT OD 24 vCPU (EC2 rollback uses one 4-vCPU g6) + Spot G+VT 64 vCPU (sixteen 4-vCPU g6/g5 hosts; a six-position fan-out uses 24, leaving room for a second fan-out or tune fleet; both GPU CEs `maxvCpus=64`) — check live values before relying.
-- **Training path is flag-selected:** `BATCH_ACTIVE` repo var picks `train-batch.yml` (Spot fan-out, default since 2026-05-20) vs `train-ec2.yml` (warm OD rollback); within Batch, `BATCH_SPLIT_ACTIVE` (default `true` since 2026-06-11, ADR-0019) splits each position into nn (GPU queue) + cpu Ridge/LGBM (c8a queue) + merge jobs — unset it for monolithic GPU jobs; check S3 for prod artifacts.
-- **GPU dtype × compute-capability:** `autocast(dtype=)` accepting an arg ≠ kernels support it — T4 (sm_75) is FP16-only; BF16 needs sm_80+. Check the matrix before enabling AMP.
+- Device/dtype constraints, including T4 BF16 exclusion, belong in [platform policy](platform.md#device-and-dtype-policy); an accepted `autocast` argument does not establish kernel support.
 - **GPU arch is per-CUDA-wheel, not per-version:** sm_xx comes from the cuXXX wheel build (inspect the selected cuXXX wheel and current requirements) — verify the wheel index, don't trust a version→GPU claim.
 - **AWS Batch UserData must be MIME multipart, not raw bash**, else the compute environment flips INVALID (recovery: republish + disable→update→enable).
 - **`src/serving/release_changelog.json` is the owner-curated model-release log** rendered by the dashboard's Changelog & Timeline tab (`/api/timeline`). When a notable model release lands (architecture change, tuning wave, full-fleet retrain milestone), append an entry `{version, date, family, model, title, summary, mae, r2, prev_mae, pr}` with metrics from the corresponding `benchmark_history/` run — schema is pinned by [tests/test_app_timeline.py](../tests/test_app_timeline.py); the weekly head-to-head log on that tab is computed live and needs no upkeep.

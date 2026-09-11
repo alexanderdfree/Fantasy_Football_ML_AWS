@@ -44,6 +44,9 @@ and decisions in their investigation or incident record.
 - Tests enforce entrypoint budgets and archive/index integrity. A consolidation
   still requires a separate evidence-preservation review; size checks cannot
   prove that a constraint survived.
+- Hooks that emit instructions must preserve the shared workflow gates. Test
+  their emitted branch-specific guidance; parser and file-budget checks alone
+  cannot detect a superseded merge or deletion recipe.
 - New lessons amend their existing topic or ADR. They are not copied into each
   provider file and memory store. Provider-specific memory-write rules remain.
 - Old archive paths and empirical results stay as historical evidence. Current
@@ -77,3 +80,6 @@ and decisions in their investigation or incident record.
   retain evidence and add context budgets (PR #1546).
 - 2026-09-10: Remove superseded recommendations, narrow global memory to
   preferences/pointers, and consolidate repeated rules by topic (PR #1553).
+- 2026-09-10: Remove completed research/harness prescriptions and duplicated
+  environment/provider guidance; align emitted merge instructions with shared
+  gates and exercise both branch workflows (PR #1557).

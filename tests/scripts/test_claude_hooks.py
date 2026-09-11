@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -139,6 +140,74 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(path), *args], check=True, text=True, capture_output=True
     )
+
+
+@pytest.mark.skipif(not _jq_available(), reason="post-pr-create hook needs jq to emit context")
+@pytest.mark.parametrize("branch", ["feature/review-workflow", "audit-123/tier-a"])
+def test_post_pr_create_preserves_merge_gates_and_verifies_before_deletion(
+    tmp_path: Path, branch: str
+):
+    """Check the emitted instructions, including branch-specific authorization.
+
+    These commands are agent guidance, so parser tests alone cannot catch an
+    unsafe merge recipe or deletion scheduled before merge verification.
+    """
+    _git(tmp_path, "init", "-b", branch)
+    env = os.environ.copy()
+    for key in ("GIT_CEILING_DIRECTORIES", "GIT_DIR", "GIT_WORK_TREE"):
+        env.pop(key, None)
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    result = subprocess.run(
+        [_bash(), str(PROJECT_ROOT / ".claude/hooks/post-pr-create.sh")],
+        input=json.dumps({"tool_input": {"command": "gh pr create --fill"}}),
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)["hookSpecificOutput"]
+    assert output["hookEventName"] == "PostToolUse"
+    context = output["additionalContext"]
+
+    commands = re.findall(r"`([^`]+)`", context)
+    merge_commands = [command for command in commands if command.startswith("gh pr merge")]
+    assert merge_commands == ["gh pr merge <N> --squash"]
+    assert "use `--admin`" in context  # It remains explicitly prohibited.
+    assert "CLAUDE.md's CI section" not in context
+    assert "CLAUDE.md's worktree section" not in context
+    assert "agent-guides/delivery.md#pr-and-merge-gates" in context
+
+    checks = context.index("`gh pr checks <N> --watch`")
+    merge = context.index("`gh pr merge <N> --squash`")
+    verify = context.index("`gh pr view <N> --json state,mergeCommit`")
+    merged = context.index("must report `MERGED`")
+    inspect = context.index("`git show <mergeCommit.oid> -- <changed-files>`")
+    delete = context.index("`git push origin --delete <branch-name>`")
+    assert checks < merge < verify < merged < inspect < delete
+    assert "latest fixes" in context[inspect:delete]
+    assert "If verification fails, stop and report; do not delete the branch" in context
+    assert "Only after that verification, separately delete" in context
+    assert "5. If any architectural findings were surfaced" in context[:checks]
+    assert "DO NOT merge. The user decides" in context[:checks]
+
+    if branch.startswith("audit-"):
+        assert "6. Do NOT auto-merge" in context
+        assert "6. Otherwise, auto-merge" not in context
+        signoff = context.index("EXPLICIT merge sign-off")
+        assert checks < signoff < merge
+        assert "regress-risk-high" in context[checks:signoff]
+        assert "Only after the user approves" in context[signoff:merge]
+    else:
+        assert "6. Otherwise, auto-merge" in context
+        confirmation = context.index("only with user confirmation")
+        local_tests = context.index("`pytest`")
+        assert checks < confirmation < local_tests < merge
+        assert "require it to pass" in context[local_tests:merge]
+        assert "agent-guides/operations.md#ci-training" in context[checks:merge]
+        assert "does not authorize bypassing branch protection" in context[checks:merge]
+        assert "or a different failing/pending check" in context[checks:merge]
 
 
 def _run_merge_hook(
