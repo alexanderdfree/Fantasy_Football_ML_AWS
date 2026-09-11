@@ -22,6 +22,14 @@ name: A/B on Batch (Spot)
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Ordinary A/B or the explicitly pinned merge-readiness campaign"
+        type: choice
+        options: [ab, merge-readiness]
+        default: ab
+      merge_readiness_config:
+        description: "Merge-readiness only: JSON with both image SHAs, isolated data prefixes/releases, replay_sha256"
+        default: ""
       spec:
         description: "Dotted A/B spec module (e.g. src.tuning.ab_example)"
         required: true
@@ -56,6 +64,7 @@ env:
 
 jobs:
   ab:
+    if: ${{ inputs.mode != 'merge-readiness' }}
     runs-on: ubuntu-latest
     # A 10-cell-per-position grid is ~30-80 min of Batch wall-clock; Spot
     # retries can stretch that. 4h matches retune-nn-batch's ceiling.
@@ -150,3 +159,71 @@ jobs:
             tail -n 600 /tmp/ab_run.log 2>/dev/null || echo "(no log produced)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  merge-readiness-smoke:
+    if: ${{ inputs.mode == 'merge-readiness' }}
+    runs-on: ubuntu-latest
+    # Each phase may wait five hours for Spot; full fanout has its own job.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c  # v6.2.4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install canonical controller and spec dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run both real smokes and verify capture/replay artifacts
+        env:
+          READINESS_CONFIG: ${{ inputs.merge_readiness_config }}
+        run: |
+          python -m src.tuning.launch_merge_readiness \
+            --config-json "$READINESS_CONFIG" \
+            --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --phase smoke
+      - name: Report smoke evidence location
+        if: always()
+        run: |
+          echo "Merge-readiness smoke: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Evidence: s3://$S3_BUCKET/experiments/merge-readiness/20260911T181252Z/ab_runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-smoke-{nn,combined}/" >> "$GITHUB_STEP_SUMMARY"
+
+  merge-readiness-full:
+    needs: merge-readiness-smoke
+    if: ${{ inputs.mode == 'merge-readiness' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c  # v6.2.4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install canonical controller and spec dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Reverify smoke evidence and run the bounded 30 plus 6 cell fleet
+        env:
+          READINESS_CONFIG: ${{ inputs.merge_readiness_config }}
+        run: |
+          python -m src.tuning.launch_merge_readiness \
+            --config-json "$READINESS_CONFIG" \
+            --run-id "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --phase full
+      - name: Report full evidence location
+        if: always()
+        run: |
+          echo "Merge-readiness full: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Evidence: s3://$S3_BUCKET/experiments/merge-readiness/20260911T181252Z/ab_runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-full-{nn,combined}/" >> "$GITHUB_STEP_SUMMARY"
