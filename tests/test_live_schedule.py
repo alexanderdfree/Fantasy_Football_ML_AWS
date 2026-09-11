@@ -85,6 +85,8 @@ def test_neutral_venue_live_odds_weather_and_rest_reach_model(monkeypatch):
     assert meta["by_game"][0]["weather"] == "forecast"
     assert meta["by_game"][0]["venue"] == "Melbourne Cricket Ground"
     assert meta["by_game"][0]["roof"] == "outdoors"
+    assert meta["source_result"]["status"] == "available"
+    assert meta["source_result"]["coverage"]["forecast_games"] == 1
 
 
 def test_forecast_outage_is_reported_and_keeps_espn_temperature(monkeypatch):
@@ -96,6 +98,8 @@ def test_forecast_outage_is_reported_and_keeps_espn_temperature(monkeypatch):
     assert pd.isna(enriched.wind.iloc[0])
     assert meta["coverage"] == {"partial_or_unavailable": 1}
     assert meta["by_game"][0]["weather"] == "unavailable"
+    assert meta["by_game"][0]["value_origin"] == "provider_fallback_partial"
+    assert meta["source_result"]["status"] == "partial"
 
 
 def test_forecast_uses_kickoff_hour_and_explicit_units():
@@ -158,4 +162,6 @@ def test_unknown_retractable_roof_does_not_use_outdoor_forecast(monkeypatch):
     assert metadata["coverage"] == {"unknown_roof": 1}
     assert metadata["by_game"][0]["weather"] == "unavailable"
     assert metadata["by_game"][0]["roof"] == "unknown"
+    assert metadata["source_result"]["status"] == "unavailable"
+    assert metadata["source_result"]["content_id"] is None
     json.dumps(metadata, allow_nan=False)  # API clients require valid JSON

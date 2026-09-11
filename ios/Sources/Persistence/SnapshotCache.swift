@@ -2,7 +2,12 @@ import Foundation
 
 /// Persists the last good `/api/snapshot` bytes to Application Support so a cold
 /// launch (incl. offline) can paint instantly before the network resolves.
-struct SnapshotCache {
+protocol SnapshotCaching {
+    func load() -> SnapshotResponse?
+    func save(_ data: Data)
+}
+
+struct SnapshotCache: SnapshotCaching {
     private var fileURL: URL? {
         let fm = FileManager.default
         guard let dir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }

@@ -74,6 +74,39 @@ class TestEmpty:
         assert r.get_json()["rows"] == []
 
 
+def test_accepted_retry_replaces_only_its_failed_run_presentation(history_client, monkeypatch):
+    client, history_dir = history_client
+
+    def write(name, run_id, accepted, value, timestamp):
+        (history_dir / name).write_text(
+            json.dumps(
+                {
+                    "run_id": name,
+                    "training_run_id": run_id,
+                    "timestamp": timestamp,
+                    "git_hash": "abcdef0",
+                    "accepted_positions": ["QB"] if accepted else [],
+                    "validation_status": "accepted" if accepted else "validation_failed",
+                    "results": [{"position": "QB", "ridge_mae": value}],
+                }
+            )
+        )
+        monkeypatch.setattr(benchmark_history, "_BENCHMARK_HISTORY_CACHE", None)
+
+    write("failed.json", "same-run", False, 9, "2026-09-10T01:00:00")
+    rows = client.get("/api/benchmark_history").get_json()["rows"]
+    assert rows[0]["validation_status"] == "validation_failed"
+    write("accepted.json", "same-run", True, 1, "2026-09-10T01:00:00")
+    write("other-seed.json", "different-run", True, 2, "2026-09-10T01:00:00")
+    write("late-failure.json", "same-run", False, 99, "2026-09-12T01:00:00")
+    rows = client.get("/api/benchmark_history").get_json()["rows"]
+    assert len(rows) == 2
+    same = next(row for row in rows if row["training_run_id"] == "same-run")
+    assert same["validation_status"] == "accepted"
+    assert same["ridge"][0]["mae"] == 1
+    assert (history_dir / "failed.json").exists()
+
+
 class TestRowShape:
     def test_one_row_per_file_newest_first(self, history_client):
         client, history_dir = history_client

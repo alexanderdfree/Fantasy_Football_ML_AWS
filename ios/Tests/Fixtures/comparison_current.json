@@ -1,0 +1,2558 @@
+{
+  "actual_basis": "shared_projected_components_v2",
+  "cohort_definitions": {
+    "top12": "Top 12 per season by regular-season actual shared-component points",
+    "top30": "Top 30 per season by regular-season actual shared-component points",
+    "weekly_reference_top24": "Top 24 per week by shared-component NFL.com/RotoWire mean; ESPN for K, RotoWire for DST"
+  },
+  "coverage": {
+    "all": {
+      "DST": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "def_sacks",
+          "def_ints",
+          "def_fumble_rec",
+          "def_fumbles_forced",
+          "def_safeties",
+          "def_tds",
+          "def_blocked_kicks",
+          "special_teams_tds",
+          "yards_allowed"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "K": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+        },
+        "n": 6,
+        "scoring_components": [
+          "fg_yard_points",
+          "pat_points",
+          "fg_misses",
+          "xp_misses"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "QB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "passing_yards",
+          "rushing_yards",
+          "passing_tds",
+          "rushing_tds",
+          "interceptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "RB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 5,
+        "scoring_components": [
+          "rushing_tds",
+          "receiving_tds",
+          "rushing_yards",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 5,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "TE": {
+        "actual_basis": "shared_projected_components_v2",
+        "n": 0,
+        "reason": "shared_actual_components_missing",
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "status": "unavailable"
+      },
+      "WR": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      }
+    },
+    "top12": {
+      "DST": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "def_sacks",
+          "def_ints",
+          "def_fumble_rec",
+          "def_fumbles_forced",
+          "def_safeties",
+          "def_tds",
+          "def_blocked_kicks",
+          "special_teams_tds",
+          "yards_allowed"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "K": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+        },
+        "n": 6,
+        "scoring_components": [
+          "fg_yard_points",
+          "pat_points",
+          "fg_misses",
+          "xp_misses"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "QB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "passing_yards",
+          "rushing_yards",
+          "passing_tds",
+          "rushing_tds",
+          "interceptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "RB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 5,
+        "scoring_components": [
+          "rushing_tds",
+          "receiving_tds",
+          "rushing_yards",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 5,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "TE": {
+        "actual_basis": "shared_projected_components_v2",
+        "n": 0,
+        "reason": "shared_actual_components_missing",
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "status": "unavailable"
+      },
+      "WR": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      }
+    },
+    "top30": {
+      "DST": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "def_sacks",
+          "def_ints",
+          "def_fumble_rec",
+          "def_fumbles_forced",
+          "def_safeties",
+          "def_tds",
+          "def_blocked_kicks",
+          "special_teams_tds",
+          "yards_allowed"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "K": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+        },
+        "n": 6,
+        "scoring_components": [
+          "fg_yard_points",
+          "pat_points",
+          "fg_misses",
+          "xp_misses"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "QB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "passing_yards",
+          "rushing_yards",
+          "passing_tds",
+          "rushing_tds",
+          "interceptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "RB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 5,
+        "scoring_components": [
+          "rushing_tds",
+          "receiving_tds",
+          "rushing_yards",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 5,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "TE": {
+        "actual_basis": "shared_projected_components_v2",
+        "n": 0,
+        "reason": "shared_actual_components_missing",
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "status": "unavailable"
+      },
+      "WR": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "n": 6,
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      }
+    },
+    "weekly_reference_top24": {
+      "DST": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 0,
+        "excluded_sources": {},
+        "n": 0,
+        "reason": "no_reference_for_evaluation_seasons",
+        "reference_status": "unavailable",
+        "scoring_components": [
+          "def_sacks",
+          "def_ints",
+          "def_fumble_rec",
+          "def_fumbles_forced",
+          "def_safeties",
+          "def_tds",
+          "def_blocked_kicks",
+          "special_teams_tds",
+          "yards_allowed"
+        ],
+        "source_n": {
+          "attn_nn": 0,
+          "espn": 0,
+          "lgbm": 0,
+          "nn": 0,
+          "ridge": 0,
+          "rotowire": 0
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "unavailable"
+      },
+      "K": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+        },
+        "missing_reference_weeks": 0,
+        "n": 6,
+        "reference_hash": "df5008c2147e9a58b3efa46a4baa32b25cea757d71f2be24feb64e30fbe9185f",
+        "reference_n": 6,
+        "reference_status": "available",
+        "reference_version": "shared_components_v3",
+        "scoring_components": [
+          "fg_yard_points",
+          "pat_points",
+          "fg_misses",
+          "xp_misses"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "QB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "missing_reference_weeks": 0,
+        "n": 6,
+        "reference_hash": "2532e5d71f9e208683b9bd483f1f67910c0c4b99f23fc1273dcdbdfc63f23b40",
+        "reference_n": 6,
+        "reference_status": "available",
+        "reference_version": "shared_components_v3",
+        "scoring_components": [
+          "passing_yards",
+          "rushing_yards",
+          "passing_tds",
+          "rushing_tds",
+          "interceptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "RB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {},
+        "missing_reference_weeks": 0,
+        "n": 5,
+        "reference_hash": "1a389320477e474b63491cc7aa9b10b8948c7939318e32cfcd712bcbab63b070",
+        "reference_n": 6,
+        "reference_status": "available",
+        "reference_version": "shared_components_v3",
+        "scoring_components": [
+          "rushing_tds",
+          "receiving_tds",
+          "rushing_yards",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 5,
+          "lgbm": 6,
+          "nflcom": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available"
+      },
+      "TE": {
+        "actual_basis": "shared_projected_components_v2",
+        "n": 0,
+        "reason": "shared_actual_components_missing",
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "status": "unavailable"
+      },
+      "WR": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 3,
+        "excluded_sources": {},
+        "missing_reference_weeks": 1,
+        "n": 3,
+        "reference_hash": "89f7d6574d7727c480e1158fb78f51853da1099c8e525fdb687b319ab71c5598",
+        "reference_n": 3,
+        "reference_status": "partial",
+        "reference_version": "shared_components_v3",
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "source_n": {
+          "attn_nn": 3,
+          "espn": 3,
+          "lgbm": 3,
+          "nflcom": 3,
+          "nn": 3,
+          "ridge": 3,
+          "rotowire": 3
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "nflcom",
+          "rotowire",
+          "espn"
+        ],
+        "status": "partial"
+      }
+    }
+  },
+  "excluded_components": {
+    "DST": {
+      "points_allowed": "Scoreboard, ESPN and RotoWire points-allowed definitions differ."
+    }
+  },
+  "excluded_sources": {
+    "K": {
+      "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+    }
+  },
+  "experts_meta": {
+    "espn": {
+      "label": "ESPN",
+      "note": "Synthetic fixture forecasts."
+    }
+  },
+  "generated_at": "2026-09-10T00:00:00+00:00",
+  "model_source": "live",
+  "quartile_bias": {
+    "DST": {
+      "Q1": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      },
+      "Q2": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q3": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q4": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      }
+    },
+    "K": {
+      "Q1": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": null
+      },
+      "Q2": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": null
+      },
+      "Q3": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": null
+      },
+      "Q4": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": null
+      }
+    },
+    "QB": {
+      "Q1": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 2
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      },
+      "Q2": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q3": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q4": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 2
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      }
+    },
+    "RB": {
+      "Q1": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 2
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      },
+      "Q2": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q3": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q4": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      }
+    },
+    "TE": null,
+    "WR": {
+      "Q1": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 2
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      },
+      "Q2": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q3": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 1
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 1
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 1
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 1
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 1
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 1
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 1
+        }
+      },
+      "Q4": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 2
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 2
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 2
+        },
+        "nflcom": {
+          "bias": 4.0,
+          "mae": 4.0,
+          "n": 2
+        },
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 2
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 2
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 2
+        }
+      }
+    }
+  },
+  "quartile_bias_meta": {
+    "bias_convention": "pred_minus_actual",
+    "binned_by": "actual_shared_component_points",
+    "n_quantiles": 4,
+    "quartiles": [
+      "Q1",
+      "Q2",
+      "Q3",
+      "Q4"
+    ],
+    "seasons": [
+      2025
+    ]
+  },
+  "sample_basis": "shared_player_weeks",
+  "scoring": "ppr",
+  "scoring_components": {
+    "DST": [
+      "def_sacks",
+      "def_ints",
+      "def_fumble_rec",
+      "def_fumbles_forced",
+      "def_safeties",
+      "def_tds",
+      "def_blocked_kicks",
+      "special_teams_tds",
+      "yards_allowed"
+    ],
+    "K": [
+      "fg_yard_points",
+      "pat_points",
+      "fg_misses",
+      "xp_misses"
+    ],
+    "QB": [
+      "passing_yards",
+      "rushing_yards",
+      "passing_tds",
+      "rushing_tds",
+      "interceptions",
+      "fumbles_lost"
+    ],
+    "RB": [
+      "rushing_tds",
+      "receiving_tds",
+      "rushing_yards",
+      "receiving_yards",
+      "receptions",
+      "fumbles_lost"
+    ],
+    "TE": [
+      "receiving_tds",
+      "receiving_yards",
+      "receptions",
+      "fumbles_lost"
+    ],
+    "WR": [
+      "receiving_tds",
+      "receiving_yards",
+      "receptions",
+      "fumbles_lost"
+    ]
+  },
+  "subsets": {
+    "all": {
+      "DST": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.991,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": 0.9189,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.9797,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9977,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.9437,
+          "rmse": 5.0
+        }
+      },
+      "K": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": null
+      },
+      "QB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8843,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.0417,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.7396,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.537,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9711,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.2766,
+          "rmse": 5.0
+        }
+      },
+      "RB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 5,
+          "r2": 0.9431,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 5,
+          "r2": 0.4875,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 5,
+          "r2": 0.8719,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 5,
+          "r2": 0.7722,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 5,
+          "r2": 0.9858,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 5,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 5,
+          "r2": 0.6441,
+          "rmse": 5.0
+        }
+      },
+      "TE": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "WR": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8322,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.5099,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.6225,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.3289,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9581,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": -0.0485,
+          "rmse": 5.0
+        }
+      }
+    },
+    "top12": {
+      "DST": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.991,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": 0.9189,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.9797,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9977,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.9437,
+          "rmse": 5.0
+        }
+      },
+      "K": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": null
+      },
+      "QB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8843,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.0417,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.7396,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.537,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9711,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.2766,
+          "rmse": 5.0
+        }
+      },
+      "RB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 5,
+          "r2": 0.9431,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 5,
+          "r2": 0.4875,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 5,
+          "r2": 0.8719,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 5,
+          "r2": 0.7722,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 5,
+          "r2": 0.9858,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 5,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 5,
+          "r2": 0.6441,
+          "rmse": 5.0
+        }
+      },
+      "TE": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "WR": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8322,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.5099,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.6225,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.3289,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9581,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": -0.0485,
+          "rmse": 5.0
+        }
+      }
+    },
+    "top30": {
+      "DST": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.991,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": 0.9189,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.9797,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9977,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.9437,
+          "rmse": 5.0
+        }
+      },
+      "K": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": null
+      },
+      "QB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8843,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.0417,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.7396,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.537,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9711,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.2766,
+          "rmse": 5.0
+        }
+      },
+      "RB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 5,
+          "r2": 0.9431,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 5,
+          "r2": 0.4875,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 5,
+          "r2": 0.8719,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 5,
+          "r2": 0.7722,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 5,
+          "r2": 0.9858,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 5,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 5,
+          "r2": 0.6441,
+          "rmse": 5.0
+        }
+      },
+      "TE": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "WR": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8322,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.5099,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.6225,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.3289,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9581,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": -0.0485,
+          "rmse": 5.0
+        }
+      }
+    },
+    "weekly_reference_top24": {
+      "DST": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "K": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.0,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": null
+      },
+      "QB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8843,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.0417,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.7396,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 6,
+          "r2": 0.537,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9711,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.2766,
+          "rmse": 5.0
+        }
+      },
+      "RB": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 5,
+          "r2": 0.9431,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 5,
+          "r2": 0.4875,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 5,
+          "r2": 0.8719,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 5,
+          "r2": 0.7722,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 5,
+          "r2": 0.9858,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 5,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 5,
+          "r2": 0.6441,
+          "rmse": 5.0
+        }
+      },
+      "TE": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "WR": {
+        "attn_nn": {
+          "mae": 2.0,
+          "n": 3,
+          "r2": 0.7693,
+          "rmse": 2.0
+        },
+        "espn": {
+          "mae": 6.0,
+          "n": 3,
+          "r2": -1.0761,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "mae": 3.0,
+          "n": 3,
+          "r2": 0.481,
+          "rmse": 3.0
+        },
+        "nflcom": {
+          "mae": 4.0,
+          "n": 3,
+          "r2": 0.0773,
+          "rmse": 4.0
+        },
+        "nn": {
+          "mae": 1.0,
+          "n": 3,
+          "r2": 0.9423,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "mae": 0.0,
+          "n": 3,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "mae": 5.0,
+          "n": 3,
+          "r2": -0.4418,
+          "rmse": 5.0
+        }
+      }
+    }
+  },
+  "top12_n": 12,
+  "top_n": 30,
+  "weekly_ranking": {
+    "DST": {
+      "attn_nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "espn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "lgbm": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "ridge": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "rotowire": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      }
+    },
+    "K": {
+      "attn_nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "espn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "lgbm": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "ridge": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      }
+    },
+    "QB": {
+      "attn_nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "espn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "lgbm": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nflcom": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "ridge": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "rotowire": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      }
+    },
+    "RB": {
+      "attn_nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "espn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "lgbm": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nflcom": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "ridge": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "rotowire": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      }
+    },
+    "TE": {},
+    "WR": {
+      "attn_nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "espn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "lgbm": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nflcom": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "nn": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "ridge": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      },
+      "rotowire": {
+        "hit_rate": null,
+        "lineup_regret": null,
+        "n_weeks": 0,
+        "points_captured": null
+      }
+    }
+  },
+  "weekly_top_n": 24
+}

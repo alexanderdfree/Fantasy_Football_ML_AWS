@@ -40,6 +40,9 @@ struct ModelArchitecture: Codable, Sendable {
     }
 
     struct PositionArch: Codable, Sendable {
+        let metadataSource: String?
+        let metadataFamily: String?
+        let metadataNote: String?
         let targets: [String]
         let backboneLayers: [Int]
         let headHidden: Int?
@@ -57,6 +60,9 @@ struct ModelArchitecture: Codable, Sendable {
         let features: [String: [String]]
 
         enum CodingKeys: String, CodingKey {
+            case metadataSource = "metadata_source"
+            case metadataFamily = "metadata_family"
+            case metadataNote = "metadata_note"
             case targets, dropout, lr, epochs, patience, scheduler, features
             case backboneLayers = "backbone_layers"
             case headHidden = "head_hidden"

@@ -4,35 +4,25 @@ Merges schedule data onto player DataFrames and computes 11 derived features.
 """
 
 import threading
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from src.config import CACHE_DIR, SEASONS
-from src.data.nflcom_loader import schedule_team_code_normalization
 
 # ---------------------------------------------------------------------------
 # Feature definitions
 # ---------------------------------------------------------------------------
-
-WEATHER_FEATURES_ALL = [
-    "implied_team_total",
-    "implied_opp_total",
-    "total_line",
-    "is_dome",
-    "is_grass",
-    "temp_adjusted",
-    "wind_adjusted",
-    "is_divisional",
-    "days_rest_improved",
-    "rest_advantage",
-    "implied_total_x_wind",
-]
+from src.contracts.feature_names import WEATHER_FEATURES_ALL as WEATHER_FEATURES_ALL
+from src.data.identity import schedule_team_code_normalization
+from src.training.context import raw_data_dir
 
 # Module-level cache for schedule data. Lock guards concurrent first-read
 # races (parallel CV folds / threaded callers) — mirrors the precedent in
 # ``feature_cache._lru_lock``.
 _schedule_cache = None
+_schedule_cache_source = None
 _schedule_cache_lock = threading.Lock()
 
 # Map franchise relocations back to their current abbreviations. Player data
@@ -56,21 +46,36 @@ TEAM_CODE_NORMALIZATION = schedule_team_code_normalization()
 def _load_schedules() -> pd.DataFrame:
     """Load and cache schedule data from the raw parquet.
 
-    Double-checked locking: fast path (already-populated cache) bypasses the
-    lock; cold path takes the lock once to serialise the parquet read so
-    parallel CV folds don't all read the same file from disk.
+    Track the source identity so a raw-data refresh also invalidates this
+    lower cache. Otherwise a new prepared-data key could cache old schedules.
+    ctime/inode detect replacement or same-size rewrites with restored mtime.
     """
-    global _schedule_cache
-    if _schedule_cache is not None:
+    global _schedule_cache, _schedule_cache_source
+    path = Path(raw_data_dir(CACHE_DIR)) / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+
+    def source_identity():
+        stat = path.stat()
+        return (
+            str(path.resolve()),
+            stat.st_dev,
+            stat.st_ino,
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+        )
+
+    source = source_identity()
+    if _schedule_cache is not None and _schedule_cache_source == source:
         return _schedule_cache
 
     with _schedule_cache_lock:
-        if _schedule_cache is not None:
+        source = source_identity()
+        if _schedule_cache is not None and _schedule_cache_source == source:
             return _schedule_cache
-        path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
         schedules = pd.read_parquet(path)
         schedules = schedules[schedules["game_type"] == "REG"].copy()
         _schedule_cache = schedules
+        _schedule_cache_source = source
         return schedules
 
 

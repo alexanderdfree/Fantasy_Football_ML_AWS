@@ -201,7 +201,9 @@ def test_inference_keeps_heldout_year_without_repeating_fit_years(monkeypatch):
     train = pd.DataFrame({"season": [2023]})
     val = pd.DataFrame({"season": [2024]})
     monkeypatch.setattr(live.core, "_ensure_base_data", lambda: None)
-    monkeypatch.setattr(live.app_pkg, "_cache", {"splits": {"QB": (train, val, frame)}})
+    monkeypatch.setattr(
+        live.app_pkg.current_state(), "cache", {"splits": {"QB": (train, val, frame)}}
+    )
     seen = []
     monkeypatch.setattr(
         live.core, "_apply_position_models", lambda tr, va, te, p, r: seen.extend(te.season)
@@ -214,6 +216,8 @@ def test_inference_keeps_heldout_year_without_repeating_fit_years(monkeypatch):
 
 
 def test_unknown_practice_uses_filtered_training_mean(monkeypatch):
+    from src.prediction import frames
+
     reg = {
         "targets": [],
         "model_dir": "unused",
@@ -222,7 +226,6 @@ def test_unknown_practice_uses_filtered_training_mean(monkeypatch):
         "min_games_per_season": 2,
         "get_feature_columns_fn": lambda: ["practice_status"],
     }
-    monkeypatch.setattr(core, "POSITION_REGISTRY", {"QB": reg})
     train = pd.DataFrame(
         {
             "player_id": ["A", "A", "B"],
@@ -248,6 +251,6 @@ def test_unknown_practice_uses_filtered_training_mean(monkeypatch):
         assert te.practice_status.tolist() == [1.5, 1.0]
         raise StopAfterPreparation
 
-    monkeypatch.setattr(core, "build_position_features", capture)
+    monkeypatch.setattr(frames, "build_position_features", capture)
     with pytest.raises(StopAfterPreparation):
-        core._apply_position_models(train, train.iloc[:0], test, "QB", pd.DataFrame())
+        frames.prepare_position_frame("QB", train, train.iloc[:0], test, reg)

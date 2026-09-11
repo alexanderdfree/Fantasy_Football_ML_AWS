@@ -122,12 +122,14 @@ def test_breakdown_degrades_on_stale_snapshot(client_with_data):
     results = app._cache["results"]
     drop = [c for c in results.columns if c.startswith(("pred_", "actual_"))]
     app._cache["results"] = results.drop(columns=drop)
+    stale = app._default_state.publish()
 
     resp = client_with_data.get("/api/predictions/breakdown?player_id=QB000&week=1")
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["unavailable"] is True
     assert body["components"] == []
+    assert resp.headers["X-FFP-Snapshot-Generation"] == stale.generation
 
 
 @pytest.mark.integration

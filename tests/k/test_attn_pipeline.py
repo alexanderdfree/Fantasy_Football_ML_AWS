@@ -177,7 +177,8 @@ def tuner_shape_pipeline_run(prepared_splits, tiny_kicks, outputs_dir):
     """Pipeline run matching what src/tuning/tune_nn.py does per Optuna trial:
     only the attention NN trains. Ridge / ElasticNet / LightGBM / base NN are
     gated off via cfg, which triggers the short-circuit early return in
-    run_pipeline that skips comparison / ranking / backtest / save artifacts.
+    run_pipeline that skips comparison / backtest / artifact and figure writes.
+    Available-family predictions, ranking and cohorts remain in the result.
     """
     train, val, test = prepared_splits
     cfg = _attn_config(tiny_kicks)
@@ -185,7 +186,19 @@ def tuner_shape_pipeline_run(prepared_splits, tiny_kicks, outputs_dir):
     cfg["train_elasticnet"] = False
     cfg["train_lightgbm"] = False
     cfg["train_base_nn"] = False
-    return run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
+
+    def downstream_effect(*args, **kwargs):
+        pytest.fail("Tuner short-circuit executed a full-pipeline downstream effect")
+
+    with pytest.MonkeyPatch.context() as patch:
+        for name in (
+            "print_comparison_table",
+            "run_weekly_simulation",
+            "save_artifacts",
+            "save_figures",
+        ):
+            patch.setattr(f"src.shared.pipeline.{name}", downstream_effect)
+        return run_pipeline("K", cfg, train.copy(), val.copy(), test.copy(), seed=42)
 
 
 @pytest.mark.e2e
@@ -197,10 +210,13 @@ def test_tuner_shape_returns_attn_history_and_skips_other_models(tuner_shape_pip
     """
     result = tuner_shape_pipeline_run
 
-    # Short-circuit fired: downstream artifacts not in the result.
-    assert "test_df" not in result, "short-circuit did not fire — downstream ran"
+    # The typed partial result retains only the family actually trained.
+    # The fixture fails directly if comparison/backtest/artifact effects run.
+    assert set(result["per_target_preds"]) == {"attn_nn"}
+    assert "pred_attn_nn_total" in result["test_df"]
+    assert np.isfinite(result["test_df"]["pred_attn_nn_total"]).all()
     assert "sim_results" not in result, "short-circuit did not fire — backtest ran"
-    assert "per_target_preds" not in result
+    assert result["model_bundle_ids"] == {}
 
     # Skipped models report None.
     assert result["ridge_metrics"] is None

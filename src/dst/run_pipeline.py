@@ -23,60 +23,45 @@ from src.dst.targets import compute_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
 from src.shared.position_pipeline import build_pipeline_config
 from src.shared.run_pipeline_factory import cli_main
+from src.training.context import runner_context
+from src.training.contracts import DatasetSplits
 
 CONFIG = build_pipeline_config("DST", POSITION_CONFIG)
 
 
-def run(seed=42, config=None):
-    """Run the DST pipeline. ``config`` lets callers (e.g.
-    ``src/tuning/tune_nn.py``) pass an overridden cfg dict per trial; mirrors
-    the RB/QB/WR/TE shape. Defaults to the module-level ``CONFIG`` when
-    omitted, preserving the existing caller contract.
-    """
-    # --- Build team-level D/ST data ---
+def provide_dataset(cfg, *, cross_validation=False) -> DatasetSplits:
+    """Supply team-level frames without flattening the DST data contract."""
     print("Building D/ST team-level data...")
-    dst_df = build_data()
-    print(f"  Built {len(dst_df)} team-week rows, {dst_df['team'].nunique()} teams")
-    print(f"  Seasons: {sorted(dst_df['season'].unique())}")
-
-    # Compute targets on full data (needed for feature computation)
-    dst_df = compute_targets(dst_df)
-
-    # Compute ALL features on full data before splitting
-    print("Computing D/ST features on full dataset...")
+    dst_df = compute_targets(build_data())
     compute_features(dst_df)
-
-    # --- Standard temporal split ---
-    train_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS)].copy()
-    val_df = dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
+    train_seasons = TRAIN_SEASONS + VAL_SEASONS if cross_validation else TRAIN_SEASONS
+    train_df = dst_df[dst_df["season"].isin(train_seasons)].copy()
+    val_df = None if cross_validation else dst_df[dst_df["season"].isin(VAL_SEASONS)].copy()
     test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
-    print(f"  Split sizes: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
+    return DatasetSplits(train_df, val_df, test_df, {})
 
-    # Explicit None check (not ``config or CONFIG``) so an empty dict ``{}``
-    # falls through to the caller's intent rather than silently reverting to
-    # CONFIG — matches K's pattern in src/k/run_pipeline.py.
+
+@runner_context
+def run(seed=42, config=None, *, context=None):
+    cfg = config if config is not None else CONFIG
+    dataset = provide_dataset(cfg)
     return run_pipeline(
-        "DST",
-        config if config is not None else CONFIG,
-        train_df,
-        val_df,
-        test_df,
-        seed,
+        "DST", cfg, *dataset.frames, seed, **({"context": context} if context is not None else {})
     )
 
 
-def run_cv(seed=42, config=None):
-    """Expanding-window CV for DST. Self-loads team-level data (like ``run()``),
-    then hands the full train+val frame plus a held-out 2025 test frame to the
-    shared CV pipeline. Defined as a module-level function (not a factory
-    closure) so the runpy-monkeypatch test pattern keeps working.
-    """
-    dst_df = build_data()
-    dst_df = compute_targets(dst_df)
-    compute_features(dst_df)
-    full_df = dst_df[dst_df["season"].isin(TRAIN_SEASONS + VAL_SEASONS)].copy()
-    test_df = dst_df[dst_df["season"].isin(TEST_SEASONS)].copy()
-    return run_cv_pipeline("DST", config if config is not None else CONFIG, full_df, test_df, seed)
+@runner_context
+def run_cv(seed=42, config=None, *, context=None):
+    cfg = config if config is not None else CONFIG
+    dataset = provide_dataset(cfg, cross_validation=True)
+    return run_cv_pipeline(
+        "DST",
+        cfg,
+        dataset.train,
+        dataset.test,
+        seed,
+        **({"context": context} if context is not None else {}),
+    )
 
 
 if __name__ == "__main__":

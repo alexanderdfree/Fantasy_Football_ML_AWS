@@ -25,13 +25,13 @@ on:
         description: "Random seed"
         default: "42"
       image_sha:
-        description: "Required full SHA of an already-built training image"
+        description: "Full 40-character source SHA of an already-built training image"
         required: true
         type: string
 
 concurrency:
   # Group keyed by the SHA the upstream image was built from (workflow_run)
-  # or the explicitly selected image SHA (workflow_dispatch). Different SHAs preserve the
+  # or the dispatch ref (workflow_dispatch). Different SHAs preserve the
   # Spot fan-out + cross-PR parallelism the original no-concurrency comment
   # intended; same-SHA duplicates serialize. GitHub Actions fires
   # workflow_run.completed multiple times per upstream completion (observed
@@ -44,13 +44,12 @@ concurrency:
   # ~1 min on detect/dedup-API-call rather than the full ~15 min. The
   # constrained warm-EC2 path keeps its own `train-ec2` cancel-in-progress
   # group; that decision lives with the constrained path.
-  group: train-batch-${{ github.event_name }}-${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
+  group: train-batch-${{ github.event_name }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
-  # Immutable identity across submit, completion-side publication, and collection.
   FF_BENCHMARK_RUN_ID: train-${{ github.run_id }}-${{ github.run_attempt }}
   # Serving ECS service, rolled after a successful train (see the ecs_rollout
   # job). PR #330 removed the post-train rollover on the theory that the
@@ -174,6 +173,8 @@ jobs:
           fi
 
   train:
+    outputs:
+      data_release: ${{ steps.build_plan.outputs.dataset_id }}
     needs: [detect, dedup_check]
     # Gate: (a) detect found something to train; (b) either a manual dispatch
     # (smoke-test break-glass, bypasses BATCH_ACTIVE), or the upstream image
@@ -254,30 +255,45 @@ jobs:
         # so two parallel train-batch runs (image A and image B, both
         # registered in the same window) submit against the same (latest)
         # revision, and the run triggered by image A can silently train image
-        # B's code. Manual dispatch requires image_sha and uses the same pin.
+        # B's code. Manual dispatch requires the same explicit image pin.
         id: revision
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}
           BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
         run: |
-          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "ERROR: supply image_sha as the full SHA of an already-built image." >&2
-            exit 1
-          fi
-          ARGS=(batch --sha "$HEAD_SHA" --bucket "$S3_BUCKET")
+          set -euo pipefail
+          args=(batch --sha "$HEAD_SHA" --bucket "$S3_BUCKET")
           if [ "${BATCH_SPLIT_ACTIVE,,}" = "true" ]; then
-            ARGS+=(--split)
+            args+=(--split)
           fi
-          python -m src.scripts.resolve_training_image "${ARGS[@]}"
+          python -m src.scripts.resolve_training_image "${args[@]}"
 
-      - name: Wait for compatible published training data
-        id: data-release
+      - name: Register image source and select immutable execution plan
+        id: build_plan
         timeout-minutes: 62
         env:
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          CODE_SHA: ${{ steps.revision.outputs.image_sha }}
+          GPU_REVISION: ${{ steps.revision.outputs.revision }}
+          CPU_REVISION: ${{ steps.revision.outputs.cpu_revision }}
+          SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
+          POSITIONS: ${{ needs.detect.outputs.positions }}
+          SEED: ${{ github.event.inputs.seed || '42' }}
         run: |
-          python -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
-            --revision "$HEAD_SHA" --timeout-seconds 3600 --pin-training
+          set -euo pipefail
+          gpu="ff-training-job${GPU_REVISION:+:$GPU_REVISION}"
+          args=(--bucket "$S3_BUCKET" --code-sha "$CODE_SHA"
+                --gpu-definition "$gpu" --positions $POSITIONS --seed "$SEED"
+                --timeout 3600 --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+                --output batch_build_plan.json)
+          if [ "${SPLIT_ACTIVE,,}" = "true" ]; then
+            args+=(--cpu-definition "ff-training-cpu-job${CPU_REVISION:+:$CPU_REVISION}")
+          fi
+          # Missing CODE_SHA on manual dispatch is inferred from the pinned
+          # image definition. Wait for that image's exact data-source tree;
+          # missing mappings, failed refreshes and timeouts block submission.
+          # The command registers full source ancestry and reserves publication
+          # intents before writing the plan shared by every split job/retry.
+          python -m src.orchestration.build_plan "${args[@]}"
 
       - name: Submit Batch jobs and wait
         id: train
@@ -303,6 +319,11 @@ jobs:
           # turned into a completed run (append + marker) instead of a
           # silently missing benchmark row.
           FF_BATCH_JOB_IDS_FILE: batch_job_ids.json
+          FF_REQUIRE_BUILD_PLAN: "1"
+          FF_BUILD_PLAN_ID: ${{ steps.build_plan.outputs.build_plan_id }}
+          FF_DATASET_ID: ${{ steps.build_plan.outputs.dataset_id }}
+          FF_DATA_RELEASE: ${{ steps.build_plan.outputs.dataset_id }}
+          FF_DATA_FORMAT: data-release-v1
           # Makes launch.py's _emit_batch_lifecycle_ledger write the W0
           # orchestration-vs-run breakdown (per-job queue_provision_s / run_s)
           # to the workspace; the "Persist Batch lifecycle ledger" step below
@@ -310,15 +331,17 @@ jobs:
           # has a durable baseline. Otherwise the ledger is log-only/ephemeral
           # (only the [timing] phase=batch_lifecycle CloudWatch lines survive).
           FF_BATCH_LIFECYCLE_FILE: batch_lifecycle.json
-          # Every event uses the exact revisions verified before the data gate.
+          # Empty when workflow_dispatch (no upstream image build to pin to);
+          # launch.py treats empty as "no revision" and falls back to name-only
+          # resolution (current behavior).
           FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
           FF_JOB_DEFINITION_CPU_REVISION: ${{ steps.revision.outputs.cpu_revision }}
           # The SHA the image being trained was built from. Threads through
           # launch.py → containerOverrides → train.py → benchmark_metrics.json,
           # so benchmark.py can warn when any position's recorded SHA diverges
-          # from the run's expected SHA. The required supplied source SHA is
-          # also checked against the actual pinned job-definition image.
-          FF_TRAIN_GIT_SHA: ${{ steps.revision.outputs.image_sha }}
+          # from the run's expected SHA. Manual dispatch without image_sha
+          # uses the resolved image tag, which may predate the runner checkout.
+          FF_TRAIN_GIT_SHA: ${{ steps.build_plan.outputs.git_sha }}
           # CUDA graphs autodetect ON in the container on the Batch GPU pool
           # (g6/L4 sm_89 primary, g5/A10G sm_86 fallback) —
           # cuda_graph_enabled() defaults on for sm_80+, so the fan-out is
@@ -336,6 +359,7 @@ jobs:
           # full eager). launch.py forwards it to the container only when set.
           FF_CUDA_GRAPH_FULL: ${{ vars.FF_BATCH_CUDA_GRAPH_FULL }}
           BATCH_SPLIT_ACTIVE: ${{ vars.BATCH_SPLIT_ACTIVE }}
+          EVENT_NAME: ${{ github.event_name }}
           SEED: ${{ github.event.inputs.seed || '42' }}
         run: |
           STARTED_AT=$(date +%s)
@@ -346,11 +370,11 @@ jobs:
             ""|*[!0-9]*) echo "Invalid seed: $SEED" >&2; exit 1 ;;
           esac
           # launch.py blocks on wait_for_jobs(); returns 0 only if all
-          # positions reach SUCCEEDED. --skip-upload because CI has no local
-          # data/splits/*.parquet — the splits in s3://ff-predictor-training/data/
-          # are refreshed out-of-band by a developer running launch.py from a
-          # workstation. Completing jobs publish the immutable history row;
-          # the later append step retrieves that same row for the git audit trail.
+          # positions reach SUCCEEDED. --skip-upload because CI selected an
+          # immutable dataset/build plan above; every container materializes
+          # that snapshot rather than reading the mutable legacy data/ prefix.
+          # Completing jobs publish the immutable run history; the later append
+          # step retrieves the same row for the git audit trail.
           PR_NUMBER=$(gh api "/repos/${GITHUB_REPOSITORY}/commits/${FF_TRAIN_GIT_SHA}/pulls" \
             --jq '.[0].number // empty' 2>/dev/null || true)
           LAUNCH_ARGS=(
@@ -364,15 +388,13 @@ jobs:
           split_active=$(echo "${BATCH_SPLIT_ACTIVE:-false}" | tr 'A-Z' 'a-z')
           if [ "$split_active" = "true" ]; then
             if [ -z "${FF_JOB_DEFINITION_CPU_REVISION:-}" ]; then
-              echo "ERROR: split mode requires a verified CPU job-definition revision." >&2
+              echo "ERROR: split mode requires the plan's pinned CPU revision." >&2
               exit 1
             fi
             export FF_JOB_DEFINITION_CPU="ff-training-cpu-job"
             export FF_JOB_QUEUE_CPU="ff-cpu-training-queue"
             split_sha="${FF_TRAIN_GIT_SHA:-$GITHUB_SHA}"
-            # The history ID includes the workflow attempt. A late branch
-            # from a timed-out attempt must not overwrite this attempt's staging.
-            SPLIT_RUN_ID="${split_sha}-${FF_BENCHMARK_RUN_ID}"
+            SPLIT_RUN_ID="${split_sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             LAUNCH_ARGS+=(--split --split-run-id "$SPLIT_RUN_ID")
             echo "Split Batch mode active: split_run_id=$SPLIT_RUN_ID"
           fi
@@ -397,7 +419,7 @@ jobs:
         if: steps.train.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          HEAD_SHA: ${{ steps.build_plan.outputs.git_sha }}
         run: |
           set -u
           recovered=false
@@ -467,7 +489,7 @@ jobs:
         # file-existence guard below skips cleanly.
         if: always()
         env:
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          HEAD_SHA: ${{ steps.build_plan.outputs.git_sha }}
         run: |
           if [ ! -f batch_lifecycle.json ]; then
             echo "No batch_lifecycle.json — launch.py wrote no ledger (no jobs reached terminal state); skipping."
@@ -480,61 +502,26 @@ jobs:
             echo "::warning::could not upload batch_lifecycle.json to S3 (instrumentation only — continuing)"
           fi
 
-      - name: Verify model artifact freshness
-        # Anchor on when training STARTED, not "now" — Spot parallelism makes
-        # this less likely to false-trip than the sequential EC2 path, but
-        # the same logic protects against e.g. a chronically retrying job
-        # whose artifact predates this run.
+      - name: Verify exact published build artifacts
         if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
         env:
-          POSITIONS: ${{ needs.detect.outputs.positions }}
-          FF_MODEL_S3_PREFIX: models
+          FF_BUILD_PLAN_ID: ${{ steps.build_plan.outputs.build_plan_id }}
         run: |
-          train_started_at="${{ steps.train.outputs.started_at }}"
-          # An empty anchor means the train step never recorded started_at
-          # (it exited before the `echo ... >> GITHUB_OUTPUT` line). Without
-          # this guard, the `age=$(( train_started_at - lm_ts ))` arithmetic
-          # below treats "" as 0, every artifact's age goes negative, the
-          # STALE check (age > 1200) is never tripped, and the gate
-          # false-passes a run whose freshness was never actually verified.
-          # Fail loud instead. (Kept as an explicit check rather than
-          # `set -eu` so the loop's `fail=1` accumulation + `exit $fail`
-          # tail semantics are unchanged.)
-          if [ -z "$train_started_at" ]; then
-            echo "ERROR: train step did not emit started_at — cannot verify artifact freshness." >&2
-            exit 1
-          fi
-          echo "| Position | Status | LastModified | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|--------|--------------|-----------|" >> "$GITHUB_STEP_SUMMARY"
-          model_prefix="${FF_MODEL_S3_PREFIX:-models}"
-          model_prefix="${model_prefix#/}"
-          model_prefix="${model_prefix%/}"
-          if [ -z "$model_prefix" ]; then model_prefix="models"; fi
-          fail=0
-          for POS in $POSITIONS; do
-            # Anchor on manifest.json — it's the atomic last write of
-            # src.batch.train.upload_artifacts. The legacy models/{POS}/model.tar.gz
-            # mirror was removed by the parallel-Batch race fix (commits
-            # f65bcbe + be56b0d); checking it would trip STALE on every run.
-            META=$(aws s3api head-object \
-              --bucket "$S3_BUCKET" \
-              --key "${model_prefix}/$POS/releases/manifest.json" \
-              --region "$AWS_REGION" 2>/dev/null || echo '{}')
-            LM=$(echo "$META" | jq -r '.LastModified // empty')
-            SZ=$(echo "$META" | jq -r '.ContentLength // 0')
-            if [ -z "$LM" ]; then
-              echo "| $POS | MISSING | — | — |" >> "$GITHUB_STEP_SUMMARY"
-              fail=1
-              continue
-            fi
-            lm_ts=$(date -d "$LM" +%s)
-            age=$(( train_started_at - lm_ts ))
-            status="OK"
-            if [ "$age" -gt 1200 ]; then status="STALE (${age}s before train start)"; fail=1; fi
-            mb=$(awk "BEGIN{printf \"%.1f\", $SZ/1048576}")
-            echo "| $POS | $status | $LM | $mb |" >> "$GITHUB_STEP_SUMMARY"
-          done
-          exit $fail
+          python -m src.artifacts.receipts --bucket "$S3_BUCKET" --plan-id "$FF_BUILD_PLAN_ID"
+
+      - name: Build and publish serving cache from verified artifacts
+        if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
+        env:
+          FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
+          FF_MODEL_S3_PREFIX: models
+          FF_BUILD_PLAN_ID: ${{ steps.build_plan.outputs.build_plan_id }}
+          FF_TRAIN_GIT_SHA: ${{ steps.build_plan.outputs.git_sha }}
+          FF_DATASET_ID: ${{ steps.build_plan.outputs.dataset_id }}
+          FF_DATA_RELEASE: ${{ steps.build_plan.outputs.dataset_id }}
+          FF_DATA_FORMAT: data-release-v1
+          FF_DEVICE: cpu
+          FF_ALLOW_RUNTIME_INFERENCE: "1"
+        run: python -m src.prediction.build_snapshot
 
       - name: Append Batch run to benchmark_history/
         # Mirrors the JSON to s3://{bucket}/models/benchmark_history/ (see
@@ -546,6 +533,7 @@ jobs:
         # ecs_rollout) so the JSON is in S3 by the time the rollover boots.
         if: steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true'
         env:
+          FF_BUILD_PLAN_ID: ${{ steps.build_plan.outputs.build_plan_id }}
           GH_TOKEN: ${{ github.token }}
           FF_MODEL_S3_BUCKET: ${{ env.S3_BUCKET }}
           FF_MODEL_S3_PREFIX: models
@@ -570,7 +558,7 @@ jobs:
           # path filters look safe; routing through env vars makes the value
           # a normal shell variable that downstream commands can quote.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          HEAD_SHA: ${{ steps.build_plan.outputs.git_sha }}
         run: |
           PR_NUMBER=""
           if [ -n "$HEAD_SHA" ]; then
@@ -600,8 +588,10 @@ jobs:
           # FF_TRAIN_GIT_SHA stamps into each position's metrics, so the
           # recorded ``git_hash`` matches benchmark.py's per-position
           # coherency check (find_git_sha_divergence) instead of
-          # false-flagging divergence. Manual dispatch uses the resolved
-          # image SHA too. See TODO.md "Benchmark git_hash recorded the wrong
+          # false-flagging divergence. Empty under workflow_dispatch (no
+          # upstream image build); benchmark.py then falls back to the
+          # workspace HEAD via get_git_hash(), which is correct for a
+          # manual run. See TODO.md "Benchmark git_hash recorded the wrong
           # SHA on rapid back-to-back merges" archive entry.
           # Hardware label for the History tab is DERIVED AT RUNTIME by
           # src/batch/benchmark.py from the gpu_name + cuda_graph_active fields
@@ -627,8 +617,7 @@ jobs:
             --note "Batch Spot auto-run (${NOTE_SHA})" \
             --git-hash "$HEAD_SHA" \
             "${PR_ARGS[@]}"
-          # Only history is committed below. Keep the tracked convenience
-          # table clean so a concurrent push can safely retry git pull --rebase.
+          # Keep the tracked convenience table out of the history-only commit.
           git restore --worktree benchmark_results.json
 
       - name: Commit and push benchmark_history/
@@ -636,7 +625,7 @@ jobs:
         env:
           # Same env-indirection rationale as the previous step.
           BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          HEAD_SHA: ${{ steps.build_plan.outputs.git_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -699,7 +688,7 @@ jobs:
           github.event_name != 'workflow_dispatch' &&
           (steps.train.outcome == 'success' || steps.recover.outputs.recovered == 'true')
         env:
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           printf '%s\n' "${GITHUB_RUN_ID}" | aws s3 cp - \
             "s3://${S3_BUCKET}/train-success-markers/${HEAD_SHA}.txt" \
@@ -715,161 +704,50 @@ jobs:
         # skips, exactly as before the recovery flow existed.)
         if: steps.train.outcome == 'failure' && steps.recover.outputs.recovered != 'true'
         env:
-          HEAD_SHA: ${{ steps.revision.outputs.image_sha }}
+          HEAD_SHA: ${{ steps.build_plan.outputs.git_sha }}
         run: |
           echo "::error::Training for ${HEAD_SHA::7} did not complete within the wait + recovery window — failing the run. See the recovery step's tracking issue."
           exit 1
 
   ecs_rollout:
-    # Force a rolling redeploy of the serving service so the freshly promoted
-    # stable artifacts are loaded by a clean boot-time sync_models_from_s3,
-    # rather than relying on the best-effort in-flight poller. This is the
-    # correctness backstop the poller alone failed to provide for an
-    # architecture-changing retrain (see the ECS_CLUSTER note in `env:` + the
-    # 2026-06-15 attn-NN incident in TODO.md). Its own job (needs: train) so
-    # the rolling-deploy wait stays off the critical path of the benchmark
-    # commit + dedup marker, exactly like warm_cache. NOT continue-on-error:
-    # a new task that can't load the new artifacts must redden the run here
-    # instead of silently serving NaN preds.
+    # A complete cache generation, its data release, and the deployed recipe
+    # are verified together before changing ECS or ALB state.
     needs: train
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: deploy-fantasy-service
+      cancel-in-progress: false
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v7
       - name: Configure AWS credentials
-        # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c  # v6.2.4
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Refresh ECS service to pick up new model + benchmark artifacts
-        # Boot-time sync_models_from_s3 / sync_benchmark_history_from_s3 only run
-        # when an ECS task starts, so freshly promoted stable pointers in S3 are
-        # invisible to a long-running task until it recycles. force-new-deployment
-        # re-runs both syncs on a clean boot (same image, new task). We then poll
-        # the PRIMARY deployment until it settles (running==desired, single
-        # deployment) so a task that fails to load the new artifacts surfaces here
-        # (rolloutState=FAILED → loud red) instead of silently serving NaN preds.
-        # This REPLACES `aws ecs wait services-stable`, whose hardcoded 40×15s =
-        # 10-min ceiling false-RED a healthy-but-slow roll (8 GB task + 6-position
-        # model load + post_fork warm routinely exceeds 10 min; e.g. the condq
-        # retrain ac3686f, #1234) — a false red trains operators to ignore the very
-        # signal this job exists to make loud. Longer ceiling + FAILED-fast keeps
-        # real bad reloads loud; a /health fallback on timeout keeps a slow-but-
-        # serving roll green. Idempotent when no stable advanced. Only smoke-passed
-        # artifacts ever become stable (artifact_gc.py), so the rollover can't
-        # promote a broken model.
+      - name: Advance verified serving data release
+        env:
+          DATA_RELEASE: ${{ needs.train.outputs.data_release }}
         run: |
-          set -euo pipefail
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --region "$AWS_REGION" \
-            --force-new-deployment \
-            --no-cli-pager > /dev/null
-          roll_timeout=1500   # 25 min; services-stable's built-in 10 min was too short
-          deadline=$(( $(date +%s) + roll_timeout ))
-          while :; do
-            out=$(aws ecs describe-services \
-                    --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --region "$AWS_REGION" \
-                    --query "services[0].[deployments[?status=='PRIMARY'].rolloutState | [0], deployments[?status=='PRIMARY'].runningCount | [0], deployments[?status=='PRIMARY'].desiredCount | [0], deployments[?status=='PRIMARY'].pendingCount | [0], length(deployments)]" \
-                    --output text 2>/dev/null || true)
-            read -r rollout running desired pending ndeploy <<<"$out" || true
-            echo "[roll] rolloutState=${rollout:-?} running=${running:-?}/${desired:-?} pending=${pending:-?} active_deployments=${ndeploy:-?}"
-            if [ "${rollout:-}" = "FAILED" ]; then
-              echo "::error::ECS deployment rolloutState=FAILED — serving did not reload the new artifacts cleanly."
-              exit 1
-            fi
-            # services-stable's own definition: only the PRIMARY deployment remains,
-            # all tasks running, none pending.
-            if [ "${ndeploy:-}" = "1" ] && [ -n "${running:-}" ] && [ "${running}" != "None" ] \
-               && [ "${running}" = "${desired:-}" ] && [ "${pending:-}" = "0" ]; then
-              echo "[roll] settled — single PRIMARY deployment, running=${running}/${desired}, pending=0."
-              break
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SERVICE_URL/health" || echo 000)
-              if [ "$code" = "200" ]; then
-                echo "::warning::Rollout slow (rolloutState=${rollout:-?}, running=${running:-?}/${desired:-?}) after ${roll_timeout}s, but ${SERVICE_URL}/health=200 — treating as healthy. Investigate if this recurs."
-                break
-              fi
-              echo "::error::Rollout did not settle within ${roll_timeout}s and ${SERVICE_URL}/health=${code}."
-              exit 1
-            fi
-            sleep 15
-          done
+          python3 -m src.scripts.advance_data_release --bucket "$S3_BUCKET" \
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --release-id "$DATA_RELEASE" \
+            --state data-release-rollout.json --timeout 1200
+      - name: Restore interrupted serving rollout
+        if: failure() || cancelled()
+        run: |
+          if [ -f data-release-rollout.json ]; then
+            python3 -m src.artifacts.deployment restore --state data-release-rollout.json
+          fi
 
-  # Post-train serving-cache warm — split out of the `train` job (was its
-  # next-to-last step) so its up-to-180s fingerprint poll no longer sits on
-  # the critical path ahead of the benchmark-history commit and the dedup
-  # success-marker write. Those land in `train`; this best-effort warm runs
-  # after ecs_rollout (needs: [train, ecs_rollout]) so it warms the FRESH
-  # tasks the rollover just started rather than ones about to drain. It needs
-  # nothing AWS-side (no creds / no checkout) — just an HTTPS GET to
-  # SERVICE_URL/warm through the ALB, exactly like a user request — so a bare
-  # ubuntu runner with the inherited workflow-level SERVICE_URL env suffices.
   warm_cache:
+    # Workers hydrate the verified artifact; serving performs no training-data
+    # rebuild or model inference. The release-aware rollout has already passed.
     needs: [train, ecs_rollout]
     runs-on: ubuntu-latest
     steps:
-      - name: Warm serving cache
-        # Move the post-retrain recompute off the user request path. ecs_rollout
-        # already started fresh tasks that boot-synced the new stable models and
-        # pre-warmed (post_fork); this step spreads /warm across their gunicorn
-        # workers so each one's _ensure_metrics() (the same compute the first
-        # /api/predictions a user makes would run) recomputes predictions +
-        # re-uploads the S3 cache (D14) before real traffic — so any later
-        # container hydrates instantly. A CI runner eats that 30-60s, not a real
-        # visitor. (The in-flight poller, FF_MODEL_REFRESH_INTERVAL_S, remains the
-        # between-train fast-path; the rollover above is the per-train guarantee.)
-        #
-        # Best-effort: a warm miss must never fail the train workflow. The
-        # existing post_fork pre-warm + lazy compute paths are the backstop.
-        # As its own job this is doubly decoupled — even a hung poll can't
-        # delay the marker/commit, which already completed in `train`.
-        continue-on-error: true
+      - name: Check published serving readiness
         run: |
-          warm_url="${SERVICE_URL%/}/warm"
-          echo "Warming $warm_url"
-          # Baseline fingerprint before the running tasks swap in the new
-          # models. This first probe may itself take 30-60s if it lands on a
-          # cold / just-refreshed worker — that's the point: a runner pays it.
-          baseline=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
-          echo "baseline fingerprint: ${baseline:-<none>}"
-          # Poll until the content-based fingerprint advances past baseline
-          # (confirms the poller swapped the freshly-trained models and a
-          # worker recomputed + re-uploaded the S3 cache), bounded so a no-op
-          # run (e.g. baseline already current) can't hang the job.
-          deadline=$(( $(date +%s) + 180 ))
-          advanced=""
-          while [ "$(date +%s)" -lt "$deadline" ]; do
-            sleep 15
-            current=$(curl -fsS --max-time 150 "$warm_url" | jq -r '.fingerprint // empty' || true)
-            echo "  probe fingerprint: ${current:-<none>}"
-            if [ -n "$current" ] && [ -n "$baseline" ] && [ "$current" != "$baseline" ]; then
-              advanced="$current"
-              break
-            fi
-          done
-          if [ -n "$advanced" ]; then
-            echo "fingerprint advanced to $advanced — new models live, cache rebuilt."
-          else
-            echo "fingerprint stable at ${baseline:-<none>} (already current, or no model change) — spreading warm anyway."
-          fi
-          # Spread the warm across the desiredCount=2 tasks' gunicorn workers;
-          # the ALB distributes these GETs, so each call may land on a
-          # different not-yet-warm worker and trigger its recompute + upload.
-          # Fire them CONCURRENTLY: same 12-call coverage, but the step's
-          # wall-clock collapses from sum(calls) to ~max(call). gunicorn's
-          # per-worker request serialization still bounds in-flight recomputes
-          # to the worker count, so concurrency doesn't add memory pressure —
-          # it only removes the round-trip serialization on a best-effort
-          # post-train step that just holds the CI runner. Each curl keeps its
-          # own --max-time + `|| true`, and `wait` reaps them all (this step is
-          # continue-on-error, so a slow worker can't fail the workflow).
-          for _ in $(seq 1 12); do
-            curl -fsS --max-time 150 "$warm_url" \
-              | jq -c '{fingerprint, rows, elapsed_s, degraded_positions}' || true &
-          done
-          wait
+          curl -fsS --retry 3 --retry-delay 5 --max-time 30 "${SERVICE_URL%/}/ready"

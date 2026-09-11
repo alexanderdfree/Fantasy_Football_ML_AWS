@@ -103,6 +103,50 @@ def test_cohorts_have_distinct_definitions_and_shared_component_errors():
     assert block["weekly_actual_top24"]["models"]["Ridge"]["hit_rate"] == 1
 
 
+def test_reference_reader_isolated_by_run_context_and_explicit_directory(tmp_path):
+    from src.shared import evaluation_cohorts as cohorts
+    from src.training.context import RunContext, use_context
+
+    first = RunContext(tmp_path / "out-one", tmp_path / "data-one")
+    second = RunContext(tmp_path / "out-two", tmp_path / "data-two")
+    for context in (first, second):
+        context.raw_root.mkdir(parents=True)
+    reference().to_parquet(first.raw_root / cohorts.REFERENCE_FILENAME)
+    reversed_reference = reference().assign(reference_rank=np.arange(30, 0, -1))
+    reversed_reference.to_parquet(second.raw_root / cohorts.REFERENCE_FILENAME)
+    data = frame()
+    data["pred_ridge_total"] = data["fantasy_points"] + np.arange(len(data))
+    with use_context(first):
+        one = build_cohorts("WR", data)["weekly_reference_top24"]
+        assert cohorts.reference_path().parent == first.raw_root
+        explicit = build_cohorts("WR", data, reference_dir=second.raw_root)[
+            "weekly_reference_top24"
+        ]
+    with use_context(second):
+        two = build_cohorts("WR", data)["weekly_reference_top24"]
+    assert one["cohort_hash"] != two["cohort_hash"]
+    assert one["models"]["Ridge"]["mae"] == 11.5
+    assert two["models"]["Ridge"]["mae"] == 17.5
+    assert explicit == two
+
+
+def test_missing_run_reference_never_falls_back_to_ambient_cache(tmp_path, monkeypatch):
+    from src.shared import evaluation_cohorts as cohorts
+    from src.training.context import RunContext, use_context
+
+    ambient = tmp_path / "ambient"
+    ambient.mkdir()
+    reference().to_parquet(ambient / cohorts.REFERENCE_FILENAME)
+    monkeypatch.setattr(cohorts, "CACHE_DIR", str(ambient))
+    assert cohorts.load_reference() is not None
+    context = RunContext(tmp_path / "outputs", tmp_path / "missing-inputs")
+    with use_context(context):
+        assert cohorts.load_reference() is None
+        result = build_cohorts("WR", frame())["weekly_reference_top24"]
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "reference_artifact_missing"
+
+
 def test_missing_reference_and_prior_information_are_explicit(monkeypatch):
     monkeypatch.setattr("src.shared.evaluation_cohorts.load_reference", lambda: None)
     block = build_cohorts("WR", frame().drop(columns="prior_season_mean_shared_component_points"))

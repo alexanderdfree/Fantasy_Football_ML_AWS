@@ -10,7 +10,9 @@ with a shrunk NN (1 layer x 8 units, 1 epoch) and asserts:
     NN: exact equality — one-epoch training with torch.manual_seed is
     deterministic on CPU)
 
-Targets <20 s total wall clock. Verified via --durations=10.
+The timed pipeline retains its 40-second budget. Synthetic feature preparation
+is outside that measurement and shares a 180-second whole-test allowance with
+the other training smoke tests.
 
 This exercises the orchestration layer: filter_to_position -> compute_targets ->
 add_specific_features -> fill_nans -> Ridge CV tuning -> Ridge fit ->
@@ -188,7 +190,8 @@ def pipeline_run(synthetic_splits, tmp_path_factory):
     """Single pipeline invocation shared across tests (saves ~6s per test)."""
     workdir = tmp_path_factory.mktemp("qb_e2e_run1")
     t0 = time.time()
-    result = _run_once(synthetic_splits, workdir, seed=42)
+    # Timing belongs to this fixture; keep the pipeline's typed result immutable.
+    result = _run_once(synthetic_splits, workdir, seed=42).copy()
     result["_elapsed"] = time.time() - t0
     return result
 
@@ -204,7 +207,11 @@ def pipeline_run_repeat(synthetic_splits, pipeline_run, tmp_path_factory):
 
 
 @pytest.mark.e2e
+@pytest.mark.timeout(180)
 class TestQBPipelineE2E:
+    # pytest-timeout includes the synthetic_splits fixture. A passing CI run
+    # spent 51 seconds in setup, and slower workers exited at the global 60s
+    # limit before assertions ran. Keep the pipeline's 40s assertion below.
     def test_pipeline_runs_without_exception(self, pipeline_run):
         """Smoke: run_pipeline must complete end-to-end on tiny synthetic data."""
         assert pipeline_run["_elapsed"] < 40.0, (

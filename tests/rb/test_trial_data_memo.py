@@ -17,6 +17,8 @@ from __future__ import annotations
 import os
 import tempfile
 
+import numpy as np
+import pandas as pd
 import pytest
 
 import src.shared.pipeline as pipeline_mod
@@ -180,3 +182,157 @@ def test_splits_stat_key_tracks_file_changes(monkeypatch, tmp_path):
     assert pipeline_mod._splits_stat_key() == key1
     (tmp_path / "val.parquet").write_bytes(b"xy")  # size change
     assert pipeline_mod._splits_stat_key() != key1
+
+
+@pytest.mark.unit
+def test_splits_stat_key_catches_preserved_mtime_and_directory_change(monkeypatch, tmp_path):
+    for name in ("train.parquet", "val.parquet", "test.parquet"):
+        (tmp_path / name).write_bytes(b"x")
+    monkeypatch.setattr(pipeline_mod, "SPLITS_DIR", str(tmp_path))
+    before = pipeline_mod._splits_stat_key()
+    path = tmp_path / "train.parquet"
+    stat = path.stat()
+    path.write_bytes(b"y")
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert pipeline_mod._splits_stat_key() != before
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("change", ["feature_order", "side_input", "disable"])
+def test_prepared_memo_invalidates_recipe_and_honors_disable(monkeypatch, change):
+    class PreparedBoundary(Exception):
+        pass
+
+    class Prepared:
+        def __iter__(self):
+            raise PreparedBoundary
+
+    cfg = _tiny_attn_config({})
+    columns = ["a", "b"]
+    cfg["get_feature_columns_fn"] = lambda: list(columns)
+    side_inputs = {"schedule": "one"}
+    monkeypatch.setattr(
+        pipeline_mod.feature_cache, "_side_input_fingerprint", lambda: dict(side_inputs)
+    )
+    monkeypatch.setattr(pipeline_mod, "_splits_stat_key", lambda: ("same files",))
+    monkeypatch.delenv("FF_FEATURE_CACHE_DISABLE", raising=False)
+    reads, preparations = [], []
+
+    def read(path):
+        reads.append(path)
+        return pd.DataFrame({"a": [1.0], "b": [2.0]})
+
+    def prepare(*args):
+        preparations.append(1)
+        return Prepared()
+
+    monkeypatch.setattr(pipeline_mod, "_read_split", read)
+    monkeypatch.setattr(pipeline_mod, "_prepare_position_data", prepare)
+
+    def run_to_preparation():
+        with pytest.raises(PreparedBoundary):
+            pipeline_mod.run_pipeline("RB", cfg)
+
+    run_to_preparation()
+    run_to_preparation()
+    assert len(reads) == 3 and len(preparations) == 1
+    if change == "feature_order":
+        columns.reverse()
+    elif change == "side_input":
+        side_inputs["schedule"] = "two"
+    else:
+        monkeypatch.setenv("FF_FEATURE_CACHE_DISABLE", "1")
+    run_to_preparation()
+    assert len(reads) == 6 and len(preparations) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("change", ["frame_value", "disable"])
+def test_attention_memo_uses_frame_content_and_honors_disable(monkeypatch, change):
+    cfg = _tiny_attn_config({})
+    cfg.update(
+        attn_history_stats=["a"],
+        opp_attn_history_stats=[],
+        attn_static_features=["a"],
+        attn_static_from_df=False,
+    )
+    cfg["get_feature_columns_fn"] = lambda: ["a"]
+    monkeypatch.delenv("FF_FEATURE_CACHE_DISABLE", raising=False)
+    calls = []
+
+    def history(frame, **kwargs):
+        calls.append(1)
+        return frame[["a"]].to_numpy()[:, None, :], np.ones((len(frame), 1), dtype=bool)
+
+    # Stop at the model boundary: exercise the real memo branch without training.
+    monkeypatch.setattr(pipeline_mod, "build_game_history_arrays", history)
+    monkeypatch.setattr(pipeline_mod, "_train_attention_nn", lambda *args, **kwargs: (None,) * 5)
+    frame = pd.DataFrame({"a": [1.0, 2.0]})
+
+    def run_attention():
+        matrix = frame[["a"]].to_numpy()
+        return pipeline_mod._train_attention_holdout(
+            "RB",
+            cfg,
+            [],
+            42,
+            matrix,
+            matrix,
+            matrix,
+            {},
+            {},
+            {},
+            frame,
+            frame,
+            frame,
+            ["a"],
+            (frame, frame, frame),
+        )
+
+    run_attention()
+    run_attention()
+    assert len(calls) == 3
+    if change == "frame_value":
+        frame.loc[0, "a"] = 5.0
+    else:
+        monkeypatch.setenv("FF_FEATURE_CACHE_DISABLE", "1")
+    run_attention()
+    assert len(calls) == 6
+
+
+@pytest.mark.e2e
+@pytest.mark.timeout(300)
+def test_explicit_output_roots_preserve_predictions_without_chdir(synthetic_splits, tmp_path):
+    from dataclasses import replace
+    from pathlib import Path
+
+    from src.training.context import RunContext
+    from src.training.contracts import PreparedDataset, TrainingResult
+
+    original = Path.cwd()
+    cfg = _tiny_attn_config(None)
+    base = replace(RunContext.defaults(), report_sink=None)
+    first = pipeline_mod.run_pipeline(
+        "RB",
+        cfg,
+        *(frame.copy() for frame in synthetic_splits),
+        context=replace(base, output_root=tmp_path / "first"),
+    )
+    second = pipeline_mod.run_pipeline(
+        "RB",
+        cfg,
+        *(frame.copy() for frame in synthetic_splits),
+        context=replace(base, output_root=tmp_path / "second"),
+    )
+    assert Path.cwd() == original
+    assert isinstance(first, TrainingResult)
+    assert isinstance(first.prepared, PreparedDataset)
+    assert first.prepared.data_id == second.prepared.data_id
+    assert first.prepared.train.attrs["prepared_data_id"] == first.prepared.data_id
+    for family, predictions in first.predictions.items():
+        for target, expected in predictions.items():
+            np.testing.assert_array_equal(second.predictions[family][target], expected)
+    for name in ("first", "second"):
+        model_dir = tmp_path / name / "rb" / "outputs" / "models"
+        assert (model_dir / "nn.bundle.json").is_file()
+        assert (model_dir / "attn_nn.bundle.json").is_file()

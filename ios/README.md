@@ -45,8 +45,10 @@ loopback cleartext without weakening production TLS. See `Networking/AppConfig.s
   shared `Position` / `ScoringFormat` / `PredictionModel`, which centralizes the
   three key conventions the API uses for each model).
 - `Networking/` — `APIClient` (actor) + typed `Endpoint`s; `URLCache` for response
-  caching. `Persistence/SnapshotCache` keeps the last snapshot on disk for an
-  instant / offline first paint.
+  caching. Stores accept `APIProviding`, allowing isolated transport tests.
+  `Persistence/SnapshotCache` keeps the last snapshot on disk for an instant
+  offline first paint. A failed refresh retains and labels the saved data;
+  successful live fallback replaces it.
 - `Stores/` — one `@Observable` store per screen; `AppState` holds the global
   scoring + model-display toggles (persisted to `UserDefaults`, same keys as the
   web's `localStorage`).
@@ -61,8 +63,22 @@ and charts use **Swift Charts**.
 
 ## Tests
 
-`Tests/DecodingTests.swift` decodes every model against real captured payloads in
-`Tests/Fixtures/*.json` (refresh them with `curl https://fantasy.alexfree.me/api/...`).
+`Tests/DecodingTests.swift` decodes every model against fixtures in
+`Tests/Fixtures/*.json`. Older captured payloads retain backward-compatibility
+coverage. `comparison_current.json` is generated through the local Flask route
+with synthetic data, covering all six positions, ESPN, zero metrics, source
+exclusions, and incomplete reference/forecast coverage. Regenerate or verify it
+from the repository root without contacting production:
+
+```bash
+python -m ios.scripts.generate_comparison_fixture
+python -m ios.scripts.generate_comparison_fixture --check
+python -m ios.scripts.generate_client_fixtures --check
+```
+
+The comparison screen presents the API's sample basis, scoring components,
+cohort definitions, and coverage. Older cached responses without those fields
+show that the metadata is unavailable rather than assuming current semantics.
 Run with **⌘U** in Xcode or:
 
 ```bash
@@ -73,6 +89,12 @@ xcodebuild -project FFPredictor.xcodeproj -scheme FFPredictor \
 ```
 
 This is the layer that's verifiable without the UI.
+
+`bash ios/scripts/test.sh` from the repository root builds the real app and runs
+all decoding, transport, and store tests on an available iPhone simulator. The
+generated test app points to localhost, so startup tasks cannot call production.
+The client accepts the API's v1 version header and legacy responses without a
+header, and rejects unknown major versions before decoding.
 
 ## App Store v1
 

@@ -18,10 +18,8 @@ Consolidates three pieces of glue that both test files need:
    dataset via their loaders and takes a recent slice.
 
 3. ``run_pipeline_in_tmp(position, cfg, splits, tmp_path, seed)`` —
-   chdir into ``tmp_path`` with a symlink to ``data/`` so the pipeline
-   finds schedule parquets, runs ``run_pipeline``, and restores cwd.
-   Required because the pipeline hard-codes ``{POS}/outputs`` for model
-   saves and would otherwise clobber the checked-in outputs tree.
+   pass an explicit RunContext output root, preserving the configured raw-data
+   location and process cwd.
 
 Ensures project root is on ``sys.path`` so tests run from any cwd.
 """
@@ -275,30 +273,14 @@ def run_pipeline_in_tmp(
     tmp_path: Path,
     seed: int = 42,
 ) -> dict:
-    """Run ``src.shared.pipeline.run_pipeline`` inside ``tmp_path``.
+    """Run the pipeline with explicit output ownership and unchanged process cwd."""
+    from dataclasses import replace
 
-    The pipeline hard-codes ``{POS}/outputs`` for artifact saves. We chdir
-    into a tmp workspace and symlink ``data/`` so schedule parquet reads
-    keep working without polluting the checked-in outputs directory.
-    """
     from src.shared.pipeline import run_pipeline
+    from src.training.context import RunContext
 
     train_df, val_df, test_df = splits
-    tmp_path = Path(tmp_path)
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    cwd = os.getcwd()
-    try:
-        os.chdir(tmp_path)
-        data_link = tmp_path / "data"
-        if not data_link.exists():
-            data_link.symlink_to(Path(cwd) / "data", target_is_directory=True)
-        return run_pipeline(
-            position,
-            cfg,
-            train_df.copy(),
-            val_df.copy(),
-            test_df.copy(),
-            seed=seed,
-        )
-    finally:
-        os.chdir(cwd)
+    context = replace(RunContext.defaults(seed=seed), output_root=tmp_path)
+    return run_pipeline(
+        position, cfg, train_df.copy(), val_df.copy(), test_df.copy(), context=context
+    )

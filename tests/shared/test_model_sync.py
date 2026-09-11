@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
+import tarfile
 import threading
 import time
 from pathlib import Path
@@ -25,10 +27,10 @@ from tests.shared._helpers import make_tarball as _make_tarball
 def _manifest_bytes(
     current_key: str,
     previous_key: str | None = None,
-    stable_key: str | None = None,
+    stable_key: str | None = "__current__",
     sha7: str = "abc1234",
     bytes_: int = 4096,
-    schema_version: int = 2,
+    schema_version: int = 3,
 ) -> bytes:
     """Build a well-formed manifest.json body pointing at the given keys.
 
@@ -41,6 +43,8 @@ def _manifest_bytes(
     exercised. ``schema_version=2`` includes ``stable`` (None unless
     ``stable_key`` is set).
     """
+    if stable_key == "__current__":
+        stable_key = current_key
     current = {
         "key": current_key,
         "sha7": sha7,
@@ -71,6 +75,8 @@ def _manifest_bytes(
                 "uploaded_at": "2026-04-21T00-00-00Z",
             }
         body["stable"] = stable
+    if schema_version >= 3:
+        body["previous_stable"] = previous
     return json.dumps(body).encode("utf-8")
 
 
@@ -107,11 +113,90 @@ class _FakeS3:
         self.calls.append((Bucket, Key))
         if Key not in self._objects:
             raise _nosuchkey_error(Key)
-        return {"Body": _FakeBody(self._objects[Key])}
+        return {
+            "Body": _FakeBody(self._objects[Key]),
+            "ETag": hashlib.sha256(self._objects[Key]).hexdigest(),
+        }
 
     def get_paginator(self, op: str):
         assert op == "list_objects_v2"
         return _FakePaginator(self._objects)
+
+
+@pytest.mark.unit
+def test_protected_writer_keys_are_disjoint_from_legacy_storage():
+    assert model_sync.manifest_key("models", "QB") == "models/releases/v3/QB/manifest.json"
+    assert model_sync.history_prefix("models", "QB") == "models/releases/v3/QB/history/"
+    assert model_sync.legacy_manifest_key("models", "QB") == "models/QB/manifest.json"
+    assert (
+        model_sync.manifest_key("sandbox/alex", "K") == "sandbox/alex/releases/v3/K/manifest.json"
+    )
+
+
+@pytest.mark.unit
+def test_boot_reader_prefers_protected_manifest_over_valid_legacy(tmp_path):
+    protected = "models/releases/v3/QB/history/current/model.tar.gz"
+    legacy = "models/QB/history/old/model.tar.gz"
+    legacy_manifest = model_sync.legacy_manifest_key("models", "QB")
+    fake = _FakeS3(
+        {
+            model_sync.manifest_key("models", "QB"): _manifest_bytes(protected),
+            legacy_manifest: _manifest_bytes(legacy),
+            protected: _make_tarball({"marker": b"protected"}),
+            legacy: _make_tarball({"marker": b"legacy"}),
+        }
+    )
+    result = model_sync._sync_one(fake, "bucket", "models", "QB", tmp_path)
+    assert result["key"] == protected
+    assert (tmp_path / "src/qb/outputs/models/marker").read_bytes() == b"protected"
+    assert ("bucket", legacy_manifest) not in fake.calls
+    assert ("bucket", legacy) not in fake.calls
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("failure", ["invalid_json", "access_denied", "missing_artifact"])
+def test_protected_failure_does_not_downgrade_to_working_legacy(tmp_path, failure):
+    protected_manifest = model_sync.manifest_key("models", "QB")
+    legacy_manifest = model_sync.legacy_manifest_key("models", "QB")
+    legacy = "models/QB/history/old/model.tar.gz"
+
+    class ProtectedFailure(_FakeS3):
+        def get_object(self, Bucket, Key):
+            if Key == protected_manifest and failure == "access_denied":
+                self.calls.append((Bucket, Key))
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+            return super().get_object(Bucket=Bucket, Key=Key)
+
+    fake = ProtectedFailure(
+        {
+            protected_manifest: b"{"
+            if failure == "invalid_json"
+            else _manifest_bytes("missing-protected-artifact"),
+            legacy_manifest: _manifest_bytes(legacy),
+            legacy: _make_tarball({"marker": b"legacy"}),
+        }
+    )
+    with pytest.raises((ValueError, ClientError, RuntimeError)):
+        model_sync._sync_one(fake, "bucket", "models", "QB", tmp_path)
+    assert ("bucket", legacy_manifest) not in fake.calls
+    assert ("bucket", legacy) not in fake.calls
+
+
+@pytest.mark.unit
+def test_legacy_fallback_is_read_only_and_never_supplies_a_writer_etag():
+    legacy_key = model_sync.legacy_manifest_key("models", "QB")
+    legacy_body = _manifest_bytes("models/QB/history/old/model.tar.gz")
+    fake = _FakeS3({legacy_key: legacy_body})
+    assert model_sync.load_manifest(fake, "bucket", "models", "QB") == json.loads(legacy_body)
+    manifest, etag = model_sync.load_manifest_snapshot(fake, "bucket", "models", "QB")
+    assert manifest is None and etag is None
+    writer = mock.Mock()
+    candidate = {"schema_version": 3, "stable": None}
+    model_sync.write_manifest(writer, "bucket", "models", "QB", candidate, expected_etag=etag)
+    request = writer.put_object.call_args.kwargs
+    assert request["Key"] == "models/releases/v3/QB/manifest.json"
+    assert request["IfNoneMatch"] == "*" and "IfMatch" not in request
+    assert fake._objects[legacy_key] == legacy_body
 
 
 @pytest.mark.unit
@@ -169,48 +254,18 @@ def test_sync_one_dest_string_path_matches_registry_model_dir(monkeypatch, tmp_p
     any model. A string-based assertion is the only kind that catches this
     on a developer's mac before it hits prod.
     """
-    captured: dict[str, Path] = {}
-
-    def fake_extract(_data: bytes, dest: Path) -> None:
-        # Record the dest each call; skip the actual untar — we don't need
-        # real artifacts, just the path string the caller built.
-        captured[fake_extract.current_pos] = dest
-        dest.mkdir(parents=True, exist_ok=True)
-
-    fake_extract.current_pos = ""  # populated per-iteration below
-
-    monkeypatch.setattr(model_sync, "_extract_tarball", fake_extract)
-
-    # ``_repo_root`` returns the actual repo root; ``_sync_one`` is responsible
-    # for prepending ``src/`` so the dest matches the registry's
-    # ``src/{pos}/outputs/models`` model_dir.
-    fake_tar = _make_tarball({"sentinel": b"x"})
-    # Use the manifest path — Layer C of the race fix removed the legacy
-    # fallback, so an absent manifest raises. The dest-string computation is
-    # identical regardless of which manifest tier the sync resolves through.
-    objects: dict[str, bytes] = {}
-    for pos in model_sync.POSITIONS:
-        history_key = f"models/{pos}/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
-        objects[history_key] = fake_tar
-        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(current_key=history_key)
-    fake_s3 = _FakeS3(objects)
-
     from src.shared.registry import get_inference_spec
 
-    for pos in model_sync.POSITIONS:
-        fake_extract.current_pos = pos
-        model_sync._sync_one(fake_s3, "test-bucket", "models", pos, tmp_path)
+    captured: dict[str, Path] = {}
 
+    def resolve(_s3, _bucket, _prefix, pos, dest):
+        captured[pos] = dest
+        return {"pos": pos}
+
+    monkeypatch.setattr(model_sync, "_resolve_manifest_extract", resolve)
     for pos in model_sync.POSITIONS:
-        sync_dest_str = str(captured[pos])
-        registry_rel = get_inference_spec(pos)["model_dir"]
-        registry_dest_str = str(tmp_path / registry_rel)
-        assert sync_dest_str == registry_dest_str, (
-            f"{pos}: model_sync._extract_tarball(dest='{sync_dest_str}'), "
-            f"but registry says serving reads from '{registry_dest_str}'. "
-            "Path strings must match exactly (case-sensitive) so synced "
-            "artifacts are reachable through the serving path on Linux."
-        )
+        model_sync._sync_one(None, "test-bucket", "models", pos, tmp_path)
+        assert str(captured[pos]) == str(tmp_path / get_inference_spec(pos)["model_dir"])
 
 
 @pytest.mark.unit
@@ -263,16 +318,15 @@ def _build_objects_for_all_positions(current_tarball: bytes) -> dict[str, bytes]
     test doesn't care about."""
     objects: dict[str, bytes] = {}
     for pos in model_sync.POSITIONS:
-        key = f"models/{pos}/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
+        key = model_sync.history_prefix("models", pos) + "2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
         objects[key] = current_tarball
-        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(current_key=key)
+        objects[model_sync.manifest_key("models", pos)] = _manifest_bytes(current_key=key)
     return objects
 
 
 @pytest.mark.unit
-def test_sync_one_prefers_current_from_manifest(monkeypatch, tmp_path):
-    """Happy path: manifest.current points at a history/ key, consumer pulls it
-    and reports source=current."""
+def test_sync_one_reads_approved_stable_from_manifest(monkeypatch, tmp_path):
+    """A new manifest points stable at its approved upload."""
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
@@ -283,15 +337,15 @@ def test_sync_one_prefers_current_from_manifest(monkeypatch, tmp_path):
         summary = model_sync.sync_models_from_s3()
 
     wr = next(r for r in summary["positions"] if r["pos"] == "WR")
-    assert wr["source"] == "current"
-    assert wr["key"] == "models/WR/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
+    assert wr["source"] == "stable"
+    assert wr["key"] == "models/releases/v3/WR/history/2026-04-23T00-00-00Z-aaa1234/model.tar.gz"
     assert (
         tmp_path / "src" / "wr" / "outputs" / "models" / "nn_scaler.pkl"
     ).read_bytes() == b"CURRENT"
 
 
 @pytest.mark.unit
-def test_sync_one_falls_back_to_previous_when_current_corrupt(monkeypatch, tmp_path, capsys):
+def test_sync_one_falls_back_to_previous_stable_when_stable_corrupt(monkeypatch, tmp_path, capsys):
     """Current points at a valid key in S3 but the bytes aren't a gzip tarball
     (e.g. a truncated upload slipped past validation, or S3 replication is
     mid-flight). _sync_one must catch the tarfile error, try previous, and
@@ -319,18 +373,18 @@ def test_sync_one_falls_back_to_previous_when_current_corrupt(monkeypatch, tmp_p
         summary = model_sync.sync_models_from_s3()
 
     qb = next(r for r in summary["positions"] if r["pos"] == "QB")
-    assert qb["source"] == "previous"
+    assert qb["source"] == "previous_stable"
     out = capsys.readouterr().out
     # On-call greps CloudWatch for these tags. Keep the grep-surface stable.
-    assert "source=previous" in out
-    assert "QB current" in out and "FAILED" in out
+    assert "source=previous_stable" in out
+    assert "QB stable" in out and "FAILED" in out
     # Other positions still serve current — one broken artifact doesn't poison
     # the fan-out.
-    assert all(r["source"] == "current" for r in summary["positions"] if r["pos"] != "QB")
+    assert all(r["source"] == "stable" for r in summary["positions"] if r["pos"] != "QB")
 
 
 @pytest.mark.unit
-def test_sync_one_falls_back_to_previous_when_current_nosuchkey(monkeypatch, tmp_path):
+def test_sync_one_falls_back_to_previous_stable_when_stable_missing(monkeypatch, tmp_path):
     """Current pointer exists in manifest but the actual key is missing from
     S3 (e.g. GC deleted it by mistake, or manifest-write succeeded but
     upload was rolled back). _sync_one must catch ClientError and retry
@@ -353,7 +407,7 @@ def test_sync_one_falls_back_to_previous_when_current_nosuchkey(monkeypatch, tmp
     with mock.patch("boto3.client", return_value=fake_s3):
         summary = model_sync.sync_models_from_s3()
 
-    assert all(r["source"] == "previous" for r in summary["positions"])
+    assert all(r["source"] == "previous_stable" for r in summary["positions"])
     for pos in model_sync.POSITIONS:
         extracted = tmp_path / "src" / pos.lower() / "outputs" / "models" / "marker.pkl"
         assert extracted.read_bytes() == b"FROM_PREVIOUS"
@@ -414,7 +468,7 @@ def test_sync_one_falls_back_on_truncated_gzip(monkeypatch, tmp_path):
     with mock.patch("boto3.client", return_value=fake_s3):
         summary = model_sync.sync_models_from_s3()
 
-    assert all(r["source"] == "previous" for r in summary["positions"])
+    assert all(r["source"] == "previous_stable" for r in summary["positions"])
 
 
 @pytest.mark.unit
@@ -572,68 +626,45 @@ def test_sync_one_prefers_stable_over_current(monkeypatch, tmp_path):
 
 
 @pytest.mark.unit
-def test_sync_one_falls_through_when_stable_missing_v1_manifest(monkeypatch, tmp_path):
-    """Backwards compat: a v1-shaped manifest has no ``stable`` field at all.
-    Consumer must treat that as "no stable yet" and fall through to current
-    without erroring. This is the migration window when the new producer
-    rolls out — until the first post-deploy training run sets ``stable``,
-    the frontend serves ``current``."""
-    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
-
-    tar = _make_tarball({"marker.pkl": b"V1_CURRENT"})
-    objects: dict[str, bytes] = {}
-    for pos in model_sync.POSITIONS:
-        cur_key = f"models/{pos}/history/v1-cur/model.tar.gz"
-        objects[cur_key] = tar
-        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(
-            current_key=cur_key, schema_version=1
-        )
-
-    fake_s3 = _FakeS3(objects)
-    with mock.patch("boto3.client", return_value=fake_s3):
-        summary = model_sync.sync_models_from_s3()
-
-    assert all(r["source"] == "current" for r in summary["positions"])
+def test_sync_one_rejects_candidate_only_legacy_manifest(tmp_path):
+    key = "models/QB/history/unapproved/model.tar.gz"
+    fake = _FakeS3(
+        {
+            "models/QB/manifest.json": _manifest_bytes(key, schema_version=1),
+            key: _make_tarball({"marker": b"not-approved"}),
+        }
+    )
+    with pytest.raises(RuntimeError, match="all manifest entries failed"):
+        model_sync._sync_one(fake, "bucket", "models", "QB", tmp_path)
+    assert ("bucket", key) not in fake.calls
 
 
 @pytest.mark.unit
-def test_sync_one_falls_through_when_stable_corrupt(monkeypatch, tmp_path, capsys):
-    """Stable points at a key whose bytes are corrupt (e.g. a delete-and-
-    rewrite race or a flipped bit on disk). Consumer falls through to current
-    rather than raising — but logs the failure so on-call sees the
-    degradation."""
-    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
-
-    good_tar = _make_tarball({"marker.pkl": b"FROM_CURRENT"})
-    objects: dict[str, bytes] = {}
-    for pos in model_sync.POSITIONS:
-        cur_key = f"models/{pos}/history/cur/model.tar.gz"
-        stable_key = f"models/{pos}/history/stable-broken/model.tar.gz"
-        objects[stable_key] = b"NOT A GZIP TARBALL"
-        objects[cur_key] = good_tar
-        objects[f"models/{pos}/manifest.json"] = _manifest_bytes(
-            current_key=cur_key, stable_key=stable_key
-        )
-
-    fake_s3 = _FakeS3(objects)
-    with mock.patch("boto3.client", return_value=fake_s3):
-        summary = model_sync.sync_models_from_s3()
-
-    assert all(r["source"] == "current" for r in summary["positions"])
-    out = capsys.readouterr().out
-    # The stable failure must be loud — it's page-worthy in production.
-    assert "stable" in out and "FAILED" in out
+@pytest.mark.parametrize("schema_version", [2, 3])
+@pytest.mark.parametrize("stable_exists", [False, True])
+def test_sync_one_never_falls_back_to_unapproved_candidate(tmp_path, schema_version, stable_exists):
+    stable = "models/QB/history/approved/model.tar.gz"
+    candidate = "models/QB/history/failed-smoke/model.tar.gz"
+    manifest = json.loads(
+        _manifest_bytes(candidate, stable_key=stable, schema_version=schema_version)
+    )
+    manifest["current"]["smoke_passed"] = False
+    fake = _FakeS3(
+        {
+            "models/QB/manifest.json": json.dumps(manifest).encode(),
+            candidate: _make_tarball({"marker": b"not-approved"}),
+        }
+    )
+    if stable_exists:
+        fake._objects[stable] = b"corrupt"
+    with pytest.raises(RuntimeError, match="all manifest entries failed"):
+        model_sync._sync_one(fake, "bucket", "models", "QB", tmp_path)
+    assert ("bucket", candidate) not in fake.calls
 
 
 @pytest.mark.unit
-def test_sync_one_full_chain_falls_to_previous_when_stable_and_current_corrupt(
-    monkeypatch, tmp_path
-):
-    """Stable + current both broken, previous good — must fall through the
-    full chain to previous. Establishes that the chain is stable→current→
-    previous, not stable→previous (skipping current)."""
+def test_sync_one_skips_candidates_and_uses_previous_stable(monkeypatch, tmp_path):
+    """Stable and current are corrupt; only approved previous_stable is eligible."""
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
@@ -654,7 +685,7 @@ def test_sync_one_full_chain_falls_to_previous_when_stable_and_current_corrupt(
     with mock.patch("boto3.client", return_value=fake_s3):
         summary = model_sync.sync_models_from_s3()
 
-    assert all(r["source"] == "previous" for r in summary["positions"])
+    assert all(r["source"] == "previous_stable" for r in summary["positions"])
 
 
 # --- Pure-function tests for build_manifest ---
@@ -768,8 +799,7 @@ def test_build_manifest_smoke_failed_pins_old_stable():
 @pytest.mark.unit
 def test_build_manifest_smoke_failed_first_run_leaves_stable_null():
     """First-ever upload with a failing smoke test — there's no prior stable
-    to pin to, so stable starts as None. Migration window: the consumer
-    falls through to ``current`` until the next passing smoke test."""
+    to pin to, so stable starts as None and serving fails closed."""
     m = model_sync.build_manifest(
         new_key="brand-new-broken",
         sha7="brk1234",
@@ -803,6 +833,43 @@ def test_build_manifest_smoke_passed_after_prior_failure_advances_stable():
     )
     assert m["stable"]["key"] == "new-good"
     assert m["current"]["key"] == "new-good"
+    assert m["previous_stable"] == old_stable
+
+
+@pytest.mark.unit
+def test_failed_candidates_cannot_displace_approved_fallback():
+    first = model_sync.build_manifest("first", "a", 1, "t0", smoke_passed=True)
+    latest = model_sync.build_manifest("latest", "b", 1, "t1", first, smoke_passed=True)
+    for index in range(model_sync.HISTORY_KEEP_N + 2):
+        latest = model_sync.build_manifest(f"failed-{index}", "c", 1, "t2", latest)
+    assert latest["stable"]["key"] == "latest"
+    assert latest["previous_stable"]["key"] == "first"
+    assert "first" not in latest["history"]
+
+
+@pytest.mark.unit
+def test_corrupt_approved_extract_cannot_contaminate_fallback(tmp_path):
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:gz") as archive:
+        regular = tarfile.TarInfo("failed-only")
+        regular.size = 1
+        archive.addfile(regular, io.BytesIO(b"x"))
+        bad_link = tarfile.TarInfo("bad-link")
+        bad_link.type = tarfile.SYMTYPE
+        bad_link.linkname = "/outside"
+        archive.addfile(bad_link)
+    fake = _FakeS3(
+        {
+            "models/QB/manifest.json": _manifest_bytes("broken", previous_key="approved"),
+            "broken": data.getvalue(),
+            "approved": _make_tarball({"good-only": b"good"}),
+        }
+    )
+    result = model_sync._sync_one(fake, "bucket", "models", "QB", tmp_path)
+    assert result["source"] == "previous_stable"
+    dest = tmp_path / "src/qb/outputs/models"
+    assert (dest / "good-only").read_bytes() == b"good"
+    assert not (dest / "failed-only").exists()
 
 
 @pytest.mark.unit
@@ -854,7 +921,6 @@ def test_data_sync_noop_when_bucket_unset(monkeypatch, capsys):
 
 @pytest.mark.unit
 def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
-    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
 
@@ -884,7 +950,6 @@ def test_data_sync_downloads_splits_and_raw(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 def test_data_sync_isolates_per_file_failures(monkeypatch, tmp_path, capsys):
-    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
     """M17: a missing split (or any individual download failure) no longer
     kills the whole sync. The container boots, the failed key is listed in
     the returned summary's ``failed`` field, and any feature build that
@@ -1168,150 +1233,263 @@ class _FakeS3WithPut(_FakeS3):
         super().__init__(objects)
         self.puts: dict[str, bytes] = {}
 
-    def put_object(self, Bucket: str, Key: str, Body: bytes, ContentType: str):  # noqa: N803
+    def put_object(
+        self, Bucket: str, Key: str, Body: bytes, ContentType=None, IfMatch=None, IfNoneMatch=None
+    ):  # noqa: N803
+        current = self._objects.get(Key)
+        etag = hashlib.sha256(current).hexdigest() if current is not None else None
+        if (IfMatch is not None and IfMatch != etag) or (
+            IfNoneMatch == "*" and current is not None
+        ):
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         self.puts[Key] = Body
         # Make subsequent get_object succeed on the same key — the round-trip
         # tests rely on this.
         self._objects[Key] = Body
 
 
-@pytest.fixture
-def predcache_env(monkeypatch, tmp_path):
-    from src.shared import prediction_cache
+def _generation_cache_fixture(prefix="models", label="generation"):
+    from src.artifacts.serving_snapshot import CACHE_SCHEMA_VERSION
+
+    payloads = {
+        "predictions.parquet": f"{label} predictions".encode(),
+        "metrics.json": json.dumps({"source": label}).encode(),
+        "fingerprint.json": json.dumps({"schema_version": CACHE_SCHEMA_VERSION}).encode(),
+        "snapshot.json": json.dumps({"source": label}).encode(),
+    }
+    manifest = {
+        "schema_version": 1,
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "files": {
+            name: {"sha256": hashlib.sha256(payload).hexdigest(), "bytes": len(payload)}
+            for name, payload in payloads.items()
+        },
+        "models": {position: f"models/{position}/approved" for position in model_sync.POSITIONS},
+    }
+    body = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    generation = hashlib.sha256(body).hexdigest()
+    base = f"{prefix}/predictions_cache/generations/{generation}"
+    objects = {f"{base}/{name}": value for name, value in payloads.items()}
+    objects[f"{base}/manifest.json"] = body
+    objects[f"{prefix}/predictions_cache/current.json"] = json.dumps(
+        {
+            "schema_version": 1,
+            "generation": generation,
+            "manifest": f"{base}/manifest.json",
+        }
+    ).encode()
+    # Legacy objects deliberately exist so a fallback would be observable.
+    objects.update({f"{prefix}/predictions_cache/{name}": b"legacy" for name in payloads})
+    return generation, objects, payloads
+
+
+@pytest.mark.unit
+def test_predcache_sync_prefers_complete_generation_over_legacy(monkeypatch, tmp_path):
+    from src.artifacts.serving_snapshot import active_directory
+
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "custom/models")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    generation, objects, payloads = _generation_cache_fixture("custom/models")
+    s3 = _FakeS3(objects)
+    legacy_download = mock.Mock()
+    monkeypatch.setattr(model_sync, "_download_file", legacy_download)
+    with mock.patch("boto3.client", return_value=s3):
+        summary = model_sync.sync_predictions_cache_from_s3()
+    assert summary == {"generation": generation, "files": 4}
+    root = tmp_path / "data/serving_cache"
+    current = active_directory(root)
+    assert current == root / "generations" / generation
+    assert all((current / name).read_bytes() == payload for name, payload in payloads.items())
+    legacy_download.assert_not_called()
+    assert ("test-bucket", "custom/models/predictions_cache/current.json") in s3.calls
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "failure", ["denied", "corrupt_manifest", "corrupt_payload", "null_pointer"]
+)
+def test_predcache_generation_failure_retains_old_pointer_without_legacy_fallback(
+    monkeypatch, tmp_path, failure
+):
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    generation, objects, _ = _generation_cache_fixture()
+    pointer = "models/predictions_cache/current.json"
+    base = f"models/predictions_cache/generations/{generation}"
+    if failure == "corrupt_manifest":
+        objects[f"{base}/manifest.json"] = b'{"schema_version":1}'
+    elif failure == "corrupt_payload":
+        objects[f"{base}/predictions.parquet"] = b"corrupt"
+    elif failure == "null_pointer":
+        objects[pointer] = b"null"
+
+    class FailingS3(_FakeS3):
+        def get_object(self, Bucket, Key):  # noqa: N803
+            if failure == "denied" and Key == pointer:
+                self.calls.append((Bucket, Key))
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+            return super().get_object(Bucket, Key)
+
+    s3 = FailingS3(objects)
+    root = tmp_path / "data/serving_cache"
+    old_generation, old_objects, old_payloads = _generation_cache_fixture(label="old")
+    old_directory = root / "generations" / old_generation
+    old_directory.mkdir(parents=True)
+    for name, payload in old_payloads.items():
+        (old_directory / name).write_bytes(payload)
+    old_pointer = old_objects[pointer]
+    (old_directory / "manifest.json").write_bytes(
+        old_objects[f"models/predictions_cache/generations/{old_generation}/manifest.json"]
+    )
+    (root / "current.json").write_bytes(old_pointer)
+    legacy_download = mock.Mock()
+    monkeypatch.setattr(model_sync, "_download_file", legacy_download)
+    with mock.patch("boto3.client", return_value=s3):
+        summary = model_sync.sync_predictions_cache_from_s3()
+    assert "generation_error" in summary
+    assert (root / "current.json").read_bytes() == old_pointer
+    from src.artifacts.serving_snapshot import active_directory
+
+    assert active_directory(root) == old_directory
+    assert all(
+        (old_directory / name).read_bytes() == payload for name, payload in old_payloads.items()
+    )
+    legacy_download.assert_not_called()
+    assert not any(key == "models/predictions_cache/predictions.parquet" for _, key in s3.calls)
+
+
+@pytest.mark.unit
+def test_predcache_sync_noop_when_bucket_unset(monkeypatch):
+    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    with mock.patch("boto3.client") as client:
+        assert model_sync.sync_predictions_cache_from_s3() is None
+        client.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "legacy_members",
+    [
+        ["predictions.parquet", "metrics.json"],
+        ["predictions.parquet", "metrics.json", "fingerprint.json"],
+        ["predictions.parquet", "metrics.json", "fingerprint.json", "snapshot.json"],
+        ["cache.tar.gz"],
+    ],
+)
+def test_predcache_sync_requires_new_generation_before_legacy_cutover(
+    monkeypatch, tmp_path, legacy_members
+):
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    fake = _FakeS3({f"models/predictions_cache/{name}": b"legacy" for name in legacy_members})
+    with mock.patch("boto3.client", return_value=fake):
+        assert model_sync.sync_predictions_cache_from_s3() == {
+            "files": 0,
+            "missing_generation": True,
+        }
+    assert fake.calls == [("test-bucket", "models/predictions_cache/current.json")]
+    assert not (tmp_path / "data/serving_cache/current.json").exists()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "failed_member", ["predictions.parquet", "metrics.json", "fingerprint.json", "snapshot.json"]
+)
+@pytest.mark.parametrize("error", ["NoSuchKey", "InternalError"])
+def test_predcache_sync_rejects_incomplete_generation_without_replacing_current(
+    monkeypatch, tmp_path, failed_member, error
+):
+    from src.artifacts.serving_snapshot import read_generation
 
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
     monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
     monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
-    fake = _FakeS3WithPut({})
-    monkeypatch.setattr("boto3.client", lambda *a, **k: fake)
-    return prediction_cache, tmp_path / "data" / "serving_cache", fake
+    old, old_objects, old_payload = _generation_cache_fixture(label="old")
+    with mock.patch("boto3.client", return_value=_FakeS3(old_objects)):
+        assert model_sync.sync_predictions_cache_from_s3()["generation"] == old
+    candidate, objects, _ = _generation_cache_fixture(label="candidate")
+    broken_key = f"models/predictions_cache/generations/{candidate}/{failed_member}"
 
+    class PartialS3(_FakeS3):
+        def get_object(self, Bucket, Key):
+            if Key == broken_key:
+                raise ClientError({"Error": {"Code": error}}, "GetObject")
+            return super().get_object(Bucket, Key)
 
-def _cache_members(generation, snapshot=True):
-    result = {
-        "predictions.parquet": generation.encode(),
-        "metrics.json": json.dumps({"generation": generation}).encode(),
-        "fingerprint.json": json.dumps({"generation": generation}).encode(),
-    }
-    if snapshot:
-        result["snapshot.json"] = json.dumps({"generation": generation}).encode()
-    return result
-
-
-@pytest.mark.unit
-def test_predcache_noop_when_bucket_unset(monkeypatch):
-    monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
-    assert model_sync.sync_predictions_cache_from_s3() is None
-    assert model_sync.upload_predictions_cache_to_s3() is None
+    with mock.patch("boto3.client", return_value=PartialS3(objects)):
+        assert "generation_error" in model_sync.sync_predictions_cache_from_s3()
+    current, captured = read_generation(tmp_path / "data/serving_cache")
+    assert current.name == old
+    assert captured == old_payload
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("snapshot", [True, False])
-def test_predcache_one_object_round_trip(predcache_env, monkeypatch, tmp_path, snapshot):
-    cache, directory, s3 = predcache_env
-    expected = _cache_members("new", snapshot=snapshot)
-    original = cache.publish_generation(directory, expected)
-    uploaded = model_sync.upload_predictions_cache_to_s3()
-    key = "models/predictions_cache/cache.tar.gz"
-    assert set(s3.puts) == {key}
-    assert uploaded["generation"] == original.name
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path / "consumer")
-    synced = model_sync.sync_predictions_cache_from_s3()
-    generation, files = cache.read_generation(tmp_path / "consumer/data/serving_cache")
-    assert synced["generation"] == generation.name == original.name
-    assert files == expected
+def test_predcache_sync_swallows_unexpected_s3_error(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    fake = mock.Mock()
+    fake.get_object.side_effect = ClientError({"Error": {"Code": "InternalError"}}, "GetObject")
+    with mock.patch("boto3.client", return_value=fake):
+        assert "generation_error" in model_sync.sync_predictions_cache_from_s3()
+    assert "retaining local snapshot" in capsys.readouterr().out
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("failure", ["missing", "invalid", "access_denied"])
-def test_predcache_failed_sync_retains_previous_generation(predcache_env, monkeypatch, failure):
-    cache, directory, s3 = predcache_env
-    old = cache.publish_generation(directory, _cache_members("old"))
-    if failure == "invalid":
-        s3._objects["models/predictions_cache/cache.tar.gz"] = b"broken archive"
-    elif failure == "access_denied":
+@pytest.mark.parametrize("prefix", ["models", "staging/v3"])
+def test_offline_publisher_then_worker_sync_round_trips(monkeypatch, tmp_path, prefix):
+    from src.artifacts import serving_snapshot
 
-        def deny(**kwargs):
-            raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
-
-        monkeypatch.setattr(s3, "get_object", deny)
-    summary = model_sync.sync_predictions_cache_from_s3()
-    assert summary["files"] == 0
-    assert bool(summary["missing"]) == (failure == "missing")
-    assert bool(summary["failed"]) == (failure != "missing")
-    current, files = cache.read_generation(directory)
-    assert current == old
-    assert files == _cache_members("old")
-
-
-@pytest.mark.unit
-def test_predcache_legacy_upload_cannot_overwrite_committed_generation(predcache_env):
-    cache, directory, s3 = predcache_env
-    cache.publish_generation(directory, _cache_members("new"))
-    model_sync.upload_predictions_cache_to_s3()
-    for name, value in _cache_members("legacy").items():
-        s3._objects[f"models/predictions_cache/{name}"] = value
-    assert model_sync.sync_predictions_cache_from_s3()["files"] == 3
-    assert cache.read_generation(directory)[1] == _cache_members("new")
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", prefix)
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path / "worker")
+    fake = _FakeS3WithPut(
+        {
+            model_sync.manifest_key(prefix, pos): _manifest_bytes(
+                f"{prefix}/releases/v3/{pos}/history/model.tar.gz"
+            )
+            for pos in model_sync.POSITIONS
+        }
+    )
+    _, _, payload = _generation_cache_fixture(prefix)
+    producer = tmp_path / "producer"
+    serving_snapshot.publish_local(producer, payload)
+    token = serving_snapshot.begin_build(fake, "test-bucket", prefix)
+    published = serving_snapshot.publish(fake, "test-bucket", producer, token, prefix)
+    with mock.patch("boto3.client", return_value=fake):
+        assert model_sync.sync_predictions_cache_from_s3() == {
+            "generation": published["generation"],
+            "files": 4,
+        }
+    assert serving_snapshot.read_generation(tmp_path / "worker/data/serving_cache")[1] == payload
+    assert all(key.startswith(f"{prefix}/predictions_cache/") for key in fake.puts)
+    assert not any(key.endswith("cache.tar.gz") for key in fake.puts)
 
 
 @pytest.mark.unit
-def test_predcache_missing_bundle_does_not_trust_legacy_loose_files(predcache_env):
-    cache, directory, s3 = predcache_env
-    directory.mkdir(parents=True)
-    for name, value in _cache_members("legacy").items():
-        (directory / name).write_bytes(value)
-        s3._objects[f"models/predictions_cache/{name}"] = value
-    assert model_sync.sync_predictions_cache_from_s3()["files"] == 0
-    assert cache.current_generation(directory) is None
-    assert model_sync.upload_predictions_cache_to_s3() is None
-    assert s3.puts == {}
-
-
-@pytest.mark.unit
-def test_predcache_upload_failure_is_best_effort(predcache_env, monkeypatch):
-    cache, directory, s3 = predcache_env
-    cache.publish_generation(directory, _cache_members("new"))
-
-    def deny(**kwargs):
-        raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
-
-    monkeypatch.setattr(s3, "put_object", deny)
-    assert model_sync.upload_predictions_cache_to_s3() is None
-    assert cache.read_generation(directory)[1] == _cache_members("new")
-
-
-@pytest.mark.unit
-def test_predcache_respects_custom_prefix(predcache_env, monkeypatch):
-    cache, directory, s3 = predcache_env
-    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "experiments/cache")
-    cache.publish_generation(directory, _cache_members("new"))
-    assert model_sync.upload_predictions_cache_to_s3()["files"] == 3
-    assert set(s3.puts) == {"experiments/cache/predictions_cache/cache.tar.gz"}
-    assert model_sync.sync_predictions_cache_from_s3()["files"] == 3
-
-
-@pytest.mark.unit
-def test_predcache_interleaved_uploads_always_return_one_complete_generation(
-    predcache_env, monkeypatch, tmp_path
+@pytest.mark.parametrize("bucket", [None, "test-bucket"])
+@pytest.mark.parametrize(
+    "members",
+    [
+        [],
+        ["predictions.parquet"],
+        ["predictions.parquet", "metrics.json", "fingerprint.json", "snapshot.json"],
+    ],
+)
+def test_runtime_cache_upload_never_bypasses_offline_release_publisher(
+    monkeypatch, tmp_path, bucket, members
 ):
-    cache, directory, s3 = predcache_env
-    new = _cache_members("new")
-    old = _cache_members("old")
-    cache.publish_generation(directory, new)
-    other_root = tmp_path / "old-writer"
-    cache.publish_generation(other_root / "data/serving_cache", old)
-    put = s3.put_object
-
-    def interleave(**kwargs):
-        monkeypatch.setattr(s3, "put_object", put)
-        monkeypatch.setattr(model_sync, "_repo_root", lambda: other_root)
-        model_sync.upload_predictions_cache_to_s3()
-        put(**kwargs)
-
-    monkeypatch.setattr(s3, "put_object", interleave)
-    model_sync.upload_predictions_cache_to_s3()
-    consumer_root = tmp_path / "consumer"
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: consumer_root)
-    assert model_sync.sync_predictions_cache_from_s3()["files"] == 3
-    assert cache.read_generation(consumer_root / "data/serving_cache")[1] == new
+    if bucket is None:
+        monkeypatch.delenv("FF_MODEL_S3_BUCKET", raising=False)
+    else:
+        monkeypatch.setenv("FF_MODEL_S3_BUCKET", bucket)
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path)
+    cache = tmp_path / "data/serving_cache"
+    cache.mkdir(parents=True)
+    for name in members:
+        (cache / name).write_bytes(b"legacy runtime output")
+    with mock.patch("boto3.client") as client:
+        assert model_sync.upload_predictions_cache_to_s3() is None
+        client.assert_not_called()

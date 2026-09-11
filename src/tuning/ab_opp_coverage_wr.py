@@ -188,7 +188,7 @@ def _mut_coverage_static(cfg):
 # Metric — WR boom subgroup (mirrors ab_boom_signals_wr)
 # --------------------------------------------------------------------------- #
 def metric_fn(result, position):
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

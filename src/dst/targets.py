@@ -85,6 +85,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
                    + _yds_allowed_to_bonus(yards_allowed)
     """
     df = df.copy()
+    from src.shared.comparison_truth import (
+        attach_comparison_actuals,
+        comparison_source_availability,
+    )
+
+    source_available = comparison_source_availability(df, "DST")
 
     # Zero-fill raw counts (missing rows typically mean 0 occurrences, not NaN)
     _count_cols = [
@@ -123,4 +129,4 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
         + df["yards_allowed"].apply(_yds_allowed_to_bonus)
     )
 
-    return df
+    return attach_comparison_actuals(df, "DST", source_available)

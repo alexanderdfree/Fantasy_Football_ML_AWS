@@ -8,9 +8,6 @@ Environment variables set via job definition / container overrides:
   LOG_EVERY          = 1
   S3_BUCKET          = ff-predictor-training
   S3_DATA_PREFIX     = data
-  FF_TRAIN_GIT_SHA   = full source SHA matching the built image (required for
-                       full/nn/cpu/merge training; register ancestry via
-                       src.scripts.register_training_source before launch)
 """
 
 import argparse
@@ -27,6 +24,8 @@ import sys
 import tarfile
 import tempfile
 import time
+from collections.abc import Mapping
+from pathlib import Path
 
 # Ensure project root is on path (baked into /opt/ml/code/ in the container)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -35,15 +34,13 @@ import boto3
 import pandas as pd
 import torch
 
-from src.shared.artifact_gc import prune as _gc_prune
-from src.shared.artifact_publication import (
-    PublicationSuperseded,
-    load_source,
-    publish_artifact,
-    source_key,
-)
+from src.orchestration.build_plan import provenance, verify_training_plan
 from src.shared.core_pool import ENV_ADDR, ENV_POS, lease_cores, start_coordinator
-from src.shared.model_sync import manifest_key, new_history_key
+from src.shared.model_sync import (
+    load_manifest_snapshot,
+    manifest_key,
+    new_history_key,
+)
 from src.shared.platform_detect import detect_platform
 from src.shared.registry import (
     ALL_POSITIONS,
@@ -225,18 +222,27 @@ def _assert_gpu(position: str, *, force: bool = False):
 
 
 def download_data(s3_bucket, s3_prefix, local_dir):
-    """Hydrate one raw+split release (legacy requires FF_DATA_RELEASE=legacy)."""
+    """Download training parquet files from S3 to the container."""
+    from concurrent.futures import ThreadPoolExecutor
+
     if os.environ.get("FF_DATA_RELEASE") != "legacy":
         from src.config import CACHE_DIR
         from src.data.release import download_release
+        from src.orchestration.datasets import bind_data_release
+        from src.training.context import raw_data_dir
 
-        result = download_release(
-            boto3.client("s3"), s3_bucket, prefix=s3_prefix, raw_dir=CACHE_DIR, splits_dir=local_dir
+        selected = os.environ.get("FF_DATA_RELEASE")
+        if not selected:
+            raise RuntimeError("FF_DATA_RELEASE must be selected before remote training")
+        bind_data_release(selected)
+        return download_release(
+            boto3.client("s3"),
+            s3_bucket,
+            prefix=s3_prefix,
+            release_id=selected,
+            raw_dir=raw_data_dir(CACHE_DIR),
+            splits_dir=local_dir,
         )
-        os.environ["FF_DATA_RELEASE"] = result["release_id"]
-        return result
-    from concurrent.futures import ThreadPoolExecutor
-
     s3 = boto3.client("s3")
     os.makedirs(local_dir, exist_ok=True)
     names = ("train.parquet", "val.parquet", "test.parquet")
@@ -253,16 +259,19 @@ def download_data(s3_bucket, s3_prefix, local_dir):
 
 
 def sync_raw_data(s3_bucket):
-    """Hydrate complete training inputs, selecting the release once per process.
+    """Sync s3://{bucket}/data/raw/*.parquet into the container's data/raw/.
 
-    The legacy-only branch syncs unversioned raw parquets for older operator
-    workflows; default consumers verify raw inputs and splits together.
+    Needed by src/shared/weather_features._load_schedules() (all positions during
+    feature engineering) and by K/DST's self-contained loaders (src.k.data,
+    src.dst.data). CACHE_DIR="data/raw" in src/config.py resolves relative to
+    the container WORKDIR=/opt/ml/code. .dockerignore excludes data/ so these
+    parquets aren't baked into the image.
     """
     if os.environ.get("FF_DATA_RELEASE") != "legacy":
         return download_data(
             s3_bucket,
             os.environ.get("S3_DATA_PREFIX", "data"),
-            os.environ.get("TRAINING_DATA_DIR", "data/splits"),
+            os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training"),
         )
     s3 = boto3.client("s3")
     os.makedirs("data/raw", exist_ok=True)
@@ -276,7 +285,9 @@ def sync_raw_data(s3_bucket):
             _download_if_stale(s3, s3_bucket, key, local_path)
 
 
-def _validate_remote_tarball(s3_client, bucket: str, key: str, position: str) -> None:
+def _validate_remote_tarball(
+    s3_client, bucket: str, key: str, position: str, expected_digest: str | None = None
+) -> None:
     """Re-download the just-uploaded tarball and confirm it's structurally
     sound — reopenable, contains ``benchmark_metrics.json`` (parseable), and
     includes the NN weight + scaler files the inference registry expects.
@@ -288,6 +299,8 @@ def _validate_remote_tarball(s3_client, bucket: str, key: str, position: str) ->
     """
     obj = s3_client.get_object(Bucket=bucket, Key=key)
     data = obj["Body"].read()
+    if expected_digest and hashlib.sha256(data).hexdigest() != expected_digest:
+        raise RuntimeError(f"{position}: uploaded artifact checksum mismatch at {key}")
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         members = {m.name for m in tar.getmembers()}
@@ -361,15 +374,42 @@ def _try_smoke_test(position: str, model_dir: str) -> bool:
     return True
 
 
-def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
-    """Upload immutable v3 bytes, validate/smoke, and conditionally promote.
+def _artifact_provenance():
+    values = provenance()
+    if os.environ.get("FF_PUBLICATION_INTENT"):
+        values["publication_intent"] = json.loads(os.environ["FF_PUBLICATION_INTENT"])
+        values["publication_revision"] = json.loads(
+            os.environ.get("FF_PUBLICATION_REVISION", "null")
+        )
+    return values
 
-    The source record must match the image's baked revision. Publication rejects
-    older source ancestry and retries ETag conflicts against the latest pointer.
-    During migration, retained legacy bytes are copied outside the old GC prefix.
-    Failed smoke preserves stable; initial seeding requires a passing smoke.
-    Returns the committed manifest, or None when a newer publisher/seed wins.
-    Retention only deletes physical keys retired by this successful publication.
+
+def upload_artifacts(s3_bucket, position, model_dir):
+    """Tar, upload to a versioned history key, validate, smoke-test, atomically
+    promote the manifest.
+
+    Order (each step raises on failure unless noted):
+      1. Structural check of ``model_dir`` (fast-fail before S3 round-trips).
+      2. Read manifest content and ETag; build tarball and versioned history key.
+      3. Upload to ``history/{ts}-{sha7}/model.tar.gz``.
+      4. Re-download + validate (reopenable, expected files present).
+      5. Run load+predict smoke test on the local ``model_dir`` (non-fatal —
+         only gates whether the new manifest's ``stable`` pointer advances).
+      6. Build new ``manifest.json`` with ``current=new, previous=old.current``
+         and ``stable`` advanced iff smoke test passed — **this write is the
+         atomic promotion** only if its ETag is unchanged. A conflict fails
+         this publication; it must not silently retry over newer state.
+         Any earlier raise leaves the old manifest in
+         place and the site keeps serving the previous good artifact.
+      7. Retain all uploaded objects. Destructive collection is deferred until
+         it can coordinate with publishers and protect in-flight candidates.
+
+    Note: the legacy ``models/{POS}/model.tar.gz`` mirror is no longer written
+    here. Two parallel train-batch runs writing the same legacy key were
+    last-write-wins; the manifest's atomic single-PUT promotion is the only
+    artifact pointer needed. Consumers — serving via
+    ``src.shared.model_sync._sync_one`` and CI benchmark aggregation via
+    ``src.batch.benchmark.download_metrics`` — both read the manifest now.
     """
     if not os.path.isdir(model_dir):
         raise RuntimeError(
@@ -390,7 +430,14 @@ def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
     # Mirrors src.shared.model_sync's consumer-side env read so producer/consumer
     # paths can't drift. Default "models" matches the legacy layout.
     s3_prefix = os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/")
-    source = load_source(s3, s3_bucket, s3_prefix, os.environ.get("FF_TRAIN_GIT_SHA", ""))
+    load_manifest_snapshot(
+        s3, s3_bucket, s3_prefix, position
+    )  # Reject an active collector before upload.
+    from src.artifacts.publication import artifact_context, publish_candidate
+
+    with open(os.path.join(model_dir, "benchmark_metrics.json")) as stream:
+        metrics = json.load(stream)
+    context = artifact_context(s3, s3_bucket, s3_prefix, position, metrics)
 
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
         tmp_path = tmp.name
@@ -403,70 +450,109 @@ def upload_artifacts(s3_bucket, position, model_dir, *, initialize_only=False):
 
         tar_bytes = os.path.getsize(tmp_path)
         with open(tmp_path, "rb") as f:
-            sha7 = hashlib.sha256(f.read()).hexdigest()[:7]
+            digest = hashlib.sha256(f.read()).hexdigest()
+            sha7 = digest[:7]
         ts = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
-        new_key = new_history_key(s3_prefix, position, ts, sha7)
+        new_key = new_history_key(s3_prefix, position, ts, digest)
 
         print(f"Uploading artifacts to s3://{s3_bucket}/{new_key}")
-        s3.upload_file(tmp_path, s3_bucket, new_key)
+        upload_options = {
+            "ExtraArgs": {
+                "Metadata": {
+                    "publication-intent": hashlib.sha256(
+                        json.dumps(context["intent"], sort_keys=True).encode()
+                    ).hexdigest()
+                }
+            }
+        }
+        if metrics.get("build_plan_id"):
+            # Retained plans own their artifacts even during the gap before
+            # receipt publication; the coordinated collector protects them.
+            upload_options["ExtraArgs"]["Metadata"]["build-plan-id"] = metrics["build_plan_id"]
+        s3.upload_file(tmp_path, s3_bucket, new_key, **upload_options)
 
         print(f"Validating uploaded tarball at s3://{s3_bucket}/{new_key}")
-        _validate_remote_tarball(s3, s3_bucket, new_key, position)
+        _validate_remote_tarball(s3, s3_bucket, new_key, position, digest)
 
         smoke_passed = _try_smoke_test(position, model_dir)
 
-        new_manifest = publish_artifact(
+        entry = {
+            "key": new_key,
+            "sha7": sha7,
+            "sha256": digest,
+            "bytes": tar_bytes,
+            "uploaded_at": ts,
+            "smoke_passed": smoke_passed,
+            **{
+                key: metrics[key]
+                for key in (
+                    "git_sha",
+                    "dataset_id",
+                    "data_release",
+                    "data_format",
+                    "build_plan_id",
+                    "image_id",
+                    "publication_intent",
+                    "publication_revision",
+                )
+                if key in metrics
+            },
+            "source_sha": context["source"]["source_sha"],
+            "source_order": context["source"]["source_order"],
+        }
+        if smoke_passed:
+            from src.artifacts.receipts import claim_successful_output, download_output_artifact
+
+            canonical = claim_successful_output(s3, s3_bucket, s3_prefix, position, entry)
+            accepted_metrics = metrics
+            if canonical["key"] != entry["key"]:
+                with tempfile.TemporaryDirectory(prefix="canonical-output-") as directory:
+                    accepted_metrics = download_output_artifact(
+                        s3, s3_bucket, canonical, Path(directory) / "model.tar.gz"
+                    )
+                _validate_remote_tarball(
+                    s3, s3_bucket, canonical["key"], position, canonical["sha256"]
+                )
+            entry = canonical
+        new_manifest = publish_candidate(
             s3,
             s3_bucket,
             s3_prefix,
             position,
-            new_key=new_key,
-            sha7=sha7,
-            bytes_=tar_bytes,
-            uploaded_at=ts,
-            smoke_passed=smoke_passed,
-            source=source,
-            initialize_only=initialize_only,
+            entry=entry,
+            context=context,
+            initial_revision=context["initial_revision"],
         )
-        # History records this run's immutable artifact even when a newer model
-        # already owns the serving pointer. Record before the superseded exit.
+        # The first accepted output owns this request, including a retry after
+        # claiming output A crashed before history publication. Never describe
+        # losing output B with A's canonical artifact key.
         history_run_id = os.environ.get("FF_BENCHMARK_RUN_ID")
         if history_run_id:
             from src.batch.run_history import publish_position
 
-            entry = publish_position(
+            history_entry = publish_position(
                 s3,
                 s3_bucket,
                 history_run_id,
                 position,
-                _read_json_file(os.path.join(model_dir, "benchmark_metrics.json")),
-                new_key,
+                accepted_metrics if smoke_passed else metrics,
+                entry["key"],
+                smoke_passed=smoke_passed,
+                publication_status=(
+                    "validation_failed"
+                    if not smoke_passed
+                    else "promoted"
+                    if new_manifest is not None
+                    else "superseded"
+                ),
             )
-            if entry:
-                print(f"Published complete training history: {entry['run_id']}")
-
-        if new_manifest is None:
-            if not initialize_only:
-                raise PublicationSuperseded(
-                    f"{position}: artifact retained without promotion because a newer source "
-                    "or explicit rollback won. Own-run history was recorded when configured; "
-                    "do not retry this source or collect from the active model's metrics."
-                )
-            print("Artifact retained without promotion: existing seed/training publication won.")
-            return None
-        print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
-
-        try:
-            deleted = _gc_prune(s3, s3_bucket, s3_prefix, position, new_manifest)
-            if deleted:
-                print(f"Pruned {len(deleted)} old history entries.")
-        except Exception as e:
-            # Retention failure leaves extra immutable bytes, never a broken
-            # pointer. Offline cleanup can retry this recorded retirement set.
-            print(f"WARNING: retention prune failed (non-fatal): {e!r}")
-
+            if history_entry:
+                print(f"Published complete training history: {history_entry['run_id']}")
+        if new_manifest is not None:
+            print(f"Promoted s3://{s3_bucket}/{manifest_key(s3_prefix, position)}")
+        else:
+            print("Publication superseded; retaining this run's own artifact and metrics.")
         print("Artifact upload complete.")
-        return new_manifest
     finally:
         os.unlink(tmp_path)
 
@@ -500,12 +586,19 @@ def _hardware_metadata() -> dict:
 
 def _extract_metrics(position, result):
     """Extract JSON-serializable benchmark metrics from pipeline result."""
+    from src.evaluation.records import record_for_result
     from src.shared.evaluation_cohorts import build_cohorts
 
-    metrics: dict = {"position": position}
-    if os.environ.get("FF_DATA_RELEASE"):
-        metrics["data_release"] = os.environ["FF_DATA_RELEASE"]
+    metrics: dict = {"position": position, **_artifact_provenance()}
     metrics["cohorts"] = result.get("cohorts") or build_cohorts(position, result.get("test_df"))
+    metrics["evaluation_record"] = record_for_result(
+        position,
+        result,
+        cohorts=metrics["cohorts"],
+        execution_regime="eager",
+        use_environment=True,
+        actual_columns=INFERENCE_REGISTRY[position]["targets"],
+    ).to_dict()
 
     # Stamp the image's commit SHA into the per-position artifact. launch.py
     # forwards FF_TRAIN_GIT_SHA from train-batch.yml; benchmark.py reads each
@@ -743,7 +836,7 @@ def _write_split_branch_metadata(
         "split_run_id": split_run_id,
         "seed": seed,
         "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
-        "data_release": os.environ.get("FF_DATA_RELEASE", ""),
+        **_artifact_provenance(),
         "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
     }
     with open(os.path.join(model_dir, "split_branch.json"), "w") as f:
@@ -781,7 +874,7 @@ def _upload_split_branch_artifacts(
             "branch": branch,
             "seed": seed,
             "git_sha": os.environ.get("FF_TRAIN_GIT_SHA", "").strip(),
-            "data_release": os.environ.get("FF_DATA_RELEASE", ""),
+            **_artifact_provenance(),
             "key": tar_key,
             "sha256": digest,
             "sha7": sha7,
@@ -831,19 +924,16 @@ def _download_split_branch_artifacts(
     parent_dir: str,
 ) -> tuple[str, dict]:
     manifest = _load_split_manifest(s3, bucket, split_run_id, position, branch)
+    for name in ("dataset_id", "build_plan_id", "data_release", "data_format"):
+        expected = provenance().get(name)
+        if expected and manifest.get(name) != expected:
+            raise RuntimeError(f"{position} {branch} split artifact {name} mismatch")
     git_sha = str(manifest.get("git_sha") or "")
     if expected_git_sha and git_sha != expected_git_sha:
         raise RuntimeError(
             f"{position} {branch} split artifact SHA mismatch: "
             f"manifest={git_sha!r}, expected={expected_git_sha!r}"
         )
-    expected_release = os.environ.get("FF_DATA_RELEASE", "")
-    if (
-        expected_release
-        and expected_release != "legacy"
-        and manifest.get("data_release") != expected_release
-    ):
-        raise RuntimeError(f"{position} {branch} split data release mismatch")
     key = manifest.get("key")
     if not key:
         raise RuntimeError(f"{position} {branch} split manifest has no artifact key")
@@ -874,6 +964,9 @@ def _download_split_branch_artifacts(
 
     with open(os.path.join(out_dir, "split_branch.json")) as f:
         branch_doc = json.load(f)
+    for name in ("dataset_id", "build_plan_id", "data_release", "data_format"):
+        if branch_doc.get(name) != manifest.get(name):
+            raise RuntimeError(f"{position} {branch} split metadata {name} mismatch")
     for name, value in {
         "split_run_id": split_run_id,
         "position": position,
@@ -929,6 +1022,7 @@ def _merged_split_metrics(
 
     metrics = {
         "position": position,
+        **_artifact_provenance(),
         "split_merged": True,
         "split_run_id": split_run_id,
         "seed": nn_metrics.get("seed", cpu_metrics.get("seed")),
@@ -956,9 +1050,23 @@ def _merged_split_metrics(
     # how cuda_graph_full_active (the 2026-06-15 full-step rebaseline marker,
     # ADR-0017) was lost from production History rows until 2026-06-19. We use
     # only its .keys(); the merge job's own platform is irrelevant here.
-    for key in ("git_sha", "data_release", *_hardware_metadata()):
+    for key in ("git_sha", *_hardware_metadata()):
         if key in nn_metrics:
             metrics[key] = nn_metrics[key]
+    from src.evaluation.records import record_for_result
+
+    metrics["evaluation_record"] = record_for_result(
+        position,
+        metrics,
+        cohorts=metrics["cohorts"],
+        execution_regime="eager",
+        use_environment=False,
+        actual_columns=INFERENCE_REGISTRY[position]["targets"],
+    ).to_dict()
+    metrics["evaluation_record"]["branches"] = {
+        branch: values.get("evaluation_record")
+        for branch, values in (("nn", nn_metrics), ("cpu", cpu_metrics))
+    }
     return metrics
 
 
@@ -989,8 +1097,6 @@ def _merge_split_artifacts(
                 f"{position} split artifact SHA mismatch between branches: "
                 f"nn={nn_manifest['git_sha']}, cpu={cpu_manifest['git_sha']}"
             )
-        if nn_manifest.get("data_release") != cpu_manifest.get("data_release"):
-            raise RuntimeError(f"{position} split branches were trained on different data releases")
         _replace_model_dir_contents(nn_dir, model_dir)
         # Drop branch-only metadata copied by the first replace before adding CPU files.
         for name in ("benchmark_metrics.json", "split_branch.json"):
@@ -1000,6 +1106,11 @@ def _merge_split_artifacts(
 
         nn_metrics = _read_json_file(os.path.join(nn_dir, "benchmark_metrics.json"))
         cpu_metrics = _read_json_file(os.path.join(cpu_dir, "benchmark_metrics.json"))
+        for branch_metrics in (nn_metrics, cpu_metrics):
+            for name in ("dataset_id", "build_plan_id", "data_release", "data_format"):
+                expected = provenance().get(name)
+                if expected and branch_metrics.get(name) != expected:
+                    raise RuntimeError(f"Split metrics {name} mismatch")
 
     metrics = _merged_split_metrics(
         position, split_run_id, nn_metrics, cpu_metrics, phase_seconds, t_total
@@ -1229,20 +1340,45 @@ def main():
         tune_nn.main()
         return
 
-    # Verify actual image and ancestry before GPU, downloads or pipeline/merge.
-    # Diagnostic modes do not publish serving models and retain their own paths.
-    if not (args.dry_run or args.ablation or args.sweep):
-        source_sha = os.environ.get("FF_TRAIN_GIT_SHA", "")
+    s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
+    plan = None
+    if not args.dry_run and not args.ablation and not args.sweep:
+        from src.artifacts.source import image_source_sha, source_key
+
         try:
-            source_key("models", source_sha)
-            load_source(
-                boto3.client("s3"),
-                os.environ.get("S3_BUCKET", "ff-predictor-training"),
-                os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
-                source_sha,
+            if release := os.environ.get("FF_DATA_RELEASE"):
+                from src.orchestration.datasets import bind_data_release
+
+                bind_data_release(release)
+            declared_source = os.environ.get("FF_TRAIN_GIT_SHA", "")
+            source_key("models", declared_source)
+            if image_source_sha() != declared_source:
+                raise RuntimeError("Training source environment disagrees with the actual image")
+            plan = (
+                verify_training_plan(
+                    boto3.client("s3"), s3_bucket, position=pos, seed=args.seed, branch=args.branch
+                )
+                if any(
+                    os.environ.get(key)
+                    for key in ("FF_BUILD_PLAN_ID", "FF_DATASET_ID", "FF_REQUIRE_BUILD_PLAN")
+                )
+                else None
             )
-        except RuntimeError as exc:
-            parser.error(str(exc))
+
+            from src.artifacts.publication import prepare_training
+
+            if args.split_run_id:
+                os.environ["FF_SPLIT_RUN_ID"] = args.split_run_id
+            if not args.ablation and not args.sweep:
+                prepare_training(
+                    boto3.client("s3"),
+                    s3_bucket,
+                    os.environ.get("FF_MODEL_S3_PREFIX", "models").strip("/"),
+                    pos,
+                    plan,
+                )
+        except (RuntimeError, ValueError) as error:
+            parser.error(str(error))
 
     # Print build fingerprint so stale container images are immediately obvious.
     _fingerprint_file = os.path.join(os.path.dirname(__file__), "train.py")
@@ -1265,7 +1401,6 @@ def main():
                 _assert_gpu(pos)
     seed_everything(args.seed)
 
-    s3_bucket = os.environ.get("S3_BUCKET", "ff-predictor-training")
     s3_prefix = os.environ.get("S3_DATA_PREFIX", "data")
     data_dir = os.environ.get("TRAINING_DATA_DIR", "/opt/ml/input/data/training")
     model_dir = os.environ.get("MODEL_OUTPUT_DIR", "/opt/ml/model")
@@ -1304,15 +1439,31 @@ def main():
 
     # data/raw/*.parquet is needed for weather features (all positions) and
     # for K/DST's self-contained data loaders. Sync before branching.
-    with _timed("sync_raw_data", store=phase_seconds):
-        sync_raw_data(s3_bucket)
+    if plan:
+        from src.orchestration.build_plan import plan_data_format
+        from src.orchestration.datasets import materialize_dataset
+
+        with _timed("materialize_dataset", store=phase_seconds):
+            materialize_dataset(
+                boto3.client("s3"),
+                s3_bucket,
+                plan["dataset_id"],
+                splits_dir=Path(data_dir),
+                raw_dir=Path("data/raw"),
+                data_format=plan_data_format(plan),
+            )
+    else:
+        print("[dataset] identified run without a Batch build plan", flush=True)
+        with _timed("sync_raw_data", store=phase_seconds):
+            sync_raw_data(s3_bucket)
 
     gpu_profile_csv = f"/tmp/gpu_profile_{pos}.csv"
 
     if accepts_dataframes(pos):
         # Download train/val/test splits from S3 into the container
-        with _timed("download_data", store=phase_seconds):
-            download_data(s3_bucket, s3_prefix, data_dir)
+        if not plan:
+            with _timed("download_data", store=phase_seconds):
+                download_data(s3_bucket, s3_prefix, data_dir)
         with _timed("read_parquets", store=phase_seconds):
             train_df = _read_parquet_cached(os.path.join(data_dir, "train.parquet"))
             val_df = _read_parquet_cached(os.path.join(data_dir, "val.parquet"))
@@ -1411,6 +1562,10 @@ def main():
     # Save benchmark metrics as JSON (after artifacts so it can't be overwritten).
     # upload_artifacts() requires benchmark_metrics.json, so this must come
     # before the upload.
+    if plan:
+        from src.data.providers.snapshot import assert_snapshot_sources_complete
+
+        assert_snapshot_sources_complete()
     metrics = _extract_metrics(pos, result)
     if args.branch in SPLIT_BRANCHES:
         metrics["split_branch"] = args.branch
@@ -1420,7 +1575,7 @@ def main():
     # lgbm_train, etc.) into the outer phase dict under a ``pipeline.`` prefix
     # so persisted metrics distinguish "data sync + S3 + outer wrap" from the
     # phases that actually dominate the GPU box.
-    inner_phases = result.get("phase_seconds", {}) if isinstance(result, dict) else {}
+    inner_phases = result.get("phase_seconds", {}) if isinstance(result, Mapping) else {}
     for phase, secs in inner_phases.items():
         phase_seconds[f"pipeline.{phase}"] = secs
     # Record end-to-end elapsed and the per-phase breakdown so the run

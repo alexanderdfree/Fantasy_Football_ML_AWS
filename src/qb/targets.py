@@ -31,6 +31,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     signal only); those contributions show up as a positive-scoring residual.
     """
     df = df.copy()
+    from src.shared.comparison_truth import (
+        attach_comparison_actuals,
+        comparison_source_availability,
+    )
+
+    source_available = comparison_source_availability(df, "QB")
 
     for col in ("passing_yards", "rushing_yards", "passing_tds", "rushing_tds", "interceptions"):
         df[col] = df[col].fillna(0)
@@ -78,4 +84,4 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
                 f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts"
             )
 
-    return df
+    return attach_comparison_actuals(df, "QB", source_available)

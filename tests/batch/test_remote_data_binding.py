@@ -53,6 +53,8 @@ class S3:
         self.objects = {}
 
     def get_object(self, *, Bucket, Key):
+        if Key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         return {"Body": io.BytesIO(self.objects[Key])}
 
     def put_object(self, *, Bucket, Key, Body, **kwargs):
@@ -66,6 +68,7 @@ class S3:
         manifest = {
             "schema_version": 1,
             "producer": recipe,
+            "data_producer_sha256": release.producer_fingerprint(recipe),
             "files": {
                 name: info
                 for name in (
@@ -90,6 +93,17 @@ class S3:
 @pytest.fixture
 def remote(monkeypatch):
     batch, s3 = Batch(), S3()
+    s3.published(RECIPE_A)
+    for name in (
+        "FF_DATASET_ID",
+        "FF_DATA_FORMAT",
+        "FF_BUILD_PLAN_ID",
+        "FF_REQUIRE_BUILD_PLAN",
+        "FF_TRAIN_GIT_SHA",
+    ):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "remote-binding-request")
     monkeypatch.setenv("FF_DATA_RELEASE", "")
     monkeypatch.setattr(launch, "JOB_DEFINITION", "gpu")
     monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", None)
@@ -106,11 +120,11 @@ def remote(monkeypatch):
         lambda sha: RECIPE_A if sha == SHA_A else RECIPE_B,
     )
 
-    def register_source(_s3, _bucket, _prefix, source_sha):
+    def register_source(_s3, _bucket, _prefix, source_sha, *_):
         assert batch.submitted == [], "source registration must precede every submission"
         batch.registered_sources.append(source_sha)
 
-    monkeypatch.setattr("src.shared.artifact_publication.register_source", register_source)
+    monkeypatch.setattr("src.artifacts.source.register_source", register_source)
     return batch, s3
 
 
@@ -121,7 +135,7 @@ def test_local_b_remote_a_cannot_publish_or_submit(remote, monkeypatch, entrypoi
     batch, _ = remote
     module = launch if entrypoint == "launch" else benchmark
     publish = mock.Mock(side_effect=AssertionError("incorrect publication"))
-    monkeypatch.setattr(module, "upload_data", publish)
+    monkeypatch.setattr(launch, "upload_data", publish)
     monkeypatch.chdir(tmp_path)
     argv = [entrypoint, "--positions", "WR"]
     if entrypoint == "launch":
@@ -230,9 +244,8 @@ def test_bound_revision_preflight_remains_mandatory(remote, monkeypatch):
     monkeypatch.setattr(
         "sys.argv", ["launch", "--positions", "WR", "--skip-upload", "--wait", "false"]
     )
-    with pytest.raises(SystemExit) as result:
+    with pytest.raises(RuntimeError, match="immutable Batch job-definition"):
         launch.main()
-    assert result.value.code == 2
     assert batch.registered_sources == []
     assert batch.submitted == []
 
@@ -243,7 +256,7 @@ def test_source_ancestry_failure_stops_before_submission(remote, monkeypatch):
     def reject(*args, **kwargs):
         raise RuntimeError("selected source is not on origin/main")
 
-    monkeypatch.setattr("src.shared.artifact_publication.register_source", reject)
+    monkeypatch.setattr("src.artifacts.source.register_source", reject)
     monkeypatch.setattr(
         "sys.argv", ["launch", "--positions", "WR", "--skip-upload", "--wait", "false"]
     )
@@ -260,15 +273,14 @@ def test_benchmark_registers_and_records_the_resolved_image(remote, monkeypatch,
     monkeypatch.setattr(release, "data_producer_hashes", lambda root: RECIPE_A)
     monkeypatch.chdir(tmp_path)
 
-    def publish(_bucket):
-        assert batch.registered_sources == [SHA_A]
-        assert batch.submitted == []
+    def publish(*args, **kwargs):
+        pytest.fail("Read-only release selection must not republish data")
 
-    monkeypatch.setattr(benchmark, "upload_data", publish)
+    monkeypatch.setattr(launch, "upload_data", publish)
     monkeypatch.setattr(benchmark, "wait_for_jobs", lambda *a, **kw: {"WR": ("SUCCEEDED", 0)})
     history = mock.Mock()
     monkeypatch.setattr(benchmark, "record_benchmark_run", history)
-    monkeypatch.setattr("sys.argv", ["benchmark", "--positions", "WR"])
+    monkeypatch.setattr("sys.argv", ["benchmark", "--positions", "WR", "--skip-upload"])
     benchmark.main()
     assert batch.registered_sources == [SHA_A]
     assert batch.submitted[0]["jobDefinition"] == "gpu:7"
@@ -280,12 +292,11 @@ def test_active_benchmark_rejects_a_conflicting_history_sha(remote, monkeypatch,
 
     batch, _s3 = remote
     publish = mock.Mock()
-    monkeypatch.setattr(benchmark, "upload_data", publish)
+    monkeypatch.setattr(launch, "upload_data", publish)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("sys.argv", ["benchmark", "--positions", "WR", "--git-hash", SHA_B])
-    with pytest.raises(SystemExit) as result:
+    with pytest.raises(RuntimeError, match="history SHA"):
         benchmark.main()
-    assert result.value.code == 2
     publish.assert_not_called()
     assert batch.registered_sources == []
     assert batch.submitted == []
@@ -298,7 +309,7 @@ def test_download_only_does_not_register_or_resolve_a_training_source(
 
     batch, _s3 = remote
     resolver = mock.Mock(side_effect=AssertionError("download-only resolved training source"))
-    monkeypatch.setattr(benchmark, "resolve_launch_binding", resolver)
+    monkeypatch.setattr(launch, "resolve_launch_binding", resolver)
     history = mock.Mock()
     monkeypatch.setattr(benchmark, "record_benchmark_run", history)
     monkeypatch.chdir(tmp_path)
@@ -329,7 +340,8 @@ def test_cpu_only_launch_uses_cpu_revision_map_for_explicit_source(monkeypatch):
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu")
     monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-queue")
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", None)
-    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", SHA_A)
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", SHA_A)
+    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", SHA_B)
     result = launch.resolve_launch_binding(batch, s3, ["K", "DST"])
     assert result["cpu_definition"] == "cpu:4" and result["gpu_definition"] == ""
     assert s3.get_object.call_args.kwargs["Key"] == f"job-def-revisions/cpu/{SHA_A}.txt"

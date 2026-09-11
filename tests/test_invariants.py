@@ -373,12 +373,8 @@ def test_every_multihead_net_call_passes_non_negative_targets():
 
 @pytest.mark.unit
 def test_training_and_serving_share_feature_builder():
-    """Both ``src.shared.pipeline`` (training) and ``src.serving.core``
-    (serving) must import ``build_position_features`` from the shared module.
-    Centralising the feature build is the architectural guarantee that the
-    two paths cannot drift on feature engineering.
-    """
-    from src.serving import core
+    """Guard common preparation routing; pipeline parity is tested separately."""
+    from src.prediction import frames
     from src.shared import feature_build, pipeline
 
     canonical = feature_build.build_position_features
@@ -391,9 +387,9 @@ def test_training_and_serving_share_feature_builder():
         "inference paths'."
     )
 
-    # The serving inference path (src.serving.core) must use the canonical function too.
-    assert core.build_position_features is canonical, (
-        "src.serving.core rebound build_position_features to a different "
+    # Serving and analysis delegate to the same prediction adapter.
+    assert frames.build_position_features is canonical, (
+        "src.prediction.frames rebound build_position_features to a different "
         "object — the serving path is no longer guaranteed to use the same "
         "feature builder as training. TODO.md Fixed archive 'Weather/Vegas "
         "features missing at inference in src/serving/app.py'."

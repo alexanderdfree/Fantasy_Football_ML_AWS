@@ -29,6 +29,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
         df: DataFrame filtered to RB rows only, with raw stat columns available.
     """
     df = df.copy()
+    from src.shared.comparison_truth import (
+        attach_comparison_actuals,
+        comparison_source_availability,
+    )
+
+    source_available = comparison_source_availability(df, "RB")
 
     for col in ("rushing_tds", "receiving_tds", "rushing_yards", "receiving_yards", "receptions"):
         df[col] = df[col].fillna(0)
@@ -77,4 +83,4 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
                 f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts"
             )
 
-    return df
+    return attach_comparison_actuals(df, "RB", source_available)

@@ -37,6 +37,10 @@ _ALL_TARGETS = tuple(TARGETS)
 def _build_tiny_cfg() -> dict:
     """Assemble the tiny config with position-specific callables attached."""
     cfg = dict(CONFIG_TINY)
+    # Preserve this fixture's legacy all-Huber recipe explicitly. The loss
+    # previously supplied delta=1 for the count targets omitted by CONFIG_TINY.
+    cfg["head_losses"] = dict.fromkeys(TARGETS, "huber")
+    cfg["huber_deltas"] = {target: cfg["huber_deltas"].get(target, 1.0) for target in TARGETS}
     cfg.update(
         {
             "filter_fn": filter_to_position,

@@ -64,7 +64,7 @@ def _load_pos(pos: str) -> pd.DataFrame:
 
 def _top30_ids(pos: str, df: pd.DataFrame) -> set[str]:
     """Elite cohort = top-30 by actual season-total FP (the comparison_experts.json basis)."""
-    cj = Path("src/serving/comparison_experts.json")
+    cj = Path("src/prediction/comparison_experts.json")
     if cj.exists():
         with open(cj) as f:
             ids = json.load(f).get("top30_ids", {}).get(pos)

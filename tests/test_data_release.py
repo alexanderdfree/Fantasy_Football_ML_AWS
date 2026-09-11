@@ -49,6 +49,22 @@ print(json.dumps({'cache':str(cache), 'pinned':(cache/'.release.json').exists(),
     assert json.loads(marker.read_text())["release_id"] == "production-snapshot"
 
 
+@pytest.fixture(autouse=True)
+def isolated_release_bindings(monkeypatch):
+    # Bootstrap/launcher functions bind aliases directly in os.environ.
+    for name in (
+        "FF_DATA_RELEASE",
+        "FF_DATASET_ID",
+        "FF_DATA_FORMAT",
+        "FF_BUILD_PLAN_ID",
+        "FF_REQUIRE_BUILD_PLAN",
+        "FF_LEGACY_RUN_ID",
+        "FF_TRAIN_GIT_SHA",
+    ):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name, raising=False)
+
+
 class FakeS3:
     def __init__(self):
         self.objects = {}
@@ -227,7 +243,22 @@ def test_split_jobs_receive_same_release(monkeypatch):
     monkeypatch.setattr(launch, "JOB_QUEUE_CPU", "cpu-q")
     batch = mock.Mock()
     batch.submit_job.side_effect = [{"jobId": f"job-{i}"} for i in range(3)]
-    launch._submit_split_for_position("WR", 42, "run", batch)
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", "b" * 40)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "split-release-test")
+    monkeypatch.setenv("FF_DATASET_ID", "a" * 64)
+    launch._submit_split_for_position(
+        "WR",
+        42,
+        "run",
+        batch,
+        binding={
+            "image_sha": "b" * 40,
+            "gpu_definition": "gpu:1",
+            "cpu_definition": "cpu:2",
+            "gpu_image": "image:" + "b" * 40,
+            "cpu_image": "image:" + "b" * 40,
+        },
+    )
     for call in batch.submit_job.call_args_list:
         env = {e["name"]: e["value"] for e in call.kwargs["containerOverrides"]["environment"]}
         assert env["FF_DATA_RELEASE"] == "a" * 64
@@ -244,6 +275,8 @@ def test_batch_raw_and_splits_pin_once(producer, monkeypatch, tmp_path):
     monkeypatch.setattr(train.boto3, "client", lambda *a, **k: s3)
     monkeypatch.setattr(config, "CACHE_DIR", str(tmp_path / "local/raw"))
     monkeypatch.setenv("TRAINING_DATA_DIR", str(tmp_path / "local/splits"))
+    selected, _ = release.resolve_release(s3, "bucket")
+    monkeypatch.setenv("FF_DATA_RELEASE", selected)
     train.sync_raw_data("bucket")
     train.download_data("bucket", "data", str(tmp_path / "local/splits"))
     assert s3.read_keys.count("data/manifest.json") == 1
@@ -266,17 +299,55 @@ def test_tuning_checks_existing_cache_instead_of_skipping(module, monkeypatch):
 
 
 def test_serving_hydrates_snapshot_before_exposing_data(producer, monkeypatch, tmp_path):
+    import hashlib
+
     import boto3
 
+    from src.artifacts import serving_snapshot
+    from src.serving import core
+    from src.serving.app import create_app
     from src.shared import model_sync
+    from tests.serving.test_state import _cache, _write_generation
 
-    s3 = FakeS3()
+    class SnapshotS3(FakeS3):
+        def get_object(self, *, Bucket, Key):
+            response = super().get_object(Bucket=Bucket, Key=Key)
+            response["ETag"] = hashlib.sha256(self.objects[Key]).hexdigest()
+            return response
+
+    s3 = SnapshotS3()
     rid = release.publish_release(s3, "bucket", **producer)
     monkeypatch.setenv("FF_MODEL_S3_BUCKET", "bucket")
-    monkeypatch.delenv("FF_DATA_RELEASE", raising=False)
-    monkeypatch.setattr(model_sync, "_repo_root", lambda: tmp_path / "consumer")
+    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
+    monkeypatch.setenv("FF_DATA_RELEASE", rid)
+    monkeypatch.setenv("FF_DATASET_ID", rid)
+    monkeypatch.delenv("FF_SERVING_SNAPSHOT_GENERATION", raising=False)
+    built = tmp_path / "built"
+    _write_generation(built, _cache())
+    published = serving_snapshot.publish(
+        s3, "bucket", built, serving_snapshot.SnapshotBuild(None, (), None, rid)
+    )
+    consumer = tmp_path / "consumer"
+    monkeypatch.setattr(model_sync, "_repo_root", lambda: consumer)
     monkeypatch.setattr(boto3, "client", lambda *a, **k: s3)
-    assert model_sync.sync_data_from_s3()["release_id"] == rid
+    monkeypatch.setattr(core, "_PREDICTIONS_CACHE_DIR", str(consumer / "data/serving_cache"))
+    monkeypatch.setattr(
+        model_sync,
+        "sync_data_from_s3",
+        lambda: pytest.fail("serving downloaded raw training inputs"),
+    )
+    monkeypatch.setattr(
+        core, "_compute_models_fingerprint", lambda: pytest.fail("serving read model/data files")
+    )
+    app = create_app(config={"ALLOW_RUNTIME_INFERENCE": False})
+    assert app.test_client().get("/api/metrics").status_code == 503
+    assert model_sync.sync_predictions_cache_from_s3()["generation"] == published["generation"]
+    response = app.test_client().get("/api/metrics")
+    assert response.status_code == 200
+    assert response.get_json() == {"value": 10.0}
+    assert response.headers["X-FFP-Snapshot-Generation"] == published["generation"]
+    assert not (consumer / "data/raw").exists()
+    assert not (consumer / "data/splits").exists()
 
 
 def test_remote_content_is_verified_before_promotion(producer):
@@ -297,7 +368,7 @@ def test_split_merge_rejects_data_from_another_release(monkeypatch, tmp_path):
 
     monkeypatch.setenv("FF_DATA_RELEASE", "a" * 64)
     monkeypatch.setattr(train, "_load_split_manifest", lambda *a: {"data_release": "b" * 64})
-    with pytest.raises(RuntimeError, match="split data release mismatch"):
+    with pytest.raises(RuntimeError, match="data_release mismatch"):
         train._download_split_branch_artifacts(
             mock.Mock(), "bucket", "run", "WR", "nn", "", str(tmp_path)
         )
@@ -307,7 +378,7 @@ def test_metrics_preserve_release_provenance(monkeypatch):
     from src.batch import train
 
     monkeypatch.setenv("FF_DATA_RELEASE", "a" * 64)
-    result = {"cohorts": {"available": True}}
+    result = {"cohorts": {"all": {"status": "unavailable", "n": 0}}}
     assert train._extract_metrics("WR", result)["data_release"] == "a" * 64
 
 
@@ -546,4 +617,7 @@ def test_unpinned_local_launcher_uses_its_recipe_after_global_current_changes(
     # An explicit pin means a deliberately selected remote image; don't replace it
     # with the local checkout's recipe when those two source revisions differ.
     monkeypatch.setenv("FF_DATA_RELEASE", second)
+    with pytest.raises(RuntimeError, match="FF_DATA_RELEASE and FF_DATASET_ID disagree"):
+        launch.pin_data_release(s3)
+    monkeypatch.setenv("FF_DATASET_ID", second)
     assert launch.pin_data_release(s3) == second

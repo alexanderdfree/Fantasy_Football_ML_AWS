@@ -34,6 +34,8 @@ def build_position_features(
     cfg: dict,
     feature_cols: list[str],
     full_train: pd.DataFrame | None = None,
+    *,
+    fitted_state: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame | None]:
     """Merge schedule features, add position-specific features, backfill missing
     whitelist columns, and clean inf/NaN values.
@@ -43,6 +45,7 @@ def build_position_features(
     splits so both training and serving can route through the same block.
     """
     dfs = [pos_train, pos_val] + ([pos_test] if pos_test is not None else [])
+    practice_mean = pos_train["practice_status"].mean() if "practice_status" in pos_train else None
     split_labels = ["train", "val", "test"][: len(dfs)]
 
     # Schedule merge first — downstream ``add_features_fn`` may read the
@@ -72,17 +75,19 @@ def build_position_features(
         pos_train, pos_val, pos_test = cfg["add_features_fn"](
             pos_train, pos_val, pos_test, full_train=full_train
         )
-        pos_train, pos_val, pos_test = cfg["fill_nans_fn"](
-            pos_train, pos_val, pos_test, cfg["specific_features"]
-        )
+        if fitted_state is None:
+            pos_train, pos_val, pos_test = cfg["fill_nans_fn"](
+                pos_train, pos_val, pos_test, cfg["specific_features"]
+            )
     else:
         empty = pos_val.iloc[:0].copy()
         pos_train, pos_val, _ = cfg["add_features_fn"](
             pos_train, pos_val, empty, full_train=full_train
         )
-        pos_train, pos_val, _ = cfg["fill_nans_fn"](
-            pos_train, pos_val, empty, cfg["specific_features"]
-        )
+        if fitted_state is None:
+            pos_train, pos_val, _ = cfg["fill_nans_fn"](
+                pos_train, pos_val, empty, cfg["specific_features"]
+            )
 
     # Whitelist columns the pipeline didn't produce mean either build_features
     # never ran (the regression behind PR fixing 8c46b59 — refresh-splits.yml
@@ -93,6 +98,10 @@ def build_position_features(
     # silent drift; fail loudly instead. Mirrors the same fail-loud contract
     # build_game_history_arrays adopted in c06568a.
     dfs = [pos_train, pos_val] + ([pos_test] if pos_test is not None else [])
+    if fitted_state is not None:
+        for df in dfs:
+            for col, value in fitted_state["fill_values"].items():
+                df[col] = df[col].replace([np.inf, -np.inf], np.nan).fillna(value)
     missing = [c for c in feature_cols if c not in pos_train.columns]
     if missing:
         raise KeyError(
@@ -115,14 +124,34 @@ def build_position_features(
     # by design. Positions whose ranks are *all* sentinel (e.g. K — kickers are
     # never on depth charts) yield a NaN mean; the guard leaves them constant,
     # which StandardScaler's zero-variance handling already neutralizes to 0.
+    depth_fill = None
     if "depth_chart_rank" in pos_train.columns:
-        fill_val = pos_train["depth_chart_rank"].replace(-1, np.nan).mean()
+        fill_val = (
+            fitted_state.get("depth_chart_rank_fill")
+            if fitted_state is not None
+            else pos_train["depth_chart_rank"].replace(-1, np.nan).mean()
+        )
         if pd.notna(fill_val):
+            depth_fill = float(fill_val)
             for df in dfs:
                 df["depth_chart_rank"] = df["depth_chart_rank"].replace(-1, fill_val)
 
     for df in dfs:
         df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    from src.shared.comparison_truth import restore_comparison_actuals
+
+    for df in dfs:
+        restore_comparison_actuals(df)
+
+    pos_train.attrs["preprocessing_state"] = fitted_state or {
+        "fill_values": pos_train.attrs.get("fitted_fill_values", {}),
+        "depth_chart_rank_fill": depth_fill,
+        "clip": list(FEATURE_CLIP),
+        "missing_value": 0.0,
+        "dtype": "float32",
+        "practice_status_mean": float(practice_mean) if pd.notna(practice_mean) else None,
+    }
 
     return pos_train, pos_val, pos_test
 
@@ -229,4 +258,5 @@ def fill_nans_with_train_means(
     for split_df in (train_df, val_df, test_df):
         for col in cols:
             split_df[col] = split_df[col].fillna(train_means[col])
+    train_df.attrs["fitted_fill_values"] = {col: float(train_means[col]) for col in cols}
     return train_df, val_df, test_df

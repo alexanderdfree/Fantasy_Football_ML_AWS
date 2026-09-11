@@ -31,18 +31,36 @@ def test_manual_batch_pins_actual_current_revision_when_latest_changes(monkeypat
         {"jobDefinitions": [definition(3, SHA_B)]},
         {"jobDefinitions": [definition(14)]},
     ]
-    resolved = resolve_batch(batch, Mock(), "bucket")
+    resolved = resolve_batch(batch, Mock(), "bucket", include_definition=True)
     # A new build arriving after verification must not change this argument.
     batch.get_paginator.return_value.paginate.return_value = [
         {"jobDefinitions": [definition(15, SHA_B)]}
     ]
-    assert resolved == {"image_sha": SHA_A, "revision": "14", "cpu_revision": ""}
+    assert {k: resolved[k] for k in ("image_sha", "revision", "cpu_revision")} == {
+        "image_sha": SHA_A,
+        "revision": "14",
+        "cpu_revision": "",
+    }
     monkeypatch.setattr(launch, "JOB_DEFINITION", "ff-training-job")
     monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", resolved["revision"])
     monkeypatch.setattr(launch, "TRAIN_GIT_SHA", resolved["image_sha"])
     monkeypatch.setattr(launch, "data_release_environment", lambda: [])
     batch.submit_job.return_value = {"jobId": "pinned-job"}
-    launch.submit_job("QB", branch="nn", split_run_id="pinned-run", batch_client=batch)
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", SHA_A)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "resolved-image-test")
+    monkeypatch.setenv("FF_DATA_RELEASE", "legacy")
+    launch.submit_job(
+        "QB",
+        branch="nn",
+        split_run_id="pinned-run",
+        batch_client=batch,
+        binding={
+            "image_sha": SHA_A,
+            "gpu_definition": resolved["job_definition"],
+            "cpu_definition": "",
+            "gpu_image": resolved["image"],
+        },
+    )
     call = batch.submit_job.call_args.kwargs
     assert call["jobDefinition"] == "ff-training-job:14"
     assert {"name": "FF_TRAIN_GIT_SHA", "value": SHA_A} in call["containerOverrides"]["environment"]

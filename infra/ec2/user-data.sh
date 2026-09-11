@@ -86,16 +86,19 @@ fi
 # --- 5. /usr/local/bin/ff-train — single entry point for SSM and humans
 cat > /usr/local/bin/ff-train <<EOF
 #!/usr/bin/env bash
-# Usage: ff-train POS [SEED]
+# Usage: FF_TRAIN_IMAGE=repo@sha256:digest FF_TRAIN_GIT_SHA=full-sha \
+#        FF_LEGACY_RUN_ID=stable-request-id ff-train POS [SEED]
 # Runs training for one position inside the ff-training container. A flock
 # prevents concurrent invocations from racing on the scratch dir or S3
 # artifact. last-activity timestamp feeds the auto-shutdown timer.
 set -euo pipefail
 POS="\$1"
 SEED="\${2:-42}"
-IMAGE="\${FF_TRAIN_IMAGE:?FF_TRAIN_IMAGE digest pin is required}"
-if [[ ! "\$IMAGE" =~ @sha256:[0-9a-f]{64}\$ ]] || [[ ! "\${FF_TRAIN_GIT_SHA:-}" =~ ^[0-9a-f]{40}\$ ]]; then
-  echo "ff-train requires a digest-pinned image and its full verified source SHA" >&2
+IMAGE="\${FF_TRAIN_IMAGE:?Set FF_TRAIN_IMAGE to an immutable image digest}"
+SOURCE_SHA="\${FF_TRAIN_GIT_SHA:?Set FF_TRAIN_GIT_SHA to the image source SHA}"
+LEGACY_RUN_ID="\${FF_LEGACY_RUN_ID:?Set FF_LEGACY_RUN_ID to a stable request identity}"
+if ! [[ "\$SOURCE_SHA" =~ ^[0-9a-f]{40}\$ ]] || ! [[ "\$IMAGE" =~ @sha256:[0-9a-f]{64}\$ ]]; then
+  echo "ff-train requires a full source SHA and digest-pinned image" >&2
   exit 1
 fi
 _t_total=\$SECONDS
@@ -108,26 +111,35 @@ mkdir -p /opt/ff/scratch/input /opt/ff/scratch/model /opt/ff/scratch/raw /opt/ff
 # outlasts IDLE_HOURS before docker completes.
 date -Iseconds > /opt/ff/logs/last-activity
 
-# The workflow resolves a SHA tag to its digest before the data gate. Running
-# that digest keeps a concurrent :latest update from changing the verified code.
+# The caller selected an immutable digest; a cached copy is already exact.
 _t_pull=\$SECONDS
 if ! docker image inspect "\$IMAGE" >/dev/null 2>&1; then
   docker pull "\$IMAGE"
 else
-  echo "[image] verified digest cached — skipping pull"
+  echo "[image] selected immutable digest is cached"
 fi
+# Reject old images without the ordered-publication protocol, and verify that
+# declared source identity describes the actual executable before GPU work.
+docker run --rm --entrypoint python \\
+  -e FF_TRAIN_GIT_SHA="\$SOURCE_SHA" "\$IMAGE" -c \\
+  'import os, sys; from src.artifacts.source import image_source_sha; from src.artifacts.publication import prepare_training; sys.exit(0 if image_source_sha() == os.environ["FF_TRAIN_GIT_SHA"] else "Pinned image source SHA mismatch")'
 echo "[timing] phase=docker_pull seconds=\$((SECONDS - _t_pull))"
 
 _t_run=\$SECONDS
 docker run --rm --gpus all \\
   -e S3_BUCKET=${BUCKET} \\
   -e S3_DATA_PREFIX=data \\
-  -e FF_DATA_RELEASE="\${FF_DATA_RELEASE:-}" \\
   -e LOG_EVERY=1 \\
   -e REQUIRE_GPU=1 \\
   -e AWS_DEFAULT_REGION=${REGION} \\
   -e FF_FORCE_REFRESH="\${FF_FORCE_REFRESH:-0}" \\
-  -e FF_TRAIN_GIT_SHA="\${FF_TRAIN_GIT_SHA:-}" \\
+  -e FF_TRAIN_GIT_SHA="\$SOURCE_SHA" \\
+  -e FF_TRAIN_IMAGE_ID="\$IMAGE" \\
+  -e FF_LEGACY_RUN_ID="\$LEGACY_RUN_ID" \\
+  -e FF_DATA_RELEASE="\${FF_DATA_RELEASE:-}" \\
+  -e FF_DATASET_ID="\${FF_DATASET_ID:-}" \\
+  -e FF_DATA_FORMAT="\${FF_DATA_FORMAT:-}" \\
+  -e FF_MODEL_S3_PREFIX="\${FF_MODEL_S3_PREFIX:-models}" \\
   -v /opt/ff/scratch/input:/opt/ml/input/data/training \\
   -v /opt/ff/scratch/model:/opt/ml/model \\
   -v /opt/ff/scratch/raw:/opt/ml/code/data/raw \\

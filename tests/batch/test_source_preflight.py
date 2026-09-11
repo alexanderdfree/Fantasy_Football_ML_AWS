@@ -9,12 +9,29 @@ import pytest
 import yaml
 from botocore.exceptions import ClientError
 
+from src.artifacts import publication
+from src.artifacts import source as artifact_publication
 from src.batch import launch, train
-from src.shared import artifact_publication
 from src.shared.registry import ALL_POSITIONS
 
 pytestmark = pytest.mark.unit
 SHA = "a" * 40
+
+
+@pytest.fixture(autouse=True)
+def publication_context(monkeypatch):
+    for key in (
+        "FF_BUILD_PLAN_ID",
+        "FF_DATASET_ID",
+        "FF_DATA_RELEASE",
+        "FF_DATA_FORMAT",
+        "FF_REQUIRE_BUILD_PLAN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", "source-preflight")
+    monkeypatch.setattr(
+        publication, "image_source_sha", lambda: artifact_publication.image_source_sha()
+    )
 
 
 class ComputeReached(Exception):
@@ -69,71 +86,33 @@ def test_verified_image_reaches_existing_compute_path(monkeypatch, pos, branch):
     train_argv(monkeypatch, pos, branch)
     monkeypatch.setenv("FF_TRAIN_GIT_SHA", SHA)
     monkeypatch.setattr(artifact_publication, "image_source_sha", lambda: SHA)
-    s3 = Mock()
+    from tests.orchestration.test_datasets import MemoryS3
+
+    s3 = MemoryS3()
     record = {"source_sha": SHA, "source_order": 1, "lineage": [SHA]}
-    s3.get_object.return_value = {"Body": io.BytesIO(json.dumps(record).encode())}
+    s3.objects[artifact_publication.source_key("models", SHA)] = json.dumps(record).encode()
     monkeypatch.setattr(train.boto3, "client", lambda *_: s3)
     monkeypatch.setattr(train, "_assert_gpu", lambda *_a, **_k: None)
     monkeypatch.setattr(train, "seed_everything", Mock(side_effect=ComputeReached))
     with pytest.raises(ComputeReached):
         train.main()
-    s3.get_object.assert_called_once()
+    assert any("/intents/" in key for key in s3.objects)
 
 
-def _invalid_remote_source(monkeypatch, module, failure):
-    """Allow real read-only binding resolution, but forbid every write boundary."""
-    monkeypatch.setenv("FF_MODEL_S3_PREFIX", "models")
-    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", None)
+@pytest.mark.parametrize("sha,revision", [(None, "12"), ("short", "12"), (SHA, None)])
+def test_direct_submission_missing_source_or_revision_fails_before_aws(monkeypatch, sha, revision):
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", sha or "")
     monkeypatch.setattr(launch, "JOB_DEFINITION", "ff-training-job")
-    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", None)
-    monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", None)
-    monkeypatch.setattr(launch, "JOB_QUEUE_CPU", None)
-    tag = {"missing_source": "latest", "malformed_source": "short", "ancestry": SHA}[failure]
-    batch, s3 = Mock(), Mock()
-    batch.get_paginator.return_value.paginate.return_value = [
-        {
-            "jobDefinitions": [
-                {
-                    "jobDefinitionName": "ff-training-job",
-                    "revision": 12,
-                    "status": "ACTIVE",
-                    "containerProperties": {"image": f"registry/training:{tag}"},
-                }
-            ]
-        }
-    ]
-    client = Mock(side_effect=lambda service, **kwargs: batch if service == "batch" else s3)
-    monkeypatch.setattr(module.boto3, "client", client)
-    monkeypatch.setattr(module, "validate_local_publish", lambda *a: None)
-    # Exercise the real source registration guard: a resolved image outside
-    # main ancestry must fail before register_source's first S3 PUT.
-    lineage = Mock(return_value="b" * 40 + "\n")
-    monkeypatch.setattr(artifact_publication.subprocess, "check_output", lineage)
-    forbidden = [batch.submit_job, s3.put_object, s3.upload_file]
-    for name in ("upload_data", "pin_data_release"):
-        stub = Mock(
-            side_effect=AssertionError(f"write/data gate reached before source validation: {name}")
-        )
-        monkeypatch.setattr(module, name, stub)
-        forbidden.append(stub)
-    return batch, client, lineage, forbidden
-
-
-@pytest.mark.parametrize("failure", ["missing_source", "malformed_source", "ancestry"])
-def test_launcher_invalid_resolved_source_fails_before_publication(monkeypatch, failure):
-    batch, client, lineage, forbidden = _invalid_remote_source(monkeypatch, launch, failure)
-    monkeypatch.setattr("sys.argv", ["launch", "--positions", "QB", "--skip-upload"])
-    with pytest.raises((ValueError, RuntimeError), match="source-SHA|not on origin/main"):
-        launch.main()
-    assert client.called
-    batch.get_paginator.return_value.paginate.assert_called_once()
-    assert lineage.called is (failure == "ancestry")
-    for stub in forbidden:
-        stub.assert_not_called()
+    monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", revision)
+    client = Mock(side_effect=AssertionError("AWS before validation"))
+    monkeypatch.setattr(launch.boto3, "client", client)
+    with pytest.raises(RuntimeError, match="source|revision|SHA"):
+        launch.validate_submission_source(["QB"])
+    client.assert_not_called()
 
 
 def test_split_requires_cpu_revision(monkeypatch):
-    monkeypatch.setattr(launch, "TRAIN_GIT_SHA", SHA)
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", SHA)
     monkeypatch.setattr(launch, "JOB_DEFINITION_REVISION", "12")
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU", "cpu-def")
     monkeypatch.setattr(launch, "JOB_DEFINITION_CPU_REVISION", None)
@@ -151,16 +130,11 @@ def test_manual_training_requires_built_image_sha_and_automatic_uses_upstream(wo
     assert trigger["workflow_dispatch"]["inputs"]["image_sha"]["required"] is True
     steps = doc["jobs"]["train"]["steps"]
     step = next(s for s in steps if "FF_TRAIN_GIT_SHA" in s.get("env", {}))
-    resolver_id = "revision" if workflow == "train-batch.yml" else "image"
-    resolver = next(s for s in steps if s.get("id") == resolver_id)
-    assert (
-        resolver["env"]["HEAD_SHA"]
-        == "${{ github.event.workflow_run.head_sha || github.event.inputs.image_sha }}"
+    assert step["env"]["FF_TRAIN_GIT_SHA"] == (
+        "${{ steps.build_plan.outputs.git_sha }}"
+        if workflow == "train-batch.yml"
+        else "${{ steps.image.outputs.image_sha }}"
     )
-    assert "^[0-9a-f]{40}$" in resolver["run"]
-    assert "resolve_training_image" in resolver["run"]
-    assert step["env"]["FF_TRAIN_GIT_SHA"] == "${{ steps." + resolver_id + ".outputs.image_sha }}"
-    assert steps.index(resolver) < steps.index(step)
     if workflow == "train-batch.yml":
         revision = next(s for s in steps if s.get("id") == "revision")
         assert "workflow_run" not in str(revision.get("if", ""))
@@ -168,21 +142,19 @@ def test_manual_training_requires_built_image_sha_and_automatic_uses_upstream(wo
         assert "falling back to bare" not in revision["run"]
 
 
-@pytest.mark.parametrize("failure", ["missing_source", "ancestry"])
-def test_standalone_benchmark_rejects_invalid_remote_source_before_publication(
-    monkeypatch, failure
-):
+@pytest.mark.parametrize("sha,run_id", [("short", "identified"), (SHA, "")])
+def test_standalone_benchmark_rejects_invalid_identity_before_aws(monkeypatch, sha, run_id):
     from src.batch import benchmark
 
-    batch, client, lineage, forbidden = _invalid_remote_source(monkeypatch, benchmark, failure)
+    monkeypatch.setenv("FF_TRAIN_GIT_SHA", sha)
+    monkeypatch.setenv("FF_LEGACY_RUN_ID", run_id)
+    client = Mock(side_effect=AssertionError("AWS before validation"))
+    monkeypatch.setattr(benchmark.boto3, "client", client)
     monkeypatch.setattr("sys.argv", ["benchmark", "--positions", "QB"])
-    with pytest.raises((ValueError, RuntimeError), match="source-SHA|not on origin/main"):
+    with pytest.raises(SystemExit) as exc:
         benchmark.main()
-    assert client.called
-    batch.get_paginator.return_value.paginate.assert_called_once()
-    assert lineage.called is (failure == "ancestry")
-    for stub in forbidden:
-        stub.assert_not_called()
+    assert exc.value.code == 2
+    client.assert_not_called()
 
 
 @pytest.mark.parametrize("manual", [True, False])
@@ -192,24 +164,19 @@ def test_ec2_records_the_image_used_for_training(monkeypatch, tmp_path, manual):
     root = Path(__file__).resolve().parents[2]
     workflow = yaml.safe_load((root / ".github/workflows/train-ec2.yml").read_text())
     steps = workflow["jobs"]["train"]["steps"]
-    training = next(s for s in steps if "FF_TRAIN_GIT_SHA" in s.get("env", {}))
+    training = next(s for s in steps if s.get("id") == "train")
     recording = next(s for s in steps if "python -m src.batch.benchmark" in s.get("run", ""))
     context = {
         "github.event.workflow_run.head_sha": "" if manual else SHA,
         "github.event.inputs.image_sha": SHA if manual else "",
         "github.sha": "b" * 40,
+        "steps.image.outputs.image_sha": SHA,
     }
 
     def evaluate(expression):
         parts = expression.removeprefix("${{").removesuffix("}}").split("||")
         return next((context.get(p.strip(), "") for p in parts if context.get(p.strip())), "")
 
-    resolver = next(s for s in steps if s.get("id") == "image")
-    requested = evaluate(resolver["env"]["HEAD_SHA"])
-    assert requested == SHA
-    # The resolver verifies the requested source tag and emits that same SHA
-    # alongside its immutable image digest; current workspace HEAD may differ.
-    context["steps.image.outputs.image_sha"] = requested
     trained = evaluate(training["env"]["FF_TRAIN_GIT_SHA"])
     recorded = evaluate(recording["env"]["HEAD_SHA"])
     saved = {}

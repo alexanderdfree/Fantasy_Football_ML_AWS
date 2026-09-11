@@ -29,7 +29,7 @@ Data
   :func:`src.analysis.artifact_eval.build_test_df_from_artifacts` (no retrain; Ridge/LGBM
   reproduce served numbers exactly, NN/Attn are loaded weights). So this reflects exactly
   the models the Comparison tab shows.
-* Top-30 player slice: ``src/serving/comparison_experts.json`` → ``top30_ids`` (the same
+* Top-30 player slice: ``src/prediction/comparison_experts.json`` → ``top30_ids`` (the same
   slice the tab scores on), with the committed expert top-30 aggregates for context.
 * Raw-stat actuals + PPR weights: the test split + :data:`src.config.SCORING_PPR`.
 
@@ -78,7 +78,7 @@ except Exception:  # pragma: no cover - defensive only
     pass
 
 _COMPARISON_EXPERTS_PATH = (
-    Path(__file__).resolve().parents[1] / "serving" / "comparison_experts.json"
+    Path(__file__).resolve().parents[1] / "prediction" / "comparison_experts.json"
 )
 _MODELS = ("ridge", "nn", "attn_nn", "lgbm")
 # Human-readable loss-family labels (the actual map is read from POSITION_CONFIG).

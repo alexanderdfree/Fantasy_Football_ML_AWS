@@ -1,16 +1,22 @@
 import SwiftUI
 
-/// 80% prediction-interval calibration grid + example bands per position.
+/// Historical prediction-interval calibration grid + example bands per position.
 struct IntervalsSection: View {
     let intervals: Comparison.Intervals
     @State private var position: Position = .qb
 
-    private let experts: [(key: String, label: String)] = [("nflcom", "NFL.com"), ("rotowire", "RotoWire")]
+    private var experts: [(key: String, label: String)] {
+        intervals.intervals.keys.sorted().map { key in
+            (key, cmpSources.first(where: { $0.key == key })?.label ?? key)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: FFSpacing.md) {
-            Text("Does the 80% band contain about 80% of outcomes? Near 80% is well-calibrated.")
-                .font(.caption).foregroundStyle(FFColor.textSecondary)
+            if let nominal = intervals.nominalCoverage {
+                Text("Nominal coverage: \(Int((nominal * 100).rounded()))%. Compare observed coverage below.")
+                    .font(.caption).foregroundStyle(FFColor.textSecondary)
+            }
 
             Grid(alignment: .leading, horizontalSpacing: FFSpacing.md, verticalSpacing: 6) {
                 GridRow {

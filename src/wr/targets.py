@@ -20,6 +20,12 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
     sparse to carry reliable signal; noise outweighs gain.
     """
     df = df.copy()
+    from src.shared.comparison_truth import (
+        attach_comparison_actuals,
+        comparison_source_availability,
+    )
+
+    source_available = comparison_source_availability(df, "WR")
 
     df["receiving_tds"] = df["receiving_tds"].fillna(0)
     df["receiving_yards"] = df["receiving_yards"].fillna(0)
@@ -84,4 +90,4 @@ def compute_targets(df: pd.DataFrame) -> pd.DataFrame:
                 f"INFO: {n_nfl_mismatch} rows differ from nflverse fantasy_points_ppr by > 0.5 pts"
             )
 
-    return df
+    return attach_comparison_actuals(df, "WR", source_available)

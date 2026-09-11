@@ -6,7 +6,9 @@ import Foundation
 @MainActor
 @Observable
 final class MetricsStore {
-    private let api = APIClient.shared
+    private let api: any APIProviding
+
+    init(api: any APIProviding = APIClient.shared) { self.api = api }
     private var loadGeneration = 0
 
     var metrics: LoadState<MetricsResponse> = .idle

@@ -117,7 +117,7 @@ def test_pinned_digest_is_version_stable():
     manifest = [("src/config.py", "a" * 40), ("src/qb/config.py", "b" * 40)]
     assert (
         fingerprint_from_manifest(manifest)
-        == "0e8894180afb16b9631d159b6cb7edf586e6a4b059b61692a2ad659b3cfc68e5"
+        == "9de4a5a955587290f6f24b5304ee9f11153420774fdc153d7b23e2e846396086"
     )
 
 
@@ -144,6 +144,9 @@ def test_manifest_covers_everything_the_gate_can_scope():
         "src/shared/deep/nested.py",
         "src/data/loader.py",
         "src/features/engineer.py",
+        "src/prediction/bundle.py",
+        "src/training/context.py",
+        "src/evaluation/cohorts.py",
         "src/config.py",
         "src/__init__.py",
     ):

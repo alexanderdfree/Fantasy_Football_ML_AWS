@@ -3,6 +3,19 @@
 Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies the shared entrypoint; current code/config and linked decisions supply operational state. Dated measurements describe their recorded regime, not a promise about today.
 
 ## Project shape (six-position symmetry)
+
+Current boundary owners are documented in [ADR-0027](../docs/adr/0027-versioned-prediction-and-execution-contracts.md):
+`src/training/` owns resolved recipes, run contexts and output effects;
+`src/prediction/` owns model bundles and the common prediction adapter;
+`src/evaluation/` owns reusable metrics/records; `src/artifacts/` and
+`src/orchestration/` own publication and identified build plans; `src/contracts/`
+owns the wire contract. Older shared-module imports remain compatibility adapters.
+The serving factory is in `src/serving/app.py`; `src/serving/state.py` adapts
+HTTP contexts to `src/artifacts/snapshot_state.py`. Historical and upcoming
+builders live in `src/prediction/{historical,build_snapshot,upcoming}.py` and
+provider adapters in `src/data/`. The production image uses
+`requirements-serving.txt` and the read-only `src/artifacts/snapshot_runtime.py`.
+Edit the owning module rather than a compatibility export under `src/serving/`.
 Each of `src/qb/ src/rb/ src/wr/ src/te/ src/k/ src/dst/` follows the same template:
 
 ```

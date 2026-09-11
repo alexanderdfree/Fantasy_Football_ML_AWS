@@ -82,7 +82,7 @@ def collect_pos_config(pos):
     return cfg
 
 
-def run_one(position):
+def run_one(position, *, context=None):
     """Run a single position pipeline and return its metrics dict.
 
     The single-split path only; ``--cv`` was collapsed into ``--rolling-origin``
@@ -93,10 +93,12 @@ def run_one(position):
     """
     from src.shared.registry import get_runner
     from src.shared.utils import seed_everything
+    from src.training.context import RunContext, use_context
 
     seed_everything(42)
     runner = get_runner(position)
-    return runner()
+    with use_context(context or RunContext.defaults()):
+        return runner(seed=context.seed) if context is not None else runner()
 
 
 def _maybe_upload_to_s3(local_path: str) -> None:
@@ -294,16 +296,25 @@ def _score_origin(position, train_df, val_df, test_df, cfg, seed=42):
     Factored out so the rolling-origin driver's iteration/aggregation can be
     unit-tested by monkeypatching this single call.
     """
+    from dataclasses import replace
+    from tempfile import TemporaryDirectory
+
     from src.shared.registry import accepts_dataframes, get_runner
     from src.shared.utils import seed_everything
+    from src.training.context import RunContext, use_context
 
     seed_everything(seed)
-    if accepts_dataframes(position):
-        result = get_runner(position)(train_df=train_df, val_df=val_df, test_df=test_df, seed=seed)
-    else:
-        from src.shared.pipeline import run_pipeline
+    with TemporaryDirectory(prefix=f"ff-origin-{position.lower()}-") as output_root:
+        context = replace(RunContext.defaults(seed=seed), output_root=output_root)
+        with use_context(context):
+            if accepts_dataframes(position):
+                result = get_runner(position)(
+                    train_df=train_df, val_df=val_df, test_df=test_df, seed=seed
+                )
+            else:
+                from src.shared.pipeline import run_pipeline
 
-        result = run_pipeline(position, cfg, train_df, val_df, test_df, seed)
+                result = run_pipeline(position, cfg, train_df, val_df, test_df, seed)
     return summarize_pipeline_result(position, result)
 
 

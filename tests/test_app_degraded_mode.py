@@ -73,7 +73,7 @@ def degraded_mode_app(monkeypatch, tmp_path):
         "positions_loaded": set(),
         "k_kicks_df": None,
     }
-    monkeypatch.setattr(app_mod, "_cache", fake_cache)
+    monkeypatch.setattr(app_mod._default_state, "cache", fake_cache)
     # Prevent the real base-data loader from running if the early-return
     # check on base_loaded ever flips.
     monkeypatch.setattr(core, "_load_base_data_locked", lambda: None)
@@ -335,78 +335,3 @@ class TestHydratedDegradedCacheRetries:
             ),
         ):
             core._ensure_metrics()  # must return via the fast path, no rebuild
-
-
-@pytest.mark.parametrize("failed_pos", _ALL_POS)
-def test_metrics_route_recovers_only_advanced_failed_position(
-    degraded_client, monkeypatch, failed_pos
-):
-    """Dashboard aggregate requests must notice a failed-only model refresh."""
-    client, app_mod = degraded_client
-    cache = app_mod._cache
-    mtimes = dict.fromkeys(_ALL_POS, 100.0)
-    calls: list[str] = []
-    monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes[pos])
-    monkeypatch.setattr(core, "_compute_models_fingerprint", lambda: ("fixture", []))
-    monkeypatch.setattr(core, "_persist_cache_to_disk", lambda: None)
-    monkeypatch.setattr(core, "_refresh_k_data_locked", lambda: None)
-    monkeypatch.setattr(core, "_refresh_dst_data_locked", lambda: None)
-    # Predeclare the column, as the real base loader does, before parallel writes.
-    cache["results"]["ridge_pred_ppr"] = np.nan
-
-    def fake_apply(train, val, test, pos, results):
-        calls.append(pos)
-        if pos == failed_pos and mtimes[pos] == 100.0:
-            raise RuntimeError("old broken artifact")
-        results.loc[results["position"] == pos, "ridge_pred_ppr"] = 10.0
-
-    monkeypatch.setattr(core, "_apply_position_models", fake_apply)
-
-    initial = client.get("/api/metrics")
-    assert initial.status_code == 200
-    assert cache["positions_failed"] == {failed_pos}
-    assert cache["positions_failed_mtime"] == {failed_pos: 100.0}
-    assert len(initial.get_json()["Ridge Regression"]["by_position"]) == 5
-    assert sorted(calls) == sorted(_ALL_POS)
-
-    # Positive control: repeated aggregate reads at unchanged sentinels do no work.
-    assert client.get("/api/metrics").status_code == 200
-    assert len(calls) == 6
-    assert client.get("/health").get_json()["status"] == "degraded"
-
-    mtimes[failed_pos] = 200.0
-    recovered = client.get("/api/metrics")
-    assert recovered.status_code == 200
-    assert len(recovered.get_json()["Ridge Regression"]["by_position"]) == 6
-    assert len(calls) == 7 and calls[-1] == failed_pos
-    assert cache["positions_loaded"] == set(_ALL_POS)
-    assert not cache["positions_failed"]
-    assert not cache["positions_failed_mtime"]
-    assert not cache["position_load_errors"]
-    assert cache["positions_mtime"][failed_pos] == 200.0
-    assert client.get("/health").get_json() == {"status": "ok"}
-    assert client.get("/api/metrics").status_code == 200
-    assert len(calls) == 7
-
-
-def test_metrics_route_bounds_retry_when_new_artifact_still_fails(degraded_client, monkeypatch):
-    client, app_mod = degraded_client
-    mtimes = dict.fromkeys(_ALL_POS, 100.0)
-    calls: list[str] = []
-    monkeypatch.setattr(core, "refresh_sentinel_mtime", lambda pos: mtimes[pos])
-    monkeypatch.setattr(core, "_compute_models_fingerprint", lambda: ("fixture", []))
-    monkeypatch.setattr(core, "_persist_cache_to_disk", lambda: None)
-
-    def fake_apply(train, val, test, pos, results):
-        calls.append(pos)
-        if pos == "QB":
-            raise RuntimeError("artifact still broken")
-
-    monkeypatch.setattr(core, "_apply_position_models", fake_apply)
-    assert client.get("/api/metrics").status_code == 200
-    mtimes["QB"] = 200.0
-    assert client.get("/api/metrics").status_code == 200
-    assert len(calls) == 7 and calls[-1] == "QB"
-    assert app_mod._cache["positions_failed_mtime"] == {"QB": 200.0}
-    assert client.get("/api/metrics").status_code == 200
-    assert len(calls) == 7

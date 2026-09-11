@@ -7,12 +7,13 @@ for converting those predictions to fantasy points under any scoring format.
 
 from __future__ import annotations
 
+import sys
 from functools import partial
 
 import numpy as np
-import torch
 
 from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD
+from src.contracts.target_units import TARGET_UNITS as TARGET_UNITS
 from src.dst.targets import _PTS_ALLOWED_TIERS, _YDS_ALLOWED_TIERS
 from src.shared.position import Position
 
@@ -88,35 +89,6 @@ DST_TARGETS: tuple[str, ...] = (
 
 
 # Display units for per-target MAE reporting.
-TARGET_UNITS = {
-    "passing_yards": "yds",
-    "rushing_yards": "yds",
-    "receiving_yards": "yds",
-    "passing_tds": "TDs",
-    "rushing_tds": "TDs",
-    "receiving_tds": "TDs",
-    "receptions": "rec",
-    "interceptions": "INT",
-    "fumbles_lost": "fum",
-    # DST raw-stat units
-    "def_sacks": "sacks",
-    "def_ints": "INT",
-    "def_fumble_rec": "fum",
-    "def_fumbles_forced": "FF",
-    "def_safeties": "safety",
-    "def_tds": "TDs",
-    "def_blocked_kicks": "blk",
-    "special_teams_tds": "TDs",
-    "points_allowed": "pts",
-    "yards_allowed": "yds",
-    # Kicker raw-stat units (predictions-tab breakdown drill-down). See
-    # ``K_TARGETS`` above / ``src/k/targets.py``: fg_yard_points and pat_points
-    # are point values, fg_misses / xp_misses are raw miss counts.
-    "fg_yard_points": "pts",
-    "pat_points": "pts",
-    "fg_misses": "misses",
-    "xp_misses": "misses",
-}
 
 
 # Precomputed boundary/bonus tables for the two DST tier lookups.
@@ -157,7 +129,10 @@ def _tier_bonuses(values, boundaries: list[int], bonuses: list[int]):
     input — PA/YA head updates come entirely from the per-target head loss
     (MSE since #870; see ``head_losses`` in src/dst/config.py).
     """
-    if isinstance(values, torch.Tensor):
+    # A Tensor's caller has already loaded torch. Pure NumPy scoring in the
+    # artifact-only HTTP runtime must not import an ML execution dependency.
+    torch = sys.modules.get("torch")
+    if torch is not None and isinstance(values, torch.Tensor):
         b = torch.tensor(boundaries, dtype=values.dtype, device=values.device)
         bns = torch.tensor(bonuses, dtype=values.dtype, device=values.device)
         clamped = torch.clamp(values.detach(), min=0)

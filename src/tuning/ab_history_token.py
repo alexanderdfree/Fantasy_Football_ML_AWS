@@ -121,7 +121,7 @@ def metric_fn(result, position):
     ~0 WR rows). The column is injected into *every* arm (baseline carries it un-whitelisted,
     so the model is unchanged but the slice is identical across arms).
     """
-    from src.analysis.cohort_analysis import available_models, per_model_metrics
+    from src.evaluation.metrics import available_models, per_model_metrics
 
     df = result["test_df"]
     models = available_models(df)

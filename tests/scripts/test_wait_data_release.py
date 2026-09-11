@@ -168,34 +168,41 @@ def workflow(name):
 def test_deploy_gate_precedes_all_running_service_changes():
     steps = workflow("deploy.yml")["jobs"]["deploy"]["steps"]
     gate_index = next(
-        i for i, step in enumerate(steps) if "wait_data_release" in step.get("run", "")
+        i
+        for i, step in enumerate(steps)
+        if "src.artifacts.serving_snapshot wait" in step.get("run", "")
     )
-    for i, step in enumerate(steps):
-        changes_ecs = "amazon-ecs-deploy-task-definition" in step.get("uses", "")
-        changes_alb = "aws elbv2 modify" in step.get("run", "")
-        changes_task = step.get("name") == "Pull current task definition"
-        if changes_ecs or changes_alb or changes_task:
-            assert i > gate_index
-    assert steps[gate_index].get("continue-on-error") is not True
-    assert "--timeout-seconds 3600" in steps[gate_index]["run"]
+    gate = steps[gate_index]
+    assert "--bind-data" in gate["run"] and "--task-definition" in gate["run"]
+    changes = [
+        i
+        for i, step in enumerate(steps)
+        if "src.artifacts.deployment deploy" in step.get("run", "")
+        or "aws elbv2 modify" in step.get("run", "")
+        or "amazon-ecs-deploy-task-definition" in step.get("uses", "")
+    ]
+    assert changes and all(i > gate_index for i in changes)
+    assert gate.get("continue-on-error") is not True
+    assert "--timeout 2400" in gate["run"]
 
 
 @pytest.mark.parametrize("name", ["train-batch.yml", "train-ec2.yml"])
 def test_training_gates_all_event_types_and_pins_before_submitting(name):
-    all_steps = [step for job in workflow(name)["jobs"].values() for step in job.get("steps", [])]
-    gate_index = next(
-        i for i, step in enumerate(all_steps) if "wait_data_release" in step.get("run", "")
-    )
-    step = all_steps[gate_index]
-    assert "--pin-training" in step["run"] and "if" not in step
-    submit_index = next(
-        i
-        for i, candidate in enumerate(all_steps)
-        if candidate.get("name")
-        in {"Submit Batch jobs and wait", "Run training for all positions (sequential)"}
-    )
+    steps = workflow(name)["jobs"]["train"]["steps"]
+    command = "src.orchestration.build_plan" if name == "train-batch.yml" else "wait_data_release"
+    gate_index = next(i for i, step in enumerate(steps) if command in step.get("run", ""))
+    gate = steps[gate_index]
+    assert "if" not in gate and gate.get("continue-on-error") is not True
+    submit_index = next(i for i, step in enumerate(steps) if step.get("id") == "train")
     assert gate_index < submit_index
-    assert "proceeding with current S3 splits" not in json.dumps(all_steps)
+    if name == "train-batch.yml":
+        assert "--timeout 3600" in gate["run"]
+        env = steps[submit_index]["env"]
+        assert env["FF_DATA_RELEASE"] == env["FF_DATASET_ID"]
+        assert env["FF_DATA_FORMAT"] == "data-release-v1"
+    else:
+        assert "--pin-training" in gate["run"]
+    assert "proceeding with current S3 splits" not in json.dumps(steps)
 
 
 def test_refresh_covers_every_data_producer_and_publishes_failure_marker():
@@ -210,3 +217,34 @@ def test_refresh_covers_every_data_producer_and_publishes_failure_marker():
         if "splits-rebuild-markers/failed/" in step.get("run", "")
     )
     assert marker["if"] == "failure()"
+
+
+@pytest.mark.parametrize("name", ["train-batch.yml", "train-ec2.yml"])
+def test_training_rollout_uses_verified_release_and_shared_deploy_lock(name):
+    jobs = workflow(name)["jobs"]
+    assert jobs["train"]["outputs"]["data_release"]
+    build = next(
+        step
+        for step in jobs["train"]["steps"]
+        if "src.prediction.build_snapshot" in step.get("run", "")
+    )
+    assert build.get("continue-on-error") is not True
+    rollout = jobs["ecs_rollout"]
+    assert rollout["needs"] == "train"
+    assert rollout["concurrency"]["group"] == "deploy-fantasy-service"
+    advance = next(
+        step
+        for step in rollout["steps"]
+        if "src.scripts.advance_data_release" in step.get("run", "")
+    )
+    assert advance["env"]["DATA_RELEASE"] == "${{ needs.train.outputs.data_release }}"
+    assert '--release-id "$DATA_RELEASE"' in advance["run"]
+    assert "--state data-release-rollout.json" in advance["run"]
+    restore = next(
+        step
+        for step in rollout["steps"]
+        if "src.artifacts.deployment restore" in step.get("run", "")
+    )
+    assert "failure()" in restore["if"] and "cancelled()" in restore["if"]
+    assert "--state data-release-rollout.json" in restore["run"]
+    assert "aws ecs update-service" not in json.dumps(jobs["train"]["steps"])

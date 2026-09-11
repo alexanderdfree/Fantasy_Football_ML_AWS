@@ -8,10 +8,9 @@ manifests are verified through the serving consumer and never replaced.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import os
-import subprocess
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -45,30 +44,15 @@ def verify_models(s3, bucket: str, prefix: str, positions=POSITIONS) -> list[dic
 
 
 def _register_source(s3, bucket: str, prefix: str, source_sha: str, root: Path) -> None:
-    from src.shared.artifact_publication import register_source
+    from src.artifacts.source import register_source
 
     register_source(s3, bucket, prefix, source_sha, repo=root)
 
 
-@contextlib.contextmanager
-def _publication_environment(prefix: str, source_sha: str):
-    settings = {"FF_MODEL_S3_PREFIX": prefix, "FF_TRAIN_GIT_SHA": source_sha}
-    previous = {key: os.environ.get(key) for key in settings}
-    os.environ.update(settings)
-    try:
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+def _upload_initial_artifact(s3, bucket, prefix, position, archive, source_sha):
+    from src.artifacts.publication import initialize_seed
 
-
-def _upload_initial_artifact(bucket: str, position: str, model_dir: Path) -> None:
-    from src.batch.train import upload_artifacts
-
-    upload_artifacts(bucket, position, str(model_dir), initialize_only=True)
+    return initialize_seed(s3, bucket, prefix, position, archive.read_bytes(), source_sha)
 
 
 def seed_models(
@@ -89,10 +73,25 @@ def seed_models(
             _check_models(position, model_dir)
             pending.append((position, model_dir))
     if pending:
-        _register_source(s3, bucket, prefix, source_sha, root)
-        with _publication_environment(prefix, source_sha):
+        from src.artifacts.publication import validate_seed
+        from src.artifacts.source import image_source_sha
+
+        if image_source_sha(root=root) != source_sha:
+            raise RuntimeError("Seed source must match the actual operator checkout/image")
+        # Freeze and validate all candidate bytes before the first source record
+        # or model upload. A changing local directory cannot invalidate preflight.
+        with tempfile.TemporaryDirectory(prefix="ff-seed-candidates-") as temp:
+            archives = []
             for position, model_dir in pending:
-                _upload_initial_artifact(bucket, position, model_dir)
+                archive = Path(temp) / f"{position}.tar.gz"
+                with tarfile.open(archive, "w:gz") as tar:
+                    for path in sorted(model_dir.iterdir()):
+                        tar.add(path, arcname=path.name)
+                validate_seed(position, archive.read_bytes(), source_sha)
+                archives.append((position, archive))
+            _register_source(s3, bucket, prefix, source_sha, root)
+            for position, archive in archives:
+                _upload_initial_artifact(s3, bucket, prefix, position, archive, source_sha)
     return verify_models(s3, bucket, prefix, positions)
 
 
@@ -116,9 +115,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.verify_only:
             result = verify_models(s3, args.bucket, prefix)
         else:
-            source_sha = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=root, text=True
-            ).strip()
+            from src.artifacts.source import image_source_sha
+
+            source_sha = image_source_sha(root=root)
             result = seed_models(s3, args.bucket, prefix, root, source_sha)
     except Exception as exc:
         print(f"[seed-s3] ERROR: {exc}")

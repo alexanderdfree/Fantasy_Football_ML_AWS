@@ -6,24 +6,17 @@
  * is highlighted. */
 import { useEffect, useState } from "react";
 import { fetchJSON } from "../api.js";
+import { contract } from "../api-contract.js";
 import { PillGroup, ApproachBanner } from "../components/common.jsx";
 
-const COMPARISON_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
+const COMPARISON_POSITIONS = contract.positions;
 // Our four model architectures, then the archived expert sources. Keys match the
 // per-model blocks in the /api/comparison payload (model prefixes) and the expert
 // cell keys. Shared (via COMPARISON_SOURCES) by the accuracy tables and the
 // quartile-bias table.
-const MODEL_SOURCES = [
-    { key: "ridge", label: "Ridge" },
-    { key: "nn", label: "Neural Net" },
-    { key: "attn_nn", label: "Attention NN" },
-    { key: "lgbm", label: "LightGBM" },
-];
-const EXPERT_SOURCES = [
-    { key: "nflcom", label: "NFL.com" },
-    { key: "rotowire", label: "RotoWire" },
-    { key: "espn", label: "ESPN" },
-];
+const SOURCE_LABELS = { ridge: "Ridge", nn: "Neural Net", attn_nn: "Attention NN", lgbm: "LightGBM", nflcom: "NFL.com", rotowire: "RotoWire", espn: "ESPN" };
+const MODEL_SOURCES = contract.model_sources.map((key) => ({ key, label: SOURCE_LABELS[key] || key }));
+const EXPERT_SOURCES = contract.expert_sources.map((key) => ({ key, label: SOURCE_LABELS[key] || key }));
 const COMPARISON_SOURCES = [...MODEL_SOURCES, ...EXPERT_SOURCES];
 const COMPARISON_METRIC_HINTS = {
     mae: "Mean absolute error — lower is better",
@@ -108,10 +101,11 @@ function ComparisonRows({ posMap, metric, coverage }) {
 }
 
 /* One of the three accuracy tables (all / top-30 / top-12). */
-function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage }) {
+function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage, definition }) {
     return (
         <div className="comparison-table-block">
             <div className="section-header">{header}</div>
+            {definition && <p className="comparison-notes">{definition}</p>}
             <div className="table-container">
                 <table className="comparison-table">
                     <ComparisonTableHead firstLabel="Position" />
@@ -197,7 +191,9 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
     const espnNote = (meta.espn && meta.espn.note) || "";
     const modelLine = unavailable
         ? "Evaluation is currently unavailable. "
-        : "Each architecture uses its deployed forecasts, and all sources are graded on identical player-weeks. ";
+        : data?.sample_basis === "shared_player_weeks"
+            ? "Each architecture uses its deployed forecasts, and all sources are graded on identical player-weeks. "
+            : "The response does not establish a shared player-week sample. ";
 
     const onWikiLink = (ev) => {
         ev.preventDefault();
@@ -211,13 +207,24 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
     return (
         <section id="view-comparison" className="view active">
             <ApproachBanner icon="chart" title="Our Models vs Expert Projections">
-                Accuracy on the stats our models and experts both project, weighted with PPR scoring. Every column uses the same components and player-weeks within each position. Expected starters use an archived pregame reference. Lower MAE / RMSE is better; higher R² is better.
+                Model and expert forecast accuracy. Scoring components, sample coverage, and cohort definitions are supplied by the server below. Lower MAE / RMSE is better; higher R² is better.
             </ApproachBanner>
 
-            <div className="comparison-notes">
-                QB includes passing, rushing, interceptions and lost fumbles. RB includes rushing, receiving and lost fumbles. WR/TE include receiving and lost fumbles. Stats outside those sets are excluded from actuals too.
-                K uses field-goal yardage, extra points and misses; NFL.com is excluded because its scoring components do not match. The kicker reference uses ESPN. DST uses shared defensive stats and yardage tiers. Points allowed is excluded from every comparison column because provider definitions differ.
-            </div>
+            {data && <div className="comparison-notes" id="comparison-contract">
+                <p>{data.sample_basis === "shared_player_weeks"
+                    ? "Every displayed source is scored on the same regular-season player-weeks. Missing forecasts are excluded; zero forecasts are retained."
+                    : `Sample basis: ${data.sample_basis || "not supplied by this response"}.`}</p>
+                <p>{["shared_projected_components_v1", "shared_projected_components_v2"].includes(data.actual_basis)
+                    ? "Predictions and actuals use only the shared projected components below. Stats outside those sets are excluded from actuals too."
+                    : `Actual basis: ${data.actual_basis || "not supplied by this response"}.`}</p>
+                {Object.entries(data.scoring_components || {}).map(([position, components]) => (
+                    <p key={position}><strong>{position}.</strong> {components.map((name) => name.replaceAll("_", " ")).join(", ")}</p>
+                ))}
+                {Object.entries(data.excluded_sources || {}).flatMap(([position, sources]) =>
+                    Object.entries(sources).map(([source, reason]) => <p key={`${position}-${source}`}>{position} · {SOURCE_LABELS[source] || source}: {reason}</p>))}
+                {Object.entries(data.excluded_components || {}).flatMap(([position, components]) =>
+                    Object.entries(components).map(([component, reason]) => <p key={`${position}-${component}`}>{position} · {component.replaceAll("_", " ")}: {reason}</p>))}
+            </div>}
 
             <div className="comparison-controls">
                 <span className="comparison-metric-label">Metric</span>
@@ -238,12 +245,13 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                 bodyId="comparison-weekly-top24"
                 posMap={data?.subsets?.weekly_reference_top24}
                 coverage={data?.coverage?.weekly_reference_top24}
+                definition={data?.cohort_definitions?.weekly_reference_top24}
                 metric={metric}
                 error={error}
             />
 
             <ComparisonSubsetBlock
-                header="All comparable player-weeks (2025)"
+                header="All comparable player-weeks"
                 coverage={data?.coverage?.all}
                 bodyId="comparison-all-body"
                 posMap={data ? (subsets.all || {}) : null}
@@ -251,16 +259,18 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                 error={error}
             />
             <ComparisonSubsetBlock
-                header="Season leaders by shared scoring · top 30 (2025)"
+                header="Season leaders · top 30"
                 coverage={data?.coverage?.top30}
+                definition={data?.cohort_definitions?.top30}
                 bodyId="comparison-top30-body"
                 posMap={data ? (subsets.top30 || {}) : null}
                 metric={metric}
                 error={error}
             />
             <ComparisonSubsetBlock
-                header="Season leaders by shared scoring · top 12 (2025)"
+                header="Season leaders · top 12"
                 coverage={data?.coverage?.top12}
+                definition={data?.cohort_definitions?.top12}
                 bodyId="comparison-top12-body"
                 posMap={data ? (subsets.top12 || {}) : null}
                 metric={metric}
@@ -327,17 +337,17 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                     <>
                         <div className="section-header">About this comparison</div>
                         <ul className="comparison-note-list">
-                            <li><strong>Seasons.</strong> Our model trains on 2013–2023 (2012 is loaded for prior-season context only), validates on 2024, and is tested on <strong>2025</strong>; every number here is on the held-out 2025 season, and the experts are scored on 2025 too.</li>
-                            <li><strong>Scoring.</strong> Predictions and regular-season actuals include only the shared projected components listed above, weighted with PPR scoring. These component scores differ from full fantasy totals.</li>
+                            {data.quartile_bias_meta?.seasons?.length > 0 && <li><strong>Evaluation seasons.</strong> {data.quartile_bias_meta.seasons.join(", ")}.</li>}
+                            <li><strong>Scoring.</strong> {data.scoring}. {["shared_projected_components_v1", "shared_projected_components_v2"].includes(data.actual_basis) ? "Predictions and regular-season actuals include only the shared projected components listed above. These component scores differ from full fantasy totals." : "Refer to the response's actual basis above."}</li>
                             <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly shared-component point totals; the best cell in each row is highlighted.</li>
                             <li><strong>NFL.com.</strong> {nflNote}</li>
                             <li><strong>RotoWire.</strong> {rwNote}</li>
                             <li><strong>ESPN.</strong> {espnNote}</li>
-                            <li><strong>Expected starters.</strong> The weekly top 24 uses a fixed average of archived NFL.com and RotoWire forecasts on shared components, with ESPN alone for K and RotoWire alone for DST. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>
-                            <li><strong>Season leaders.</strong> Top 30 and top 12 use total actual regular-season points from the shared components, excluding playoffs. These are retrospective diagnostics, not pregame starter lists.</li>
+                            {data.cohort_definitions?.weekly_reference_top24 && <li><strong>Expected starters.</strong> {data.cohort_definitions.weekly_reference_top24}. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>}
+                            {(data.cohort_definitions?.top30 || data.cohort_definitions?.top12) && <li><strong>Season leaders.</strong> {data.cohort_definitions.top30 || data.cohort_definitions.top12}. These are retrospective diagnostics, not pregame starter lists.</li>}
                             <li><strong>Weekly leader capture.</strong> The fraction of actual weekly top-24 scorers selected by each source's own forecasts. Only weeks with at least 24 comparable players count; hover for the number of weeks.</li>
                             <li>
-                                <strong>Coverage.</strong> Every displayed source in a position is scored on the same player-weeks. Missing forecasts are excluded, never treated as zero. Sample sizes appear beside each position. Historical investigations and uncertainty estimates are available in the{" "}
+                                <strong>Coverage.</strong> {data.sample_basis === "shared_player_weeks" ? "Every displayed source in a position is scored on the same player-weeks. Missing forecasts are excluded, never treated as zero." : "The response does not establish whether source samples are paired."} Sample sizes appear beside each position. Historical investigations and uncertainty estimates are available in the{" "}
                                 <a
                                     href="#wiki:expert-comparison"
                                     className="comparison-link"

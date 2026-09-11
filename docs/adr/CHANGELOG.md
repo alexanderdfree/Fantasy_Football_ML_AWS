@@ -1,19 +1,26 @@
 # ADR Changelog
 
+- 2026-09-11 · Repair data isolation, observation provenance and client boundaries after consolidation · (PR #1566 follow-up) · → ADR-0027
+
 - 2026-09-11 · Repair finite paired offline scoring and incomplete provider cache boundaries · (PR #1574 follow-up) · → ADR-0024
 
 - 2026-09-10 · Remove repository Codex model, reasoning, and context pins; inherit personal defaults and session selections · (PR #1579) · → ADR-0025
+- 2026-09-10 · Remove ML dependencies from the serving image and move offline prediction builders and providers out of HTTP code · (PR #1566 follow-up) · → ADR-0027
+- 2026-09-10 · Restore historical QB role reconstruction and use pregame depth for upcoming availability · (PR pending) · → ADR-0004
 
 - 2026-09-10 · Preserve projection availability through refresh failures, recover prior S3 versions, and shorten schedule/delivery delays · (PR #1572) · → ADR-0018
 - 2026-09-10 · Exclude non-shared DST points allowed, enforce NFL.com source eligibility, and pair offline comparison cohorts · (PR pending) · → ADR-0024
 - 2026-09-10 · Correct Timeline scoring and source populations, retain K/DST comparisons, and report fixed per-model records · (PR #1573) · → ADR-0024
 
-- 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR pending) · → ADR-0018
+- 2026-09-10 · Recover corroborated live roster identities and practice aliases, disclose omitted players, and include unqualified QBR appearances · (PR #1569) · → ADR-0018
 
 - 2026-09-10 · Isolate and order model publication, retain concurrent artifacts, publish coherent cache generations, and expose initialization failures · (PR #1560) · → ADR-0011, ADR-0014
 - 2026-09-10 · Correct training event/identity/depth/availability semantics and K filtering; publish coherent data releases with safe live overlays and rollout gates · (PR #1564) · → ADR-0001, ADR-0002, ADR-0004, ADR-0026
 
-- 2026-09-10 · Isolate training history by run, publish from completing jobs beyond the workflow wait, and refresh the History view · (PR pending) · → ADR-0013, ADR-0023
+- 2026-09-10 · Isolate training history by run, publish from completing jobs beyond the workflow wait, and refresh the History view · (PR #1559) · → ADR-0013, ADR-0023
+
+- 2026-09-10 · Bind models, prepared data and execution to explicit contracts; coordinate publication/retention; serve verified snapshot generations and validate both clients · (PR #1566) · → ADR-0027, ADR-0011
+
 - 2026-09-10 · Repair conflicting macOS OpenMP runtimes in the selected Python environment · (PR #1554) · → ADR-0017
 - 2026-09-10 · Remove superseded research/environment prescriptions and enforce shared gates in emitted post-PR instructions · (PR #1557) · → ADR-0025
 

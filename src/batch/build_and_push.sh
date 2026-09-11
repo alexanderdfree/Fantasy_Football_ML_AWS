@@ -18,7 +18,7 @@
 # Env overrides (all optional):
 #   AWS_REGION             default us-east-1
 #   ECR_REPO               default ff-training
-#   IMAGE_TAG              default latest
+#   IMAGE_TAG              default the full built Git SHA
 #   USE_PULL_THROUGH       1 (default) to use <acct>.dkr.ecr/dockerhub/ base, 0 to hit Docker Hub directly
 #   PULL_THROUGH_PREFIX    override the prefix string entirely
 set -euo pipefail
@@ -26,14 +26,14 @@ set -euo pipefail
 BUILD_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$BUILD_ROOT"
 TRAIN_GIT_SHA=$(git rev-parse --verify HEAD)
-if [[ -n "$(git status --porcelain --untracked-files=all -- src)" ]]; then
-  echo "ERROR: commit source changes before building; the image must match its recorded SHA." >&2
+if [[ -n "$(git status --porcelain --untracked-files=normal -- src .dockerignore)" ]]; then
+  echo "ERROR: commit source changes before building an identified training image" >&2
   exit 1
 fi
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
 ECR_REPO="${ECR_REPO:-ff-training}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+IMAGE_TAG="${IMAGE_TAG:-$TRAIN_GIT_SHA}"
 USE_PULL_THROUGH="${USE_PULL_THROUGH:-1}"
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -48,7 +48,6 @@ PULL_THROUGH_PREFIX="${PULL_THROUGH_PREFIX:-}"
 echo "==> Account:    ${ACCOUNT_ID}"
 echo "==> Region:     ${AWS_REGION}"
 echo "==> Image:      ${IMAGE_URI}"
-echo "==> Source SHA: ${TRAIN_GIT_SHA}"
 echo "==> Base prefix: ${PULL_THROUGH_PREFIX:-<Docker Hub>}"
 
 echo "==> docker login to ECR"

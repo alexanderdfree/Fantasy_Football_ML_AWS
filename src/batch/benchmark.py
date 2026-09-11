@@ -8,10 +8,6 @@ Usage:
     python src/batch/benchmark.py                          # all 6 positions
     python src/batch/benchmark.py --positions RB WR QB     # subset
     python src/batch/benchmark.py --note "attention + LGBM on GPU"
-
-For job submission, set FF_TRAIN_GIT_SHA to the full built-image SHA and
-FF_JOB_DEFINITION_REVISION to its registered numeric revision. The
---git-hash option labels a recorded run; it does not select the training image.
 """
 
 import argparse
@@ -33,12 +29,7 @@ from src.batch.launch import (
     AWS_REGION,
     S3_BUCKET,
     WAIT_TIMEOUT_SECONDS,
-    pin_data_release,
-    resolve_launch_binding,
     submit_job,
-    upload_data,
-    validate_local_publish,
-    validate_submission_source,
     wait_for_jobs,
 )
 from src.scripts.bench_fingerprint import collect_code_fingerprints
@@ -136,11 +127,11 @@ def _model_s3_prefix() -> str:
 def download_metrics(positions):
     """Download benchmark_metrics.json from each position's model artifacts.
 
-    Resolves the per-position artifact via ``models/{POS}/releases/manifest.json`` rather
+    Resolves the per-position artifact via ``models/{POS}/manifest.json`` rather
     than the legacy ``models/{POS}/model.tar.gz`` mirror. Two parallel
     train-batch runs writing the same position's legacy key were last-write-
     wins; the manifest's ``current`` entry is an atomic single-PUT promotion
-    paired with a versioned ``models/{POS}/releases/history/{ts}-{uuid}-{sha7}/model.tar.gz``
+    paired with a versioned ``models/{POS}/history/{ts}-{sha7}/model.tar.gz``
     key, so each consumer reads exactly the artifact the producer's manifest
     write committed to.
 
@@ -156,6 +147,40 @@ def download_metrics(positions):
     s3_prefix = _model_s3_prefix()
 
     def _fetch_one(pos):
+        plan_id = os.environ.get("FF_BUILD_PLAN_ID")
+        if plan_id:
+            from pathlib import Path
+
+            from src.artifacts.receipts import download_receipt_artifact
+
+            with tempfile.TemporaryDirectory(prefix="benchmark-receipt-") as temp:
+                metrics = download_receipt_artifact(
+                    s3, S3_BUCKET, plan_id, pos, Path(temp) / "model.tar.gz"
+                )
+            return pos, metrics
+        legacy_run_id = os.environ.get("FF_LEGACY_RUN_ID")
+        if legacy_run_id:
+            from pathlib import Path
+
+            from src.artifacts.receipts import download_run_artifact
+
+            source_sha = os.environ.get("FF_TRAIN_GIT_SHA", "")
+            with tempfile.TemporaryDirectory(prefix="benchmark-run-receipt-") as temp:
+                metrics = download_run_artifact(
+                    s3,
+                    S3_BUCKET,
+                    s3_prefix,
+                    source_sha,
+                    pos,
+                    legacy_run_id,
+                    Path(temp) / "model.tar.gz",
+                    expected_dataset_id=(
+                        os.environ.get("FF_DATA_RELEASE")
+                        if os.environ.get("FF_DATA_RELEASE") != "legacy"
+                        else None
+                    ),
+                )
+            return pos, metrics
         manifest = load_manifest(s3, S3_BUCKET, s3_prefix, pos)
         if manifest is None:
             # Treated as soft error here (returns None metrics, lets the rest
@@ -163,7 +188,7 @@ def download_metrics(positions):
             # already prints a per-position WARNING when metrics are missing,
             # and one stale position shouldn't kill a six-position aggregation.
             print(
-                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/releases/manifest.json"
+                f"[{pos}] WARNING: no manifest at s3://{S3_BUCKET}/{s3_prefix}/{pos}/manifest.json"
             )
             return pos, None
 
@@ -236,10 +261,10 @@ def record_benchmark_run(
 ):
     """Aggregate already-trained artifacts into one benchmark_history row.
 
-    With ``run_id``, collect the immutable summary published by completing jobs.
-    Legacy calls without an id read serving artifacts and reject SHA divergence.
-    Prints the comparison table and writes the local history file; legacy rows
-    are also mirrored to S3. Returns the path, or None if no legacy metrics exist.
+    Downloads ``benchmark_metrics.json`` for ``positions`` (via each manifest),
+    prints the comparison table, writes ``benchmark_history/{run_id}.json``, and
+    mirrors it to S3. Returns the written path, or ``None`` if no metrics were
+    resolvable.
 
     Shared by ``main()`` (CLI / CI) and ``src/batch/launch.py``'s standalone
     auto-append so both go through exactly one code path. ``HISTORY_DIR`` /
@@ -255,13 +280,12 @@ def record_benchmark_run(
             run_id,
             positions=positions,
             git_sha=git_hash,
-            **({"data_release": data_release} if data_release is not None else {}),
+            data_release=data_release or os.environ.get("FF_DATA_RELEASE"),
         )
         if entry is None:
             raise RuntimeError(f"History run {run_id} still has unfinished positions")
-        # Keep local benchmark-gate evidence without changing the immutable S3
-        # summary. complete_run already verified every result against the run's
-        # SHA; only this exact checkout can attest its HEAD fingerprints.
+        # The immutable S3 row describes the completing jobs. Only a matching
+        # checkout can add local evidence for those exact committed sources.
         local_sha = (get_git_hash() or "")[:7]
         if local_sha and local_sha != "unknown" and entry.get("git_hash") == local_sha:
             code_fps = collect_code_fingerprints(
@@ -270,14 +294,11 @@ def record_benchmark_run(
             if code_fps:
                 entry = {**entry, "code_fingerprints": code_fps}
         print_comparison_table(
-            entry["results"],
-            header="AWS Batch Benchmark Results (MAE / R2)",
-            show_time=False,
+            entry["results"], header="AWS Batch Benchmark Results (MAE / R2)", show_time=False
         )
         with open(os.path.join(_REPO_ROOT, RESULTS_FILE), "w") as file:
             json.dump(entry["results"], file, indent=2)
-        history_dir = os.path.join(_REPO_ROOT, HISTORY_DIR)
-        return append_to_history(history_dir, entry)
+        return append_to_history(os.path.join(_REPO_ROOT, HISTORY_DIR), entry)
 
     print("\nDownloading benchmark metrics...")
     all_metrics = download_metrics(positions)
@@ -307,6 +328,12 @@ def record_benchmark_run(
         with_sha = [p for p, m in all_metrics.items() if m.get("git_sha")]
         if with_sha:
             print(f"\ngit_sha coherent at {expected_sha} across {len(with_sha)} positions")
+
+    selected_release = data_release or os.environ.get("FF_DATA_RELEASE")
+    if selected_release and any(
+        metrics.get("data_release") != selected_release for metrics in all_metrics.values()
+    ):
+        raise ValueError("Refusing metrics from another or unknown data release")
 
     # Build summaries
     summaries = []
@@ -442,45 +469,56 @@ def main():
             "across consecutive benchmarks."
         ),
     )
+    parser.add_argument(
+        "--skip-upload",
+        action="store_true",
+        help="Use the selected image-compatible published release",
+    )
     args = parser.parse_args()
 
     project_root = os.path.join(os.path.dirname(__file__), "..", "..")
     os.chdir(project_root)
 
-    selected_release = None
     if not args.download_only:
-        binding = resolve_launch_binding(None, None, args.positions)
-        try:
-            validate_submission_source(args.positions, binding=binding)
-        except RuntimeError as exc:
-            parser.error(str(exc))
-        if args.git_hash and not binding["image_sha"].startswith(args.git_hash):
-            parser.error("--git-hash must match the selected training image source SHA")
-        args.git_hash = binding["image_sha"]
-        validate_local_publish(binding["image_sha"])
-
-        from src.batch.run_history import create_run
-        from src.shared.artifact_publication import register_source
-
-        register_source(
-            boto3.client("s3", region_name=AWS_REGION),
-            S3_BUCKET,
-            _model_s3_prefix(),
-            binding["image_sha"],
+        from src.batch.launch import (
+            prepare_submission,
+            register_submission_source,
+            require_training_identity,
         )
-        print("Publishing data for the selected remote image...")
-        upload_data(S3_BUCKET)
-        selected_release = pin_data_release(source_ref=binding["image_sha"])
+
+        try:
+            _, _, source_sha = require_training_identity(allow_unresolved_source=True)
+        except RuntimeError as error:
+            parser.error(str(error))
+        if args.git_hash and source_sha and args.git_hash != source_sha:
+            parser.error("--git-hash must match FF_TRAIN_GIT_SHA when submitting training")
+        from src.batch.run_history import create_run
+
+        s3_client = boto3.client("s3", region_name=AWS_REGION)
+        batch_client = boto3.client("batch", region_name=AWS_REGION)
+        binding = prepare_submission(
+            args.positions,
+            s3_client,
+            batch_client,
+            skip_upload=args.skip_upload,
+            expected_source=args.git_hash,
+        )
+        source_sha = os.environ["FF_TRAIN_GIT_SHA"]
+        args.git_hash = source_sha
+        register_submission_source(s3_client)
         args.run_id = create_run(
-            boto3.client("s3", region_name=AWS_REGION),
+            s3_client,
             S3_BUCKET,
             args.positions,
             run_id=args.run_id,
-            git_sha=binding["image_sha"],
-            data_release=selected_release,
+            git_sha=source_sha,
             pr_number=args.pr_number,
             seed=args.seed,
             note=args.note or "AWS Batch training run",
+            build_plan_id=os.environ.get("FF_BUILD_PLAN_ID"),
+            dataset_id=os.environ.get("FF_DATASET_ID"),
+            legacy_run_id=os.environ.get("FF_LEGACY_RUN_ID"),
+            data_release=os.environ.get("FF_DATA_RELEASE"),
         )
 
         # Submit all jobs in parallel (mirrors src/batch/launch.py:main)
@@ -493,8 +531,9 @@ def main():
                     submit_job,
                     pos,
                     args.seed,
-                    binding=binding,
+                    batch_client=batch_client,
                     history_run_id=args.run_id,
+                    binding=binding,
                 ): pos
                 for pos in args.positions
             }
@@ -521,8 +560,6 @@ def main():
         failed = [p for p in args.positions if p not in results or results[p][0] != "SUCCEEDED"]
         if failed:
             print(f"Failed positions: {failed}")
-            # In particular, a superseded job must not relabel newer active
-            # artifacts as this benchmark run's own output.
             sys.exit(1)
 
     # Download metrics, build the comparison table, and record the run (writes
@@ -536,7 +573,6 @@ def main():
         pr_number=args.pr_number,
         git_hash=args.git_hash,
         run_id=args.run_id,
-        **({"data_release": selected_release} if selected_release is not None else {}),
     )
 
 

@@ -106,6 +106,7 @@ def test_preprocess_drops_rows_with_no_snaps_and_zero_stats():
             _base_row(
                 player_id="ghost",
                 passing_yards=0.0,
+                passing_tds=0,
                 rushing_yards=0.0,
                 receiving_yards=0.0,
                 receptions=0,
@@ -130,6 +131,7 @@ def test_preprocess_keeps_zero_stats_row_with_nonzero_snaps():
             _base_row(
                 player_id="snapper",
                 passing_yards=0.0,
+                passing_tds=0,
                 rushing_yards=0.0,
                 receiving_yards=0.0,
                 receptions=0,
@@ -153,6 +155,39 @@ def test_preprocess_when_snap_pct_column_absent_keeps_all_zero_stat_rows():
     df = df.drop(columns=["snap_pct"])
     out = preprocess(df)
     assert len(out) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "events",
+    [
+        {"attempts": 1, "passing_yards": -1},
+        {"carries": 1, "rushing_yards": -1},
+        {"sacks": 1},
+        {"sack_fumbles_lost": 1},
+        {"rushing_fumbles_lost": 1},
+        {"receiving_fumbles_lost": 1},
+        {"passing_2pt_conversions": 1},
+        {"rushing_2pt_conversions": 1},
+        {"receiving_2pt_conversions": 1},
+    ],
+)
+def test_preprocess_keeps_recorded_activity_without_snap_coverage(events):
+    row = _base_row()
+    metadata = {"player_id", "position", "season_type", "season", "week", "snap_pct"}
+    row.update({key: 0 for key in row if key not in metadata})
+    row.update(snap_pct=np.nan, **events)
+    out = preprocess(pd.DataFrame([row]))
+    assert out["player_id"].tolist() == [row["player_id"]]
+
+
+@pytest.mark.unit
+def test_preprocess_does_not_treat_epa_as_participation_evidence():
+    row = _base_row()
+    metadata = {"player_id", "position", "season_type", "season", "week", "snap_pct"}
+    row.update({key: 0 for key in row if key not in metadata})
+    row.update(snap_pct=np.nan, passing_epa=-2.0)
+    assert preprocess(pd.DataFrame([row])).empty
 
 
 # --------------------------------------------------------------------------

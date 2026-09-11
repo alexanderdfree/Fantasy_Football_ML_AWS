@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "watch": "node build.mjs --watch"
+    "watch": "node build.mjs --watch",
+    "test": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "esbuild": "0.28.2",
     "react": "19.3.0",
     "react-dom": "19.3.0"

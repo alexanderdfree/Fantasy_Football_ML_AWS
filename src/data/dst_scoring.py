@@ -9,6 +9,7 @@ The compact team-week cache is built with the training inputs, never in serving.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from pathlib import Path
 
 import pandas as pd
@@ -142,7 +143,8 @@ def load_dst_scoring_events(
         return frame
 
     with ThreadPoolExecutor(max_workers=min(3, len(seasons))) as pool:
-        frame = pd.concat(pool.map(fetch, seasons), ignore_index=True)
+        futures = [pool.submit(copy_context().run, fetch, season) for season in seasons]
+        frame = pd.concat((future.result() for future in futures), ignore_index=True)
     if not _valid_cache(frame, seasons):
         raise ValueError("Invalid D/ST scoring PBP aggregation; refusing to cache")
     atomic_write_parquet(frame, str(path), index=False)

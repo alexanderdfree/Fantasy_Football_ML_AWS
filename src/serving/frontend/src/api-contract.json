@@ -1,0 +1,101 @@
+{
+  "comparison": {
+    "actual_basis": "shared_projected_components_v2",
+    "optional_metadata": [
+      "coverage",
+      "scoring_components",
+      "excluded_sources",
+      "excluded_components",
+      "cohort_definitions"
+    ],
+    "sample_basis": "shared_player_weeks"
+  },
+  "compatibility": "Optional fields and new source IDs may be added within v1; consumers reject unsupported major versions.",
+  "endpoints": {
+    "/api/comparison": "comparison",
+    "/api/predictions": "predictions",
+    "/api/snapshot": "snapshot",
+    "/api/upcoming_week": [
+      "upcoming_available",
+      "upcoming_unavailable",
+      "warming"
+    ]
+  },
+  "envelopes": {
+    "comparison": {
+      "model_source": "string",
+      "scoring": "string",
+      "subsets": "object"
+    },
+    "error": {
+      "error": "string"
+    },
+    "predictions": {
+      "players": "array",
+      "scoring": "string",
+      "total": "integer"
+    },
+    "snapshot": {
+      "degraded_positions": "array",
+      "scoring": "object",
+      "weeks": "array"
+    },
+    "upcoming_available": {
+      "available": "boolean",
+      "scoring": "object"
+    },
+    "upcoming_unavailable": {
+      "available": "boolean",
+      "reason": "string"
+    },
+    "warming": {
+      "status": "string"
+    }
+  },
+  "expert_sources": [
+    "nflcom",
+    "rotowire",
+    "espn"
+  ],
+  "model_sources": [
+    "ridge",
+    "nn",
+    "attn_nn",
+    "lgbm"
+  ],
+  "nullable_comparison_prediction_fields": [
+    "ridge_comparison_pred",
+    "nn_comparison_pred",
+    "attn_nn_comparison_pred",
+    "lgbm_comparison_pred",
+    "nflcom_comparison_pred",
+    "rotowire_comparison_pred",
+    "espn_comparison_pred"
+  ],
+  "nullable_prediction_fields": [
+    "ridge_pred",
+    "nn_pred",
+    "attn_nn_pred",
+    "lgbm_pred"
+  ],
+  "optional_row_comparison_metadata": [
+    "comparison_actual",
+    "comparison_actual_basis",
+    "comparison_excluded_sources"
+  ],
+  "positions": [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "K",
+    "DST"
+  ],
+  "scoring_formats": [
+    "ppr",
+    "half_ppr",
+    "standard"
+  ],
+  "version": "1.0",
+  "version_header": "X-FFP-Contract-Version"
+}

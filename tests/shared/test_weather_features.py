@@ -1,5 +1,6 @@
 """Tests for src.shared.weather_features.merge_schedule_features."""
 
+import os
 from unittest.mock import patch
 
 import numpy as np
@@ -8,6 +9,7 @@ import pytest
 from src.shared.weather_features import (
     WEATHER_FEATURES_ALL,
     _build_team_schedule_lookup,
+    _load_schedules,
     merge_schedule_features,
 )
 
@@ -18,8 +20,46 @@ def _clear_schedule_cache():
     import src.shared.weather_features as wf
 
     wf._schedule_cache = None
+    wf._schedule_cache_source = None
     yield
     wf._schedule_cache = None
+    wf._schedule_cache_source = None
+
+
+@pytest.mark.unit
+def test_schedule_loader_reloads_same_size_rewrite_with_preserved_mtime(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from src.shared import weather_features as wf
+
+    monkeypatch.setattr(wf, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(wf, "SEASONS", [2025])
+    path = tmp_path / "schedules_2025_2025.parquet"
+    pd.DataFrame({"game_type": ["REG"], "total_line": [40.0]}).to_parquet(path)
+    before_stat = path.stat()
+    first = _load_schedules()
+    assert first["total_line"].tolist() == [40.0]
+    assert _load_schedules() is first
+    pd.DataFrame({"game_type": ["REG"], "total_line": [50.0]}).to_parquet(path)
+    os.utime(path, ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns))
+    assert path.stat().st_size == before_stat.st_size
+    assert _load_schedules()["total_line"].tolist() == [50.0]
+
+
+@pytest.mark.unit
+def test_schedule_loader_never_serves_deleted_source(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from src.shared import weather_features as wf
+
+    monkeypatch.setattr(wf, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(wf, "SEASONS", [2025])
+    path = tmp_path / "schedules_2025_2025.parquet"
+    pd.DataFrame({"game_type": ["REG"]}).to_parquet(path)
+    _load_schedules()
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        _load_schedules()
 
 
 # ---------------------------------------------------------------------------

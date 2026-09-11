@@ -44,33 +44,33 @@ from collections.abc import Sequence
 import pandas as pd
 
 from src.config import CACHE_DIR
-from src.serving import expert_sources as _shared
-from src.serving.expert_sources import (
+from src.data import expert_sources as _shared
+from src.data.expert_sources import (
     _MIN_SEASON as _MIN_SEASON,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     _REQUEST_TIMEOUT_S,
     _RETRY_BACKOFF_S,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     SLEEPER_DEFAULT_WEEKS as SLEEPER_DEFAULT_WEEKS,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     SLEEPER_DST_STAT_MAP as SLEEPER_DST_STAT_MAP,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     SLEEPER_FETCH_POSITIONS as SLEEPER_FETCH_POSITIONS,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     SLEEPER_OFFENSE_POSITIONS as SLEEPER_OFFENSE_POSITIONS,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     SLEEPER_STAT_MAP as SLEEPER_STAT_MAP,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     _projection_url as _projection_url,
 )
-from src.serving.expert_sources import (
+from src.data.expert_sources import (
     _weeks_signature as _weeks_signature,
 )
 

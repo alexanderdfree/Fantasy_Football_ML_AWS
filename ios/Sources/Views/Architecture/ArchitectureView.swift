@@ -74,6 +74,8 @@ struct ArchitectureView: View {
         Card {
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
+                    Text(p.metadataNote ?? "Configured recipe; served bundle metadata is unavailable.")
+                        .font(.caption).foregroundStyle(FFColor.textSecondary)
                     Grid(alignment: .leading, horizontalSpacing: FFSpacing.md, verticalSpacing: 6) {
                         configRow("Targets", p.targets.joined(separator: ", "))
                         configRow("Backbone", "[" + p.backboneLayers.map(String.init).joined(separator: ", ") + "]")

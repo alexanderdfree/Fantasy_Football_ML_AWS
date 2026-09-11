@@ -4,7 +4,9 @@ import Foundation
 @MainActor
 @Observable
 final class WikiStore {
-    private let api = APIClient.shared
+    private let api: any APIProviding
+
+    init(api: any APIProviding = APIClient.shared) { self.api = api }
     var index: LoadState<[WikiIndexEntry]> = .idle
 
     func loadIndex() async {

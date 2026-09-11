@@ -26,6 +26,7 @@ from src.data.loader import load_team_week_stats
 # (see the matching note in src/features/engineer.py).
 from src.shared import weather_features
 from src.shared.weather_features import TEAM_CODE_NORMALIZATION
+from src.training.context import raw_data_dir
 
 # Columns produced per (season, week, team) before the per-row merge.
 TEAM_BOX_SCORE_FEATURES: list[str] = [
@@ -135,7 +136,7 @@ def _build_team_box_score_lookup() -> pd.DataFrame:
         points["team_points_scored"] = 0.0
         points["opp_team_points_scored"] = 0.0
 
-    team_stats = load_team_week_stats(SEASONS, cache_dir=CACHE_DIR)
+    team_stats = load_team_week_stats(SEASONS, cache_dir=raw_data_dir(CACHE_DIR))
     if team_stats.empty:
         # Box-score frame still carries the scoring columns even when team_stats
         # is unavailable — score margin alone is useful and matches the

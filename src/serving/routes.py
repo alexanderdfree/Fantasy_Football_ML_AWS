@@ -1,31 +1,36 @@
 """HTTP routes for the serving app — Flask handlers and their helpers.
 
 Extracted from ``app.py`` during the serving decomposition (increment 5). Uses the
-canonical Flask pattern: ``from src.serving.app import app`` for the ``@app.route``
+canonical Flask pattern: ``from flask import Blueprint, current_app
+
+app = Blueprint("main", __name__)`` for the ``@app.route``
 decorators, and ``app_pkg`` for the shared mutable cache/locks (call-time attribute
 access). ``app.py`` imports this module at the bottom, which registers the handlers.
 """
 
+import hashlib
 import os
 import time
 import traceback
+from contextlib import suppress
 
 import numpy as np
 import pandas as pd
-from flask import jsonify, render_template, request, send_file
+from flask import Blueprint, current_app, jsonify, render_template, request, send_file
 
 import src.dst.config as dst_cfg
 import src.k.config as k_cfg
 import src.qb.config as qb_cfg
 import src.rb.config as rb_cfg
-import src.serving.app as app_pkg
 import src.serving.core as core
 import src.serving.timeline as timeline
 import src.te.config as te_cfg
 import src.wr.config as wr_cfg
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
-from src.serving import benchmark_history, comparison, upcoming_status, upcoming_week
-from src.serving.app import app
+from src.contracts.feature_names import WEATHER_FEATURES_ALL
+from src.contracts.target_units import TARGET_UNITS
+from src.serving import benchmark_history, upcoming_status, upcoming_week
+from src.serving import state as app_pkg
 from src.serving.metadata import _ALL_POSITIONS, POSITION_INFO
 from src.serving.serialization import (
     _EXPERT_PRED_PREFIXES,
@@ -40,14 +45,8 @@ from src.serving.serialization import (
     _validate_scoring,
 )
 from src.serving.wiki import WIKI_DOCS, _render_wiki_doc
-from src.shared.aggregate_targets import TARGET_UNITS
-from src.shared.comparison_scoring import (
-    ACTUAL_BASIS,
-    EXCLUDED_COMPONENTS,
-    EXCLUDED_SOURCES,
-    scoring_components,
-)
-from src.shared.weather_features import WEATHER_FEATURES_ALL
+
+app = Blueprint("main", __name__)
 
 # Sortable keys for /api/predictions: the realized total ("actual"), the week, and
 # every model/expert prediction column. Derived from the canonical prefix tuple so
@@ -79,7 +78,9 @@ def favicon():
     404-ing for everything else. All current major browsers render an SVG served
     here.
     """
-    resp = send_file(os.path.join(app.static_folder, "favicon.svg"), mimetype="image/svg+xml")
+    resp = send_file(
+        os.path.join(current_app.static_folder, "favicon.svg"), mimetype="image/svg+xml"
+    )
     resp.headers["Cache-Control"] = "public, max-age=86400"
     return resp
 
@@ -148,25 +149,18 @@ def api_predictions():
 
 @app.route("/api/snapshot")
 def api_snapshot():
-    """Serve the precomputed predictions snapshot straight off disk.
-
-    The frontend hydrates its first paint from this (frontend/src/App.jsx), so
-    this route MUST NOT call ``_ensure_metrics`` / load models — that is the whole
-    point: instant first paint with zero compute on the request path. Missing
-    or invalid generation -> 404, and the frontend falls back to
-    ``/api/predictions``. The snapshot is committed with predictions and metrics
-    off the request path, then synced from S3 as one verified bundle. This route
-    performs checksum/fingerprint validation but never loads a model.
-    """
-    path = core._snapshot_path()
-    if path is None:
+    """Serve verified bytes from the request's captured generation without inference."""
+    payload, generation = core._snapshot_response_bytes()
+    if payload is None:
         return jsonify({"error": "snapshot not available"}), 404
-    resp = send_file(path, mimetype="application/json", conditional=True)
-    # Snapshot content changes on retrain; send_file stamps a size/mtime ETag,
-    # so "no-cache" makes browsers revalidate cheaply (304 when unchanged)
-    # rather than serving a stale snapshot after a model refresh.
-    resp.headers["Cache-Control"] = "no-cache"
-    return resp
+    from flask import Response
+
+    response = Response(payload, mimetype="application/json")
+    response.set_etag(hashlib.sha256(payload).hexdigest())
+    response.headers["Cache-Control"] = "no-cache"
+    if generation is not None:
+        response.headers["X-FFP-Snapshot-Generation"] = generation
+    return response.make_conditional(request)
 
 
 @app.route("/api/upcoming_week")
@@ -555,6 +549,9 @@ def _position_arch_payload(pc, include_features, attn_history=None):
 @app.route("/api/model_architecture")
 def api_model_architecture():
     try:
+        model_metadata = app_pkg._cache.get("model_metadata", {})
+        model_ids = app_pkg._cache.get("model_bundle_ids", {})
+        torch_versions = set()
         cfg_modules = {
             "QB": qb_cfg,
             "RB": rb_cfg,
@@ -574,13 +571,82 @@ def api_model_architecture():
                 positions[pos] = _position_arch_payload(
                     pc, pc.include_features, pc.attn_history_stats
                 )
+            payload = positions[pos]
+            families = {
+                family: metadata
+                for family, metadata in model_metadata.get(pos, {}).items()
+                if metadata.get("status") == "available"
+                and metadata.get("bundle_id") == model_ids.get(pos, {}).get(family)
+            }
+            payload["metadata_source"] = "bundle" if families else "config_fallback"
+            payload["models"] = families
+            if not families:
+                payload["metadata_note"] = (
+                    "Configured recipe; served bundle metadata is unavailable."
+                )
+                continue
+            primary = next(
+                family for family in ("nn", "attn_nn", "ridge", "lgbm") if family in families
+            )
+            payload["metadata_family"] = primary
+            payload["metadata_note"] = (
+                f"Recorded {primary} bundle; family-specific inputs are listed below."
+            )
+            descriptor = families[primary]
+            inputs = descriptor.get("inputs") or {}
+            architecture = descriptor.get("architecture") or {}
+            kwargs = architecture.get("kwargs") or {}
+            options = descriptor.get("training_options") or {}
+            prefix = "attn_" if primary == "attn_nn" else "nn_"
+            features = list(inputs.get("features", []))
+            payload.update(
+                targets=list(inputs.get("targets", [])),
+                backbone_layers=list(kwargs.get("backbone_layers", [])),
+                head_hidden=kwargs.get("head_hidden"),
+                head_hidden_overrides=kwargs.get("head_hidden_overrides") or {},
+                dropout=kwargs.get("dropout"),
+                scheduler=(options.get("scheduler_type") or "Not recorded")
+                if primary in {"nn", "attn_nn"}
+                else "Not applicable",
+                attention_enabled="attn_nn" in model_ids.get(pos, {}),
+                lightgbm_enabled="lgbm" in model_ids.get(pos, {}),
+                feature_count=len(features),
+                features=_categorize_features(features),
+            )
+            for output, option in (
+                ("lr", "lr"),
+                ("weight_decay", "weight_decay"),
+                ("batch_size", "batch_size"),
+                ("epochs", "epochs"),
+                ("patience", "patience"),
+            ):
+                payload[output] = (
+                    options.get(prefix + option) if primary in {"nn", "attn_nn"} else None
+                )
+            for metadata in families.values():
+                version = (metadata.get("provenance") or {}).get("dependencies", {}).get("torch")
+                if version:
+                    torch_versions.add(version)
+            attention = families.get("attn_nn", {}).get("inputs") or {}
+            for source, group in (
+                ("features", "attention_static"),
+                ("history", "attention_history"),
+                ("opponent_history", "opponent_history"),
+                ("kicks", "kick_history"),
+            ):
+                if attention.get(source):
+                    payload["features"][group] = list(attention[source])
         return jsonify(
             {
                 "overview": {
-                    "framework": "PyTorch 2.12 + CUDA 13.0 (AWS Batch)",
-                    "device": "CUDA if available, else CPU",
+                    "framework": "PyTorch "
+                    + ", ".join(sorted(torch_versions))
+                    + " (served bundles)"
+                    if torch_versions
+                    else "PyTorch (served version not recorded)",
+                    "device": "Execution device is selected by the runner; bundle weights are portable",
                     "data_splits": (
-                        f"Train {min(TRAIN_SEASONS)}-{max(TRAIN_SEASONS)}, "
+                        f"Configured: Train {min(TRAIN_SEASONS)}-{max(TRAIN_SEASONS)}, "
                         f"Val {', '.join(map(str, VAL_SEASONS))}, "
                         f"Test {', '.join(map(str, TEST_SEASONS))} "
                         "(K uses 2015+)"
@@ -632,54 +698,24 @@ def api_wiki_page(slug):
 @app.route("/api/comparison")
 def api_comparison():
     """Compare shared projected components on identical regular-season player-weeks."""
-    from datetime import UTC, datetime
-
-    scoring = "ppr"
-    metadata = comparison._load_comparison_experts() or {}
     results = None
     try:
         core._ensure_metrics()
         with app_pkg._cache_lock:
+            published = app_pkg._cache.get("comparison_snapshot")
             results = app_pkg._cache.get("results")
+        if published is not None:
+            return jsonify(published)
     except Exception:
         traceback.print_exc()
-    available = results is not None and not results.empty
-    subsets, coverage, quartile_bias, rankings = comparison.comparison_tables(results, scoring)
-    seasons = sorted(int(s) for s in results["season"].dropna().unique()) if available else []
-    return jsonify(
-        {
-            "scoring": scoring,
-            "model_source": "live" if available else "unavailable",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "experts_meta": metadata.get("experts_meta", {}),
-            "top_n": 30,
-            "top12_n": 12,
-            "weekly_top_n": 24,
-            "subsets": subsets,
-            "coverage": coverage,
-            "weekly_ranking": rankings,
-            "actual_basis": ACTUAL_BASIS,
-            "scoring_components": {
-                pos: list(scoring_components(pos)) for pos in comparison.COMPARISON_POSITIONS
-            },
-            "excluded_sources": EXCLUDED_SOURCES,
-            "excluded_components": EXCLUDED_COMPONENTS,
-            "sample_basis": "shared_player_weeks",
-            "cohort_definitions": {
-                "weekly_reference_top24": "Top 24 per week by shared-component NFL.com/RotoWire mean; ESPN for K, RotoWire for DST",
-                "top30": "Top 30 per season by regular-season actual shared-component points",
-                "top12": "Top 12 per season by regular-season actual shared-component points",
-            },
-            "quartile_bias": quartile_bias,
-            "quartile_bias_meta": {
-                "n_quantiles": 4,
-                "quartiles": list(comparison._QUARTILE_LABELS),
-                "binned_by": "actual_shared_component_points",
-                "bias_convention": "pred_minus_actual",
-                "seasons": seasons,
-            },
-        }
-    )
+    # Pre-generation caches and explicit local runtime inference remain readable.
+    # New published snapshots always carry the precomputed comparison, so their
+    # request path never reads raw reference files or reruns cohort evaluation.
+    if not current_app.config["ALLOW_RUNTIME_INFERENCE"]:
+        return jsonify({"error": "Comparison snapshot is warming"}), 503
+    from src.prediction.comparison_snapshot import build_comparison_snapshot
+
+    return jsonify(build_comparison_snapshot(results))
 
 
 @app.route("/api/benchmark_history")
@@ -715,8 +751,8 @@ def api_benchmark_history():
 def health():
     """Liveness probe for ALB + ECS.
 
-    Three return shapes, matched on the joint state of ``positions_loaded``,
-    ``position_load_errors`` and shared ``base_load_error``:
+    Three return shapes, matched on the joint state of ``positions_loaded``
+    and ``position_load_errors`` / shared ``base_load_error``:
 
     - **200 ``{"status": "ok"}``** — happy path. Either steady state (every
       position loaded, no errors) OR cold-start before any load attempt
@@ -732,7 +768,8 @@ def health():
       ``/health`` must agree, otherwise ALB recycles a still-serving task.
     - **503 ``{"status": "unhealthy", ...}``** — we have affirmatively
       failed: shared initialization or position errors exist AND no position
-      is loaded. ALB rotates us out; ECS replaces the task.
+      is loaded. ALB rotates us out; ECS replaces the
+      task.
 
     Why no "503 when empty everything": that would 503 the ~30 s cold-start
     window before pre-warm completes (interval=10s × unhealthy_threshold=3
@@ -746,18 +783,15 @@ def health():
     cleanly (alexfree.me, 2026-05-21 12:16 UTC, ~60 s ALB 5xx window).
     """
     loaded = set(app_pkg._cache.get("positions_loaded") or ())
-    # Actual exception details remain in the cache/logs for operators. Public
-    # health probes must not expose paths, configuration or library internals.
+    # Keep original diagnostics in the owned cache/logs. Public probes expose
+    # availability without paths, provider URLs or exception implementation text.
     errors = {
         key: "Position or model initialization failed"
         for key in list(app_pkg._cache.get("position_load_errors") or {})
     }
     base_error = bool(app_pkg._cache.get("base_load_error"))
     if errors or base_error:
-        payload = {
-            "status": "degraded" if loaded else "unhealthy",
-            "position_load_errors": errors,
-        }
+        payload = {"status": "degraded" if loaded else "unhealthy", "position_load_errors": errors}
         if loaded:
             payload["positions_loaded"] = sorted(loaded)
         if base_error:
@@ -796,7 +830,9 @@ def warm():
     t0 = time.time()
     core._ensure_metrics()
     elapsed = round(time.time() - t0, 3)
-    fingerprint, _ = core._compute_models_fingerprint()
+    fingerprint = app_pkg._cache.get("snapshot_generation")
+    if fingerprint is None:
+        fingerprint, _ = core._compute_models_fingerprint()
     return jsonify(
         {
             "status": "ok",
@@ -810,3 +846,16 @@ def warm():
             "elapsed_s": elapsed,
         }
     )
+
+
+@app.route("/ready")
+def ready():
+    """Readiness is a completed artifact generation, never a model computation."""
+    owner = app_pkg.current_state()
+    if owner.snapshots.current() is None:
+        with owner.cache_lock, suppress(OSError, ValueError):
+            core._try_hydrate_from_disk()
+    snapshot = owner.snapshots.current()
+    if snapshot is None:
+        return jsonify({"status": "warming"}), 503
+    return jsonify({"status": "ready", "generation": snapshot.generation})

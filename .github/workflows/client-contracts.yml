@@ -1,0 +1,66 @@
+name: Client contracts
+
+on:
+  pull_request:
+    branches: [main, "codex/**"]
+    paths:
+      - "src/contracts/**"
+      - "src/serving/**"
+      - "ios/**"
+      - "tests/contracts/**"
+      - "tests/test_client_fixture_generation.py"
+      - ".github/workflows/client-contracts.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/contracts/**"
+      - "src/serving/**"
+      - "ios/**"
+      - "tests/contracts/**"
+      - "tests/test_client_fixture_generation.py"
+      - ".github/workflows/client-contracts.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/serving/frontend/package-lock.json
+      - name: Validate shared wire contracts
+        run: |
+          python -m pip install "$(awk '/^flask==/ { print $1 }' requirements.txt)"
+          python -m src.contracts.export --check
+          python -m unittest discover -s tests/contracts -v
+      - name: Build and test the rendered dashboard
+        working-directory: src/serving/frontend
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code -- ../static/js/app.js
+          npx playwright install --with-deps chromium
+          npm test
+
+  native:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Compile app and run isolated native client tests
+        run: bash ios/scripts/test.sh

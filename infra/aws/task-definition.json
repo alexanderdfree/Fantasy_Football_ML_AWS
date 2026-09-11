@@ -19,12 +19,13 @@
         {"containerPort": 8000, "protocol": "tcp"}
       ],
       "environment": [
+        {"name": "FF_ALLOW_RUNTIME_INFERENCE", "value": "0"},
         {"name": "FF_MODEL_S3_BUCKET", "value": "__FF_MODEL_S3_BUCKET__"},
         {"name": "FF_MODEL_S3_PREFIX", "value": "models"},
         {"name": "AWS_REGION", "value": "__REGION__"}
       ],
       "healthCheck": {
-        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"],
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')\" || exit 1"],
         "interval": 30,
         "timeout": 5,
         "retries": 3,

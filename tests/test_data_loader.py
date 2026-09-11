@@ -654,20 +654,30 @@ def test_load_raw_data_cache_hit_short_circuit(tmp_path, monkeypatch):
     # load_ff_opportunity / load_qbr_weekly / load_contracts short-circuit on the
     # parquet read and never hit nfl_data_py or the network.
     from src.data.external_sources import (
+        _CONTRACT_TIEBREAK_SENTINEL,
         CONTRACT_FEATURE_COLUMNS,
         FF_OPP_FEATURE_COLUMNS,
         QBR_FEATURE_COLUMNS,
     )
 
+    # Mutable empty source caches now require recovery. Use actual zero-valued
+    # observations and complete schemas to exercise the cache-hit contract.
+    keys = {"player_id": "P00", "season": 2022, "week": 1}
     pd.DataFrame(
-        columns=["player_id", "season", "week", *FF_OPP_FEATURE_COLUMNS, "_ff_opportunity_v2"]
+        [{**keys, **dict.fromkeys(FF_OPP_FEATURE_COLUMNS, 0.0), "_ff_opportunity_v2": True}]
     ).to_parquet(tmp_path / f"ff_opportunity_{seasons[0]}_{seasons[-1]}.parquet")
-    pd.DataFrame(columns=["player_id", "season", "week", *QBR_FEATURE_COLUMNS]).to_parquet(
+    pd.DataFrame([{**keys, **dict.fromkeys(QBR_FEATURE_COLUMNS, 0.0)}]).to_parquet(
         tmp_path / f"qbr_weekly_v2_{seasons[0]}_{seasons[-1]}.parquet"
     )
-    pd.DataFrame(columns=["player_id", "season", *CONTRACT_FEATURE_COLUMNS]).to_parquet(
-        tmp_path / f"contracts_{seasons[0]}_{seasons[-1]}.parquet"
-    )
+    pd.DataFrame(
+        [
+            {
+                **keys,
+                **dict.fromkeys(CONTRACT_FEATURE_COLUMNS, 0.0),
+                _CONTRACT_TIEBREAK_SENTINEL: True,
+            }
+        ]
+    ).to_parquet(tmp_path / f"contracts_{seasons[0]}_{seasons[-1]}.parquet")
 
     out = loader.load_raw_data(seasons, cache_dir=str(tmp_path))
     # Enrichment columns still land from the merge path.

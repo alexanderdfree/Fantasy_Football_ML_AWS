@@ -1,0 +1,491 @@
+{
+  "schema_version": 1,
+  "purpose": "Consolidated correctness-review repair validation; no deployment or metric-neutrality claim",
+  "foundation_source": "28002bb8",
+  "combined_source": "ad6a607c30b6c192694c786db933139d13aabcd0",
+  "checks": {
+    "foundation_unit": {
+      "passed": 5045,
+      "skipped": 2
+    },
+    "combined_unit": {
+      "passed": 5284,
+      "skipped": 2
+    },
+    "combined_e2e_api": {
+      "passed": 55,
+      "skipped": 0
+    },
+    "browser": {
+      "passed": 9
+    },
+    "native": {
+      "passed": 32
+    }
+  },
+  "benchmark": {
+    "artifact": "benchmark_history/2026-09-11T08-15-38_28002bb8_review-fixes_seed42.json",
+    "positions": [
+      "QB",
+      "RB",
+      "WR",
+      "TE",
+      "K",
+      "DST"
+    ],
+    "seed": 42,
+    "regime": "CPU eager POSITION_CONFIG",
+    "workers": 2,
+    "passed": 6,
+    "available_required_cohorts": 24,
+    "http_attempts": 0,
+    "source_data_provider_hashes_unchanged": true
+  },
+  "inputs": {
+    "kind": "local archive-derived benchmark inputs, not a sealed release",
+    "split_policy": "Rebuilt by fixed28002bb8 load/preprocess/build_features/temporal_split from frozen inputs; includes corrected2012 activity context and pre-fill reporting masks",
+    "files": {
+      "data/raw/ff_opportunity_2012_2025.parquet": {
+        "bytes": 1521277,
+        "sha256": "3816d9eb48f7a1854806c56faef632d8d1cbbef235dd2ce866d8736733337822"
+      },
+      "data/raw/contracts_2012_2025.parquet": {
+        "bytes": 790802,
+        "sha256": "75386fefc26740db5a79274bd577649723dbb7948c5b61f3bc30cb96e8129f18"
+      },
+      "data/raw/dst_scoring_pbp_v1_2012_2025.parquet": {
+        "bytes": 8406,
+        "sha256": "4fc5104a133be9f0f6fd62a66734fe947475bac63029f3fcca09218008dfad9b"
+      },
+      "data/raw/sleeper_projections_v2_2025_2025_w1-18_DEF-QB-RB-TE-WR.parquet": {
+        "bytes": 142778,
+        "sha256": "a290b75a04936272f0707bb64e6db079857bacf2b64449ec73dfe49166e5befa"
+      },
+      "data/raw/snap_counts_2012_2025.parquet": {
+        "bytes": 2549832,
+        "sha256": "f98161c311e3be00a650452c3ebd8cd38c3815c67f0b9087483ec279168abaac"
+      },
+      "data/raw/rosters_weekly_2012_2025.parquet": {
+        "bytes": 6749029,
+        "sha256": "337c4194a5baf0b8350ae63fe4e5efbefbd1af58f12370e59d88b9c5516a6372"
+      },
+      "data/raw/schedules_2012_2025.parquet": {
+        "bytes": 299645,
+        "sha256": "78fe03145dd98603149a71a6d31fc251a4f71ad5f145208fdc66648e8d391fa5"
+      },
+      "data/raw/injuries_2012_2025.parquet": {
+        "bytes": 1285105,
+        "sha256": "a363552716ca24d087dcac768267e41c6149f026cb29cd9e29c289bb05147b5b"
+      },
+      "data/raw/weekly_2012_2025.parquet": {
+        "bytes": 9574017,
+        "sha256": "6a94fbe0bfb951a5a828498aeb286bebd459a770dd736920a28933f1becba45c"
+      },
+      "data/raw/player_id_bridge_v2.parquet": {
+        "bytes": 185671,
+        "sha256": "0fe1bff6206176aee124cf986ded45142182dcfd0029c40ed487f56791d161fa"
+      },
+      "data/raw/kicker_kicks_pbp_2015_2025.parquet": {
+        "bytes": 238944,
+        "sha256": "890b749c2270d3bee45cdd08b6b25dc5809f18667d394073cef4253718f7990f"
+      },
+      "data/raw/rosters_2012_2025.parquet": {
+        "bytes": 3093848,
+        "sha256": "9d3fb3e87dbaf691cb42a4c0998685c17c618f73dcb5d6c4049a8a849a5f2c6d"
+      },
+      "data/raw/kicker_backfill_pbp_v1_2025.parquet": {
+        "bytes": 537324,
+        "sha256": "9665cf0da98be5466d81e91d1b5556d3bf3487af907f3eb2c68812245f486be3"
+      },
+      "data/raw/redzone_pbp_v2_2012_2025.parquet": {
+        "bytes": 217965,
+        "sha256": "843ae8a9031bcc61e605de47c51d9538d0f21be4a8cca3dca3c9133bb656d79d"
+      },
+      "data/raw/team_stats_2012_2025.parquet": {
+        "bytes": 912918,
+        "sha256": "19c585eacad07658a01dd44f2e632b81af20804f7bd156b0dac8fc3cb589ae00"
+      },
+      "data/raw/weekly_evaluation_reference_v1.parquet": {
+        "bytes": 69529,
+        "sha256": "3b444fe290352b40ac4468f156e0badff628aaf64f43e656b254d38c500734ca"
+      },
+      "data/raw/nflcom_projections_v1_2025_2025_w1-18.parquet": {
+        "bytes": 264079,
+        "sha256": "ded3e2e1ae6e2a36d909abba4dd8324ac2715841d85b248ae30d77f1ee92b4a2"
+      },
+      "data/raw/qbr_weekly_v2_2012_2025.parquet": {
+        "bytes": 34557,
+        "sha256": "77f927892522f96bcc26d5074651ec23fca38f8236a6fe05e63dff9722453d8c"
+      },
+      "data/raw/nflcom_projections_joined_v1_2025_2025_mr90.parquet": {
+        "bytes": 277884,
+        "sha256": "b553b1c555248a985ea2e590790797a4ceb7f37f28181672fc207f178ef78c47"
+      },
+      "data/raw/kicker_pbp_2015_2024.parquet": {
+        "bytes": 124217,
+        "sha256": "a4c13ec5914418e697107e87ff3204dc7ec928fd328848b367a00f483aad1a8c"
+      },
+      "data/raw/player_metadata_v1.parquet": {
+        "bytes": 1014041,
+        "sha256": "356741f5970d468d478982b809bb71b68d50471e1ea5b97ba1916f2f2f293e6a"
+      },
+      "data/raw/depth_charts_v2_2012_2025.parquet": {
+        "bytes": 956421,
+        "sha256": "92a2468b2962b5ee126a97e84680bd7e2c2c3dd55a2befd4490fe80d3ae906b8"
+      },
+      "data/raw/depth_charts_v3_2012_2025.parquet": {
+        "bytes": 955530,
+        "sha256": "0703df8c7fe0d20f012fc70cf791127abc68c0746c434666777de76ac7094e7f"
+      },
+      "data/raw/redzone_pbp_2012_2025.parquet": {
+        "bytes": 221169,
+        "sha256": "325268f2230678ef6474a954b3bdbd4a1aac7bece4369f9e3198d898ad7bb4b8"
+      },
+      "data/raw/espn_projections_v1_2025.parquet": {
+        "bytes": 395789,
+        "sha256": "db3ec6b323bcadbfeeb3a22ddda93189151b3d294fcb695fc7110798460c8d52"
+      },
+      "data/splits/train.parquet": {
+        "bytes": 19855887,
+        "sha256": "aa6986dd5be245fbbcfc6c4845cbe63f232db5b311c2957e4574275a268d4080"
+      },
+      "data/splits/test.parquet": {
+        "bytes": 2546568,
+        "sha256": "5c620c2213de4af2044dbcd14022249007f9d7bb69943ba1466efdd520147949"
+      },
+      "data/splits/val.parquet": {
+        "bytes": 2560139,
+        "sha256": "e62c23d97945dc4b2b7717ed331b2569bec824f2043482be5667cb9aacf3e564"
+      },
+      "provider_cache/81a4762522a9c8ca8db90508ad2e2a31.parquet": {
+        "bytes": 12024,
+        "sha256": "1d1d105ff0b0fca8806bfa047c96ef001d150c0bcbba481db5babbafa1f36636"
+      },
+      "provider_cache/bdb98d84c67745680ec0e3520082fdb5.parquet": {
+        "bytes": 13266724,
+        "sha256": "5ed293fdf54d79e34426133829f3111faf577db29b8cfc25cf910d75eb55b2ef"
+      }
+    }
+  },
+  "reference_reconstruction": {
+    "mode": "archive-only numerical reconstruction",
+    "rows": 7140,
+    "positions": {
+      "DST": 544,
+      "K": 541,
+      "QB": 547,
+      "RB": 1555,
+      "TE": 1438,
+      "WR": 2515
+    },
+    "missing_weeks": {
+      "QB": [],
+      "RB": [],
+      "WR": [],
+      "TE": [],
+      "K": [],
+      "DST": []
+    },
+    "coverage": {
+      "QB": {
+        "nflcom": {
+          "archive_rows": 2348,
+          "unavailable_identity_rows": 90,
+          "projected_rows": 2258,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 2258
+        },
+        "rotowire": {
+          "archive_rows": 547,
+          "unavailable_identity_rows": 0,
+          "projected_rows": 547,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 547
+        }
+      },
+      "RB": {
+        "nflcom": {
+          "archive_rows": 4345,
+          "unavailable_identity_rows": 252,
+          "projected_rows": 4093,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 4093
+        },
+        "rotowire": {
+          "archive_rows": 1572,
+          "unavailable_identity_rows": 0,
+          "projected_rows": 1572,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 1572
+        }
+      },
+      "WR": {
+        "nflcom": {
+          "archive_rows": 7954,
+          "unavailable_identity_rows": 756,
+          "projected_rows": 7198,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 7198
+        },
+        "rotowire": {
+          "archive_rows": 2523,
+          "unavailable_identity_rows": 0,
+          "projected_rows": 2523,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 2523
+        }
+      },
+      "TE": {
+        "nflcom": {
+          "archive_rows": 3923,
+          "unavailable_identity_rows": 288,
+          "projected_rows": 3635,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 3635
+        },
+        "rotowire": {
+          "archive_rows": 1451,
+          "unavailable_identity_rows": 0,
+          "projected_rows": 1451,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 1451
+        }
+      },
+      "K": {
+        "espn": {
+          "archive_rows": 541,
+          "unavailable_identity_rows": 0,
+          "projected_rows": 541,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 541
+        }
+      },
+      "DST": {
+        "rotowire": {
+          "archive_rows": 544,
+          "unavailable_identity_rows": 0,
+          "projected_rows": 544,
+          "unavailable_components_rows": 0,
+          "usable_projected_rows": 544
+        }
+      }
+    },
+    "versions": [
+      "shared_components_v3"
+    ],
+    "sha256": "3b444fe290352b40ac4468f156e0badff628aaf64f43e656b254d38c500734ca",
+    "network_denied": true,
+    "source_fetch_completion": "unknown: retained archives lack the current accessor completion metadata; no flags added",
+    "pregame_publication_timing": "not newly certified",
+    "reference_builder_sources": {
+      "src/scripts/build_evaluation_reference.py": "7318e553a7a82c2c4c087761170a289293566e500d4d87a99121d19ec51a2d45",
+      "src/analysis/analysis_expert_comparison.py": "5ac56c38410d48ee25e9ee3374eba13c767cab0e872ee51d52f954af652f382d",
+      "src/data/expert_sources.py": "66bb5f5040b0fd12b7d9bbbeffa14d4cf2e667ad4ab61865f9c44a53ed29c40c",
+      "src/data/espn_live.py": "ceaaf3551a1e3601c141a25d191f1cb452c386faddbdcab68d4a8a8406899a01",
+      "src/data/espn_projections.py": "69fe954f02a2acad7f0d8b2498f02cadcd45430c0349c64b0bdcfb086f912ad7",
+      "src/shared/comparison_scoring.py": "c51003a11366357416093b6438bc2b4d9f6e3b732d926b290cb1f768c5d74e76",
+      "src/shared/expert_eligibility.py": "45c6a812e261a019592d3059c317fc1e0cd3c1fea24e86b41de5fee87f0f8797",
+      "src/shared/evaluation_cohorts.py": "58b1326423bcb5d2ff9ece7de335c26e2dd2983285b3b4e0c0d46e9204144bbb",
+      "src/shared/aggregate_targets.py": "775e8d002389a585dbb46f9f010386b521b5903a68ca45b94afdee6bc244cf65",
+      "src/config.py": "bb8243c7a45faffccc8f414fcc2caffcabd754392f0a373f3d3bc4496b632ce5"
+    },
+    "identity_source_sha256": "b236903edffe34ca3b6002baf721a6c5cd76deaae020bad0b29e28284d3b1253",
+    "source_data_unchanged": true
+  },
+  "preprocess": {
+    "old_code": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-review-20260911-efhe4ood/pr1566",
+    "fixed_code": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/benchmark-source-28002bb8",
+    "old_rows": 95652,
+    "fixed_rows": 95675,
+    "common_rows": 95652,
+    "positions": {
+      "DST": {
+        "old": 0,
+        "fixed": 0,
+        "retained_additional": 0,
+        "lost": 0
+      },
+      "K": {
+        "old": 7333,
+        "fixed": 7333,
+        "retained_additional": 0,
+        "lost": 0
+      },
+      "QB": {
+        "old": 8920,
+        "fixed": 8932,
+        "retained_additional": 12,
+        "lost": 0
+      },
+      "RB": {
+        "old": 23156,
+        "fixed": 23163,
+        "retained_additional": 7,
+        "lost": 0
+      },
+      "TE": {
+        "old": 20730,
+        "fixed": 20732,
+        "retained_additional": 2,
+        "lost": 0
+      },
+      "WR": {
+        "old": 35513,
+        "fixed": 35515,
+        "retained_additional": 2,
+        "lost": 0
+      }
+    },
+    "added_columns": [
+      "actual_projected_source_available",
+      "actual_projected_source_basis"
+    ],
+    "removed_columns": [],
+    "common_value_differences": {}
+  },
+  "feature_effect": {
+    "new_rows_context_year": 2012,
+    "training_rows_changed_at_float32": 122,
+    "training_years": [
+      2013
+    ],
+    "prior_season_features_changed": 40,
+    "validation_test_existing_values_equal_at_float32": true
+  },
+  "limits": [
+    "No newly sealed release or source-fetch completeness certification.",
+    "Archived identity lookups do not newly certify pregame publication timing.",
+    "No new GPU training, AWS rehearsal, activation or merge.",
+    "Single-seed CPU checks do not establish accuracy neutrality; prior NN tradeoffs remain documented."
+  ],
+  "leaf_validation": {
+    "n_cells": 11,
+    "all_passed": true,
+    "required_cohort_blocks_available": 44,
+    "network_attempts": 0,
+    "read_events": 102,
+    "cells": [
+      {
+        "label": "nn_WR",
+        "source_ref": "724fbf7f79e9971999d098211df0847135c6bcdf",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 2768,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "nn_DST",
+        "source_ref": "724fbf7f79e9971999d098211df0847135c6bcdf",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 544,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "flags_WR",
+        "source_ref": "646728a51b2ddea094e7fbb48cee68aace9926b7",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 2768,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "flags_QB",
+        "source_ref": "646728a51b2ddea094e7fbb48cee68aace9926b7",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "maintenance_QB",
+        "source_ref": "78aeb689943114300f2cb8ce5f9d701bbc3bd998",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "evaluation_QB",
+        "source_ref": "fea23a66bcaa6b2cdb368e38d0360aaff50dc1da",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "rmse_RB",
+        "source_ref": "4f14a7daa2d49c8d11ddb5a2410bbca16cdd9111",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 1759,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": "fantasy_rmse_ppr"
+      },
+      {
+        "label": "rmse_QB",
+        "source_ref": "4f14a7daa2d49c8d11ddb5a2410bbca16cdd9111",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": "fantasy_rmse_ppr"
+      },
+      {
+        "label": "rmse_WR",
+        "source_ref": "4f14a7daa2d49c8d11ddb5a2410bbca16cdd9111",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 2768,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": "fantasy_rmse_ppr"
+      },
+      {
+        "label": "qb_QB",
+        "source_ref": "66278abda8e5fcef0b98a924c217bd435d2a3b40",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": null,
+        "nn_selection_metric": null
+      },
+      {
+        "label": "combined_QB",
+        "source_ref": "ad6a607c30b6c192694c786db933139d13aabcd0",
+        "native_exit": 0,
+        "fingerprint_matches_head": true,
+        "rows": 687,
+        "all_required_cohorts_available": true,
+        "nn_bounded_flag_range": null,
+        "nn_poisson_log_rate": 1,
+        "nn_selection_metric": null
+      }
+    ]
+  }
+}

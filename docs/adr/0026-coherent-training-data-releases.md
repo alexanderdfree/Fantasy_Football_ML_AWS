@@ -57,6 +57,15 @@ or submitting new training jobs. A failed rebuild or timeout fails the gate;
 absence of a pending marker is not evidence that data is ready. Documentation or
 unrelated changes can reuse a matching release.
 
+The execution and serving integration in [ADR-0027](0027-versioned-prediction-and-execution-contracts.md)
+uses this release ID as the only new dataset authority. Build plans, standalone
+run receipts, model metadata and cache-schema-10 snapshots preserve it. Serving
+data advancement requires a fully verified matching snapshot and the readiness
+transaction; it cannot independently replace raw data beneath a running model.
+Captured provider response files are included in the sealed inventory. Retained
+releases without captures can only replay their existing historical derived
+caches with network fallback forbidden.
+
 ## Completeness and identity
 
 An absent upstream season is recorded in coverage metadata. Both upstream 2012
@@ -94,3 +103,6 @@ Identity sources are part of the release rather than a per-run network lookup.
 
 - **2026-09-10** — Seal, verify, publish, pin, and gate coherent raw/split releases;
   isolate live-data overlays and record source coverage. (PR #1564)
+
+- **2026-09-10** — Bind typed execution plans, standalone receipts and serving
+  snapshot rollback to this canonical release authority. (PR #1566)
