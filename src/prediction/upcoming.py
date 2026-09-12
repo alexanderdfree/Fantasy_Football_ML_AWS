@@ -945,7 +945,10 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     if slate.empty:
         _write_unavailable("no_slate")
         return read_cached_artifact()
-    schedule_context, weather_metadata = live_schedule.fetch_schedule_context(season, sched_rows)
+    with live_source_cache(CACHE_DIR):
+        schedule_context, weather_metadata = live_schedule.fetch_schedule_context(
+            season, sched_rows
+        )
     team_id_to_code = dict(zip(slate["team_id"], slate["recent_team"], strict=False))
     # One weekly reference supplies identity aliases and reserve/inactive
     # statuses to every live consumer. Failure remains explicit in coverage.

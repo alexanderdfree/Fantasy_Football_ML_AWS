@@ -93,8 +93,24 @@ jobs:
         # in upcoming_artifact; never rerun this expensive step for upload alone.
         run: |
           python - <<'PY'
-          from src.shared.model_sync import sync_data_from_s3, sync_models_from_s3
-          sync_data_from_s3()
+          import os
+          from pathlib import Path
+
+          import boto3
+
+          from src.artifacts.model_sync import sync_models_from_s3
+          from src.orchestration.datasets import materialize_dataset
+
+          root = Path.cwd()
+          dataset = materialize_dataset(
+              boto3.client("s3"),
+              os.environ["FF_MODEL_S3_BUCKET"],
+              os.environ["FF_DATA_RELEASE"],
+              splits_dir=root / "data/splits",
+              raw_dir=root / "data/raw",
+              data_format="data-release-v1",
+          )
+          print(f"Materialized release {dataset['release_id']}: {len(dataset['files'])} verified files")
           sync_models_from_s3()
           PY
           python -m src.prediction.upcoming
