@@ -202,8 +202,11 @@ def test_offline_builders_preserve_their_selected_snapshot_across_steps():
     job = next(iter(upcoming["jobs"].values()))
     steps = job["steps"]
     gate = next(i for i, s in enumerate(steps) if "wait_data_release" in s.get("run", ""))
-    hydration = next(i for i, s in enumerate(steps) if "sync_data_from_s3()" in s.get("run", ""))
+    hydration = next(i for i, s in enumerate(steps) if "materialize_dataset(" in s.get("run", ""))
     assert gate < hydration and "--pin-training" in steps[gate]["run"]
+    assert 'os.environ["FF_DATA_RELEASE"]' in steps[hydration]["run"]
+    assert 'data_format="data-release-v1"' in steps[hydration]["run"]
+    assert "sync_data_from_s3" not in steps[hydration]["run"]
     assert job["timeout-minutes"] >= 85
 
 

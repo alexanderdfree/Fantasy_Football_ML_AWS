@@ -81,6 +81,7 @@ def test_unavailable_capture_has_explicit_status(tmp_path, monkeypatch):
     def provider():
         raise OSError("provider unavailable")
 
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FF_CAPTURE_PROVIDER_SOURCES", str(tmp_path))
     with pytest.raises(OSError):
         provider()

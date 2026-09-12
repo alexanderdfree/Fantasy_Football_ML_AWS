@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Upcoming refresh mixed legacy hydration with historical provider replay
+[Read the incident record](fixed-archive/upcoming-sealed-data-live-provider-boundaries.md).
+
 ### [FIXED] Consolidated data isolation, truth provenance and client boundaries
 [Read the incident record](fixed-archive/consolidated-contract-review-followup.md).
 
