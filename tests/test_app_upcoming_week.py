@@ -784,6 +784,64 @@ def test_artifact_carries_source_freshness_and_weather_gaps(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("captured", [False, True])
+def test_refresh_scopes_live_schedules_without_relaxing_historical_replay(
+    monkeypatch, tmp_path, captured
+):
+    from src.data.providers import snapshot
+    from src.data.release import DataReleaseError
+    from src.training.context import RunContext, use_context
+
+    cache = tmp_path / "live/raw"
+    cache.mkdir(parents=True)
+    history = cache / "historical.parquet"
+    history.write_bytes(b"historical inputs remain unchanged")
+    if captured:
+        (cache / "provider_sources").mkdir()
+    monkeypatch.setenv("FF_DATA_RELEASE", "a" * 64)
+    monkeypatch.setattr(upcoming_week, "CACHE_DIR", str(cache))
+    monkeypatch.setattr(snapshot, "_missing", set())
+    monkeypatch.setattr(upcoming_week.espn_live, "next_unplayed_week", lambda season: (2026, 1))
+    live_rows = pd.DataFrame({"season": [2026], "week": [1]})
+    monkeypatch.setattr(
+        upcoming_week.espn_live,
+        "fetch_slate",
+        lambda *args: (pd.DataFrame({"recent_team": ["SEA"], "team_id": ["26"]}), live_rows),
+    )
+    fetched = []
+
+    @snapshot.snapshot_source
+    def schedules(seasons):
+        fetched.append(seasons)
+        assert snapshot.provider_replay_mode() is None
+        return pd.DataFrame({"season": seasons})
+
+    class ReachedLiveSchedule(Exception):
+        pass
+
+    def enriched(live, provider):
+        pd.testing.assert_frame_equal(live, live_rows)
+        assert provider["season"].tolist() == [2026]
+        raise ReachedLiveSchedule
+
+    monkeypatch.setattr(upcoming_week.nfl_source, "schedules", schedules)
+    monkeypatch.setattr(upcoming_week.live_schedule, "enrich_schedule_rows", enriched)
+    error = snapshot.SourceUnavailable if captured else DataReleaseError
+    context = RunContext(tmp_path / "outputs", tmp_path / "data", raw_root=cache)
+    with use_context(context):
+        with pytest.raises(error):
+            schedules([2026])
+        assert not fetched
+        with pytest.raises(ReachedLiveSchedule):
+            upcoming_week.refresh_upcoming_week_cache(force=True)
+        assert fetched == [[2026]]
+        assert snapshot.provider_replay_mode() == ("captured" if captured else "derived_only")
+        with pytest.raises(error):
+            schedules([2026])
+    assert history.read_bytes() == b"historical inputs remain unchanged"
+
+
+@pytest.mark.unit
 def test_build_upcoming_week_frame_keeps_season_to_date_reg_rows(monkeypatch):
     """The built frame = current-season completed REG weeks + context-filled week W."""
     history = pd.DataFrame(

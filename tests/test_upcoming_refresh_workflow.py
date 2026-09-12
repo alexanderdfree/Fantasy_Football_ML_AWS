@@ -47,3 +47,59 @@ def test_version_recovery_permission_is_scoped_to_the_upcoming_snapshot():
     assert listing["Effect"] == "Allow" and listing["Action"] == ["s3:ListBucketVersions"]
     assert listing["Resource"] == bucket
     assert listing["Condition"] == {"StringEquals": {"s3:prefix": key}}
+
+
+@pytest.mark.parametrize("corrupt_capture", [False, True])
+def test_builder_materializes_every_pinned_release_file_before_models(
+    monkeypatch, tmp_path, corrupt_capture
+):
+    import boto3
+
+    from src.artifacts import model_sync
+    from src.orchestration.datasets import DatasetError
+    from tests.orchestration.test_datasets import MemoryS3, write_release
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/refresh-upcoming-week.yml").read_text())
+    step = next(
+        step
+        for step in workflow["jobs"]["refresh"]["steps"]
+        if step.get("name") == "Build + upload upcoming-week artifact"
+    )
+    code = step["run"].split("python - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    s3 = MemoryS3()
+    capture = f"raw/provider_sources/{'a' * 64}"
+    files = {
+        **{f"splits/{name}.parquet": name.encode() for name in ("train", "val", "test")},
+        "raw/weekly.parquet": b"selected historical rows",
+        "raw/weekly_evaluation_reference_v1.parquet": b"selected reference",
+        f"{capture}.json": b'{"status":"observed"}',
+        f"{capture}.parquet": b"selected provider response",
+    }
+    release_id = write_release(s3, files=files)
+    # Legacy objects cannot replace any part of the explicitly selected release.
+    s3.objects["data/train.parquet"] = b"stale mutable split"
+    s3.objects["data/raw/weekly.parquet"] = b"stale mutable raw rows"
+    if corrupt_capture:
+        s3.objects[f"data/releases/{release_id}/{capture}.parquet"] = b"corrupt"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FF_MODEL_S3_BUCKET", "bucket")
+    monkeypatch.setenv("FF_DATA_RELEASE", release_id)
+    monkeypatch.setattr(boto3, "client", lambda name: s3)
+    synced = []
+
+    def sync_models():
+        for name, body in files.items():
+            assert (tmp_path / "data" / name).read_bytes() == body
+        marker = json.loads((tmp_path / "data/raw/.release.json").read_text())
+        assert marker == {"release_id": release_id, "provider_sources": "captured"}
+        synced.append(True)
+
+    monkeypatch.setattr(model_sync, "sync_models_from_s3", sync_models)
+    if corrupt_capture:
+        with pytest.raises(DatasetError, match="checksum mismatch"):
+            exec(compile(code, str(ROOT / ".github/workflows/refresh-upcoming-week.yml"), "exec"))
+        assert not synced
+        assert not (tmp_path / "data/raw/.release.json").exists()
+    else:
+        exec(compile(code, str(ROOT / ".github/workflows/refresh-upcoming-week.yml"), "exec"))
+        assert synced == [True]
