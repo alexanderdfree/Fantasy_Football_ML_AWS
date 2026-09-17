@@ -195,11 +195,19 @@ jobs:
           CUDA_GRAPH: ${{ github.event.inputs.cuda_graph }}
         run: |
           set -eu
-          STORAGE_VERSION="scheduler_v2_mps"
-          case "$(printf '%s' "$CUDA_GRAPH" | tr '[:upper:]' '[:lower:]')" in
-            1|true|yes|on) STORAGE_VERSION="scheduler_v2_mps_graph" ;;
-          esac
           mkdir -p tune_results
+          # Use the submitter's resolver: flat positions stack by default,
+          # while K/DST retain eager graph settings and a different namespace.
+          python - <<'PY'
+          import os
+          from src.tuning.aggregate_results import _download_from_s3
+          from src.tuning.tune_nn_storage import batch_storage_version
+
+          graph = os.environ["CUDA_GRAPH"].lower() in {"1", "true", "yes", "on"}
+          for position in os.environ["POSITIONS"].split():
+              version = batch_storage_version(position, cuda_graph=graph)
+              _download_from_s3(os.environ["S3_BUCKET"], [position], "./tune_results", version)
+          PY
           # $POSITIONS is intentionally unquoted — argparse `nargs="+"` needs
           # the values as separate argv entries (e.g. "QB" "RB" "WR"), and
           # the parse step already trimmed/normalised whitespace + rejected
@@ -207,8 +215,7 @@ jobs:
           # as a single argv entry and trip choices validation.
           python -m src.tuning.aggregate_results \
             --positions $POSITIONS \
-            --bucket "$S3_BUCKET" \
-            --search-space-version "$STORAGE_VERSION" \
+            --no-s3 \
             --local-dir ./tune_results \
             --output tune_nn_results.json \
             --summary-output "$GITHUB_STEP_SUMMARY"

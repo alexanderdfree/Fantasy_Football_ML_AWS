@@ -17,9 +17,9 @@ capture. Differences vs the LightGBM tuner:
 * Search space targets the **attention NN** (architecture + optimizer + scheduler knobs).
 * Pruner is HyperbandPruner, fed by the `epoch_callback` hook on
   `MultiHeadTrainer` — kills clearly-bad trials at low epoch counts.
-* Trial objective is `min(result["attn_history"]["val_loss"])` — val-only, no
+* Trial objective is `min(result["attn_history"]["val_fantasy_rmse_ppr"])` — val-only, no
   test contamination. The pipeline's `result["attn_nn_metrics"]` is test-set
-  MAE and would leak into the search; we deliberately don't use it.
+  errors and would leak into the search; we deliberately don't use them.
 * Single train/val/test split per trial (no CV). 30 trials × CV folds × full
   NN training is too slow for laptop validation; CV is v2.
 
@@ -116,6 +116,9 @@ from src.shared.utils import cuda_graph_full_enabled as _cuda_graph_full_enabled
 # free (re only); safe to import at module top.
 from src.tuning import attn_history_space as _attn_hist
 from src.tuning.history import append_tuning_run
+from src.tuning.tune_nn_storage import (
+    OBJECTIVE_METRIC,
+)
 from src.tuning.tune_nn_storage import (
     SCOPE_ROOTS as _SCOPE_ROOTS,
 )
@@ -849,7 +852,7 @@ def _make_objective(
 
     Each trial:
       1. Samples cfg overrides via ``_sample_overrides``.
-      2. Builds an ``epoch_callback`` that reports per-epoch val loss to the
+      2. Builds an ``epoch_callback`` that reports per-epoch validation RMSE to the
          trial (for HyperbandPruner) and accumulates the trajectory for the
          final objective value.
       3. Runs the position's ``run()`` with the overridden cfg. The pipeline
@@ -857,7 +860,7 @@ def _make_objective(
          see ``src/shared/pipeline.py::_run_nn_training`` (gated on attention
          trainer kinds so the regular NN's phase doesn't bleed into our
          trajectory).
-      4. Returns ``min(captured_val_losses)``.
+      4. Returns ``min(captured_validation_rmses)``.
 
     ``optuna.TrialPruned`` raised inside the callback propagates up through
     ``trainer.train()`` and out of ``run()``; Optuna's ``study.optimize``
@@ -868,8 +871,8 @@ def _make_objective(
     trial config, train them as ONE stacked ensemble for ``stacked_epochs``
     fixed epochs (the ensemble regime — the caller applies
     ``apply_ensemble_env`` process-wide), and report the across-member MEAN
-    val loss per epoch. The objective becomes seed-averaged (the
-    "single-seed NN val loss is noise" fix) at ~1.5–2× single-seed trial
+    validation RMSE per epoch. The objective becomes seed-averaged (the
+    "single-seed NN validation RMSE is noise" fix) at ~1.5–2× single-seed trial
     cost; results live in ``_ens{N}x{E}``-suffixed study namespaces because
     the objective semantics differ from the eager early-stop path.
     """
@@ -891,9 +894,10 @@ def _make_objective(
         # shallow-copy + per-key strategy at that point.
         cfg = copy.deepcopy(base_cfg)
         cfg.update(overrides)
+        cfg["nn_selection_metric"] = OBJECTIVE_METRIC
         _apply_attention_scheduler_overrides(cfg, overrides)
 
-        # The objective only reads result["attn_history"]["val_loss"] (below),
+        # The objective only reads result["attn_history"]["val_fantasy_rmse_ppr"] (below),
         # so Ridge / ElasticNet / LightGBM / base NN are wasted compute per
         # trial. Disabling them drops trial wall-clock substantially and frees
         # the CPU branch, which is what makes n_jobs > 1 in study.optimize
@@ -908,9 +912,9 @@ def _make_objective(
 
         captured: list[float] = []
 
-        def epoch_callback(epoch: int, avg_val_loss: float) -> None:
-            captured.append(float(avg_val_loss))
-            trial.report(float(avg_val_loss), epoch)
+        def epoch_callback(epoch: int, validation_rmse: float) -> None:
+            captured.append(float(validation_rmse))
+            trial.report(float(validation_rmse), epoch)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
@@ -927,10 +931,10 @@ def _make_objective(
         if captured:
             return float(min(captured))
         attn_history = result.get("attn_history") or {}
-        val_losses = attn_history.get("val_loss") or []
+        val_losses = attn_history.get("val_fantasy_rmse_ppr") or []
         if not val_losses:
             raise RuntimeError(
-                f"{pos}: no val_loss trajectory captured for trial {trial.number}. "
+                f"{pos}: no validation RMSE trajectory captured for trial {trial.number}. "
                 f"Is train_attention_nn enabled in the position's CONFIG?"
             )
         return float(min(val_losses))
@@ -951,7 +955,7 @@ def _make_stacked_objective(
     Per trial: capture ``stacked_n`` seed constructions of the sampled config
     through the REAL pipeline (non-attention branches disabled, the worker's
     trial-data memo shared), train them as one stacked ensemble, and report
-    the across-member MEAN combined val loss per epoch via
+    the across-member MEAN PPR fantasy-point validation RMSE per epoch via
     ``train_stacked(epoch_callback=...)``. ``optuna.TrialPruned`` raised in
     the callback propagates out of ``train_stacked``. Objective value =
     ``min`` over the seed-averaged trajectory.
@@ -966,13 +970,14 @@ def _make_stacked_objective(
         _validate_overrides(overrides, scope)
         cfg = copy.deepcopy(base_cfg)
         cfg.update(overrides)
+        cfg["nn_selection_metric"] = OBJECTIVE_METRIC
         _apply_attention_scheduler_overrides(cfg, overrides)
 
         captured: list[float] = []
 
-        def epoch_callback(epoch: int, mean_val_loss: float) -> None:
-            captured.append(float(mean_val_loss))
-            trial.report(float(mean_val_loss), epoch)
+        def epoch_callback(epoch: int, mean_validation_rmse: float) -> None:
+            captured.append(float(mean_validation_rmse))
+            trial.report(float(mean_validation_rmse), epoch)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
@@ -1756,7 +1761,7 @@ def main():
                 best = _trial_to_params(study.best_trial, scope, pos)
                 print(
                     f"\n{pos} best trial #{study.best_trial.number} "
-                    f"(val_loss = {study.best_value:.4f}):"
+                    f"(validation PPR RMSE = {study.best_value:.4f}):"
                 )
                 print(_format_config_lines(pos, best))
             except Exception as e:
@@ -1879,13 +1884,17 @@ def main():
         best = _trial_to_params(study.best_trial, scope, pos)
         state_counts = _study_state_counts(study)
         print(f"\n{pos} tuning complete in {elapsed:.0f}s")
-        print(f"  Best trial #{study.best_trial.number}: val_loss = {study.best_value:.4f}")
+        print(
+            f"  Best trial #{study.best_trial.number}: validation PPR RMSE = {study.best_value:.4f}"
+        )
         print(f"  Trial states: {state_counts}")
         print(f"\n{_format_config_lines(pos, best)}")
 
         all_results[pos] = {
             "best_trial": study.best_trial.number,
-            "best_val_loss": study.best_value,
+            "best_validation_rmse": study.best_value,
+            "objective_metric": OBJECTIVE_METRIC,
+            "scoring_format": "ppr",
             "best_params": best,
             "n_trials": len(study.trials),
             "trial_state_counts": state_counts,

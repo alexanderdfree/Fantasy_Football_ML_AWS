@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import sys
 from functools import partial
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import torch
 
 from src.config import SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDARD
 from src.contracts.target_units import TARGET_UNITS as TARGET_UNITS
@@ -193,8 +197,8 @@ def predictions_to_fantasy_points(
     pos: str,
     preds_dict: dict,
     scoring_format: str = "ppr",
-) -> np.ndarray:
-    """Aggregate per-target predictions to fantasy points.
+) -> np.ndarray | torch.Tensor:
+    """Aggregate per-target predictions to fantasy points, preserving tensor inputs.
 
     Args:
         pos: Position code (QB/RB/WR/TE/K/DST).
@@ -213,11 +217,21 @@ def predictions_to_fantasy_points(
         raise ValueError(f"Unknown scoring format: {scoring_format}")
     target_map = POSITION_TARGET_MAP[pos]
     scoring = _SCORING_BY_FORMAT[scoring_format]
+    # Tensor callers already loaded their execution backend. NumPy-only
+    # scoring also runs in the artifact-serving runtime without Torch.
+    torch = sys.modules.get("torch")
     total = None
     for target_name, scoring_key in target_map.items():
         if target_name not in preds_dict:
             continue
-        arr = np.asarray(preds_dict[target_name], dtype=np.float64)
+        values = preds_dict[target_name]
+        # Preserve tensor device/dtype and vmap dimensions for validation
+        # scoring. NumPy reporting retains its existing float64 arithmetic.
+        arr = (
+            values
+            if torch is not None and isinstance(values, torch.Tensor)
+            else np.asarray(values, dtype=np.float64)
+        )
         contribution = arr * scoring[scoring_key]
         total = contribution if total is None else total + contribution
     if total is None:

@@ -67,6 +67,7 @@ from src.tuning.ab_ensemble_seeds import (  # noqa: E402
 from src.tuning.tune_nn_storage import (  # noqa: E402
     SCOPE_ROOTS,
     SEARCH_SPACE_VERSION,
+    batch_storage_version,
     resolve_search_space_version,
     s3_prefix,
 )
@@ -210,15 +211,15 @@ def submit_tune_job(
     if timeout is not None:
         command += ["--timeout", str(timeout)]
 
-    storage_version = resolve_search_space_version(
-        _batch_storage_backend(parallel_backend),
-        # In-container, apply_ensemble_env forces the graphs off before the
-        # namespace resolves — predict the same graph-less base here.
-        cuda_graph=cuda_graph and not stacked,
-        full_graph=cuda_graph_full and not stacked,
-        # --scope history lands in the history_v2 root (separate study DB).
-        root=SCOPE_ROOTS.get(scope, SEARCH_SPACE_VERSION),
-    ) + _stacked_suffix(stacked_seeds, stacked_epochs)
+    storage_version = batch_storage_version(
+        position,
+        parallel_backend=parallel_backend,
+        cuda_graph=cuda_graph,
+        full_graph=cuda_graph_full,
+        stacked_seeds=stacked_seeds,
+        stacked_epochs=stacked_epochs,
+        scope=scope,
+    )
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,

@@ -1007,6 +1007,51 @@ class TestMergedSplitMetrics:
             "cuda_graph_full_active": True,
         }
 
+    def test_selection_provenance_survives_extraction_merge_and_history(self):
+        from src.batch.train import _extract_metrics, _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        selection = {
+            "metric": "fantasy_rmse_ppr",
+            "scoring_format": "ppr",
+            "epoch": 7,
+            "score": 4.25,
+            "validation_curve": [4.5, 4.25],
+        }
+        nn_metrics = self._nn_branch_metrics()
+        extracted = _extract_metrics(
+            "WR",
+            {
+                "nn_metrics": nn_metrics["nn_metrics"],
+                "attn_nn_metrics": nn_metrics["attn_nn_metrics"],
+                "history": {"checkpoint_selection": selection},
+                "attn_history": {"checkpoint_selection": selection},
+            },
+        )
+        nn_metrics.update(extracted)
+        merged = _merged_split_metrics(
+            "WR", "run-1", nn_metrics, self._cpu_branch_metrics(), {}, time.monotonic()
+        )
+        summary = summarize_pipeline_result("WR", merged)
+        assert summary["nn_selection"] == selection
+        assert summary["attn_nn_selection"] == selection
+
+    def test_cpu_model_selection_survives_extraction_merge_and_history(self):
+        from src.batch.train import _extract_metrics, _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        cpu = self._cpu_branch_metrics()
+        ridge = {"metric": "mean_cv_fantasy_rmse_ppr", "score": 5.0, "alphas": {"x": 2.0}}
+        lgbm = {"metric": "fantasy_rmse_ppr", "score": 4.9, "iterations": {"x": 12}}
+        result = {**cpu, "ridge_selection": ridge, "lgbm_selection": lgbm}
+        cpu.update(_extract_metrics("WR", result))
+        merged = _merged_split_metrics(
+            "WR", "run-1", self._nn_branch_metrics(), cpu, {}, time.monotonic()
+        )
+        summary = summarize_pipeline_result("WR", merged)
+        assert summary["ridge_selection"] == ridge
+        assert summary["lgbm_selection"] == lgbm
+
     def _cpu_branch_metrics(self) -> dict:
         return {
             "position": "WR",

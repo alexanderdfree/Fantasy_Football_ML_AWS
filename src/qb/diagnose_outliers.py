@@ -123,6 +123,8 @@ def _train_models(seed=42):
         alpha_grids={t: cfg["ridge_alpha_grids"][t] for t in targets},
         n_cv_folds=cfg.get("ridge_cv_folds", 4),
         refine_points=cfg.get("ridge_refine_points", 5),
+        pca_n_components=cfg.get("ridge_pca_components"),
+        cfg=cfg,
     )
     print(f"Ridge alphas: {best_alphas}")
     ridge_model = RidgeMultiTarget(target_names=targets, alpha=best_alphas)

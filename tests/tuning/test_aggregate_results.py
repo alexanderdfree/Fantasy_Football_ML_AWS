@@ -136,13 +136,13 @@ def test_download_skips_404(tmp_path, capsys):
 
     with patch("boto3.client", return_value=fake_s3):
         paths = aggregate_results._download_from_s3(
-            "bucket", ["QB", "RB"], str(tmp_path), "scheduler_v2"
+            "bucket", ["QB", "RB"], str(tmp_path), "scheduler_v2_fp_rmse_ppr_v1"
         )
     assert len(paths) == 1
     assert "rb" in paths[0]
     assert calls == [
-        "tune_nn/scheduler_v2/qb/results.json",
-        "tune_nn/scheduler_v2/rb/results.json",
+        "tune_nn/scheduler_v2_fp_rmse_ppr_v1/qb/results.json",
+        "tune_nn/scheduler_v2_fp_rmse_ppr_v1/rb/results.json",
     ]
     out = capsys.readouterr().out
     assert "no results at s3" in out
@@ -161,10 +161,10 @@ def test_download_from_s3_uses_requested_search_space_version(tmp_path):
 
     with patch("boto3.client", return_value=fake_s3):
         aggregate_results._download_from_s3(
-            "bucket", ["QB"], str(tmp_path), "scheduler_v2_mps_graph"
+            "bucket", ["QB"], str(tmp_path), "scheduler_v2_fp_rmse_ppr_v1_mps_graph"
         )
 
-    assert calls == ["tune_nn/scheduler_v2_mps_graph/qb/results.json"]
+    assert calls == ["tune_nn/scheduler_v2_fp_rmse_ppr_v1_mps_graph/qb/results.json"]
 
 
 def test_aggregate_defaults_cover_all_attention_positions():

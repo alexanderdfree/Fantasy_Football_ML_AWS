@@ -1,0 +1,645 @@
+{
+  "run_id": "2026-09-11T08:32:01_4f14a7da_review-fixes_rmse_WR_seed42",
+  "timestamp": "2026-09-11T08:32:01",
+  "git_hash": "4f14a7da",
+  "note": "Review-fix rmse_WR production validation; CPU eager seed 42; explicit frozen data/reference version per input manifest; no sealed release or cross-PR cohort-identity claim",
+  "positions": [
+    "WR"
+  ],
+  "seed": 42,
+  "code_fingerprints": {
+    "WR": "df667f09547502176a55411211fb2438924fbf33e545b89b0e099afe1b5bbc42"
+  },
+  "config": {
+    "global": {
+      "train_seasons": [
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "wr": {
+      "lgbm_objective": "regression",
+      "head_losses": {
+        "receiving_tds": "poisson_nll",
+        "receiving_yards": "mse",
+        "receptions": "hurdle_negbin",
+        "fumbles_lost": "poisson_nll"
+      },
+      "loss_weights": {
+        "receiving_tds": 1.0,
+        "receiving_yards": 0.0667,
+        "receptions": 1.0,
+        "fumbles_lost": 1.0
+      }
+    }
+  },
+  "results": [
+    {
+      "position": "WR",
+      "ridge_mae": 4.117,
+      "ridge_r2": 0.385,
+      "nn_mae": 3.986,
+      "nn_r2": 0.409,
+      "nn_wins_mae": 1,
+      "nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.285,
+          "r2": 0.102,
+          "rmse": 0.408
+        },
+        "receiving_yards": {
+          "mae": 19.241,
+          "r2": 0.392,
+          "rmse": 26.341
+        },
+        "receptions": {
+          "mae": 1.24,
+          "r2": 0.479,
+          "rmse": 1.711
+        },
+        "fumbles_lost": {
+          "mae": 0.01,
+          "r2": -0.01,
+          "rmse": 0.101
+        }
+      },
+      "ridge_per_target": {
+        "receiving_tds": {
+          "mae": 0.271,
+          "r2": 0.101,
+          "rmse": 0.408
+        },
+        "receiving_yards": {
+          "mae": 19.888,
+          "r2": 0.367,
+          "rmse": 26.869
+        },
+        "receptions": {
+          "mae": 1.323,
+          "r2": 0.454,
+          "rmse": 1.75
+        },
+        "fumbles_lost": {
+          "mae": 0.025,
+          "r2": 0.002,
+          "rmse": 0.1
+        }
+      },
+      "ridge_top12": 0.333,
+      "nn_top12": 0.366,
+      "ridge_rmse": 5.613,
+      "nn_rmse": 5.501,
+      "ridge_selection": {
+        "metric": "mean_cv_fantasy_rmse_ppr",
+        "scoring_format": "ppr",
+        "score": 6.011083988484616,
+        "alphas": {
+          "receiving_tds": 0.04393673110720564,
+          "receiving_yards": 0.04393673110720564,
+          "receptions": 0.0043859649122807,
+          "fumbles_lost": 22759.999999999993
+        },
+        "n_folds": 4,
+        "search": "two_coordinate_sweeps_per_coarse_and_fine_grid",
+        "score_history": [
+          6.011438977159356,
+          6.011112153232993,
+          6.011112153232993,
+          6.011083988484616,
+          6.011083988484616
+        ]
+      },
+      "nn_selection": {
+        "metric": "fantasy_rmse_ppr",
+        "scoring_format": "ppr",
+        "epoch": 7,
+        "score": 5.835522038909528,
+        "fixed_epochs": 0,
+        "validation_metrics": {
+          "val_fantasy_rmse_ppr": 5.835522038909528,
+          "val_fantasy_mae_ppr": 4.156996069936764,
+          "val_fantasy_rmse_half_ppr": 5.123514693840978,
+          "val_fantasy_mae_half_ppr": 3.628653597397087,
+          "val_fantasy_rmse_standard": 4.484173918825236,
+          "val_fantasy_mae_standard": 3.159044801662759
+        },
+        "validation_curve": [
+          6.3694811020119575,
+          6.154736726543704,
+          5.887381486010206,
+          5.855143726200171,
+          5.878522269875979,
+          5.856071915690498,
+          5.835522038909528,
+          5.860402428657532,
+          5.868900489234868,
+          5.8801502325178205,
+          5.864082213276614,
+          5.840936122677606,
+          5.856190484664054,
+          5.850114668373244,
+          5.868894814856831,
+          5.8723543765952195,
+          5.8508479715474655,
+          5.871406720884323,
+          5.877194872346971,
+          5.846961535667225,
+          5.860457585309068,
+          5.863060876134512,
+          5.865061258413904,
+          5.849543370470672,
+          5.853262626632753,
+          5.857719602957528,
+          5.857494633207725,
+          5.861621200310135,
+          5.850399684523483,
+          5.862383684247272,
+          5.845177620510749,
+          5.863135622378117
+        ]
+      },
+      "attn_nn_selection": {
+        "metric": "fantasy_rmse_ppr",
+        "scoring_format": "ppr",
+        "epoch": 15,
+        "score": 5.892665524890684,
+        "fixed_epochs": 0,
+        "validation_metrics": {
+          "val_fantasy_rmse_ppr": 5.892665524890684,
+          "val_fantasy_mae_ppr": 4.129389101604478,
+          "val_fantasy_rmse_half_ppr": 5.169258381807611,
+          "val_fantasy_mae_half_ppr": 3.604196792889131,
+          "val_fantasy_rmse_standard": 4.520970319836263,
+          "val_fantasy_mae_standard": 3.1317901912751873
+        },
+        "validation_curve": [
+          6.4699557848621225,
+          6.000737647918707,
+          5.983415972846299,
+          5.969122389212571,
+          5.9342375670331835,
+          5.941143034358533,
+          5.977031615253503,
+          5.913541466650783,
+          5.905002878192534,
+          5.936235344244811,
+          5.908568234949057,
+          5.8981920980330385,
+          5.931629498776083,
+          5.900565578505465,
+          5.892665524890684,
+          5.9200659826483015,
+          5.943546167758019,
+          5.908363933382855,
+          5.910588547094136,
+          5.922564439342452,
+          5.916608154164172,
+          5.92209094693238,
+          5.910506872302894,
+          5.921812208781539,
+          5.910205374107145,
+          5.910056408107966,
+          5.931634981716601,
+          5.9163935138490595,
+          5.9232072698445135,
+          5.914906827332017,
+          5.916141472425597,
+          5.92594256434766,
+          5.925872080203384,
+          5.91650501723926,
+          5.919355033292911
+        ]
+      },
+      "lgbm_selection": {
+        "metric": "fantasy_rmse_ppr",
+        "scoring_format": "ppr",
+        "score": 5.880002810625439,
+        "initial_score": 5.882671864730694,
+        "iterations": {
+          "receiving_tds": 31,
+          "receiving_yards": 47,
+          "receptions": 49,
+          "fumbles_lost": 1
+        },
+        "search": "two_coordinate_prefix_sweeps",
+        "score_history": [
+          5.882671864730694,
+          5.882671864730694,
+          5.881787638832586,
+          5.881301094749129,
+          5.880002810625439,
+          5.880002810625439,
+          5.880002810625439,
+          5.880002810625439,
+          5.880002810625439
+        ],
+        "n_validation_rows": 2753
+      },
+      "attn_nn_mae": 4.086,
+      "attn_nn_r2": 0.383,
+      "attn_nn_rmse": 5.619,
+      "attn_nn_per_target": {
+        "receiving_tds": {
+          "mae": 0.267,
+          "r2": 0.098,
+          "rmse": 0.409
+        },
+        "receiving_yards": {
+          "mae": 20.289,
+          "r2": 0.358,
+          "rmse": 27.056
+        },
+        "receptions": {
+          "mae": 1.289,
+          "r2": 0.437,
+          "rmse": 1.778
+        },
+        "fumbles_lost": {
+          "mae": 0.01,
+          "r2": -0.01,
+          "rmse": 0.101
+        }
+      },
+      "attn_nn_top12": 0.356,
+      "lgbm_mae": 4.015,
+      "lgbm_r2": 0.41,
+      "lgbm_rmse": 5.498,
+      "lgbm_per_target": {
+        "receiving_tds": {
+          "mae": 0.269,
+          "r2": 0.095,
+          "rmse": 0.409
+        },
+        "receiving_yards": {
+          "mae": 19.367,
+          "r2": 0.396,
+          "rmse": 26.247
+        },
+        "receptions": {
+          "mae": 1.28,
+          "r2": 0.486,
+          "rmse": 1.699
+        },
+        "fumbles_lost": {
+          "mae": 0.025,
+          "r2": -0.002,
+          "rmse": 0.1
+        }
+      },
+      "lgbm_top12": 0.37,
+      "elapsed_sec": 73.31348283396801,
+      "phase_seconds": {
+        "prepare_data": 12.6,
+        "ridge_tune": 5.9,
+        "ridge_fit": 0.2,
+        "nn_train": 17.3,
+        "lgbm_train": 38.4,
+        "attn_nn_train": 40.4,
+        "train_models_total": 57.6,
+        "backtest": 0.2,
+        "save_artifacts": 0.2,
+        "figures": 1.4
+      },
+      "cohorts": {
+        "week1": {
+          "n": 166,
+          "models": {
+            "Ridge": {
+              "n": 166,
+              "mae": 4.9173,
+              "rmse": 5.8599,
+              "bias": 1.2232
+            },
+            "NN": {
+              "n": 166,
+              "mae": 4.0831,
+              "rmse": 5.2754,
+              "bias": 0.6708
+            },
+            "Attention NN": {
+              "n": 166,
+              "mae": 4.4548,
+              "rmse": 5.4933,
+              "bias": 1.7219
+            },
+            "LightGBM": {
+              "n": 166,
+              "mae": 4.3478,
+              "rmse": 5.4604,
+              "bias": 1.6009
+            }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "seasonal_actual_top24": {
+          "n": 386,
+          "models": {
+            "Ridge": {
+              "n": 386,
+              "mae": 6.7099,
+              "rmse": 8.6158,
+              "bias": -0.6657
+            },
+            "NN": {
+              "n": 386,
+              "mae": 6.6443,
+              "rmse": 8.4995,
+              "bias": -0.5601
+            },
+            "Attention NN": {
+              "n": 386,
+              "mae": 6.7169,
+              "rmse": 8.5346,
+              "bias": -0.1366
+            },
+            "LightGBM": {
+              "n": 386,
+              "mae": 6.664,
+              "rmse": 8.5485,
+              "bias": -0.9178
+            }
+          },
+          "status": "available",
+          "definition": "regular_season_total_actual_fantasy_points",
+          "cohort_hash": "496892e8f06a0d42682f61baf4d899f4b28653efdab98ad00cf24004784ab0a3",
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "returning": {
+          "n": 333,
+          "models": {
+            "Ridge": {
+              "n": 333,
+              "mae": 3.5545,
+              "rmse": 5.0403,
+              "bias": 0.5017
+            },
+            "NN": {
+              "n": 333,
+              "mae": 3.5353,
+              "rmse": 4.9688,
+              "bias": 0.4544
+            },
+            "Attention NN": {
+              "n": 333,
+              "mae": 3.5002,
+              "rmse": 4.9025,
+              "bias": 0.3342
+            },
+            "LightGBM": {
+              "n": 333,
+              "mae": 3.5836,
+              "rmse": 4.973,
+              "bias": 0.5434
+            }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "questionable": {
+          "n": 108,
+          "models": {
+            "Ridge": {
+              "n": 108,
+              "mae": 4.3848,
+              "rmse": 5.953,
+              "bias": 0.2975
+            },
+            "NN": {
+              "n": 108,
+              "mae": 4.44,
+              "rmse": 5.9447,
+              "bias": 0.1034
+            },
+            "Attention NN": {
+              "n": 108,
+              "mae": 4.4682,
+              "rmse": 5.9553,
+              "bias": 0.0535
+            },
+            "LightGBM": {
+              "n": 108,
+              "mae": 4.5582,
+              "rmse": 5.9249,
+              "bias": 0.5262
+            }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "inheritor": {
+          "n": 92,
+          "models": {
+            "Ridge": {
+              "n": 92,
+              "mae": 6.5621,
+              "rmse": 8.227,
+              "bias": 0.7791
+            },
+            "NN": {
+              "n": 92,
+              "mae": 6.3981,
+              "rmse": 7.9909,
+              "bias": 0.0907
+            },
+            "Attention NN": {
+              "n": 92,
+              "mae": 6.5686,
+              "rmse": 8.2659,
+              "bias": -0.1532
+            },
+            "LightGBM": {
+              "n": 92,
+              "mae": 6.4753,
+              "rmse": 8.3473,
+              "bias": -0.8502
+            }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "elite_top24": {
+          "n": 325,
+          "models": {
+            "Ridge": {
+              "n": 325,
+              "mae": 6.4134,
+              "rmse": 8.2037,
+              "bias": 0.2875
+            },
+            "NN": {
+              "n": 325,
+              "mae": 6.3132,
+              "rmse": 8.0658,
+              "bias": 0.3186
+            },
+            "Attention NN": {
+              "n": 325,
+              "mae": 6.4828,
+              "rmse": 8.1227,
+              "bias": 0.9982
+            },
+            "LightGBM": {
+              "n": 325,
+              "mae": 6.3469,
+              "rmse": 8.0288,
+              "bias": 0.2315
+            }
+          },
+          "status": "available",
+          "definition": "prior_season_mean_shared_component_points",
+          "cohort_hash": "1c3c4c47c7f02883df69c981b165af2c6d020cbe7ee79dd03ecc291d2394e27b",
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "weekly_reference_top24": {
+          "n": 432,
+          "models": {
+            "Ridge": {
+              "n": 432,
+              "mae": 6.4859,
+              "rmse": 8.3089,
+              "bias": 0.2431
+            },
+            "NN": {
+              "n": 432,
+              "mae": 6.4138,
+              "rmse": 8.1431,
+              "bias": 0.4122
+            },
+            "Attention NN": {
+              "n": 432,
+              "mae": 6.5305,
+              "rmse": 8.236,
+              "bias": 0.8724
+            },
+            "LightGBM": {
+              "n": 432,
+              "mae": 6.4232,
+              "rmse": 8.18,
+              "bias": -0.0134
+            }
+          },
+          "status": "available",
+          "reference_version": "shared_components_v2",
+          "reference_hash": "93a8cdc237a51d2e6beaf14ff78a696119a9f41c88b0711ac1eb6b86e96071a9",
+          "reference_n": 432,
+          "missing_reference_weeks": 0,
+          "definition": "pregame_archived_expert_reference",
+          "cohort_hash": "144c1a66b3577b498365895a2e01033baf8ee3eaf309b772fe7288aac431037c",
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        },
+        "weekly_actual_top24": {
+          "status": "available",
+          "definition": "actual_weekly_leaders_ranking",
+          "n": 2768,
+          "cohort_hash": "a538acb1d2a319c522210ebc2ea74732e045292a912530981b034dd8dc7baae5",
+          "models": {
+            "Ridge": {
+              "n_weeks": 18,
+              "hit_rate": 0.4722,
+              "points_captured": 328.2333,
+              "lineup_regret": 137.7444
+            },
+            "NN": {
+              "n_weeks": 18,
+              "hit_rate": 0.4769,
+              "points_captured": 329.0278,
+              "lineup_regret": 136.95
+            },
+            "Attention NN": {
+              "n_weeks": 18,
+              "hit_rate": 0.4699,
+              "points_captured": 327.5611,
+              "lineup_regret": 138.4167
+            },
+            "LightGBM": {
+              "n_weeks": 18,
+              "hit_rate": 0.4676,
+              "points_captured": 322.7222,
+              "lineup_regret": 143.2556
+            }
+          },
+          "actual_basis": "shared_projected_components_v1",
+          "scoring_components": [
+            "receiving_tds",
+            "receiving_yards",
+            "receptions",
+            "fumbles_lost"
+          ]
+        }
+      }
+    }
+  ],
+  "validation": {
+    "driver": "benchmark_leaf_driver",
+    "regime": "cpu-eager",
+    "jobs": 1,
+    "outer_max_workers": 2,
+    "capture_layout": "legacy_cwd",
+    "source_snapshot": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/rmse_WR/data",
+    "provider_cache": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/rmse_WR/provider_cache",
+    "result_root": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/rmse_WR/results",
+    "input_manifest": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/rmse_WR/input-manifest.json",
+    "driver_sha256": "92e037027a4e1e1ee484663004d9112d4afe993954bd1c396d001f870bceca53",
+    "data_description": "Fixed foundation numerical splits; unchanged archived shared_components_v2 reference required by standalone RMSE",
+    "no_sync": true
+  }
+}

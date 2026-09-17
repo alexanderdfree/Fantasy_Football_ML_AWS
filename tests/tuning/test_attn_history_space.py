@@ -268,7 +268,7 @@ def test_full_scope_sampling_unchanged():
 
 
 def test_history_storage_namespace_is_separate():
-    """History-scope studies must not share the scheduler_v2 namespace."""
+    """History-scope studies must not share the scheduler_v2_fp_rmse_ppr_v1 namespace."""
     from src.tuning.tune_nn_storage import (
         HISTORY_SEARCH_SPACE_VERSION,
         SEARCH_SPACE_VERSION,
@@ -277,10 +277,10 @@ def test_history_storage_namespace_is_separate():
 
     assert HISTORY_SEARCH_SPACE_VERSION != SEARCH_SPACE_VERSION
     eager = resolve_search_space_version("thread", root=HISTORY_SEARCH_SPACE_VERSION)
-    assert eager == "history_v2"
+    assert eager == "history_v2_fp_rmse_ppr_v1"
     assert resolve_search_space_version("thread") == SEARCH_SPACE_VERSION
     # Execution-profile suffixes still apply to the history root.
     assert (
         resolve_search_space_version("mps", cuda_graph=True, root=HISTORY_SEARCH_SPACE_VERSION)
-        == "history_v2_mps_graph"
+        == "history_v2_fp_rmse_ppr_v1_mps_graph"
     )

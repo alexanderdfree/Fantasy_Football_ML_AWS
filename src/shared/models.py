@@ -8,6 +8,7 @@ this one. The multi-target wrappers below loop the per-target classes;
 ``ElasticNetModel`` directly for its per-fold CV evaluators.
 """
 
+import copy
 import json
 import os
 import shutil
@@ -708,12 +709,35 @@ class RidgeMultiTarget(_MultiTargetLinear):
         self._init_common(
             target_names, alpha, two_stage_targets, classification_targets, non_negative_targets
         )
+        self.selection_info = None
+
+    def fit(self, X_train, y_train_dict):
+        # Refitting invalidates a prior dataset's CV selection provenance.
+        self.selection_info = None
+        return super().fit(X_train, y_train_dict)
 
     def _build_estimator(self, name):
         return RidgeModel(alpha=self._alphas[name], pca_n_components=self.pca_n_components)
 
     def _default_estimator(self):
         return RidgeModel()
+
+    def save(self, model_dir):
+        super().save(model_dir)
+        path = os.path.join(model_dir, "ridge_selection.json")
+        if self.selection_info:
+            with open(path, "w") as handle:
+                json.dump(self.selection_info, handle)
+        elif os.path.exists(path):
+            os.remove(path)
+
+    def load(self, model_dir):
+        super().load(model_dir)
+        path = os.path.join(model_dir, "ridge_selection.json")
+        self.selection_info = None
+        if os.path.exists(path):
+            with open(path) as handle:
+                self.selection_info = json.load(handle)
 
 
 class ElasticNetMultiTarget(_MultiTargetLinear):
@@ -795,8 +819,14 @@ class LightGBMMultiTarget:
         seed=42,
         n_jobs=None,
         non_negative_targets: set | None = None,
+        selection_metric="per_target",
     ):
         self.target_names = target_names
+        if selection_metric not in ("per_target", "fantasy_rmse_ppr"):
+            raise ValueError(f"Unknown LightGBM selection metric: {selection_metric}")
+        self.selection_metric = selection_metric
+        self.selected_iterations = {}
+        self.selection_info = None
         # Which heads clamp to >= 0. Default (``None``) clamps every head — the
         # long-standing behavior. Stored so ``save``/``load`` can round-trip it
         # and ``predict`` can fall back to it when the caller omits the kwarg
@@ -826,6 +856,34 @@ class LightGBMMultiTarget:
         self._feature_names = None
 
     def fit(self, X_train, y_train_dict, X_val=None, y_val_dict=None, feature_names=None):
+        self.selected_iterations = {}
+        self.selection_info = None
+        joint = self.selection_metric == "fantasy_rmse_ppr"
+        if joint:
+            from src.shared.model_selection import selection_position
+
+            selection_position(self.target_names)
+            if X_val is None or y_val_dict is None:
+                raise ValueError("PPR tree selection requires validation data")
+            # Prefix summation is exact for identity-link GBDT regressors.
+            # All six production positions use regression; older Huber/Fair
+            # recipes remain supported without changing their fitting loss.
+            if self._params["objective"] not in (
+                "regression",
+                "regression_l2",
+                "l2",
+                "mse",
+                "mean_squared_error",
+                "huber",
+                "fair",
+                "regression_l1",
+                "l1",
+                "mae",
+                "mean_absolute_error",
+            ):
+                raise ValueError(
+                    "PPR prefix selection requires an identity-link regression objective"
+                )
         self._feature_names = feature_names
         # Wrap inputs in a named DataFrame so fit sees the same feature names
         # predict() will pass later — otherwise sklearn warns about feature-name
@@ -836,7 +894,11 @@ class LightGBMMultiTarget:
                 X_val = pd.DataFrame(X_val, columns=feature_names)
         # Callbacks are stateless across heads — hoist out of the loop so we
         # don't re-allocate ``early_stopping`` + ``log_evaluation`` per target.
-        callbacks = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(0)]
+        # Joint selection uses the configured tree budget; a head-local stop
+        # could otherwise discard a prefix useful to the combined prediction.
+        callbacks = [lgb.log_evaluation(0)]
+        if not joint:
+            callbacks.insert(0, lgb.early_stopping(30, verbose=False))
         for name, model in self._models.items():
             if X_val is not None and y_val_dict is not None:
                 model.fit(
@@ -844,9 +906,76 @@ class LightGBMMultiTarget:
                     y_train_dict[name],
                     eval_set=[(X_val, y_val_dict[name])],
                     callbacks=callbacks,
+                    **({"eval_metric": "rmse"} if joint else {}),
                 )
             else:
                 model.fit(X_train, y_train_dict[name])
+        if joint:
+            self._select_ppr_iterations(X_val, y_val_dict)
+
+    def _prefix_predictions(self, name, X):
+        """Yield every trained prefix in linear tree work and bounded memory."""
+        booster = self._models[name].booster_
+        cumulative = np.zeros(len(X), dtype=np.float64)
+        for index in range(booster.current_iteration()):
+            cumulative += booster.predict(
+                X,
+                start_iteration=index,
+                num_iteration=1,
+                raw_score=True,
+                num_threads=booster.params.get("num_threads", 1),
+            )
+            predicted = (
+                np.maximum(cumulative, 0) if name in self.non_negative_targets else cumulative
+            )
+            yield index + 1, predicted
+
+    def _select_ppr_iterations(self, X_val, truth):
+        from src.shared.model_selection import ppr_rmse, selection_position
+
+        position = selection_position(self.target_names)
+        for name, model in self._models.items():
+            curve = model.evals_result_["valid_0"]["rmse"]
+            self.selected_iterations[name] = min(
+                int(np.argmin(curve)) + 1, model.booster_.current_iteration()
+            )
+        predictions = self.predict(X_val)
+        best_score = ppr_rmse(position, truth, predictions)
+        initial_score = best_score
+        score_history = [best_score]
+        for _ in range(2):
+            changed = False
+            for name in self.target_names:
+                best_iteration = self.selected_iterations[name]
+                best_predictions = predictions[name]
+                for iteration, predicted in self._prefix_predictions(name, X_val):
+                    predictions[name] = predicted
+                    score = ppr_rmse(position, truth, predictions)
+                    if score < best_score - 1e-12:
+                        best_score = score
+                        best_iteration = iteration
+                        best_predictions = predicted.copy()
+                        changed = True
+                predictions[name] = best_predictions
+                self.selected_iterations[name] = best_iteration
+                score_history.append(best_score)
+            if not changed:
+                break
+        # Record the exact native predict path used after saving and serving.
+        best_score = ppr_rmse(position, truth, self.predict(X_val))
+        self.selection_info = {
+            "metric": "fantasy_rmse_ppr",
+            "scoring_format": "ppr",
+            "score": best_score,
+            "initial_score": initial_score,
+            "iterations": dict(self.selected_iterations),
+            "search": "two_coordinate_prefix_sweeps",
+            "score_history": score_history,
+            "n_validation_rows": len(X_val),
+        }
+        print(
+            f"  Joint LightGBM validation PPR RMSE={best_score:.4f}; iterations={self.selected_iterations}"
+        )
 
     def predict(self, X, non_negative_targets: set[str] | None = None):
         """Return per-target predictions, clamping the non-negative subset to >= 0.
@@ -874,7 +1003,12 @@ class LightGBMMultiTarget:
         )
         preds = {}
         for name, model in self._models.items():
-            pred = model.predict(X_in)
+            kwargs = (
+                {"num_iteration": self.selected_iterations[name]}
+                if name in self.selected_iterations
+                else {}
+            )
+            pred = model.predict(X_in, **kwargs)
             if name in clamp_set:
                 pred = np.maximum(pred, 0)
             preds[name] = pred
@@ -883,7 +1017,13 @@ class LightGBMMultiTarget:
     def get_feature_importance(self, feature_names):
         result = {}
         for name, model in self._models.items():
-            importance = model.feature_importances_
+            importance = (
+                model.booster_.feature_importance(
+                    importance_type=model.importance_type, iteration=self.selected_iterations[name]
+                )
+                if name in self.selected_iterations
+                else model.feature_importances_
+            )
             s = pd.Series(importance, index=feature_names)
             result[name] = s.sort_values(ascending=False)
         return result
@@ -892,10 +1032,21 @@ class LightGBMMultiTarget:
         lgb_dir = f"{model_dir}/lightgbm"
         os.makedirs(lgb_dir, exist_ok=True)
         for name, model in self._models.items():
-            joblib.dump(model, f"{lgb_dir}/{name}.pkl")
+            saved = model
+            if name in self.selected_iterations:
+                # Keep the familiar sklearn artifact interface, but omit
+                # unselected trees from serving memory and S3 payloads.
+                saved = copy.deepcopy(model)
+                saved.booster_.model_from_string(
+                    model.booster_.model_to_string(num_iteration=self.selected_iterations[name])
+                )
+            joblib.dump(saved, f"{lgb_dir}/{name}.pkl")
         meta = {
             "target_names": self.target_names,
             "params": self._params,
+            "selection_metric": self.selection_metric,
+            "selected_iterations": self.selected_iterations,
+            "selection_info": self.selection_info,
             # Round-trip the per-head clamp set so a reload honors it (serving
             # calls predict() without the kwarg). Sets aren't JSON-serializable.
             "non_negative_targets": sorted(self.non_negative_targets),
@@ -911,6 +1062,10 @@ class LightGBMMultiTarget:
             meta = json.load(f)
         self.target_names = meta["target_names"]
         self._feature_names = meta.get("feature_names")
+        self._params = meta.get("params", self._params)
+        self.selection_metric = meta.get("selection_metric", "per_target")
+        self.selected_iterations = meta.get("selected_iterations", {})
+        self.selection_info = meta.get("selection_info")
         # Older artifacts predate the meta key — fall back to the constructor
         # default already set in __init__ (clamp every head).
         if "non_negative_targets" in meta:
