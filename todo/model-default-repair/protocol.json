@@ -1,0 +1,79 @@
+{
+  "schema": "model-default-repair-protocol/v1",
+  "campaign": "model-default-repair-20260912",
+  "baseline_sha": "a9ae2a12a9ea3408d133d5bc231948cbea9b694a",
+  "nn_pr": {"number": 1575, "head": "2a97c93fe493692e765969bb6d3b2eda1b16ac2a"},
+  "selection_pr": {"number": 1568, "head": "1a15bdc1281c5dfe310dbfd6daabe8adb589bbe2"},
+  "source_release": "4d196674393af2bbdc09e4269117bfe84ef7d98cad3243b27b982c6270dfa6d7",
+  "source_release_may_be_overwritten": false,
+  "development_origins": [2022, 2023],
+  "confirmation_origins": [2024, 2025],
+  "evidence_class": "retrospective",
+  "seeds": [42, 123, 7],
+  "positions": ["QB", "RB", "WR", "TE", "K", "DST"],
+  "split_rule": {"train_through": "origin-2", "validation": "origin-1", "assessment": "origin", "training_floor": 2013, "K_training_floor": 2015},
+  "scoring": {
+    "format": "ppr",
+    "comparison": "src.shared.comparison_scoring canonical shared components and identical rows",
+    "native_configured_target_metrics": "also report separately",
+    "missing_actual_or_forecast_components": "unavailable, never zero or full-fantasy fallback"
+  },
+  "cohorts": {
+    "development": ["all", "elite_top24"],
+    "development_weekly_reference_top24": "explicitly unavailable before 2024",
+    "confirmation_required": ["all", "elite_top24", "weekly_reference_top24"],
+    "2024_reference_recipe": "existing v3: NFL.com+RotoWire offense, ESPN K, RotoWire DST",
+    "confirmation_missing_position_or_required_week": "block confirmation; do not substitute or silently restrict"
+  },
+  "wr_diagnostics": ["gate_logit", "mu", "log_alpha", "conditional_mean", "marginal_mean", "raw_actuals", "raw_errors", "zero_positive_errors", "week1", "cross_head_error_covariance", "observed_fp32_likelihood_and_gradient_vs_fp64"],
+  "wr_repair": {
+    "active_numerical_defect": "test one shared stable numerical correction",
+    "otherwise": [
+      {"attn_gate_weight": 0.5},
+      {"attn_gate_weight": 2.0},
+      {"reception_loss_weight": 0.5},
+      {"reception_loss_weight": 2.0}
+    ],
+    "cartesian_combinations": false,
+    "corrected_candidate_math_enabled": true,
+    "yards_loss_coupling_preserved": true
+  },
+  "selector_diagnostics": {
+    "positions": ["QB", "WR"],
+    "development_trajectories": 12,
+    "maximum_epochs": {"QB": 300, "WR": 250},
+    "policies": ["legacy_weighted_mae_original_stop", "unrestricted_ppr_rmse", "ppr_rmse_subject_to_mae_anchor"],
+    "anchor": "best weighted-MAE checkpoint no later than original legacy stopping point on the identical trajectory",
+    "constraint": "validation PPR MAE <= anchor PPR MAE",
+    "qualification": "strict validation PPR RMSE improvement over anchor",
+    "checkpoint_storage": "retain alternative checkpoint states and independently rescore restored weights",
+    "no_qualifying_candidate": "hold; no claim that baseline fallback is an improvement"
+  },
+  "candidate_choice": ["passing development gates", "lowest RMSE", "lowest MAE"],
+  "freeze_before_confirmation": true,
+  "promotion": {
+    "per_affected_position_and_model": true,
+    "each_confirmation_origin": true,
+    "overall_mae_delta": "< 0 across matched seed means",
+    "overall_rmse_delta": "< 0 across matched seed means",
+    "important_cohort_mae_delta": "<= 0 across matched seed means",
+    "important_cohort_rmse_delta": "<= 0 across matched seed means",
+    "unchanged_controls": "equivalent",
+    "complete_provenance_and_inference_parity": true,
+    "independent_and_combined_recipes": true
+  },
+  "execution": {
+    "queue": "ff-training-queue",
+    "compute_environment": "ff-gpu-spot",
+    "purchase_model": "SPOT",
+    "max_vcpus": 64,
+    "stacked_training": false,
+    "dtype": "fp32",
+    "cuda_graphs": "production defaults with native K exception",
+    "matched_pair_hardware_required": true,
+    "real_smoke_before_expansion": true,
+    "isolated_artifact_prefix": "ab_runs/model-default-repair-20260912"
+  },
+  "excluded": ["new calibration model", "fantasy-total training", "test-derived offsets", "legacy-default staging", "automatic tradeoff acceptance"],
+  "delivery": {"merge_only_passing_units": true, "PR1534": "rebase after successful NN merge; flags remain default-off", "PR1479": "hold"}
+}

@@ -7,6 +7,9 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 ---
 
 ## Open
+### [HELD] Model-default repair and merge evidence
+- [Campaign protocol and status](todo/model-default-repair/README.md): #1575 and #1568 require both MAE and RMSE improvements per affected model and confirmation year, with protected cohorts non-worsening. All training runs on AWS Batch Spot. The 2024 NFL.com archive lacks Week 18 offense coverage, so confirmation remains blocked.
+
 ### [PRIORITY] Shared parallel A/B / ablation harness (device-autodetect)
 - **Plan doc:** [todo/ab_harness_priority.md](todo/ab_harness_priority.md) — read first (now has a "What shipped" summary).
 - **What:** `src/tuning/ab_harness.py` — one reusable harness that runs the position×variant×seed A/B grid **in parallel** (gated on `detect_platform()`: GPU-launch-bound fan-out on the 5080, 16-physical-core pool with capped BLAS on the 9950X3D; `FF_AB_JOBS` override, CPU-considerate), **artifact-isolated** (chdir+symlink `data/` so it never clobbers served `{pos}/outputs`), with a `Variant=(cfg-mutator, frame-injector)` / `metric=fn(result)` abstraction and mean±std + Ridge-invariance aggregation. Composes `parallel_train`/`core_pool`/`detect_platform`.

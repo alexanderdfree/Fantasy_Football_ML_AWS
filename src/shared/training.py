@@ -1775,6 +1775,11 @@ class MultiHeadTrainer:
             if not np.isfinite(selection_score):
                 selection_score = float("inf")
             history["val_selection_metric"].append(selection_score)
+            # Read-only experiment observer. It cannot replace the production
+            # selector or consume rounded log output as checkpoint evidence.
+            observer = getattr(self, "epoch_observer", None)
+            if observer is not None:
+                observer(epoch, history, val_preds, val_targets)
             if self.epoch_callback is not None:
                 # Optuna pruning sees the same validation score as checkpoint
                 # selection. Pruning exceptions intentionally propagate.
