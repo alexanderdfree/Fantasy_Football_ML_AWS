@@ -1,0 +1,682 @@
+{
+  "run_id": "2026-09-11T08:33:36_724fbf7f_review-fixes_nn_DST_seed42",
+  "timestamp": "2026-09-11T08:33:36",
+  "git_hash": "724fbf7f",
+  "note": "Review-fix nn_DST production validation; CPU eager seed 42; explicit frozen data/reference version per input manifest; no sealed release or cross-PR cohort-identity claim",
+  "positions": [
+    "DST"
+  ],
+  "seed": 42,
+  "code_fingerprints": {
+    "DST": "14ab58a5380bf81f8089ec1dd746cddb1a59bfffd52b649c237fa05ac0cef350"
+  },
+  "config": {
+    "global": {
+      "train_seasons": [
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023
+      ],
+      "val_seasons": [
+        2024
+      ],
+      "test_seasons": [
+        2025
+      ],
+      "nn_epochs": 200,
+      "nn_batch_size": 256,
+      "nn_patience": 15,
+      "nn_dropout": 0.3,
+      "nn_lr": 0.001
+    },
+    "dst": {
+      "lgbm_objective": "regression",
+      "head_losses": {
+        "def_sacks": "mse",
+        "def_ints": "mse",
+        "def_fumble_rec": "mse",
+        "def_fumbles_forced": "mse",
+        "def_safeties": "poisson_nll",
+        "def_tds": "poisson_nll",
+        "def_blocked_kicks": "poisson_nll",
+        "special_teams_tds": "poisson_nll",
+        "points_allowed": "mse",
+        "yards_allowed": "mse"
+      },
+      "loss_weights": {
+        "def_sacks": 1.0,
+        "def_ints": 2.0,
+        "def_fumble_rec": 2.0,
+        "def_fumbles_forced": 2.0,
+        "def_safeties": 5.0,
+        "def_tds": 5.0,
+        "def_blocked_kicks": 5.0,
+        "special_teams_tds": 5.0,
+        "points_allowed": 0.2,
+        "yards_allowed": 0.0333
+      }
+    }
+  },
+  "results": [
+    {
+      "position": "DST",
+      "ridge_mae": 5.463,
+      "ridge_r2": 0.09,
+      "nn_mae": 5.401,
+      "nn_r2": 0.116,
+      "nn_wins_mae": 1,
+      "nn_per_target": {
+        "def_sacks": {
+          "mae": 1.365,
+          "r2": 0.021,
+          "rmse": 1.763
+        },
+        "def_ints": {
+          "mae": 0.686,
+          "r2": 0.01,
+          "rmse": 0.832
+        },
+        "def_fumble_rec": {
+          "mae": 0.584,
+          "r2": -0.013,
+          "rmse": 0.686
+        },
+        "def_fumbles_forced": {
+          "mae": 0.695,
+          "r2": -0.025,
+          "rmse": 0.848
+        },
+        "def_safeties": {
+          "mae": 0.052,
+          "r2": -0.007,
+          "rmse": 0.147
+        },
+        "def_tds": {
+          "mae": 0.187,
+          "r2": -0.018,
+          "rmse": 0.304
+        },
+        "def_blocked_kicks": {
+          "mae": 0.148,
+          "r2": -0.006,
+          "rmse": 0.28
+        },
+        "special_teams_tds": {
+          "mae": 0.085,
+          "r2": -0.004,
+          "rmse": 0.226
+        },
+        "points_allowed": {
+          "mae": 7.392,
+          "r2": 0.143,
+          "rmse": 9.198
+        },
+        "yards_allowed": {
+          "mae": 61.973,
+          "r2": 0.15,
+          "rmse": 77.857
+        }
+      },
+      "ridge_per_target": {
+        "def_sacks": {
+          "mae": 1.385,
+          "r2": 0.058,
+          "rmse": 1.729
+        },
+        "def_ints": {
+          "mae": 0.687,
+          "r2": -0.004,
+          "rmse": 0.838
+        },
+        "def_fumble_rec": {
+          "mae": 0.604,
+          "r2": -0.036,
+          "rmse": 0.694
+        },
+        "def_fumbles_forced": {
+          "mae": 0.692,
+          "r2": -0.038,
+          "rmse": 0.854
+        },
+        "def_safeties": {
+          "mae": 0.053,
+          "r2": -0.016,
+          "rmse": 0.148
+        },
+        "def_tds": {
+          "mae": 0.187,
+          "r2": -0.022,
+          "rmse": 0.304
+        },
+        "def_blocked_kicks": {
+          "mae": 0.148,
+          "r2": -0.002,
+          "rmse": 0.28
+        },
+        "special_teams_tds": {
+          "mae": 0.086,
+          "r2": -0.004,
+          "rmse": 0.226
+        },
+        "points_allowed": {
+          "mae": 7.329,
+          "r2": 0.139,
+          "rmse": 9.216
+        },
+        "yards_allowed": {
+          "mae": 62.761,
+          "r2": 0.109,
+          "rmse": 79.743
+        }
+      },
+      "ridge_top12": 0.532,
+      "nn_top12": 0.56,
+      "ridge_rmse": 6.999,
+      "nn_rmse": 6.9,
+      "attn_nn_mae": 5.383,
+      "attn_nn_r2": 0.13,
+      "attn_nn_rmse": 6.842,
+      "attn_nn_per_target": {
+        "def_sacks": {
+          "mae": 1.414,
+          "r2": 0.028,
+          "rmse": 1.756
+        },
+        "def_ints": {
+          "mae": 0.686,
+          "r2": -0.011,
+          "rmse": 0.841
+        },
+        "def_fumble_rec": {
+          "mae": 0.606,
+          "r2": -0.033,
+          "rmse": 0.693
+        },
+        "def_fumbles_forced": {
+          "mae": 0.694,
+          "r2": -0.039,
+          "rmse": 0.854
+        },
+        "def_safeties": {
+          "mae": 0.05,
+          "r2": -0.009,
+          "rmse": 0.148
+        },
+        "def_tds": {
+          "mae": 0.188,
+          "r2": -0.021,
+          "rmse": 0.304
+        },
+        "def_blocked_kicks": {
+          "mae": 0.147,
+          "r2": -0.006,
+          "rmse": 0.28
+        },
+        "special_teams_tds": {
+          "mae": 0.088,
+          "r2": 0.005,
+          "rmse": 0.225
+        },
+        "points_allowed": {
+          "mae": 7.268,
+          "r2": 0.181,
+          "rmse": 8.992
+        },
+        "yards_allowed": {
+          "mae": 61.629,
+          "r2": 0.148,
+          "rmse": 77.984
+        }
+      },
+      "attn_nn_top12": 0.556,
+      "lgbm_mae": 5.44,
+      "lgbm_r2": 0.111,
+      "lgbm_rmse": 6.919,
+      "lgbm_per_target": {
+        "def_sacks": {
+          "mae": 1.399,
+          "r2": 0.048,
+          "rmse": 1.738
+        },
+        "def_ints": {
+          "mae": 0.689,
+          "r2": -0.011,
+          "rmse": 0.841
+        },
+        "def_fumble_rec": {
+          "mae": 0.598,
+          "r2": -0.021,
+          "rmse": 0.689
+        },
+        "def_fumbles_forced": {
+          "mae": 0.694,
+          "r2": -0.042,
+          "rmse": 0.855
+        },
+        "def_safeties": {
+          "mae": 0.052,
+          "r2": -0.005,
+          "rmse": 0.147
+        },
+        "def_tds": {
+          "mae": 0.188,
+          "r2": -0.014,
+          "rmse": 0.303
+        },
+        "def_blocked_kicks": {
+          "mae": 0.146,
+          "r2": -0.001,
+          "rmse": 0.279
+        },
+        "special_teams_tds": {
+          "mae": 0.088,
+          "r2": -0.001,
+          "rmse": 0.226
+        },
+        "points_allowed": {
+          "mae": 7.259,
+          "r2": 0.166,
+          "rmse": 9.071
+        },
+        "yards_allowed": {
+          "mae": 61.653,
+          "r2": 0.151,
+          "rmse": 77.811
+        }
+      },
+      "lgbm_top12": 0.56,
+      "elapsed_sec": 80.19574620801723,
+      "phase_seconds": {
+        "prepare_data": 0.3,
+        "ridge_tune": 3.2,
+        "ridge_fit": 0.1,
+        "lgbm_train": 2.6,
+        "nn_train": 34.0,
+        "attn_nn_train": 37.4,
+        "train_models_total": 71.5,
+        "backtest": 0.2,
+        "save_artifacts": 0.1,
+        "figures": 2.6
+      },
+      "cohorts": {
+        "week1": {
+          "n": 32,
+          "models": {
+            "Ridge": {
+              "n": 32,
+              "mae": 3.9115,
+              "rmse": 4.4719,
+              "bias": 1.6695
+            },
+            "NN": {
+              "n": 32,
+              "mae": 3.5346,
+              "rmse": 4.2028,
+              "bias": 0.9652
+            },
+            "Attention NN": {
+              "n": 32,
+              "mae": 3.8183,
+              "rmse": 4.5054,
+              "bias": 1.573
+            },
+            "LightGBM": {
+              "n": 32,
+              "mae": 3.7793,
+              "rmse": 4.4006,
+              "bias": 1.4111
+            }
+          },
+          "actual_basis": "shared_projected_components_v2",
+          "scoring_components": [
+            "def_sacks",
+            "def_ints",
+            "def_fumble_rec",
+            "def_fumbles_forced",
+            "def_safeties",
+            "def_tds",
+            "def_blocked_kicks",
+            "special_teams_tds",
+            "yards_allowed"
+          ]
+        },
+        "seasonal_actual_top24": {
+          "n": 408,
+          "models": {
+            "Ridge": {
+              "n": 408,
+              "mae": 4.2491,
+              "rmse": 5.4451,
+              "bias": -0.1078
+            },
+            "NN": {
+              "n": 408,
+              "mae": 4.1719,
+              "rmse": 5.405,
+              "bias": -0.2786
+            },
+            "Attention NN": {
+              "n": 408,
+              "mae": 4.1741,
+              "rmse": 5.3454,
+              "bias": 0.0289
+            },
+            "LightGBM": {
+              "n": 408,
+              "mae": 4.2,
+              "rmse": 5.3663,
+              "bias": 0.0154
+            }
+          },
+          "status": "available",
+          "definition": "regular_season_total_actual_fantasy_points",
+          "cohort_hash": "26ac7a2caf07eca255ade80cdc3ce449853e07c2c111169247a27af14469317b",
+          "actual_basis": "shared_projected_components_v2",
+          "scoring_components": [
+            "def_sacks",
+            "def_ints",
+            "def_fumble_rec",
+            "def_fumbles_forced",
+            "def_safeties",
+            "def_tds",
+            "def_blocked_kicks",
+            "special_teams_tds",
+            "yards_allowed"
+          ]
+        },
+        "elite_top24": {
+          "n": 408,
+          "models": {
+            "Ridge": {
+              "n": 408,
+              "mae": 4.355,
+              "rmse": 5.4744,
+              "bias": 0.7919
+            },
+            "NN": {
+              "n": 408,
+              "mae": 4.296,
+              "rmse": 5.4763,
+              "bias": 0.6144
+            },
+            "Attention NN": {
+              "n": 408,
+              "mae": 4.3131,
+              "rmse": 5.4525,
+              "bias": 0.8219
+            },
+            "LightGBM": {
+              "n": 408,
+              "mae": 4.3512,
+              "rmse": 5.4758,
+              "bias": 0.8733
+            }
+          },
+          "status": "available",
+          "definition": "prior_season_mean_shared_component_points",
+          "cohort_hash": "d9dcd086663ab8b9abd66ff192fbdcd696f8e261cd29d07ec6198b51b305502d",
+          "actual_basis": "shared_projected_components_v2",
+          "scoring_components": [
+            "def_sacks",
+            "def_ints",
+            "def_fumble_rec",
+            "def_fumbles_forced",
+            "def_safeties",
+            "def_tds",
+            "def_blocked_kicks",
+            "special_teams_tds",
+            "yards_allowed"
+          ]
+        },
+        "weekly_reference_top24": {
+          "n": 432,
+          "models": {
+            "Ridge": {
+              "n": 432,
+              "mae": 4.335,
+              "rmse": 5.45,
+              "bias": 0.4822
+            },
+            "NN": {
+              "n": 432,
+              "mae": 4.2883,
+              "rmse": 5.4275,
+              "bias": 0.4189
+            },
+            "Attention NN": {
+              "n": 432,
+              "mae": 4.2912,
+              "rmse": 5.4032,
+              "bias": 0.7189
+            },
+            "LightGBM": {
+              "n": 432,
+              "mae": 4.2995,
+              "rmse": 5.4139,
+              "bias": 0.6468
+            }
+          },
+          "status": "available",
+          "reference_version": "shared_components_v3",
+          "reference_hash": "7ad129dfd53042087b090944fceb57dec317199613b4d976d5f63eaef7090aaf",
+          "reference_n": 432,
+          "missing_reference_weeks": 0,
+          "definition": "pregame_archived_expert_reference",
+          "cohort_hash": "4a7f615e002154dedb113b5114fd4681ffc169ed292ec6febeaf522c8f723c17",
+          "actual_basis": "shared_projected_components_v2",
+          "scoring_components": [
+            "def_sacks",
+            "def_ints",
+            "def_fumble_rec",
+            "def_fumbles_forced",
+            "def_safeties",
+            "def_tds",
+            "def_blocked_kicks",
+            "special_teams_tds",
+            "yards_allowed"
+          ]
+        },
+        "weekly_actual_top24": {
+          "status": "available",
+          "definition": "actual_weekly_leaders_ranking",
+          "n": 544,
+          "cohort_hash": "2dcab3795a5662b9b50826e4b7ed8b447e0c03b55288f515aa48b5aaa40d4d05",
+          "models": {
+            "Ridge": {
+              "n_weeks": 18,
+              "hit_rate": 0.8403,
+              "points_captured": 161.0556,
+              "lineup_regret": 28.2778
+            },
+            "NN": {
+              "n_weeks": 18,
+              "hit_rate": 0.8403,
+              "points_captured": 163.8333,
+              "lineup_regret": 25.5
+            },
+            "Attention NN": {
+              "n_weeks": 18,
+              "hit_rate": 0.8403,
+              "points_captured": 161.7778,
+              "lineup_regret": 27.5556
+            },
+            "LightGBM": {
+              "n_weeks": 18,
+              "hit_rate": 0.838,
+              "points_captured": 164.0556,
+              "lineup_regret": 25.2778
+            }
+          },
+          "actual_basis": "shared_projected_components_v2",
+          "scoring_components": [
+            "def_sacks",
+            "def_ints",
+            "def_fumble_rec",
+            "def_fumbles_forced",
+            "def_safeties",
+            "def_tds",
+            "def_blocked_kicks",
+            "special_teams_tds",
+            "yards_allowed"
+          ]
+        }
+      },
+      "evaluation_record": {
+        "position": "DST",
+        "metric_definition": "pipeline_metrics",
+        "scoring": null,
+        "actual_basis": null,
+        "sample_basis": null,
+        "source_ids": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm"
+        ],
+        "cohorts": {
+          "elite_top24": {
+            "name": "elite_top24",
+            "definition": "prior_season_mean_shared_component_points",
+            "status": "available",
+            "cohort_hash": "d9dcd086663ab8b9abd66ff192fbdcd696f8e261cd29d07ec6198b51b305502d",
+            "reference_hash": null,
+            "reference_version": null,
+            "actual_basis": "shared_projected_components_v2",
+            "scoring_components": [
+              "def_sacks",
+              "def_ints",
+              "def_fumble_rec",
+              "def_fumbles_forced",
+              "def_safeties",
+              "def_tds",
+              "def_blocked_kicks",
+              "special_teams_tds",
+              "yards_allowed"
+            ],
+            "n": 408
+          },
+          "seasonal_actual_top24": {
+            "name": "seasonal_actual_top24",
+            "definition": "regular_season_total_actual_fantasy_points",
+            "status": "available",
+            "cohort_hash": "26ac7a2caf07eca255ade80cdc3ce449853e07c2c111169247a27af14469317b",
+            "reference_hash": null,
+            "reference_version": null,
+            "actual_basis": "shared_projected_components_v2",
+            "scoring_components": [
+              "def_sacks",
+              "def_ints",
+              "def_fumble_rec",
+              "def_fumbles_forced",
+              "def_safeties",
+              "def_tds",
+              "def_blocked_kicks",
+              "special_teams_tds",
+              "yards_allowed"
+            ],
+            "n": 408
+          },
+          "week1": {
+            "name": "week1",
+            "definition": null,
+            "status": null,
+            "cohort_hash": null,
+            "reference_hash": null,
+            "reference_version": null,
+            "actual_basis": "shared_projected_components_v2",
+            "scoring_components": [
+              "def_sacks",
+              "def_ints",
+              "def_fumble_rec",
+              "def_fumbles_forced",
+              "def_safeties",
+              "def_tds",
+              "def_blocked_kicks",
+              "special_teams_tds",
+              "yards_allowed"
+            ],
+            "n": 32
+          },
+          "weekly_actual_top24": {
+            "name": "weekly_actual_top24",
+            "definition": "actual_weekly_leaders_ranking",
+            "status": "available",
+            "cohort_hash": "2dcab3795a5662b9b50826e4b7ed8b447e0c03b55288f515aa48b5aaa40d4d05",
+            "reference_hash": null,
+            "reference_version": null,
+            "actual_basis": "shared_projected_components_v2",
+            "scoring_components": [
+              "def_sacks",
+              "def_ints",
+              "def_fumble_rec",
+              "def_fumbles_forced",
+              "def_safeties",
+              "def_tds",
+              "def_blocked_kicks",
+              "special_teams_tds",
+              "yards_allowed"
+            ],
+            "n": 544
+          },
+          "weekly_reference_top24": {
+            "name": "weekly_reference_top24",
+            "definition": "pregame_archived_expert_reference",
+            "status": "available",
+            "cohort_hash": "4a7f615e002154dedb113b5114fd4681ffc169ed292ec6febeaf522c8f723c17",
+            "reference_hash": "7ad129dfd53042087b090944fceb57dec317199613b4d976d5f63eaef7090aaf",
+            "reference_version": "shared_components_v3",
+            "actual_basis": "shared_projected_components_v2",
+            "scoring_components": [
+              "def_sacks",
+              "def_ints",
+              "def_fumble_rec",
+              "def_fumbles_forced",
+              "def_safeties",
+              "def_tds",
+              "def_blocked_kicks",
+              "special_teams_tds",
+              "yards_allowed"
+            ],
+            "n": 432
+          }
+        },
+        "evaluation_data_id": "60207023aa8ab1651c954ff4b99acec2efe9c7638d3eb7976d635c2ce1ffa21f",
+        "training_data_id": "bf63ac9efa93106a525861c4ce146c43f33c938520265537389a5867092a536e",
+        "dataset_id": null,
+        "model_bundle_ids": {
+          "attn_nn": "38d6622825d7cdc03ebc9dea6222f4edfce7bb0e689efb2eea200bd5762780cc",
+          "lgbm": "cf6fa0bdfb7edebefc0d180c5aa60acf15d1ef10864b4603ad60e71660fd3af2",
+          "nn": "23b16c0e61c7d5031150b062baf51a9440416483b0f9fd19955cca35d09d4cc7",
+          "ridge": "f53b87a2bdabdaed914e67c3225fb9f56b80953fe76f11d5d3bbfe07bca42479"
+        },
+        "execution_regime": "eager",
+        "run_id": "f694dcdd0dcc41609a0d08fdfaf76583",
+        "build_plan_id": null,
+        "code_id": null,
+        "schema_version": 1
+      }
+    }
+  ],
+  "validation": {
+    "driver": "benchmark_leaf_driver",
+    "regime": "cpu-eager",
+    "jobs": 1,
+    "outer_max_workers": 2,
+    "capture_layout": "run_context",
+    "source_snapshot": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/nn_DST/data",
+    "provider_cache": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/nn_DST/provider_cache",
+    "result_root": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/nn_DST/results",
+    "input_manifest": "/var/folders/lb/5gkmj44x5z1c5w60kmrjk1mm0000gn/T/consolidated-fixes-20260911-fpiih6u_/evidence/leaf-benchmarks/nn_DST/input-manifest.json",
+    "driver_sha256": "92e037027a4e1e1ee484663004d9112d4afe993954bd1c396d001f870bceca53",
+    "data_description": "Fixed foundation numerical splits; archive-only reconstructed shared_components_v3 reference",
+    "no_sync": true
+  }
+}

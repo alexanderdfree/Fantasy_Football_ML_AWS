@@ -43,7 +43,7 @@ from src.shared.evaluation import (
     print_comparison_table,
 )
 from src.shared.evaluation_cohorts import build_cohorts
-from src.shared.feature_build import build_position_features, scale_and_clip
+from src.shared.feature_build import build_position_features, make_nn_scaler, scale_and_clip
 from src.shared.models import (
     ElasticNetModel,
     ElasticNetMultiTarget,
@@ -57,6 +57,8 @@ from src.shared.neural_net import (
     build_multihead_net,
     build_multihead_net_with_history,
     build_multihead_net_with_nested_history,
+    initialize_poisson_heads,
+    load_warm_start_state,
 )
 from src.shared.training import (
     MultiHeadHistoryTrainer,
@@ -226,14 +228,18 @@ def _maybe_force_dropout_zero(cfg: dict) -> dict:
     return out
 
 
-def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
-    """Fit a StandardScaler on the first array, transform + clip all arrays.
+def _scale_xs(
+    *X_arrays: np.ndarray, feature_cols=None, magnitude_features=()
+) -> tuple[StandardScaler, list[np.ndarray]]:
+    """Fit the NN scaler on the first array, transform + clip all arrays.
 
     Returns ``(scaler, [X_train_s, X_val_s, ...])``. Callers unpack the list
     with as many positional targets as they passed in. See
     ``src/shared/feature_build.py::scale_and_clip`` for the clip rationale.
     """
-    scaler = StandardScaler()
+    if feature_cols is not None and len(feature_cols) != X_arrays[0].shape[1]:
+        raise ValueError("NN scaler feature names must match the exact input columns")
+    scaler = make_nn_scaler(feature_cols, magnitude_features)
     scaled = [scale_and_clip(scaler, X_arrays[0], fit=True)]
     scaled.extend(scale_and_clip(scaler, X) for X in X_arrays[1:])
     return scaler, scaled
@@ -769,7 +775,13 @@ def _train_nn(
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history)."""
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
-    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(
+        X_train,
+        X_val,
+        X_test,
+        feature_cols=cfg["get_feature_columns_fn"]() if "get_feature_columns_fn" in cfg else None,
+        magnitude_features=cfg.get("nn_magnitude_features", ()),
+    )
 
     device = _nn_device()
     train_loader, val_loader = make_dataloaders(
@@ -782,6 +794,7 @@ def _train_nn(
     )
 
     model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
+    initialize_poisson_heads(model, y_train_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
@@ -849,6 +862,7 @@ def _train_attention_nn(
     # attention branch learns its own temporal representation from raw game
     # stats, so rolling / EWMA / trend / share / specific categories are
     # excluded by config (``POSITION_CONFIG.attn_static_features``).
+    static_cols = cfg.get("attn_static_features")
     if feature_cols is not None:
         static_whitelist = cfg["attn_static_features"]
         static_cols = get_attn_static_columns(feature_cols, static_whitelist)
@@ -860,7 +874,13 @@ def _train_attention_nn(
         suffix = " (filtered)" if len(col_idx) != len(feature_cols) else ""
         print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)}{suffix}")
 
-    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(
+        X_train,
+        X_val,
+        X_test,
+        feature_cols=static_cols,
+        magnitude_features=cfg.get("nn_magnitude_features", ()),
+    )
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     device = _nn_device()
@@ -904,6 +924,7 @@ def _train_attention_nn(
         targets=targets,
         opp_game_dim=(opp_hist_train.shape[2] if use_opp else None),
     ).to(device)
+    initialize_poisson_heads(model, y_train_dict)
 
     # Warm-start hook (default-off, numerically inert when None): seed this
     # fold's weights from a prior fold's trained state instead of the fresh
@@ -912,7 +933,7 @@ def _train_attention_nn(
     # is byte-identical to the from-scratch fit. Load onto the raw model before
     # _maybe_compile so the (optional) compile wrapper sees the warm weights.
     if init_state_dict is not None:
-        model.load_state_dict(init_state_dict)
+        load_warm_start_state(model, init_state_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
@@ -986,7 +1007,13 @@ def _train_nested_attention_nn(
     """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
-    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(
+        X_train,
+        X_val,
+        X_test,
+        feature_cols=cfg.get("attn_static_features"),
+        magnitude_features=cfg.get("nn_magnitude_features", ()),
+    )
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     device = _nn_device()
@@ -1017,11 +1044,12 @@ def _train_nested_attention_nn(
         targets=targets,
         game_dim=game_dim,
     ).to(device)
+    initialize_poisson_heads(model, y_train_dict)
 
     # Warm-start hook (default-off, numerically inert when None) — see the twin
     # in _train_attention_nn. Production passes None (byte-identical fit).
     if init_state_dict is not None:
-        model.load_state_dict(init_state_dict)
+        load_warm_start_state(model, init_state_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
@@ -2296,7 +2324,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         fold_ridge_metrics.append(compute_target_metrics(y_val_dict, ridge_val_preds, targets))
 
         # NN training for this fold
-        _, (X_train_s, X_val_s) = _scale_xs(X_train, X_val)
+        _, (X_train_s, X_val_s) = _scale_xs(
+            X_train,
+            X_val,
+            feature_cols=feature_cols,
+            magnitude_features=cfg.get("nn_magnitude_features", ()),
+        )
 
         device = _nn_device()
         train_loader, val_loader = make_dataloaders(
@@ -2309,6 +2342,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         )
 
         model = build_multihead_net(cfg, input_dim=X_train_s.shape[1], targets=targets).to(device)
+        initialize_poisson_heads(model, y_train_dict)
 
         _run_nn_training(
             model=_maybe_compile(model),

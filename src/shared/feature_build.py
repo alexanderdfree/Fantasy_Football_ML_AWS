@@ -27,6 +27,65 @@ from src.shared.weather_features import merge_schedule_features
 FEATURE_CLIP: tuple[float, float] = (-4.0, 4.0)
 
 
+class MagnitudePreservingScaler(StandardScaler):
+    """Keep sparse continuous magnitudes distinguishable within the NN bounds.
+
+    Ordinary columns retain StandardScaler semantics. Selected columns use
+    ``4 * x / (median_nonzero_abs_train + abs(x))``: zero stays zero and the
+    mapping is monotone, bounded, and independent of the frequency of zeros.
+    The selected indices, positive scale, and bound are fitted/pickled with
+    the model. Legacy StandardScaler artifacts keep their original behavior.
+    """
+
+    def __init__(self, magnitude_indices: tuple[int, ...] = (), *, copy: bool = True):
+        super().__init__(copy=copy)
+        self.magnitude_indices = magnitude_indices
+
+    def fit(self, X, y=None, sample_weight=None):
+        super().fit(X, y, sample_weight=sample_weight)
+        indices = tuple(self.magnitude_indices)
+        if len(set(indices)) != len(indices) or any(
+            i < 0 or i >= self.n_features_in_ for i in indices
+        ):
+            raise ValueError("magnitude_indices must be unique indices within the feature matrix")
+        values = np.asarray(X)
+        self.magnitude_scales_ = np.array(
+            [
+                np.median(np.abs(values[:, i][np.isfinite(values[:, i]) & (values[:, i] != 0)]))
+                if np.any(np.isfinite(values[:, i]) & (values[:, i] != 0))
+                else 1.0
+                for i in indices
+            ]
+        )
+        self.magnitude_bound_ = float(FEATURE_CLIP[1])
+        return self
+
+    def transform(self, X, copy=None):
+        # Preserve raw values before StandardScaler's optional in-place write.
+        raw = np.asarray(X)[:, self.magnitude_indices].copy()
+        result = super().transform(X, copy=copy)
+        result[:, self.magnitude_indices] = self.magnitude_bound_ * (
+            raw / (self.magnitude_scales_ + np.abs(raw))
+        )
+        return result
+
+    def inverse_transform(self, X, copy=None):
+        bounded = np.asarray(X)[:, self.magnitude_indices].copy()
+        result = super().inverse_transform(X, copy=copy)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result[:, self.magnitude_indices] = (
+                self.magnitude_scales_ * bounded / (self.magnitude_bound_ - np.abs(bounded))
+            )
+        return result
+
+
+def make_nn_scaler(feature_cols=None, magnitude_features=()) -> StandardScaler:
+    """Build a scaler for the exact ordered NN inputs, before fitting on train."""
+    selected = set(magnitude_features)
+    indices = tuple(i for i, name in enumerate(feature_cols or ()) if name in selected)
+    return MagnitudePreservingScaler(indices) if indices else StandardScaler()
+
+
 def build_position_features(
     pos_train: pd.DataFrame,
     pos_val: pd.DataFrame,

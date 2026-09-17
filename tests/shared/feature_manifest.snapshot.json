@@ -237,6 +237,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -244,6 +245,8 @@
         "gated",
         "gated_targets",
         "head_hidden",
+        "head_losses",
+        "log_rate_targets",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -259,7 +262,10 @@
       ],
       "head_hidden": 32,
       "head_hidden_overrides": {},
-      "dropout": 0.2
+      "dropout": 0.2,
+      "magnitude_features": [],
+      "correct_ztnb_mean": true,
+      "poisson_log_rate": true
     },
     "loss_heads": {
       "head_losses": {
@@ -550,6 +556,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -558,6 +565,8 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
+        "log_rate_targets",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -576,7 +585,10 @@
       "head_hidden_overrides": {
         "receptions": 64
       },
-      "dropout": 0.15
+      "dropout": 0.15,
+      "magnitude_features": [],
+      "correct_ztnb_mean": true,
+      "poisson_log_rate": true
     },
     "loss_heads": {
       "head_losses": {
@@ -870,6 +882,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -878,6 +891,8 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
+        "log_rate_targets",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -895,7 +910,12 @@
       "head_hidden_overrides": {
         "receptions": 64
       },
-      "dropout": 0.2
+      "dropout": 0.2,
+      "magnitude_features": [
+        "inherited_opportunity"
+      ],
+      "correct_ztnb_mean": true,
+      "poisson_log_rate": true
     },
     "loss_heads": {
       "head_losses": {
@@ -1168,6 +1188,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -1176,6 +1197,8 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
+        "log_rate_targets",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -1194,7 +1217,10 @@
       "head_hidden_overrides": {
         "receptions": 32
       },
-      "dropout": 0.3
+      "dropout": 0.3,
+      "magnitude_features": [],
+      "correct_ztnb_mean": true,
+      "poisson_log_rate": true
     },
     "loss_heads": {
       "head_losses": {
@@ -1354,6 +1380,7 @@
         "encoder_hidden_dim",
         "game_dim",
         "head_hidden",
+        "log_rate_targets",
         "max_games",
         "n_attn_heads",
         "non_negative_targets",
@@ -1368,7 +1395,10 @@
       ],
       "head_hidden": 16,
       "head_hidden_overrides": {},
-      "dropout": 0.25
+      "dropout": 0.25,
+      "magnitude_features": [],
+      "correct_ztnb_mean": true,
+      "poisson_log_rate": true
     },
     "loss_heads": {
       "head_losses": {
@@ -1566,6 +1596,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -1574,6 +1605,8 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
+        "log_rate_targets",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -1597,7 +1630,10 @@
         "special_teams_tds": 16,
         "yards_allowed": 48
       },
-      "dropout": 0.3
+      "dropout": 0.3,
+      "magnitude_features": [],
+      "correct_ztnb_mean": true,
+      "poisson_log_rate": true
     },
     "loss_heads": {
       "head_losses": {
