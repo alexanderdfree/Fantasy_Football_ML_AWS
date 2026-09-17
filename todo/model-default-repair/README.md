@@ -40,6 +40,13 @@ then screen weights only if observed count numerics pass. Use
 identical QB/WR trajectories. Both specs default to 2022 development and accept
 `FF_REPAIR_ORIGIN=2023`; they refuse confirmation years.
 
+The guarded selector searches the full declared trajectory budget. The legacy
+anchor keeps its original stop; unrestricted RMSE keeps its own shadow stop.
+The first `selector-dev-*-8cfd3959` grid incorrectly limited guarded eligibility
+to the unrestricted RMSE stop. Those guarded results are superseded and cannot
+be used for candidate admission; five of the twelve trajectories change their
+eligible checkpoint under the corrected search. No policy was promoted.
+
 Submit through `src.tuning.launch_ab`, passing environment options to both the
 submitter and the container. Pin `FF_DATA_RELEASE` to the protocol release,
 use the exact SHA-tagged branch image plus its verified `--image-digest`,

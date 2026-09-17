@@ -29,12 +29,25 @@ def test_guard_uses_ppr_mae_and_never_claims_baseline_is_improvement():
     trace.observe(1, 2, 3, 4)
     trace.observe(2, 3, 3.5, 3)
     trace.observe(3, 4, 3.2, 3.1)
-    trace.observe(4, 1, 1, 1)  # after both policies stopped
+    trace.observe(4, 1, 3.4, 1)  # still violates the frozen anchor's PPR MAE
     report = trace.finish()
     assert report["legacy"]["epoch"] == 1
     assert report["rmse"]["epoch"] == 2
     assert report["guarded"] is None
     assert not report["guarded_qualifies"]
+
+
+def test_guarded_policy_searches_full_declared_budget_after_other_policies_stop():
+    trace = SelectionTrace(1)
+    trace.observe(1, 1, 3, 4)
+    trace.observe(2, 2, 3.5, 3)
+    trace.observe(3, 3, 3.6, 3.2)
+    trace.observe(4, 0.5, 2.8, 2.9)
+    report = trace.finish()
+    assert report["legacy"]["epoch"] == 1
+    assert report["stop_epochs"] == {"legacy": 2, "rmse": 3}
+    assert report["guarded"]["epoch"] == 4
+    assert report["guarded_search_epochs"] == 4
 
 
 def test_nonfinite_checkpoint_is_rejected():

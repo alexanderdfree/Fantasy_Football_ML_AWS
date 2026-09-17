@@ -42,10 +42,10 @@ class SelectionTrace:
         if not self.rows:
             raise ValueError("No checkpoint observations")
         anchor = self.best["legacy"]
-        # Use only epochs reachable under the unrestricted RMSE stopping rule.
-        # Retain all states until the true legacy anchor has been frozen.
-        stop = self.stops.get("rmse", len(self.rows))
-        eligible = [r for r in self.rows[:stop] if r["mae"] <= anchor["mae"]]
+        # The guarded policy is the minimum over the declared diagnostic
+        # budget. Its feasible set must not inherit another policy's stop.
+        # Only the legacy anchor is frozen at its original stopping point.
+        eligible = [r for r in self.rows if r["mae"] <= anchor["mae"]]
         guarded = (
             min(eligible, key=lambda r: (r["rmse"], r["mae"], r["epoch"])) if eligible else None
         )
@@ -55,6 +55,7 @@ class SelectionTrace:
             "rmse": self.best["rmse"],
             "guarded": guarded if qualifies else None,
             "guarded_qualifies": qualifies,
+            "guarded_search_epochs": len(self.rows),
             "stop_epochs": {p: self.stops.get(p, len(self.rows)) for p in ("legacy", "rmse")},
             "stop_reasons": {
                 p: "patience" if p in self.stops else "budget" for p in ("legacy", "rmse")
