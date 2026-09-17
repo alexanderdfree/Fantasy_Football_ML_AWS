@@ -42,7 +42,8 @@ identical QB/WR trajectories. Both specs default to 2022 development and accept
 
 Submit through `src.tuning.launch_ab`, passing environment options to both the
 submitter and the container. Pin `FF_DATA_RELEASE` to the protocol release,
-use the exact SHA-tagged branch image, `FF_AMP_DTYPE=fp32`, and an isolated
+use the exact SHA-tagged branch image plus its verified `--image-digest`,
+`FF_AMP_DTYPE=fp32`, and an isolated
 `ab_runs/model-default-repair-20260917` prefix. Start with one position and seed.
 The observer writes content-addressed rows, raw count parameters, full-precision
 cohort metrics, restored checkpoint evidence and saved-inference comparisons.

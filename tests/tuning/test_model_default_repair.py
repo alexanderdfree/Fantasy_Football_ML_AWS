@@ -80,6 +80,36 @@ def test_digest_pin_preserves_source_identity_and_rejects_ambiguous_images():
             _image_sha({"containerProperties": {"image": invalid}})
 
 
+def test_batch_clone_pins_digest_without_changing_production_definition():
+    from unittest.mock import MagicMock
+
+    from src.tuning import launch_ab
+
+    batch = MagicMock()
+    batch.describe_job_definitions.side_effect = [
+        {
+            "jobDefinitions": [
+                {
+                    "revision": 8,
+                    "type": "container",
+                    "containerProperties": {
+                        "image": "registry/repo:" + "a" * 40,
+                        "jobRoleArn": "original-role",
+                    },
+                }
+            ]
+        },
+        {"jobDefinitions": []},
+    ]
+    batch.register_job_definition.return_value = {"revision": 9}
+    digest = "sha256:" + "b" * 64
+    assert launch_ab.resolve_job_definition("c" * 40, batch, image_digest=digest) == "ff-ab-job:9"
+    registered = batch.register_job_definition.call_args.kwargs
+    assert registered["jobDefinitionName"] == "ff-ab-job"
+    assert registered["containerProperties"]["image"] == "registry/repo:" + "c" * 40 + "@" + digest
+    assert registered["containerProperties"]["jobRoleArn"] == "original-role"
+
+
 @pytest.mark.parametrize("position,floor", [("WR", 2013), ("K", 2015), ("DST", 2013)])
 def test_native_and_skill_origin_slicing(position, floor):
     frame = pd.DataFrame(
