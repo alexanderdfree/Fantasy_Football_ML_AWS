@@ -25,25 +25,37 @@ def stable_ztnb_reference(y, mu, log_alpha):
     )
 
 
-def observed_likelihood_check(actuals, mu, log_alpha):
+def observed_likelihood_check(actuals, mu, log_alpha, *, device=None):
     """Test every observed positive; synthetic extremes cannot authorize a fix."""
     from src.shared.training import ztnb2_log_prob
 
     mask = np.asarray(actuals) > 0
     if not mask.any():
         raise ValueError("No observed positive counts to assess")
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     outputs = []
     for dtype, function in (
         (torch.float32, ztnb2_log_prob),
         (torch.float64, stable_ztnb_reference),
     ):
-        y = torch.tensor(np.asarray(actuals)[mask], dtype=dtype)
-        m = torch.tensor(np.asarray(mu)[mask], dtype=dtype, requires_grad=True)
-        a = torch.tensor(np.asarray(log_alpha)[mask], dtype=dtype, requires_grad=True)
+        evaluation_device = device if dtype == torch.float32 else "cpu"
+        y = torch.tensor(np.asarray(actuals)[mask], dtype=dtype, device=evaluation_device)
+        m = torch.tensor(
+            np.asarray(mu)[mask], dtype=dtype, device=evaluation_device, requires_grad=True
+        )
+        a = torch.tensor(
+            np.asarray(log_alpha)[mask], dtype=dtype, device=evaluation_device, requires_grad=True
+        )
         value = function(y, m, a)
         gradients = torch.autograd.grad(value.sum(), (m, a))
-        outputs.append([v.detach().double().numpy() for v in (value, *gradients)])
-    report = {"n_positive": int(mask.sum()), "active_numerical_defect": False, "errors": {}}
+        outputs.append([v.detach().double().cpu().numpy() for v in (value, *gradients)])
+    report = {
+        "n_positive": int(mask.sum()),
+        "production_device": str(device),
+        "reference_device": "cpu",
+        "active_numerical_defect": False,
+        "errors": {},
+    }
     for name, actual, expected in zip(
         ("log_probability", "d_mu", "d_log_alpha"), *outputs, strict=True
     ):
