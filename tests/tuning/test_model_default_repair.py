@@ -67,6 +67,19 @@ def test_aws_only_training_guard(monkeypatch):
         configure({}, arm="baseline", mode="wr")
 
 
+def test_digest_pin_preserves_source_identity_and_rejects_ambiguous_images():
+    from src.scripts.resolve_training_image import _image_sha
+    from src.tuning.launch_ab import _swap_image_tag
+
+    sha, digest = "a" * 40, "sha256:" + "b" * 64
+    image = f"registry/repo:{sha}@{digest}"
+    assert _image_sha({"containerProperties": {"image": image}}) == sha
+    assert _swap_image_tag(image, "c" * 40) == "registry/repo:" + "c" * 40
+    for invalid in (f"registry/repo@{digest}", f"registry/repo:{sha}@sha256:short"):
+        with pytest.raises(ValueError):
+            _image_sha({"containerProperties": {"image": invalid}})
+
+
 @pytest.mark.parametrize("position,floor", [("WR", 2013), ("K", 2015), ("DST", 2013)])
 def test_native_and_skill_origin_slicing(position, floor):
     frame = pd.DataFrame(
