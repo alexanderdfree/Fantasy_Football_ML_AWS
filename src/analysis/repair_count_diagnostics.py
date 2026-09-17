@@ -50,7 +50,7 @@ def observed_likelihood_check(actuals, mu, log_alpha):
         scaled = np.abs(actual - expected) / (1 + np.abs(expected))
         failed = ~np.isfinite(actual) | (scaled > 1e-4)
         report["errors"][name] = {
-            "max_scaled_error": float(np.nan_to_num(scaled, nan=np.inf).max()),
+            "max_scaled_error": float(scaled.max()) if np.isfinite(scaled).all() else None,
             "n_outside_tolerance": int(failed.sum()),
         }
         report["active_numerical_defect"] |= bool(failed.any())
@@ -67,9 +67,22 @@ def observed_likelihood_check(actuals, mu, log_alpha):
 def error_summary(predictions, truth):
     targets = sorted(truth)
     errors = np.column_stack([np.asarray(predictions[t]) - np.asarray(truth[t]) for t in targets])
+    groups = {}
+    for i, target in enumerate(targets):
+        for name, mask in (
+            ("zero", np.asarray(truth[target]) == 0),
+            ("positive", np.asarray(truth[target]) > 0),
+        ):
+            values = errors[mask, i]
+            groups[f"{target}:{name}"] = {
+                "n": len(values),
+                "mae": float(np.abs(values).mean()) if len(values) else None,
+                "rmse": float(np.sqrt(np.square(values).mean())) if len(values) else None,
+            }
     return {
         "targets": targets,
         "error_covariance": np.cov(errors, rowvar=False).tolist(),
+        "zero_positive_errors": groups,
         "raw_metrics": {
             t: {
                 "mae": float(np.abs(errors[:, i]).mean()),

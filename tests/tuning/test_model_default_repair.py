@@ -80,6 +80,73 @@ def test_native_and_skill_origin_slicing(position, floor):
     assert test.season.tolist() == [2022]
 
 
+def test_kicker_provider_imputes_with_origin_ceiling_and_keeps_history(monkeypatch):
+    from src.dst import run_pipeline as dst_runner
+    from src.k import data as kicker_data
+    from src.k import run_pipeline as kicker_runner
+    from src.training.contracts import DatasetSplits
+    from src.tuning import model_default_repair as repair
+
+    frame = pd.DataFrame(
+        {"season": list(range(2015, 2026)), "season_type": "REG", "player_id": "p", "week": 1}
+    )
+    kick_history = object()
+    seen = []
+
+    def fake(cfg):
+        seen.append(kicker_data._TRAIN_MAX_SEASON)
+        return DatasetSplits(
+            frame.iloc[:5],
+            frame.iloc[5:6],
+            frame.iloc[6:],
+            {"attn_history_builder_fn": kick_history},
+        )
+
+    original_ceiling = kicker_data._TRAIN_MAX_SEASON
+    monkeypatch.setattr(repair, "STATE", {"origin": 2022})
+    monkeypatch.setattr(kicker_runner, "provide_dataset", fake)
+    monkeypatch.setattr(dst_runner, "provide_dataset", dst_runner.provide_dataset)
+    repair.install_native_origins()
+    result = kicker_runner.provide_dataset({})
+    assert seen == [2020]
+    assert original_ceiling == kicker_data._TRAIN_MAX_SEASON
+    assert result.bindings["attn_history_builder_fn"] is kick_history
+    assert result.test.season.tolist() == [2022]
+
+
+def test_protected_cohort_metrics_keep_sub_rounding_regressions(tmp_path):
+    from types import SimpleNamespace
+
+    from src.training.context import RunContext, use_context
+    from src.tuning.model_default_repair import precise_cohorts
+
+    prior = pd.DataFrame(
+        {
+            "player_id": [f"p{i:02}" for i in range(30)],
+            "season": 2021,
+            "week": 1,
+            "season_type": "REG",
+            "receiving_yards": 10.0,
+            "receiving_tds": 0.0,
+            "receptions": 1.0,
+            "fumbles_lost": 0.0,
+            "fantasy_points": 2.0,
+        }
+    )
+    frame = prior.assign(season=2022)
+    for family in FAMILIES:
+        frame[f"pred_{family}_total"] = 2.0000001
+        for target in ("receiving_yards", "receiving_tds", "receptions", "fumbles_lost"):
+            frame[f"pred_{family}_{target}"] = frame[target] + (
+                0.0000001 if target == "receptions" else 0
+            )
+    result = SimpleNamespace(prepared=SimpleNamespace(train=prior.iloc[:0], val=prior))
+    with use_context(RunContext(tmp_path / "output", tmp_path / "data")):
+        blocks = precise_cohorts(result, frame, "WR")
+    assert 0 < blocks["elite_top24"]["models"]["nn"]["mae"] < 1e-6
+    assert blocks["weekly_reference_top24"]["status"] == "unavailable"
+
+
 def records():
     output = []
     for position in POSITIONS:

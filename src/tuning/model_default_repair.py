@@ -35,10 +35,17 @@ def split_origin(frames, origin, *, position):
     if origin not in (2022, 2023, 2024, 2025):
         raise ValueError("Origin is outside the frozen repair protocol")
     full = pd.concat([f for f in frames if f is not None], ignore_index=True)
-    folds = rolling_origin_folds(
-        full, test_seasons=[origin], min_train_season=2015 if position == "K" else 2013
-    )
-    _, train, val, test = folds[0]
+    if position == "DST":
+        # The native provider selects REG schedules before constructing rows;
+        # its team-level schema does not carry generic-player season_type.
+        train = full[full.season.between(2013, origin - 2)].copy()
+        val = full[full.season.eq(origin - 1)].copy()
+        test = full[full.season.eq(origin)].copy()
+    else:
+        folds = rolling_origin_folds(
+            full, test_seasons=[origin], min_train_season=2015 if position == "K" else 2013
+        )
+        _, train, val, test = folds[0]
     if any(f.empty for f in (train, val, test)):
         raise ValueError(f"Empty historical split for {position}/{origin}")
     return train, val, test
@@ -65,8 +72,20 @@ def install_native_origins():
                 raise ValueError(
                     "Repair origins require chronological train/validation/test splits"
                 )
-            dataset = _original(cfg)
+            if _position == "K":
+                from unittest.mock import patch
+
+                from src.k import data as kicker_data
+
+                # load_data fits Vegas fill values before season_split. Set its
+                # training ceiling before invoking the native provider, rather
+                # than re-slicing values already imputed using later seasons.
+                with patch.object(kicker_data, "_TRAIN_MAX_SEASON", STATE["origin"] - 2):
+                    dataset = _original(cfg)
+            else:
+                dataset = _original(cfg)
             frames = split_origin(dataset.frames, STATE["origin"], position=_position)
+            STATE["frames"] = frames
             return DatasetSplits(*frames, dataset.bindings)
 
         provider._repair_original = original
@@ -213,6 +232,11 @@ def install_observer():
                         weights_only=True,
                     )
                 )
+                trainer.best_epoch = anchor["epoch"]
+                trainer.best_val_metric = anchor["weighted_mae"]
+                trainer.best_model_state = {
+                    k: v.clone() for k, v in trainer.model.state_dict().items()
+                }
                 history["checkpoint_selection"].update(
                     metric="weighted_mae",
                     epoch=anchor["epoch"],
@@ -414,7 +438,12 @@ def inference_parity(result, position):
     )
     if replay.attrs.get("prediction_errors"):
         raise ValueError(f"Saved inference errors: {replay.attrs['prediction_errors']}")
-    actual = result["test_df"].sort_values(KEYS).reset_index(drop=True)
+    actual = result["test_df"].copy()
+    for family, predictions in result["per_target_preds"].items():
+        if predictions is not None:
+            for target, values in predictions.items():
+                actual[f"pred_{family}_{target}"] = values
+    actual = actual.sort_values(KEYS).reset_index(drop=True)
     replay = replay.sort_values(KEYS).reset_index(drop=True)
     pd.testing.assert_frame_equal(actual[KEYS], replay[KEYS], check_dtype=False)
     errors = {}
@@ -435,6 +464,16 @@ def metric_fn(result, position):
     context = current_context()
     if context is None or position != STATE["position"]:
         raise ValueError("Repair result does not match its execution context")
+    trainers = STATE["trainers"]
+    if {t["family"] for t in trainers} != {"nn", "attn_nn"}:
+        raise ValueError("Both production neural trainers must be observed")
+    if any(
+        t["amp"]
+        or not t["device"].startswith("cuda")
+        or (not t["graph"] and not (position == "K" and t["family"] == "attn_nn"))
+        for t in trainers
+    ):
+        raise ValueError("Repair evidence did not execute production FP32 CUDA graph policies")
     frame = regular_season_rows(result["test_df"]).copy()
     if set(frame.season.unique()) != {STATE["origin"]} or frame.duplicated(KEYS).any():
         raise ValueError("Wrong origin or duplicate player-weeks")
@@ -446,6 +485,10 @@ def metric_fn(result, position):
     frame["comparison_actual"] = comparison_actuals(frame, position)
     metrics = default_metric_fn(result, position)
     for family in FAMILIES:
+        if not np.isfinite(frame[f"pred_{family}_total"]).all():
+            raise ValueError(
+                f"Nonfinite {family} predictions cannot be excluded to improve metrics"
+            )
         error = frame[f"pred_{family}_total"] - frame.comparison_actual
         valid = np.isfinite(error)
         if not valid.any():
@@ -474,6 +517,7 @@ def metric_fn(result, position):
         "data_release": os.environ.get("FF_DATA_RELEASE"),
         "batch_job_id": os.environ["AWS_BATCH_JOB_ID"],
         "gpu": torch.cuda.get_device_name(),
+        "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
         "prepared_hashes": prepared_hashes(result.prepared),
         "execution": result.get("execution"),
         "cohorts": cohorts,
