@@ -1,5 +1,6 @@
 """DST cohorts: team donors, tier scoring and the never-resampled opponent stream."""
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -18,7 +19,6 @@ from src.analysis.synthetic_history_schema import position_schema
 from src.analysis.synthetic_replay import load_cohort, replay_cohort
 from src.analysis.synthetic_replay import main as replay_main
 from src.features.engineer import build_game_history_arrays, build_opp_defense_history_arrays
-from src.shared.registry import get_inference_spec
 from tests.analysis.conftest import (
     DST_POISON,
     LONG_WEEKS,
@@ -40,11 +40,6 @@ def recipe(**kwargs):
     kwargs.setdefault("history_games", 3)
     kwargs.setdefault("block_games", 2)
     return HistoryRecipe(name="test", position="DST", **kwargs)
-
-
-def dst_bundle(directory, families=("attn_nn",)):
-    spec = get_inference_spec("DST")
-    return fake_artifacts(directory, "DST", families, opp_stats=spec["opp_attn_history_stats"])
 
 
 def test_generation_requires_the_opponent_frame_and_refuses_it_elsewhere():
@@ -198,11 +193,24 @@ def test_source_without_a_points_column_is_rejected():
         (lambda f: pd.concat([f, f.iloc[:1]]), "duplicate team/season/week"),
         (lambda f: f.assign(off_ints=[np.nan] + list(f["off_ints"][1:])), "observed and finite"),
         (lambda f: f.assign(week=[1.5] + list(f["week"][1:])), "finite integers"),
+        (lambda f: f.iloc[:0], "frame is empty"),
+        (lambda f: f.assign(off_pts_scored=0.0), "zero everywhere"),
     ],
 )
 def test_invalid_opponent_frames_fail(mutate, error):
     with pytest.raises(ValueError, match=error):
         validate_opponent_per_game(mutate(opponent_per_game_rows()), SCHEMA)
+
+
+def test_forecast_opponents_missing_from_the_frame_fail_loudly():
+    per_game = opponent_per_game_rows()
+    thin = per_game[~per_game["opponent_team"].eq("DEN")]
+    with pytest.raises(ValueError, match=r"no games for forecast opponents \[\('DEN'"):
+        generate_cohort(dst_rows(), recipe(cases=8), opponent_per_game=thin)
+    # A covered opponent with no game before the forecast week is legitimate.
+    early = per_game[per_game["week"].ge(6)]
+    cohort = generate_cohort(dst_rows(), recipe(cases=8), opponent_per_game=early)
+    assert (cohort.cases["opponent_prior_games"] == 0).any()
 
 
 def test_transforms_scale_counts_without_accounting_and_decline_ppg_targets():
@@ -218,6 +226,7 @@ def test_transforms_scale_counts_without_accounting_and_decline_ppg_targets():
     assert (scaled.games["def_sacks"] == 6).all() and (scaled.games["points_allowed"] == 34).all()
     assert scaled.games["opp_qb_epa"].isna().all()
     assert scaled.manifest["transforms"][0]["team_accounting"] == []
+    assert scaled.manifest["scoring_weights"] is None  # tiered points have no unit weights
     # Points are recomputed through the shared tier scoring (34 allowed = -1).
     assert scaled.games["fantasy_points"].iloc[0] == pytest.approx(
         6 + 2 + 2 + 1 - 1 + (0.0 if scaled.games["yards_allowed"].iloc[0] < 350 else -1.0)
@@ -253,7 +262,7 @@ def test_replay_streams_the_opponent_and_the_control_rebuilds_it(tmp_path, dst_s
         opponent_weekly_rows(),
     )
     models = tmp_path / "models"
-    dst_bundle(models, families=("attn_nn", "ridge"))
+    fake_artifacts(models, "DST", families=("attn_nn", "ridge"))
     cohort = write_cohort(
         generate_cohort(
             source, recipe(cases=5, history_games=5, window="exact"), opponent_per_game=per_game
@@ -284,20 +293,39 @@ def test_replay_streams_the_opponent_and_the_control_rebuilds_it(tmp_path, dst_s
     np.testing.assert_array_equal(
         predictions["pred_attn_nn_total"], predictions["pred_attn_nn_total_standard"]
     )
-    # A wrong or missing weekly frame breaks the control loudly.
-    with pytest.raises(ValueError, match="needs the opponent weekly frame"):
+    pinned = control["schedules_cache_sha256"]  # the local raw cache, when present
+    assert pinned is None or len(pinned) == 64
+    assert manifest["families"]["attn_nn"]["opponent_history"] == list(
+        SCHEMA.opponent_history_columns
+    )
+    assert (
+        manifest["opponent_per_game_values_sha256"]
+        == loaded.manifest["opponent_per_game_values_sha256"]
+    )
+    # A wrong or missing weekly frame breaks the control loudly, but only the
+    # attention family needs it.
+    with pytest.raises(ValueError, match="needs the opponent weekly"):
         replay_cohort(loaded, str(models), ["attn_nn"], source=source)
+    _, ridge_only = replay_cohort(loaded, str(models), ["ridge"], source=source)
+    assert ridge_only["identity_control"]["status"] == "passed"
+    assert ridge_only["identity_control"]["opponent_weekly_file_sha256"] is None
+    with pytest.raises(ValueError, match="weekly frame lacks columns: \\['sack_fumbles_lost'\\]"):
+        replay_cohort(
+            loaded,
+            str(models),
+            ["attn_nn"],
+            source=source,
+            opponent_weekly=weekly.drop(columns="sack_fumbles_lost"),
+        )
     altered = weekly.assign(passing_yards=weekly["passing_yards"] + 1.0)
     with pytest.raises(ValueError, match="opponent_stream"):
         replay_cohort(loaded, str(models), ["attn_nn"], source=source, opponent_weekly=altered)
 
 
 def test_replay_refuses_mismatched_streams(tmp_path, qb_source):
-    from tests.analysis.test_synthetic_replay import _qb_artifacts
-
     qb_models, dst_models = tmp_path / "qb", tmp_path / "dst"
-    _qb_artifacts(qb_models)
-    dst_bundle(dst_models)
+    fake_artifacts(qb_models, "QB")
+    fake_artifacts(dst_models, "DST")
     dst_cohort = write_cohort(
         generate_cohort(dst_rows(), recipe(), opponent_per_game=opponent_per_game_rows()),
         tmp_path / "dst-cohort",
@@ -311,16 +339,13 @@ def test_replay_refuses_mismatched_streams(tmp_path, qb_source):
     with pytest.raises(ValueError, match="position"):
         replay_cohort(load_cohort(qb_cohort), str(dst_models), ["attn_nn"])
     # A DST cohort written without its stream is refused at load time.
-    stripped = tmp_path / "stripped"
-    stripped.mkdir()
-    for path in dst_cohort.iterdir():
-        if path.name != "history.npz":
-            (stripped / path.name).write_bytes(path.read_bytes())
-    with np.load(dst_cohort / "history.npz") as data:
-        np.savez_compressed(stripped / "history.npz", history=data["history"], mask=data["mask"])
-    manifest = json.loads((stripped / "manifest.json").read_text())
-    manifest["files"]["history.npz"] = sources.file_digest(stripped / "history.npz")
-    (stripped / "manifest.json").write_text(json.dumps(manifest))
+    naked = dataclasses.replace(
+        generate_cohort(dst_rows(), recipe(), opponent_per_game=opponent_per_game_rows()),
+        opponent_history=None,
+        opponent_mask=None,
+        opponent_games=None,
+    )
+    stripped = write_cohort(naked, tmp_path / "stripped")
     with pytest.raises(ValueError, match="opponent stream disagrees"):
         load_cohort(stripped)
 
@@ -367,7 +392,7 @@ def test_cli_round_trip_with_the_opponent_frame(tmp_path, dst_schedules, capsys)
         tmp_path / "per_game.parquet"
     )
     models = tmp_path / "models"
-    dst_bundle(models)
+    fake_artifacts(models, "DST")
     assert (
         replay_main(
             [
@@ -395,7 +420,7 @@ def test_cli_round_trip_with_the_opponent_frame(tmp_path, dst_schedules, capsys)
 def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_schedules):
     from types import SimpleNamespace
 
-    source, weekly = dst_rows(), opponent_weekly_rows()
+    source, weekly = dst_rows().assign(headshot_url="https://logo"), opponent_weekly_rows()
     calls = []
     monkeypatch.setattr("src.dst.data.build_data", lambda **kwargs: calls.append(kwargs) or source)
     monkeypatch.setattr("src.dst.targets.compute_targets", lambda frame: frame)
@@ -410,7 +435,13 @@ def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_sched
     monkeypatch.setattr(sources, "_prepare_position_data", prepare)
     weekly_path = tmp_path / "weekly_2012_2025.parquet"
     pd.concat([weekly, weekly.iloc[:2].assign(season_type="POST")]).to_parquet(weekly_path)
-    monkeypatch.setattr(sources, "_weekly_cache_path", lambda: weekly_path)
+    missing = tmp_path / "team_stats_2012_2025.parquet"
+    monkeypatch.setattr(
+        sources, "dst_raw_cache_files", lambda: {"weekly": weekly_path, "team_stats": missing}
+    )
+    with pytest.raises(ValueError, match="raw caches missing"):
+        sources.write_sources("DST", tmp_path / "dst")
+    assert calls == []  # refused before build_data could fetch anything
     monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: {"weekly": weekly_path})
     output = sources.write_sources("DST", tmp_path / "dst")
     manifest = json.loads((output / "sources.json").read_text())
@@ -424,6 +455,9 @@ def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_sched
     )
     assert manifest["opponent_per_game_rows"] == len(per_game)
     assert manifest["raw_caches"] == {"weekly": sources.file_digest(weekly_path)}
+    assert manifest["excluded_columns"] == ["headshot_url"]
+    assert "headshot_url" not in pd.read_parquet(output / "dst.parquet").columns
+    assert "src/shared/weather_features.py" in manifest["code_sha256"]
     assert "src/dst/targets.py" in manifest["code_sha256"]
     assert manifest["prepared_data_id"] == "dst-id"
     with pytest.raises(ValueError, match="not a skill position"):

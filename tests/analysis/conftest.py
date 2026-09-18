@@ -267,14 +267,10 @@ def fake_schedules(weeks=range(1, 14)) -> pd.DataFrame:
 def opponent_per_game_rows(weeks=range(1, 14)) -> pd.DataFrame:
     """The production aggregation of the weekly slice, with the fake schedule scores."""
     from src.features.engineer import build_opp_offense_per_game_df
-    from src.shared import weather_features
 
-    original = weather_features._load_schedules
-    weather_features._load_schedules = lambda: fake_schedules(weeks)
-    try:
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("src.shared.weather_features._load_schedules", lambda: fake_schedules(weeks))
         return build_opp_offense_per_game_df(opponent_weekly_rows(weeks))
-    finally:
-        weather_features._load_schedules = original
 
 
 @pytest.fixture
