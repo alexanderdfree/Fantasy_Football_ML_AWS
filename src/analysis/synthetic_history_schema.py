@@ -8,22 +8,33 @@ copy. Schema version 2 populates QB; further positions are later slices.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
 from src.features.engineer import flatten_include_features
 from src.qb.config import POSITION_CONFIG as _QB_CONFIG
 
+BoundFn = Callable[[pd.DataFrame], pd.Series]
+
 
 @dataclass(frozen=True)
 class PositionHistorySchema:
-    """Columns, validity relations and provenance paths for one position.
+    """Columns, validity relations, transform declarations and provenance paths.
 
     ``sequence_coupled_context`` names the static feature columns whose value
     describes the real prior sequence (calendar position, rest, games to date);
     they are held at the forecast game's real value and disclosed as such.
-    ``check_columns`` lists what the ``checks`` callables read.
+    ``derived_checks`` are validity rules that are not a plain ``a <= b`` pair;
+    ``derived_caps`` bound a count that integer rounding may push over such a
+    rule. ``check_columns`` lists what those callables read.
+
+    Transform declarations partition the history columns: ``transformable``
+    production/usage stats an op may rewrite, ``opaque`` externally modeled
+    signals governed only by the recipe's opaque-signal policy, team totals
+    that move with a player stat through ``team_accounting``, and held game
+    context. ``transform_support`` maps an op to ``None`` (supported) or the
+    reason it is declined.
     """
 
     position: str
@@ -36,11 +47,17 @@ class PositionHistorySchema:
     must_observe: tuple[str, ...]
     relations: tuple[tuple[str, str], ...]
     bounded_columns: tuple[tuple[str, float, float], ...]
-    checks: tuple[Callable[[pd.DataFrame], str | None], ...]
+    derived_checks: tuple[tuple[str, BoundFn], ...]
+    derived_caps: tuple[tuple[str, BoundFn], ...]
     check_columns: tuple[str, ...]
     sequence_coupled_context: tuple[str, ...]
     scoring_scope: str
     code_paths: tuple[str, ...]
+    transformable_columns: tuple[str, ...] = ()
+    opaque_columns: tuple[str, ...] = ()
+    team_accounting: dict[str, tuple[str, float]] = field(default_factory=dict)
+    held_context_columns: tuple[str, ...] = ()
+    transform_support: dict[str, str | None] = field(default_factory=dict)
 
     def __post_init__(self):
         known = set(self.history_columns) | set(self.targets)
@@ -49,7 +66,13 @@ class PositionHistorySchema:
             | set(self.must_observe)
             | {column for relation in self.relations for column in relation}
             | {column for column, _, _ in self.bounded_columns}
+            | {column for column, _ in self.derived_caps}
             | set(self.check_columns)
+            | set(self.transformable_columns)
+            | set(self.opaque_columns)
+            | set(self.team_accounting)
+            | {column for column, _ in self.team_accounting.values()}
+            | set(self.held_context_columns)
         )
         if not referenced <= known:
             raise ValueError(
@@ -58,16 +81,22 @@ class PositionHistorySchema:
             )
         if not set(self.sequence_coupled_context) <= set(self.feature_columns):
             raise ValueError(f"{self.position} sequence-coupled context must be feature columns")
+        groups = (
+            set(self.transformable_columns),
+            set(self.opaque_columns),
+            self.team_accounting_columns,
+            set(self.held_context_columns),
+        )
+        if sum(len(group) for group in groups) != len(set().union(*groups)):
+            raise ValueError(f"{self.position} transform column groups overlap")
 
     @property
     def validated_columns(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys([*self.history_columns, *self.targets]))
 
-
-def _qb_interceptions_within_incompletions(frame: pd.DataFrame) -> str | None:
-    if (frame["interceptions"] > frame["attempts"] - frame["completions"]).any():
-        return "interceptions exceed incomplete attempts"
-    return None
+    @property
+    def team_accounting_columns(self) -> set[str]:
+        return {column for column, _ in self.team_accounting.values()}
 
 
 QB_SCHEMA = PositionHistorySchema(
@@ -95,8 +124,27 @@ QB_SCHEMA = PositionHistorySchema(
         ("carries", "team_rush_attempts"),
     ),
     bounded_columns=(("snap_pct_raw", 0.0, 1.0), ("qbr_total", 0.0, 100.0)),
-    checks=(_qb_interceptions_within_incompletions,),
-    check_columns=("interceptions", "attempts", "completions"),
+    derived_checks=(
+        (
+            "interceptions exceed incomplete attempts",
+            lambda frame: frame["interceptions"] > frame["attempts"] - frame["completions"],
+        ),
+        (
+            "touchdowns exceed team points (six per touchdown)",
+            lambda frame: (
+                6.0 * (frame["passing_tds"] + frame["rushing_tds"]) > frame["team_points_scored"]
+            ),
+        ),
+    ),
+    derived_caps=(("interceptions", lambda frame: frame["attempts"] - frame["completions"]),),
+    check_columns=(
+        "interceptions",
+        "attempts",
+        "completions",
+        "passing_tds",
+        "rushing_tds",
+        "team_points_scored",
+    ),
     sequence_coupled_context=(
         "week",
         "days_rest",
@@ -111,6 +159,43 @@ QB_SCHEMA = PositionHistorySchema(
         "config.py",
         "shared/aggregate_targets.py",
     ),
+    transformable_columns=(
+        "passing_yards",
+        "rushing_yards",
+        "passing_tds",
+        "rushing_tds",
+        "attempts",
+        "completions",
+        "carries",
+        "interceptions",
+        "fumbles_lost",
+        "snap_pct_raw",
+        "sacks",
+        "sack_yards",
+    ),
+    opaque_columns=(
+        "pass_yards_gained_exp",
+        "pass_touchdown_exp",
+        "pass_interception_exp",
+        "rush_yards_gained_exp",
+        "rush_touchdown_exp",
+        "qbr_total",
+        "pts_added",
+    ),
+    team_accounting={
+        "rushing_yards": ("team_rushing_yards", 1.0),
+        "carries": ("team_rush_attempts", 1.0),
+        "passing_tds": ("team_points_scored", 6.0),
+        "rushing_tds": ("team_points_scored", 6.0),
+    },
+    held_context_columns=(
+        "implied_team_total",
+        "implied_opp_total",
+        "is_home",
+        "days_rest",
+        "opp_team_points_scored",
+    ),
+    transform_support={"scale": None, "set_history_ppg": None},
 )
 
 POSITION_HISTORY_SCHEMAS: dict[str, PositionHistorySchema] = {"QB": QB_SCHEMA}

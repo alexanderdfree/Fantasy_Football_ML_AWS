@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR pending) · → ADR-0029
+
 - 2026-09-18 · Replay QB synthetic cohorts against saved checkpoints with exported forecast context, per-family readiness and recorded responses · (PR pending) · → ADR-0029
 
 - 2026-09-17 · Extract verified ECR digest pins for isolated A/B images while retaining source-SHA compatibility · (PR #1584) · → ADR-0020

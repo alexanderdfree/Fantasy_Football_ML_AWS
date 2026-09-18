@@ -1,0 +1,34 @@
+{
+  "schema_version": 2,
+  "name": "qb-usage-step-up",
+  "position": "QB",
+  "seed": 42,
+  "cases": 20,
+  "history_games": 8,
+  "mode": "replay",
+  "window": "exact",
+  "min_history_ppg": 15.0,
+  "max_history_ppg": 30.0,
+  "transforms": [
+    {
+      "op": "scale",
+      "factor": 0.3,
+      "steps": [1, 4],
+      "stats": [
+        "attempts",
+        "completions",
+        "passing_yards",
+        "passing_tds",
+        "interceptions",
+        "sacks",
+        "sack_yards",
+        "carries",
+        "rushing_yards",
+        "rushing_tds",
+        "fumbles_lost",
+        "snap_pct_raw"
+      ]
+    }
+  ],
+  "opaque_signal_policy": "mark_missing"
+}

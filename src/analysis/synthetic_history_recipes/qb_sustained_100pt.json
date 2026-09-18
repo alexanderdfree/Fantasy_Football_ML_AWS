@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "name": "qb-sustained-100pt-fixture",
+  "position": "QB",
+  "seed": 42,
+  "cases": 20,
+  "history_games": 8,
+  "mode": "replay",
+  "window": "exact",
+  "min_history_ppg": 15.0,
+  "max_history_ppg": 30.0,
+  "transforms": [
+    {
+      "op": "set_history_ppg",
+      "target_ppg": 100.0,
+      "stats": [
+        "passing_yards",
+        "rushing_yards",
+        "passing_tds",
+        "rushing_tds",
+        "attempts",
+        "completions",
+        "carries"
+      ]
+    }
+  ],
+  "opaque_signal_policy": "mark_missing"
+}
