@@ -1,0 +1,36 @@
+{
+  "bucket": "ff-predictor-training",
+  "files": {
+    "README.md": {
+      "bytes": 5332,
+      "sha256": "96e6a97d175a81765b802cacc3b83302b25235ac90b8225218cb80aaed2f0252"
+    },
+    "execution.json": {
+      "bytes": 14221,
+      "sha256": "f316aba8ea96a8763cec87b830555b05e4f0485fc2bb9f92c75650f6baf3e03c"
+    },
+    "findings.md": {
+      "bytes": 6416,
+      "sha256": "cf33e88de000e5aba889235d572cd3c508130bb348f418fe0110718cfb882fa5"
+    },
+    "input-manifest.json": {
+      "bytes": 82137,
+      "sha256": "2fae99fea6ac4054cb7bf6323f27533cdc92b10f6c65aaf27257a7b1ae69ccdd"
+    },
+    "recovery.json": {
+      "bytes": 29250,
+      "sha256": "6b6384b19cade23f820d5be2358d26614439c61ff6d898291aed2a40bc7ebea8"
+    },
+    "results.json": {
+      "bytes": 142297,
+      "sha256": "a1614e4a0a78272a96c6d4d0ff0bcf05157e94d4ac3a02975909d2b7ccda57a1"
+    },
+    "results.md": {
+      "bytes": 3688,
+      "sha256": "c817bdcd7efd910160f8fe805aa3c738ed32dd8018e2871e176a8946e9038c71"
+    }
+  },
+  "manifest_sha256": "b12921edee9df6592854dcf36a1b3d4f9d782278ef80a2655fd258e20bd01659",
+  "prefix": "ab_runs/wr-pr1564-20260918/report/b12921edee9df6592854dcf36a1b3d4f9d782278ef80a2655fd258e20bd01659",
+  "reporter_sha256": "6e38212ec168fd46a3159ff9b1e2fd08086336b177e1042634f3a6d9737a4a6f"
+}

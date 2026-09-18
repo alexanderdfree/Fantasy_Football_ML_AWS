@@ -1,0 +1,140 @@
+[
+  {
+    "Key": "data/raw/depth_charts_2012_2025.parquet",
+    "Size": 11859126,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "47f4ef85edaf33e58fff3f34a4934a7827ef74414d15cb1a690493236ac4dadc"
+  },
+  {
+    "Key": "data/raw/depth_charts_2023_2023.parquet",
+    "Size": 486193,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "47b564da4c06189db6100aec3ef72a350805a66fdba9cb6319a624da3c2b988e"
+  },
+  {
+    "Key": "data/raw/depth_charts_v2_2012_2025.parquet",
+    "Size": 956421,
+    "Modified": "2026-06-08T16:29:36+00:00",
+    "sha256": "92a2468b2962b5ee126a97e84680bd7e2c2c3dd55a2befd4490fe80d3ae906b8"
+  },
+  {
+    "Key": "data/raw/fftoday_projections_joined_v2_2013_2025_mr90.parquet",
+    "Size": 357151,
+    "Modified": "2026-07-06T07:15:05+00:00",
+    "sha256": "e1981ac23a44d3f4d2f0166df68264d4e54b8ddc992d457a242f5818f73b84e4"
+  },
+  {
+    "Key": "data/raw/fftoday_projections_v2_2013_2025_w1-18.parquet",
+    "Size": 324558,
+    "Modified": "2026-07-06T07:14:16+00:00",
+    "sha256": "e8d46ea9968a6b1fdd42fbbe47a767a4eae2de90e64d2cd9e68e70356c8b8003"
+  },
+  {
+    "Key": "data/raw/injuries_2012_2025.parquet",
+    "Size": 1431363,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "023e18fb3fa999d03384cf048e47ee3411625e92d1801fe212bd66163dc9a947"
+  },
+  {
+    "Key": "data/raw/injuries_2023_2023.parquet",
+    "Size": 128895,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "768bfa2cb87108b4fb80c2d84a5763106cef8bba4426d3c67da86a69f486cb92"
+  },
+  {
+    "Key": "data/raw/kicker_kicks_pbp_2015_2025.parquet",
+    "Size": 238944,
+    "Modified": "2026-04-27T04:25:43+00:00",
+    "sha256": "890b749c2270d3bee45cdd08b6b25dc5809f18667d394073cef4253718f7990f"
+  },
+  {
+    "Key": "data/raw/kicker_pbp_2015_2024.parquet",
+    "Size": 124217,
+    "Modified": "2026-06-08T16:29:38+00:00",
+    "sha256": "a4c13ec5914418e697107e87ff3204dc7ec928fd328848b367a00f483aad1a8c"
+  },
+  {
+    "Key": "data/raw/rosters_2012_2025.parquet",
+    "Size": 7494587,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "56ce89a81b2a0f0f849ab35e27947544b0f79a010943448631a3ed6cef6467b6"
+  },
+  {
+    "Key": "data/raw/rosters_2023_2023.parquet",
+    "Size": 563180,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "4a97021ae28f986858d188315ecb5aaac4f6c16d647c0b590aaa119c99e4640b"
+  },
+  {
+    "Key": "data/raw/rotowire_slate_ppr_2018_2025.parquet",
+    "Size": 281531,
+    "Modified": "2026-07-06T11:11:59+00:00",
+    "sha256": "9144e3f2034a54830c8c1e045762c4c23e186fe2df59a3f6435832c97c370573"
+  },
+  {
+    "Key": "data/raw/schedules_2012_2025.parquet",
+    "Size": 320996,
+    "Modified": "2026-04-19T08:38:40+00:00",
+    "sha256": "6f55cd79051a3ed31eddd67d90a9489824dbee5e0ca3208d31f73ef0575a1cad"
+  },
+  {
+    "Key": "data/raw/schedules_2023_2023.parquet",
+    "Size": 49377,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "0957db316ca8bb72e3dd3ff0bba18d920f7af7fae7c535d44ce1be3bee6e783e"
+  },
+  {
+    "Key": "data/raw/snap_counts_2012_2025.parquet",
+    "Size": 3267572,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "489fa1fe5d70d9dddcc15125b9e2ab6a99152a949677ce8d344e071f780e9a34"
+  },
+  {
+    "Key": "data/raw/snap_counts_2023_2023.parquet",
+    "Size": 242136,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "140db7a25f3daa3aa599c2c079c975ea13f9d9fae8453dcf8e43fbb0bf69cbad"
+  },
+  {
+    "Key": "data/raw/team_stats_2012_2025.parquet",
+    "Size": 744165,
+    "Modified": "2026-06-08T16:29:39+00:00",
+    "sha256": "6c0611ad16684ef4d16203946d2ded38bacb3eb408efa19bee5bf6bcce705918"
+  },
+  {
+    "Key": "data/raw/weekly_2012_2025.parquet",
+    "Size": 3830705,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "3d030239e5254ba1321e06b2683e2a62138f236b624c371d44afbb32eb8611e8"
+  },
+  {
+    "Key": "data/raw/weekly_2023_2023.parquet",
+    "Size": 278601,
+    "Modified": "2026-04-19T09:00:50+00:00",
+    "sha256": "a48934ec4858c03d2fe3239704cafe42c2dff65ac14836d007285d59e6f64064"
+  },
+  {
+    "Key": "data/raw/weekly_evaluation_reference_v1.parquet",
+    "Size": 87678,
+    "Modified": "2026-09-10T11:21:56+00:00",
+    "sha256": "f538395845d77a659a763a2a33079685c25a7cad635bc57ea4a23a3244418d76"
+  },
+  {
+    "Key": "data/test.parquet",
+    "Size": 2344430,
+    "Modified": "2026-09-10T11:06:12+00:00",
+    "sha256": "c59ba912088ca92b9863dcd04ebe99f8ab322217be690df791675578b4e344f1"
+  },
+  {
+    "Key": "data/train.parquet",
+    "Size": 17880274,
+    "Modified": "2026-09-10T11:06:11+00:00",
+    "sha256": "958ec26b2c07b514e1a974b833505288fc57139d0a3e00fa2defd6264216b1e1"
+  },
+  {
+    "Key": "data/val.parquet",
+    "Size": 2330421,
+    "Modified": "2026-09-10T11:06:12+00:00",
+    "sha256": "66ee26777f9902d83d4da8284b636c3c732ff2d7626d2d878e3e25845a6396b4"
+  }
+]
