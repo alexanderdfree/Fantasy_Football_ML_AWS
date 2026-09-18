@@ -43,7 +43,12 @@ from src.shared.evaluation import (
     print_comparison_table,
 )
 from src.shared.evaluation_cohorts import build_cohorts
-from src.shared.feature_build import build_position_features, scale_and_clip
+from src.shared.feature_build import (
+    BOUNDED_FLAG_DOMAINS,
+    apply_bounded_flag_scaling,
+    build_position_features,
+    scale_and_clip,
+)
 from src.shared.models import (
     ElasticNetModel,
     ElasticNetMultiTarget,
@@ -226,16 +231,51 @@ def _maybe_force_dropout_zero(cfg: dict) -> dict:
     return out
 
 
-def _scale_xs(*X_arrays: np.ndarray) -> tuple[StandardScaler, list[np.ndarray]]:
-    """Fit a StandardScaler on the first array, transform + clip all arrays.
+def _scale_xs(
+    *X_arrays: np.ndarray,
+    cfg: dict | None = None,
+    feature_cols: list[str] | None = None,
+) -> tuple[StandardScaler, list[np.ndarray]]:
+    """Fit the NN scaler on train, apply requested policies, and transform/clip.
 
     Returns ``(scaler, [X_train_s, X_val_s, ...])``. Callers unpack the list
     with as many positional targets as they passed in. See
     ``src/shared/feature_build.py::scale_and_clip`` for the clip rationale.
+
+    When ``cfg["nn_bounded_flag_range"]`` is set (a positive float), the fitted
+    scaler's stats for bounded ordinal flag columns are replaced so their
+    semantic domain maps onto ``[-range, +range]`` before anything is
+    transformed (see ``BOUNDED_FLAG_DOMAINS``). ``feature_cols`` must then be the
+    feature-column list matching the arrays' column order.
+
+    Both failure modes raise rather than degrade: a missing column list would
+    silently fall back to plain scaling, and an override that matches no column
+    would report as a genuine "no effect" A/B result. Neither is recoverable at
+    this depth and both are invisible in a fleet run's aggregate table.
     """
     scaler = StandardScaler()
-    scaled = [scale_and_clip(scaler, X_arrays[0], fit=True)]
-    scaled.extend(scale_and_clip(scaler, X) for X in X_arrays[1:])
+    flag_range = (cfg or {}).get("nn_bounded_flag_range")
+    if flag_range is None:
+        # Preserve main's fit_transform path exactly while the experiment is off.
+        scaled = [scale_and_clip(scaler, X_arrays[0], fit=True)]
+        scaled.extend(scale_and_clip(scaler, X) for X in X_arrays[1:])
+        return scaler, scaled
+
+    if feature_cols is None:
+        raise ValueError(
+            "nn_bounded_flag_range is set but no column list reached _scale_xs; "
+            "the override cannot be positioned without one."
+        )
+    scaler.fit(X_arrays[0])
+    touched = apply_bounded_flag_scaling(scaler, feature_cols, target_range=flag_range)
+    if not touched:
+        raise ValueError(
+            f"nn_bounded_flag_range={flag_range} is set but none of "
+            f"{sorted(BOUNDED_FLAG_DOMAINS)} is among the {len(feature_cols)} scaled "
+            "columns — the knob would be a silent no-op."
+        )
+    print(f"  Bounded-flag scaling (range={flag_range}) applied to: {touched}")
+    scaled = [scale_and_clip(scaler, X) for X in X_arrays]
     return scaler, scaled
 
 
@@ -765,11 +805,24 @@ def _train_nn(
     cfg,
     targets,
     seed,
+    feature_cols=None,
 ):
-    """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history)."""
+    """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
+
+    ``feature_cols`` names the columns of ``X_*`` in order; it is only consumed
+    by the ``nn_bounded_flag_range`` scaler override.
+    """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
-    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(
+        X_train,
+        X_val,
+        X_test,
+        cfg=cfg,
+        feature_cols=feature_cols
+        if feature_cols is not None
+        else (cfg["get_feature_columns_fn"]() if "get_feature_columns_fn" in cfg else None),
+    )
 
     device = _nn_device()
     train_loader, val_loader = make_dataloaders(
@@ -857,10 +910,22 @@ def _train_attention_nn(
         X_train = X_train[:, col_idx]
         X_val = X_val[:, col_idx]
         X_test = X_test[:, col_idx]
+        # ``get_attn_static_columns`` already returns in feature_cols order and
+        # ``col_idx`` is built from that same set, so static_cols is exactly the
+        # column order of the sliced X. It is also the list
+        # ``_attn_saved_static_cols`` persists into the scaler sidecar, so
+        # reusing it here keeps the override and the artifact metadata on one
+        # source of truth.
         suffix = " (filtered)" if len(col_idx) != len(feature_cols) else ""
         print(f"  Attention static features: {len(col_idx)}/{len(feature_cols)}{suffix}")
 
-    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(
+        X_train,
+        X_val,
+        X_test,
+        cfg=cfg,
+        feature_cols=static_cols,
+    )
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     device = _nn_device()
@@ -971,6 +1036,7 @@ def _train_nested_attention_nn(
     game_hist_val=None,
     game_hist_test=None,
     init_state_dict=None,
+    feature_cols=None,
 ):
     """Train a MultiHeadNetWithNestedHistory on pre-padded nested history.
 
@@ -983,10 +1049,20 @@ def _train_nested_attention_nn(
     aggregates (``ATTN_HISTORY_STATS``) aligned to the same outer game order
     as the nested kick tensor; when provided they are concatenated with the
     inner-pool output before the outer attention.
+
+    ``feature_cols`` names the columns of ``X_*`` in order (the caller's
+    ``attn_feature_cols``); it is only consumed by the
+    ``nn_bounded_flag_range`` scaler override.
     """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
-    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(X_train, X_val, X_test)
+    nn_scaler, (X_train_s, X_val_s, X_test_s) = _scale_xs(
+        X_train,
+        X_val,
+        X_test,
+        cfg=cfg,
+        feature_cols=feature_cols if feature_cols is not None else cfg.get("attn_static_features"),
+    )
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
     device = _nn_device()
@@ -1204,6 +1280,7 @@ def _train_attention_holdout(
                 game_hist_val=game_hist_val,
                 game_hist_test=game_hist_test,
                 init_state_dict=init_state_dict,
+                feature_cols=attn_feature_cols,
             ),
             attn_feature_cols,
         )
@@ -1827,6 +1904,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                     cfg,
                     targets,
                     seed,
+                    feature_cols=feature_cols,
                 )
 
         # --- Attention NN (game history as variable-length sequences) ---
@@ -2296,7 +2374,12 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         fold_ridge_metrics.append(compute_target_metrics(y_val_dict, ridge_val_preds, targets))
 
         # NN training for this fold
-        _, (X_train_s, X_val_s) = _scale_xs(X_train, X_val)
+        _, (X_train_s, X_val_s) = _scale_xs(
+            X_train,
+            X_val,
+            cfg=cfg,
+            feature_cols=feature_cols,
+        )
 
         device = _nn_device()
         train_loader, val_loader = make_dataloaders(
@@ -2472,6 +2555,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         cfg,
         targets,
         seed,
+        feature_cols=feature_cols,
     )
 
     # Attention NN (game history as sequences) — mirrors run_pipeline so CV mode

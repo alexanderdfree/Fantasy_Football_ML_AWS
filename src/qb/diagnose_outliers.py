@@ -140,6 +140,7 @@ def _train_models(seed=42):
         cfg,
         targets,
         seed,
+        feature_cols=feature_cols,
     )
     # The IG step backprops through ``nn_model``; pull its device once so
     # downstream tensors land on the right one without a second lookup.
