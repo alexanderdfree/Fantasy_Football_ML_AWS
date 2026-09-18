@@ -206,54 +206,90 @@ def _agg(values):
     return {"mean": round(mean, 4), "std": round(std, 4), "n": len(vals)}
 
 
-def _summarize(runs):
-    """Build the COLD-vs-WARM comparison, per position × test_season (averaged
-    over seeds) and as the walk-forward mean±std across origins per arm."""
+def _summarize(runs, *, positions=None, test_seasons=None, requested_arms=("cold", "warm")):
+    """Compare matched seeds/origins; retain standalone requested-arm summaries."""
     summary = {}
-    positions = sorted({r["position"] for r in runs})
+    arms = ("cold", "warm")
+    compare = set(arms).issubset(requested_arms)
+    positions = sorted(set(positions or ()) | {r["position"] for r in runs})
+
+    def comparison(paired, available):
+        return {
+            "status": "available" if compare and paired else "unavailable",
+            "reason": (
+                "single_arm_selected"
+                if not compare
+                else (None if paired else "no_matched_seed_pairs")
+            ),
+            "paired_seeds": paired,
+            "unpaired_seeds": {arm: sorted(available[arm] - set(paired)) for arm in arms},
+        }
+
     for position in positions:
         pos_runs = [r for r in runs if r["position"] == position]
-        seasons = sorted({f["test_season"] for r in pos_runs for f in r["folds"]})
+        by_arm = {
+            arm: {
+                r["seed"]: {f["test_season"]: f for f in r["folds"]}
+                for r in pos_runs
+                if r["arm"] == arm
+            }
+            for arm in arms
+        }
+        seasons = sorted(
+            set(test_seasons or ()) | {f["test_season"] for r in pos_runs for f in r["folds"]}
+        )
 
         per_season = {}
         for season in seasons:
+            available = {
+                arm: {seed for seed, folds in by_arm[arm].items() if season in folds}
+                for arm in arms
+            }
+            paired = sorted(available["cold"] & available["warm"]) if compare else []
             entry = {}
-            for arm in ("cold", "warm"):
-                maes, rmses, r2s = [], [], []
-                for r in pos_runs:
-                    if r["arm"] != arm:
-                        continue
-                    for f in r["folds"]:
-                        if f["test_season"] == season:
-                            maes.append(f["mae"])
-                            rmses.append(f["rmse"])
-                            r2s.append(f["r2"])
-                entry[arm] = {"mae": _agg(maes), "rmse": _agg(rmses), "r2": _agg(r2s)}
-            cold_mae = entry["cold"]["mae"]["mean"]
-            warm_mae = entry["warm"]["mae"]["mean"]
-            entry["delta_mae_warm_minus_cold"] = (
-                round(warm_mae - cold_mae, 4)
-                if cold_mae is not None and warm_mae is not None
-                else None
-            )
+            for arm in arms:
+                selected = paired if compare else sorted(available[arm])
+                entry[arm] = {
+                    metric: _agg([by_arm[arm][seed][season][metric] for seed in selected])
+                    for metric in ("mae", "rmse", "r2")
+                }
+            entry["comparison"] = comparison(paired, available)
+            entry["delta_mae_warm_minus_cold"] = _agg(
+                [
+                    by_arm["warm"][seed][season]["mae"] - by_arm["cold"][seed][season]["mae"]
+                    for seed in paired
+                ]
+            )["mean"]
             per_season[str(season)] = entry
 
-        # Walk-forward aggregate (mean±std across origins), per arm per seed,
-        # then averaged over seeds — the "instead of just the mean/STD" view.
+        # Average the same origins for each matched seed before aggregating seeds.
+        paired_origins = {
+            seed: sorted(set(by_arm["cold"][seed]) & set(by_arm["warm"][seed]))
+            for seed in sorted(set(by_arm["cold"]) & set(by_arm["warm"]))
+        }
+        paired_origins = {seed: years for seed, years in paired_origins.items() if years}
         walkforward = {}
-        for arm in ("cold", "warm"):
+        for arm in arms:
             seed_means = []
-            for r in pos_runs:
-                if r["arm"] != arm:
-                    continue
-                fold_maes = [f["mae"] for f in r["folds"]]
+            selected = paired_origins if compare else by_arm[arm]
+            for seed in selected:
+                years = paired_origins[seed] if compare else by_arm[arm][seed]
+                fold_maes = [by_arm[arm][seed][year]["mae"] for year in years]
                 if fold_maes:
                     seed_means.append(statistics.fmean(fold_maes))
             walkforward[arm] = _agg(seed_means)
+        walkforward_comparison = comparison(
+            sorted(paired_origins) if compare else [],
+            {arm: set(by_arm[arm]) for arm in arms},
+        )
+        walkforward_comparison["paired_origins"] = {
+            str(seed): years for seed, years in paired_origins.items()
+        }
 
         summary[position] = {
             "per_season": per_season,
             "walkforward_mae_over_origins": walkforward,
+            "walkforward_comparison": walkforward_comparison,
         }
     return summary
 
@@ -277,12 +313,19 @@ def _print_table(summary):
             if delta is not None:
                 flag = "  (warm better)" if delta < 0 else ("  (cold better)" if delta > 0 else "")
             print(f"  {season:<14}{cold_s:>12}{warm_s:>12}{delta_s:>16}{flag}")
+            comparison = e["comparison"]
+            if comparison["status"] == "unavailable":
+                print(f"    comparison unavailable: {comparison['reason']}")
+            else:
+                print(f"    paired seeds: {comparison['paired_seeds']}")
+                if any(comparison["unpaired_seeds"].values()):
+                    print(f"    excluded unpaired seeds: {comparison['unpaired_seeds']}")
         wf = s["walkforward_mae_over_origins"]
         for arm in ("cold", "warm"):
             a = wf[arm]
             if a["mean"] is not None:
                 print(
-                    f"  walk-forward {arm.upper():<5} mae (mean±std over origins): "
+                    f"  walk-forward {arm.upper():<5} mae (origins averaged per seed): "
                     f"{a['mean']:.3f} ± {a['std']:.3f}  (n_seeds={a['n']})"
                 )
 
@@ -381,14 +424,31 @@ def main(argv=None):
         ),
     }
 
-    def _flush(runs):
-        # Rewrite the full artifact after every completed arm so a gaming
-        # interrupt mid-run still leaves a valid, partial JSON (this box is
-        # also a gaming machine — long runs get pre-empted).
-        with open(out_path, "w") as fh:
-            json.dump({"meta": meta, "runs": runs, "summary": _summarize(runs)}, fh, indent=2)
-
     runs = []
+    failures = []
+    expected_runs = len(positions) * len(args.seeds) * len(args.arms)
+
+    def _summary():
+        return _summarize(
+            runs, positions=positions, test_seasons=test_seasons, requested_arms=args.arms
+        )
+
+    def _flush(runs):
+        # Preserve completed work and every failed request in partial checkpoints.
+        status = "failed" if failures else ("complete" if len(runs) == expected_runs else "running")
+        with open(out_path, "w") as fh:
+            json.dump(
+                {
+                    "meta": meta,
+                    "status": status,
+                    "runs": runs,
+                    "failures": failures,
+                    "summary": _summary(),
+                },
+                fh,
+                indent=2,
+            )
+
     for position in positions:
         cfg = get_config(position)
         for seed in args.seeds:
@@ -406,6 +466,16 @@ def main(argv=None):
                     )
                 except Exception as exc:  # noqa: BLE001 — surface, keep other cells
                     print(f"!! {position} seed={seed} {arm} FAILED: {exc!r}")
+                    failures.append(
+                        {
+                            "position": position,
+                            "seed": seed,
+                            "arm": arm,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                        }
+                    )
+                    _flush(runs)
                     continue
                 runs.append(
                     {
@@ -417,10 +487,15 @@ def main(argv=None):
                 )
                 _flush(runs)
 
-    summary = _summarize(runs)
+    summary = _summary()
     _print_table(summary)
     _flush(runs)
     print(f"\nWrote {out_path}")
+    if failures:
+        print(
+            f"ERROR: {len(failures)} requested arms failed; completed results are retained above."
+        )
+        raise SystemExit(1)
     return out_path
 
 

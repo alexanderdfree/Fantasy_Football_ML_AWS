@@ -40,8 +40,7 @@ install_parameterized_targets(
             "passing_yards",
             "passing_tds",
             "interceptions",
-            # Read by compute_targets' decomposition-discrepancy check (2pt
-            # conversions are scored in fantasy_points but aren't RB targets).
+            # Extra source stats must not alter the modeled target decomposition.
             "rushing_2pt_conversions",
             "receiving_2pt_conversions",
         ),

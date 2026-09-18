@@ -1493,3 +1493,60 @@ def test_runtime_cache_upload_never_bypasses_offline_release_publisher(
     with mock.patch("boto3.client") as client:
         assert model_sync.upload_predictions_cache_to_s3() is None
         client.assert_not_called()
+
+
+def _partially_extractable_tarball():
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        member = tarfile.TarInfo("rejected_model.pkl")
+        member.size = 3
+        archive.addfile(member, io.BytesIO(b"bad"))
+        member = tarfile.TarInfo("invalid_link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "/outside-archive"
+        archive.addfile(member)
+    return buffer.getvalue()
+
+
+@pytest.mark.unit
+def test_manifest_fallback_does_not_keep_files_from_rejected_archive(tmp_path):
+    # Approved walk is stable -> previous_stable; the rejected stable archive
+    # must leave nothing behind for the previous_stable extract to inherit.
+    client = _FakeS3(
+        {
+            "models/QB/manifest.json": _manifest_bytes("rejected", previous_key="approved"),
+            "rejected": _partially_extractable_tarball(),
+            "approved": _make_tarball({"valid_model.pkl": b"good"}),
+        }
+    )
+    dest = tmp_path / "models"
+    result = model_sync._resolve_manifest_extract(client, "bucket", "models", "QB", dest)
+
+    assert result["source"] == "previous_stable"
+    assert (dest / "valid_model.pkl").read_bytes() == b"good"
+    assert sorted(p.name for p in dest.iterdir()) == ["valid_model.pkl"]
+
+
+@pytest.mark.unit
+def test_rejected_archive_keeps_existing_model_tree_intact(tmp_path):
+    dest = tmp_path / "models"
+    dest.mkdir()
+    (dest / "existing.pkl").write_bytes(b"existing")
+
+    with pytest.raises(tarfile.TarError):
+        model_sync._extract_tarball(_partially_extractable_tarball(), dest)
+
+    assert sorted(p.name for p in dest.iterdir()) == ["existing.pkl"]
+    assert (dest / "existing.pkl").read_bytes() == b"existing"
+
+
+@pytest.mark.unit
+def test_valid_archive_replaces_obsolete_model_files(tmp_path):
+    dest = tmp_path / "models"
+    dest.mkdir()
+    (dest / "obsolete.pkl").write_bytes(b"obsolete")
+
+    model_sync._extract_tarball(_make_tarball({"valid.pkl": b"valid"}), dest)
+
+    assert sorted(p.name for p in dest.iterdir()) == ["valid.pkl"]
+    assert (dest / "valid.pkl").read_bytes() == b"valid"

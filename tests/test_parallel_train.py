@@ -9,6 +9,9 @@ the integration smoke (a real ``--dry-run`` / small run) documented in SETUP.md.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +62,11 @@ def test_split_cores_sizes_and_coverage(n, expected_sizes):
 def test_split_cores_clamps_when_more_positions_than_cores():
     chunks = pt._split_cores([0, 1, 2], 5)
     assert chunks == [[0], [1], [2]]  # clamped to one core each, no empties
+
+
+def test_unsupported_affinity_does_not_supply_posix_preexec_hook(monkeypatch):
+    monkeypatch.delattr(pt.os, "sched_setaffinity", raising=False)
+    assert pt._pin_self([0, 1]) is None
 
 
 def test_history_cost_order_slowest_first(tmp_path):
@@ -173,6 +181,78 @@ def test_launch_rolling_origin_cell_isolates_files_and_passes_origin(tmp_path, m
     assert info["log_path"].endswith("local-train-RB-2025.log")
     assert info["cell_key"] == "RB:2025" and info["origin"] == 2025
     assert captured["env"][pt.ENV_POS] == "RB:2025"
+
+
+@pytest.mark.parametrize("pos", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_rolling_origin_workers_isolate_pipeline_artifacts(tmp_path, monkeypatch, pos):
+    """Follow worker -> origin scorer -> pipeline boundary, checking model/scaler paths."""
+    from src.benchmarking import benchmark
+    from src.shared import pipeline, registry
+
+    monkeypatch.chdir(tmp_path)
+    reference = tmp_path / "data" / "raw" / "reference.txt"
+    reference.parent.mkdir(parents=True)
+    reference.write_text("shared reference")
+    producer = tmp_path / pos.lower() / "outputs" / "models"
+    producer.mkdir(parents=True)
+    model_name = registry.INFERENCE_REGISTRY[pos]["nn_file"]
+    for name in (model_name, "nn_scaler.pkl"):
+        (producer / name).write_text("production")
+    observed = []
+
+    def run(position, test_df):
+        assert Path("data/raw/reference.txt").read_text() == "shared reference"
+        models = Path(position.lower()) / "outputs" / "models"
+        models.mkdir(parents=True, exist_ok=True)
+        for name in (model_name, "nn_scaler.pkl"):
+            (models / name).write_text(str(test_df))
+        assert (models / model_name).read_text() == (models / "nn_scaler.pkl").read_text()
+        observed.append(models.resolve())
+        return {
+            "ridge_metrics": {"total": {"mae": float(test_df), "r2": 0.0}},
+            "nn_metrics": {"total": {"mae": 1.0, "r2": 0.0}},
+        }
+
+    monkeypatch.setattr(
+        benchmark,
+        "_rolling_origin_inputs",
+        lambda position: ([(year, None, None, year) for year in (2023, 2025)], {}),
+    )
+    monkeypatch.setattr(
+        registry, "get_runner", lambda position: lambda **kwargs: run(position, kwargs["test_df"])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "run_pipeline",
+        lambda position, cfg, train, val, test, seed: run(position, test),
+    )
+    for year in (2023, 2025):
+        summary = tmp_path / f"{pos}-{year}.json"
+        assert pt._run_worker(pos, str(summary), True, False, str(year)) == 0
+        assert json.loads(summary.read_text())["ridge_mae"] == float(year)
+
+    assert len(set(observed)) == 2
+    assert all(path != producer and not path.exists() for path in observed)
+    for name in (model_name, "nn_scaler.pkl"):
+        assert (producer / name).read_text() == "production"
+    assert Path.cwd() == tmp_path
+
+
+def test_single_split_worker_keeps_producer_outputs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    model = Path("qb/outputs/models/qb_multihead_nn.pt")
+
+    def run(position):
+        model.parent.mkdir(parents=True)
+        model.write_text("new production model")
+        return {"position": position}
+
+    monkeypatch.setattr(pt, "run_one", run)
+    monkeypatch.setattr(pt, "summarize_pipeline_result", lambda position, result: result)
+    monkeypatch.setattr(pt, "_cohorts_block", lambda position, result: None)
+    assert pt._run_worker("QB", "summary.json", False, False) == 0
+    assert model.read_text() == "new production model"
+    assert json.loads(Path("summary.json").read_text()) == {"position": "QB"}
 
 
 # ------------------------------------------------------------------------- merge

@@ -141,6 +141,26 @@ def test_run_position_sentinel_fails_on_ridge_mismatch():
     assert out["summary"]["verdict"]["note"] == "sentinel_failed"
 
 
+@pytest.mark.parametrize("only", [["onecycle"], ["plateau"], ["cosine_warm_restarts", "plateau"]])
+def test_scheduler_subset_without_complete_comparison_still_reports(only):
+    result = ast.run_position(
+        "QB",
+        [42],
+        scheds=only,
+        run_fn=_fake_run_factory(dict.fromkeys(ast.SCHEDULERS, 4.0)),
+        base_cfg=_onecycle_base(),
+    )
+    assert len(result["rows"]) == len(only)
+    assert result["summary"]["verdict"]["note"] == "incomplete"
+
+
+def test_production_winner_noise_uses_alternative_dispersion():
+    agg = {"onecycle": {"attn": (4.0, 0.0)}, "plateau": {"attn": (4.1, 1.0)}}
+    result = ast._position_verdict("QB", agg, list(agg), "onecycle", True, True)
+    assert result["pooled_std"] == pytest.approx(1.0)
+    assert result["note"] == "production_best_flat"
+
+
 def test_result_is_json_serializable():
     import json
 

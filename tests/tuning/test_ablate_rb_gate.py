@@ -382,6 +382,12 @@ def test_results_to_rows_multi_seed_averages():
     assert stats["n"] == 2
 
 
+def test_gate_table_preserves_observed_seed_std(capsys):
+    results = [_make_result("C", 42, 1.0, 1.0), _make_result("C", 43, 3.0, 3.0)]
+    ablate_rb_gate.print_summary(ablate_rb_gate._results_to_rows(results))
+    assert "2.0000±1.4142" in capsys.readouterr().out
+
+
 def test_results_to_rows_skips_errors():
     """Error results must be excluded from the aggregation."""
     good = _make_result("B", 42, 7.20, 0.80)

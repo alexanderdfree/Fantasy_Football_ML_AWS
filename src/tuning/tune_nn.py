@@ -50,7 +50,7 @@ production recipe (attention sizing, lr, batch, scheduler, AND the static
 backbone) at the position's POSITION_CONFIG. Isolating those two axes is
 deliberate: the history effects are small (~2-3%), and v1 — which co-tuned lr
 + sizing alongside them — let lr dominate the objective and swamp them
-(GH #1239). It lands in the separate ``history_v2`` study namespace and
+(GH #1239). It lands in the separate ``history_v3`` study namespace and
 supports QB/RB/WR/TE only. The Batch route carries it via ``FF_TUNE_SCOPE``
 (the fixed ENTRYPOINT can't take ``--scope``), set by ``launch_tune --scope``.
 
@@ -327,7 +327,7 @@ def _force_eager_for_concurrent_thread_trials(parallel_backend: str, n_jobs: int
     Deliberately overrides an explicit ``FF_CUDA_GRAPH=1`` (that is the exact
     config the measured job crashed under). Must run BEFORE
     ``_resolve_storage_version`` so the study lands in the eager namespace
-    (``scheduler_v2``) the trials will actually train under.
+    (``scheduler_v3``) the trials will actually train under.
     """
     if parallel_backend != _THREAD_BACKEND or n_jobs <= 1 or not _cuda_graph_enabled():
         return False
@@ -349,12 +349,19 @@ def _force_eager_for_concurrent_thread_trials(parallel_backend: str, n_jobs: int
 
 
 def _resolve_storage_version(
-    parallel_backend: str, scope: str = _DEFAULT_SCOPE
+    parallel_backend: str,
+    scope: str = _DEFAULT_SCOPE,
+    *,
+    stacked_n: int = 0,
+    stacked_epochs: int = 30,
 ) -> tuple[str, bool, bool]:
     """Storage namespace for this run, plus the capture decision it keys on.
 
-    ``scope`` selects the search-space root (``scheduler_v2`` for full,
-    ``history_v2`` for ``--scope history``) so the two never share a study DB.
+    ``scope`` selects the search-space root (``scheduler_v3`` for full,
+    ``history_v3`` for ``--scope history``) so the two never share a study DB.
+
+    Stacked trials always disable graphs; read-only lookups must use that same
+    namespace even though they do not apply the ensemble training environment.
 
     Keyed on ``cuda_graph_enabled()`` — the same autodetect + force-off-override
     resolver the trainer consults at capture time — NOT on FF_CUDA_GRAPH
@@ -365,15 +372,17 @@ def _resolve_storage_version(
     refuses capture). Either mislabel resumes a study DB from the wrong
     training trajectory (ADR-0017: graphed and eager are not comparable).
     """
-    cuda_graph = _cuda_graph_enabled()
-    full_graph = _cuda_graph_full_enabled()
+    stacked = stacked_n >= 2
+    cuda_graph = False if stacked else _cuda_graph_enabled()
+    full_graph = False if stacked else _cuda_graph_full_enabled()
     return (
         _resolve_search_space_version(
             parallel_backend,
             cuda_graph=cuda_graph,
             full_graph=full_graph,
             root=_SCOPE_ROOTS.get(scope, _DEFAULT_SEARCH_SPACE_VERSION),
-        ),
+        )
+        + (f"_ens{stacked_n}x{stacked_epochs}" if stacked else ""),
         cuda_graph,
         full_graph,
     )
@@ -958,8 +967,6 @@ def _make_stacked_objective(
     """
 
     def objective(trial: optuna.Trial) -> float:
-        import torch
-
         from src.tuning.ab_ensemble_seeds import capture_seeds, train_stacked
 
         overrides = _sample_overrides(trial, scope, pos)
@@ -979,7 +986,7 @@ def _make_stacked_objective(
         seeds = [seed + k for k in range(stacked_n)]
         with _lease_cores("tune_nn_trial", default=None):
             captures, _ = capture_seeds(pos, seeds, base_cfg=cfg, memo=_TRIAL_DATA_MEMO)
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device = captures[0]["trainer"].device
             train_stacked(captures, cfg, device, stacked_epochs, epoch_callback=epoch_callback)
         if not captured:
             raise RuntimeError(
@@ -1524,7 +1531,7 @@ def main():
             "recipe (attention sizing, lr, batch, scheduler, and the static "
             "backbone) at the position's config, so the small history effects "
             "aren't swamped by the lr/sizing nuisances that confounded v1. "
-            "History-scope studies live in the separate history_v2 namespace and "
+            "History-scope studies live in the separate history_v3 namespace and "
             "support QB/RB/WR/TE only (flat history). Pairs with stacked seeds for "
             "cheap seed-robust evaluation. Env default: FF_TUNE_SCOPE (the Batch route)."
         ),
@@ -1732,11 +1739,9 @@ def main():
     # Order matters: the eager-force mutates FF_CUDA_GRAPH[_FULL], and the storage
     # resolver below keys the study namespace off cuda_graph[_full]_enabled().
     _force_eager_for_concurrent_thread_trials(parallel_backend, n_jobs)
-    storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(parallel_backend, scope)
-    if stacked_n:
-        # Seed-averaged fixed-epochs objective ≠ the eager early-stop objective;
-        # never mix their trials in one study.
-        storage_version = f"{storage_version}_ens{stacked_n}x{stacked_epochs}"
+    storage_version, cuda_graph, cuda_graph_full = _resolve_storage_version(
+        parallel_backend, scope, stacked_n=stacked_n, stacked_epochs=stacked_epochs
+    )
 
     if not args.print_best:
         _ensure_data_from_s3()

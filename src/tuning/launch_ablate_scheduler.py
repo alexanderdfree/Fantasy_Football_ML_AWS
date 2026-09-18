@@ -169,6 +169,7 @@ def main():
     pin_data_release(s3, source_ref=binding["image_sha"])
     print(f"Submitting {len(positions)} scheduler-type ablation jobs: {positions}")
     job_ids: dict[str, str] = {}
+    submit_failures: list[str] = []
     with ThreadPoolExecutor(max_workers=len(positions)) as pool:
         futures = {
             pool.submit(
@@ -188,10 +189,13 @@ def main():
                 job_ids[pos] = job_id
             except Exception as e:
                 print(f"[{pos}] FAILED to submit: {e}")
+                submit_failures.append(pos)
 
     if not wait:
         print("\nJobs submitted. Use 'aws batch describe-jobs' to check status.")
         print(f"Results land at s3://{S3_BUCKET}/{RESULT_PREFIX}/{{pos}}/result.json per position.")
+        if submit_failures:
+            raise SystemExit(f"Failed to submit scheduler ablations: {submit_failures}")
         return
 
     print(
@@ -211,9 +215,11 @@ def main():
         print(f"  Per-position results: s3://{S3_BUCKET}/{RESULT_PREFIX}/{{pos}}/result.json")
         print("  Run `python -m src.tuning.aggregate_scheduler` to merge per-position JSONs.")
 
-    # Non-zero exit if nothing succeeded so the GH matrix job fails loudly.
-    if not succeeded:
-        raise SystemExit("No scheduler-type ablation jobs succeeded.")
+    # A partially completed fleet run must fail the caller's completion gate.
+    if failed or timed_out or submit_failures or len(succeeded) != len(positions):
+        raise SystemExit(
+            "Scheduler-type ablation incomplete: not every requested position succeeded."
+        )
     print("\nAll done.")
 
 

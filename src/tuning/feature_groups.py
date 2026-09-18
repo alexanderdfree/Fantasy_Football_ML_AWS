@@ -393,12 +393,10 @@ def build_confirm_variants(
     this is NOT a Plackett-Burman design — it is a single combined-drop A/B that
     catches the interactions the additive PB main effects assume away.
 
-    ``row_drops`` includes ``baseline`` with an empty drop-set. In a PB/leave-one-out
-    screen each group is dropped in some rows and kept in others, so ``main_effects``
-    forms its high-minus-low contrast from the non-baseline rows alone. This degenerate
-    1-group design has only ONE drop arm, so the baseline IS the kept arm — without it
-    in ``row_drops`` the estimator finds no "kept" value and silently returns no effect
-    (the empty ``confirm-report`` table bug).
+    ``row_drops`` includes ``baseline`` with an empty drop-set to declare the
+    unchanged control. Like leave-one-group-out screens, this compares each
+    drop directly against the same-seed baseline; PB screens use balanced
+    contrasts across their multi-group design rows.
     """
     cols = frozenset(drop_cols)
     if not cols:
@@ -425,16 +423,22 @@ def main_effects(
 ) -> dict[str, dict[str, float]]:
     """High-minus-low main effect per group, averaged across seeds.
 
-    ``variant_seed_value`` maps each non-baseline variant name to its
+    ``variant_seed_value`` maps each variant name (including baseline) to its
     ``{seed: value}`` for ONE (model, metric) — extract via
     :func:`extract_variant_seed_metric`. Per seed and per group: mean(value |
-    group DROPPED) - mean(value | group KEPT), then averaged across seeds. A
+    group DROPPED) - mean(value | group KEPT), then averaged across seeds.
+    For leave-one-group-out designs, KEPT is the unchanged same-seed baseline. A
     POSITIVE effect = dropping the group RAISES the metric = the group carries
     signal for that model. Metric-agnostic (pass MAE or RMSE values). Mirrors
     ``attn_knob_experiments.estimate_doe_effects`` /
     ``ab_feature_screen.feature_main_effects``.
     """
     seeds = sorted({s for m in variant_seed_value.values() for s in m})
+    # Single-group drop arms change different variables. Their control is the
+    # unchanged baseline, not another group's removal.
+    nonempty_drops = [drop for drop in row_drops.values() if drop]
+    leave_one_out = bool(nonempty_drops) and all(len(drop) == 1 for drop in nonempty_drops)
+    controls = [variant for variant, drop in row_drops.items() if not drop] or ["baseline"]
     out: dict[str, dict[str, float]] = {}
     for grp in group_names:
         per_seed: list[float] = []
@@ -444,11 +448,18 @@ def main_effects(
                 for v, drop in row_drops.items()
                 if grp in drop and v in variant_seed_value and seed in variant_seed_value[v]
             ]
-            kept = [
-                variant_seed_value[v][seed]
-                for v, drop in row_drops.items()
-                if grp not in drop and v in variant_seed_value and seed in variant_seed_value[v]
-            ]
+            if leave_one_out:
+                kept = [
+                    variant_seed_value[variant][seed]
+                    for variant in controls
+                    if variant in variant_seed_value and seed in variant_seed_value[variant]
+                ]
+            else:
+                kept = [
+                    variant_seed_value[v][seed]
+                    for v, drop in row_drops.items()
+                    if grp not in drop and v in variant_seed_value and seed in variant_seed_value[v]
+                ]
             if dropped and kept:
                 per_seed.append(statistics.mean(dropped) - statistics.mean(kept))
         if per_seed:

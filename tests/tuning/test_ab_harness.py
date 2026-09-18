@@ -731,7 +731,7 @@ def test_run_group_stacked_contract(tmp_path, monkeypatch):
 
     def stub_capture(position, seeds, base_cfg, *, frames=None, memo=None):
         seen["captures"].append((position, tuple(seeds), base_cfg["train_attention_nn"], frames))
-        return ["cap0", "cap1"], {"args": None}
+        return [{"trainer": SimpleNamespace(device="cpu")} for _ in seeds], {"args": None}
 
     monkeypatch.setattr("src.tuning.ab_ensemble_seeds.capture_seeds", stub_capture)
     monkeypatch.setattr(
@@ -784,7 +784,7 @@ def test_run_group_stacked_threads_frames(tmp_path, monkeypatch):
 
     def stub_capture(position, seeds, base_cfg, *, frames=None, memo=None):
         seen["capture_frames"] = frames is not None
-        return ["c"], {"args": None}
+        return [{"trainer": SimpleNamespace(device="cpu")} for _ in seeds], {"args": None}
 
     monkeypatch.setattr("src.tuning.ab_ensemble_seeds.capture_seeds", stub_capture)
     monkeypatch.setattr(

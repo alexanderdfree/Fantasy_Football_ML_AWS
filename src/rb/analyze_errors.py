@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.rb.config import POSITION_CONFIG
 from src.rb.run_pipeline import run
+from src.shared.comparison_scoring import score_actual_components
 from src.shared.error_analysis import (
     add_stratification_columns,
     find_top_error_sources,
@@ -78,7 +79,7 @@ def main():
 
     # ``pred_*_total`` columns are fantasy points, so compare them to the
     # pipeline's actual fantasy-point total rather than a raw-stat sum.
-    df["actual_total"] = df["fantasy_points"]
+    df["actual_total"] = score_actual_components(df, "RB")
 
     # Add stratification columns
     add_stratification_columns(df, targets)

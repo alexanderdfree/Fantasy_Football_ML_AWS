@@ -39,8 +39,7 @@ install_parameterized_targets(
             "passing_yards",
             "passing_tds",
             "interceptions",
-            # Read by compute_targets' decomposition-discrepancy check (2pt
-            # conversions are scored in fantasy_points but aren't WR targets).
+            # Extra source stats must not alter the modeled target decomposition.
             "passing_2pt_conversions",
             "rushing_2pt_conversions",
             "receiving_2pt_conversions",
@@ -89,19 +88,13 @@ class TestComputeWRTargets:
         assert "target decomposition discrepancy" not in capsys.readouterr().out
 
     def test_no_spurious_warning_on_2pt_conversion_row(self, capsys):
-        """#1412: a 2pt conversion adds a flat +2 to the upstream (nflverse)
-        fantasy_points column but is not a WR target; the decomposition
-        diagnostic must back it out rather than WARN on an exact-2.0
-        discrepancy (mirrors the RB back-out shipped for #406)."""
+        """Canonical fantasy_points excludes unmodeled two-point conversions."""
         df = _make_row(receiving_2pt_conversions=1)
-        # The builder's auto-computed fantasy_points has no 2pt term; the
-        # upstream column includes the conversion, so add it here.
-        df["fantasy_points"] = df["fantasy_points"] + 2.0
         compute_targets(df)
         assert "target decomposition discrepancy" not in capsys.readouterr().out
 
     def test_decomposition_still_warns_on_corrupt_fantasy_points(self, capsys):
-        """Positive control for the 2pt back-out: a genuinely inconsistent
+        """Positive control: an inconsistent
         fantasy_points value must still trip the WARN."""
         df = _make_row(fantasy_points=999.0)
         compute_targets(df)

@@ -137,7 +137,9 @@ def _split_cores(phys: list[int], n: int) -> list[list[int]]:
 
 
 def _pin_self(cores: list[int]):
-    """Return a ``preexec_fn`` that pins the forked child to ``cores`` before exec."""
+    """Return an affinity ``preexec_fn`` only on platforms supporting that API."""
+    if not hasattr(os, "sched_setaffinity"):
+        return None
     cset = set(cores)
 
     def _fn():
@@ -225,10 +227,16 @@ def _run_worker(
     No ``benchmark_results.json`` / history / S3 writes here — those are the
     orchestrator's single-threaded merge step, so concurrent workers never collide.
     """
-    if rolling_origin and origin is not None:
-        _ts, summary = score_one_origin(pos, int(origin))
-    elif rolling_origin:
-        summary = run_rolling_origin(pos)
+    if rolling_origin:
+        from src.tuning._execution import isolated_outputs
+
+        # Production pipelines also save models/scalers under {pos}/outputs.
+        # Origins for the same position must not share those destinations.
+        with isolated_outputs(os.path.abspath("data"), legacy_cwd=True):
+            if origin is not None:
+                _ts, summary = score_one_origin(pos, int(origin))
+            else:
+                summary = run_rolling_origin(pos)
     else:
         result = run_one(pos)
         summary = summarize_pipeline_result(pos, result)
