@@ -1,0 +1,528 @@
+{
+  "kind": "numerical",
+  "origins": [
+    2022,
+    2023
+  ],
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "records": 18,
+  "source_shas": [
+    "50ac1d1349bb5026bcce97eff1ee78d836dc58aa"
+  ],
+  "data_releases": [
+    "4d196674393af2bbdc09e4269117bfe84ef7d98cad3243b27b982c6270dfa6d7"
+  ],
+  "hardware": [
+    "NVIDIA A10G"
+  ],
+  "provenance_errors": [],
+  "numerical_findings": [
+    {
+      "cell": [
+        "WR",
+        2023,
+        7,
+        "baseline"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.0001015083401746781,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 5.852325976369276e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.000020769719569591077,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.434983730316162,
+            1.5454955101013184
+          ],
+          "mu": [
+            0.2324415147304535,
+            9.134099006652832
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.0041706669236865794,
+          "std": 0.0010354253083341267,
+          "paired": [
+            -0.00511761902113772,
+            -0.0030650778605494367,
+            -0.004329303889372582
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.0019412793776284094,
+          "std": 0.007088979675633117,
+          "paired": [
+            0.0013509488728757901,
+            0.009306965492211994,
+            -0.0048340762322025554
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.02010865145022282,
+          "std": 0.02885882489228474,
+          "paired": [
+            -0.05088344581403792,
+            0.0063474312029692115,
+            -0.015789939739599745
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029681499271374534,
+          "std": 0.031043835734483553,
+          "paired": [
+            0.053853665321828004,
+            0.04051919273327087,
+            -0.005328360240975272
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.08266258211308337,
+          "std": 0.035179311618130114,
+          "paired": [
+            0.052127564351787115,
+            0.12113124363026007,
+            0.07472893835720296
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.004446790336679681,
+          "std": 0.03342584613502153,
+          "paired": [
+            -0.0005568826111108649,
+            0.026863911759440917,
+            -0.039647400158369095
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.04663701201820292,
+          "std": 0.04763275060483453,
+          "paired": [
+            -0.0028906376237189946,
+            -0.03963858728113134,
+            -0.09738181114975841
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.012484473378395458,
+          "std": 0.0865468534075834,
+          "paired": [
+            0.10528028026145009,
+            -0.0017877160096535505,
+            -0.06603914411661016
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.003956208206307821,
+          "std": 0.008809160922389236,
+          "paired": [
+            -0.006133936823174757,
+            0.007886360939380666,
+            0.010116200502717554
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.012265278862040022,
+          "std": 0.013187943520426015,
+          "paired": [
+            0.002478443645252959,
+            0.007054972076550925,
+            0.027262420864316184
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.02665880182766885,
+          "std": 0.05887541682673764,
+          "paired": [
+            -0.009595178435943374,
+            0.09459092616074294,
+            -0.005019342241793012
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029711094572549612,
+          "std": 0.05198083459385574,
+          "paired": [
+            -0.0014059345615411445,
+            0.0008195805853308258,
+            0.08971963769385916
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.05666782569538631,
+          "std": 0.015197499321462849,
+          "paired": [
+            0.07421638629308402,
+            0.04789470192675882,
+            0.04789238886631608
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.028493351626273682,
+          "std": 0.024059111214702274,
+          "paired": [
+            -0.02035021653784952,
+            -0.055567263521446364,
+            -0.00956257481952516
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.012564904718289563,
+          "std": 0.05313806259263444,
+          "paired": [
+            0.03514408541397529,
+            -0.06983411048971355,
+            -0.0030046890791304293
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.0634083544741723,
+          "std": 0.04082619586991168,
+          "paired": [
+            -0.10574775673514303,
+            -0.0601916344706801,
+            -0.024285672216693754
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "stable_numeric",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.0041706669236865794,
+          "std": 0.0010354253083341267,
+          "paired": [
+            -0.00511761902113772,
+            -0.0030650778605494367,
+            -0.004329303889372582
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.0019412793776284094,
+          "std": 0.007088979675633117,
+          "paired": [
+            0.0013509488728757901,
+            0.009306965492211994,
+            -0.0048340762322025554
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.02010865145022282,
+          "std": 0.02885882489228474,
+          "paired": [
+            -0.05088344581403792,
+            0.0063474312029692115,
+            -0.015789939739599745
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029681499271374534,
+          "std": 0.031043835734483553,
+          "paired": [
+            0.053853665321828004,
+            0.04051919273327087,
+            -0.005328360240975272
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "stable_numeric",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.10254838621850926,
+          "std": 0.03801868053719737,
+          "paired": [
+            0.058649645958085195,
+            0.12418868928425564,
+            0.12480682341318694
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.01214862019494826,
+          "std": 0.023325470050285933,
+          "paired": [
+            0.01003453617223471,
+            0.036459168170470235,
+            -0.010047843757860164
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.026822201686947267,
+          "std": 0.03191374959972826,
+          "paired": [
+            -0.00580245419312142,
+            -0.011119195489336597,
+            -0.06354495537838378
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.032785242504134615,
+          "std": 0.051965467943847723,
+          "paired": [
+            0.08610642571104066,
+            0.029958417381973135,
+            -0.017709115580609947
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "stable_numeric",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.003956208206307821,
+          "std": 0.008809160922389236,
+          "paired": [
+            -0.006133936823174757,
+            0.007886360939380666,
+            0.010116200502717554
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.012265278862040022,
+          "std": 0.013187943520426015,
+          "paired": [
+            0.002478443645252959,
+            0.007054972076550925,
+            0.027262420864316184
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.02665880182766885,
+          "std": 0.05887541682673764,
+          "paired": [
+            -0.009595178435943374,
+            0.09459092616074294,
+            -0.005019342241793012
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029711094572549612,
+          "std": 0.05198083459385574,
+          "paired": [
+            -0.0014059345615411445,
+            0.0008195805853308258,
+            0.08971963769385916
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "stable_numeric",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.05422329926139587,
+          "std": 0.05067729707861213,
+          "paired": [
+            0.11265280742722661,
+            0.027780344380848643,
+            0.02223674597611236
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.01294578554829092,
+          "std": 0.028382364409785414,
+          "paired": [
+            0.0034530758090776104,
+            -0.04571891393664451,
+            0.0034284814826941457
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.019325173037549288,
+          "std": 0.03137377298438874,
+          "paired": [
+            0.0060412427874805275,
+            -0.05440754036330375,
+            -0.009609221536824641
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.0578046684798359,
+          "std": 0.0007660193086920615,
+          "paired": [
+            -0.05829465884614038,
+            -0.056921929098759705,
+            -0.058197417494607606
+          ]
+        }
+      },
+      "passes": false
+    }
+  ],
+  "development_qualified": [],
+  "merge_authorized": false,
+  "limitation": "Development evidence only; confirmation and current review/CI remain mandatory.",
+  "manifest_proofs": [
+    {
+      "file": "numeric-dev-2022-s123-50ac1d13-1aaf990bd0e7cb1f48cc4d93b71cd4568658bd10a9cee4ce2914386aebfaa650-manifest.json",
+      "sha256": "1aaf990bd0e7cb1f48cc4d93b71cd4568658bd10a9cee4ce2914386aebfaa650",
+      "batch_job_id": "02ca1913-0860-445e-8ec8-002bc450ce1e"
+    },
+    {
+      "file": "numeric-dev-2022-s123-50ac1d13-232aa7b8b21756b2f521a4eab68ada9d9c6639ba5b6210b261d10d60b00a47de-manifest.json",
+      "sha256": "232aa7b8b21756b2f521a4eab68ada9d9c6639ba5b6210b261d10d60b00a47de",
+      "batch_job_id": "02ca1913-0860-445e-8ec8-002bc450ce1e"
+    },
+    {
+      "file": "numeric-dev-2022-s123-50ac1d13-91b8d4d66e884f52e1aedba9f0cf34ecd28f48d20ef88f3b05e7c8d8692f154b-manifest.json",
+      "sha256": "91b8d4d66e884f52e1aedba9f0cf34ecd28f48d20ef88f3b05e7c8d8692f154b",
+      "batch_job_id": "02ca1913-0860-445e-8ec8-002bc450ce1e"
+    },
+    {
+      "file": "numeric-dev-2022-s42-50ac1d13-1f193018f567948364f4d4f42683ffcdf2e088a9b990582a25ad60b24c121264-manifest.json",
+      "sha256": "1f193018f567948364f4d4f42683ffcdf2e088a9b990582a25ad60b24c121264",
+      "batch_job_id": "95d56e56-706c-40fe-9d52-d65fefabdf9b"
+    },
+    {
+      "file": "numeric-dev-2022-s42-50ac1d13-b0cb038a6d33fbb91273f9fa0cee1110c6fc410c2678a47ee57c4a34095de8f3-manifest.json",
+      "sha256": "b0cb038a6d33fbb91273f9fa0cee1110c6fc410c2678a47ee57c4a34095de8f3",
+      "batch_job_id": "95d56e56-706c-40fe-9d52-d65fefabdf9b"
+    },
+    {
+      "file": "numeric-dev-2022-s42-50ac1d13-dcf8f04c8d880a5f42861eb63c56c50e50a38ef1b8effb06800f47da0d756d20-manifest.json",
+      "sha256": "dcf8f04c8d880a5f42861eb63c56c50e50a38ef1b8effb06800f47da0d756d20",
+      "batch_job_id": "95d56e56-706c-40fe-9d52-d65fefabdf9b"
+    },
+    {
+      "file": "numeric-dev-2022-s7-50ac1d13-172ae1a422c0248b79cad44eaccdb767bab91be560b40998b9fafaa0439f81d6-manifest.json",
+      "sha256": "172ae1a422c0248b79cad44eaccdb767bab91be560b40998b9fafaa0439f81d6",
+      "batch_job_id": "38a785ae-8bf3-49e6-b2a7-226af734c95f"
+    },
+    {
+      "file": "numeric-dev-2022-s7-50ac1d13-55ea084052307b9d809b7484a9fc81a625dae03c21c0f38b3a6f66267e84db97-manifest.json",
+      "sha256": "55ea084052307b9d809b7484a9fc81a625dae03c21c0f38b3a6f66267e84db97",
+      "batch_job_id": "38a785ae-8bf3-49e6-b2a7-226af734c95f"
+    },
+    {
+      "file": "numeric-dev-2022-s7-50ac1d13-f52d35703aa240893ea2ce705624239566e624ea6af9d98cc5a58c5083d32029-manifest.json",
+      "sha256": "f52d35703aa240893ea2ce705624239566e624ea6af9d98cc5a58c5083d32029",
+      "batch_job_id": "38a785ae-8bf3-49e6-b2a7-226af734c95f"
+    },
+    {
+      "file": "numeric-dev-2023-s123-50ac1d13-b3a095d986dc6fc91921930de80a28d68f2372916282b381e0f3252457cf24c5-manifest.json",
+      "sha256": "b3a095d986dc6fc91921930de80a28d68f2372916282b381e0f3252457cf24c5",
+      "batch_job_id": "3120dd1c-ef94-4b5b-800c-ba812656881a"
+    },
+    {
+      "file": "numeric-dev-2023-s123-50ac1d13-bbd31bb6523db1c75d9547a60925cdebb144c0c7cb416bee7a31bb7138916015-manifest.json",
+      "sha256": "bbd31bb6523db1c75d9547a60925cdebb144c0c7cb416bee7a31bb7138916015",
+      "batch_job_id": "3120dd1c-ef94-4b5b-800c-ba812656881a"
+    },
+    {
+      "file": "numeric-dev-2023-s123-50ac1d13-cd4f924dd9b4f5fb062693ccea91cfe9a93a51ef6c2270b1c7e2fff69fbaa830-manifest.json",
+      "sha256": "cd4f924dd9b4f5fb062693ccea91cfe9a93a51ef6c2270b1c7e2fff69fbaa830",
+      "batch_job_id": "3120dd1c-ef94-4b5b-800c-ba812656881a"
+    },
+    {
+      "file": "numeric-dev-2023-s42-50ac1d13-82495895ef2c8989825c572dd88675b3d5e30234e7a5f9b7429c27a573ce4efa-manifest.json",
+      "sha256": "82495895ef2c8989825c572dd88675b3d5e30234e7a5f9b7429c27a573ce4efa",
+      "batch_job_id": "38a88c42-57a0-4c9d-892d-5b3b0381b164"
+    },
+    {
+      "file": "numeric-dev-2023-s42-50ac1d13-8298d763b4f92424592171072780524faaf35f630cad0683f79c95abcdca6370-manifest.json",
+      "sha256": "8298d763b4f92424592171072780524faaf35f630cad0683f79c95abcdca6370",
+      "batch_job_id": "38a88c42-57a0-4c9d-892d-5b3b0381b164"
+    },
+    {
+      "file": "numeric-dev-2023-s42-50ac1d13-e43a94d2992c705d4c26b3c5f239f8c724b75332e76351ca9e55066a0cc157fe-manifest.json",
+      "sha256": "e43a94d2992c705d4c26b3c5f239f8c724b75332e76351ca9e55066a0cc157fe",
+      "batch_job_id": "38a88c42-57a0-4c9d-892d-5b3b0381b164"
+    },
+    {
+      "file": "numeric-dev-2023-s7-50ac1d13-5f4a15095bd3ce7e22987f9c15b03a50e3d31d096793f8419cabca8f2d39c2f9-manifest.json",
+      "sha256": "5f4a15095bd3ce7e22987f9c15b03a50e3d31d096793f8419cabca8f2d39c2f9",
+      "batch_job_id": "9c44deda-adc4-4b2e-a0b0-c150f2f23bc5"
+    },
+    {
+      "file": "numeric-dev-2023-s7-50ac1d13-7023573fd8d4e22a565c8faa619e52e18abc7da5c61fd1b3cdbfe988c74feb16-manifest.json",
+      "sha256": "7023573fd8d4e22a565c8faa619e52e18abc7da5c61fd1b3cdbfe988c74feb16",
+      "batch_job_id": "9c44deda-adc4-4b2e-a0b0-c150f2f23bc5"
+    },
+    {
+      "file": "numeric-dev-2023-s7-50ac1d13-babf7e2100326aab57dfc37c7cb2dac7b9d552ab9ab4512a2412427335f3d483-manifest.json",
+      "sha256": "babf7e2100326aab57dfc37c7cb2dac7b9d552ab9ab4512a2412427335f3d483",
+      "batch_job_id": "9c44deda-adc4-4b2e-a0b0-c150f2f23bc5"
+    }
+  ]
+}
