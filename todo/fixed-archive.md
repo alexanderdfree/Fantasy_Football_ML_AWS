@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] A/B job revisions retained mutable image tags
+[Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
+
 ### [FIXED] Upcoming refresh mixed legacy hydration with historical provider replay
 [Read the incident record](fixed-archive/upcoming-sealed-data-live-provider-boundaries.md).
 

@@ -20,8 +20,9 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 def _image_sha(definition: dict) -> str:
     image = definition.get("containerProperties", {}).get("image", "")
-    sha = image.rsplit(":", 1)[-1]
-    if "@" in image or not _SHA.fullmatch(sha):
+    tagged, separator, digest = image.partition("@")
+    sha = tagged.rsplit(":", 1)[-1]
+    if not _SHA.fullmatch(sha) or (separator and not _DIGEST.fullmatch(digest)):
         raise ValueError(f"Batch image must have an explicit full source-SHA tag: {image!r}")
     return sha
 

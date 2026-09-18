@@ -5,13 +5,27 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.scripts.resolve_training_image import main, resolve_batch, resolve_ec2
+from src.scripts.resolve_training_image import _image_sha, main, resolve_batch, resolve_ec2
 
 pytestmark = pytest.mark.unit
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 DIGEST = "sha256:" + "1" * 64
 REPO = "123456789012.dkr.ecr.us-east-1.amazonaws.com/ff-training"
+
+
+def test_digest_pin_retains_explicit_source_identity():
+    image = f"{REPO}:{SHA_A}@{DIGEST}"
+    assert _image_sha({"containerProperties": {"image": image}}) == SHA_A
+
+
+@pytest.mark.parametrize(
+    "image",
+    [f"{REPO}@{DIGEST}", f"{REPO}:{SHA_A}@sha256:short", f"{REPO}:{SHA_A}@"],
+)
+def test_digest_pin_rejects_missing_source_or_malformed_digest(image):
+    with pytest.raises(ValueError, match="source-SHA"):
+        _image_sha({"containerProperties": {"image": image}})
 
 
 def definition(revision, sha=SHA_A, name="ff-training-job"):

@@ -46,6 +46,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -108,7 +109,7 @@ def _git_head_sha() -> str | None:
 
 def _swap_image_tag(image_uri: str, sha: str) -> str:
     """``...amazonaws.com/ff-training:old`` -> ``...amazonaws.com/ff-training:{sha}``."""
-    base, _, _ = image_uri.rpartition(":")
+    base, _, _ = image_uri.partition("@")[0].rpartition(":")
     if not base:
         raise ValueError(f"job-definition image has no tag to swap: {image_uri!r}")
     return f"{base}:{sha}"
@@ -120,7 +121,7 @@ def _describe_latest_active(batch, name: str) -> dict | None:
     return defs[0] if defs else None
 
 
-def resolve_job_definition(image_sha: str, batch_client) -> str:
+def resolve_job_definition(image_sha: str, batch_client, *, image_digest: str | None = None) -> str:
     """Return ``ff-ab-job:{revision}`` whose image is ``ff-training:{image_sha}``.
 
     Clones the production GPU job definition (resource requirements, env caps,
@@ -133,6 +134,10 @@ def resolve_job_definition(image_sha: str, batch_client) -> str:
     if template is None:
         raise RuntimeError(f"no ACTIVE {JOB_DEFINITION} job definition to clone")
     desired_image = _swap_image_tag(template["containerProperties"]["image"], image_sha)
+    if image_digest is not None:
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+            raise ValueError("Image digest must be a complete sha256 digest")
+        desired_image += f"@{image_digest}"
 
     existing = _describe_latest_active(batch_client, AB_JOB_DEFINITION)
     if existing is not None and existing["containerProperties"].get("image") == desired_image:
@@ -368,6 +373,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="ff-training image tag to run (default: local git HEAD). For an "
         "unmerged branch, dispatch batch-image.yml on that branch first.",
     )
+    p.add_argument("--image-digest", help="Pin exact ECR bytes as well as the source SHA tag")
     p.add_argument(
         "--run-id",
         default=None,
@@ -548,7 +554,17 @@ def main() -> None:
                 "builds push only the SHA tag). --skip-image-check bypasses this preflight."
             )
 
-    job_definition = resolve_job_definition(image_sha, batch)
+    if args.image_digest:
+        from src.scripts.resolve_training_image import resolve_ec2
+
+        selected = resolve_ec2(boto3.client("ecr", region_name=AWS_REGION), image_sha)
+        if selected["image_uri"].partition("@")[2] != args.image_digest:
+            raise RuntimeError("ECR source tag no longer matches the requested image digest")
+    job_definition = (
+        resolve_job_definition(image_sha, batch, image_digest=args.image_digest)
+        if args.image_digest
+        else resolve_job_definition(image_sha, batch)
+    )
     binding = resolve_definition(batch, job_definition)
     if binding["image_sha"] != image_sha:
         raise RuntimeError("Resolved A/B job image differs from the requested source SHA")
@@ -604,6 +620,7 @@ def main() -> None:
             "variants": list(spec.variants),
             "baseline": spec.baseline,
             "image_sha": image_sha,
+            "image_digest": args.image_digest,
             "data_prefix": args.data_prefix,
             "job_definition": job_definition,
             "cuda_graph": args.cuda_graph,
