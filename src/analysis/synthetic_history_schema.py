@@ -12,13 +12,19 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from src.features.engineer import flatten_include_features
 from src.qb.config import POSITION_CONFIG as _QB_CONFIG
-from src.qb.features import get_feature_columns as _qb_feature_columns
 
 
 @dataclass(frozen=True)
 class PositionHistorySchema:
-    """Columns, validity relations and provenance paths for one position."""
+    """Columns, validity relations and provenance paths for one position.
+
+    ``sequence_coupled_context`` names the static feature columns whose value
+    describes the real prior sequence (calendar position, rest, games to date);
+    they are held at the forecast game's real value and disclosed as such.
+    ``check_columns`` lists what the ``checks`` callables read.
+    """
 
     position: str
     identity_columns: tuple[str, ...]
@@ -31,8 +37,31 @@ class PositionHistorySchema:
     relations: tuple[tuple[str, str], ...]
     bounded_columns: tuple[tuple[str, float, float], ...]
     checks: tuple[Callable[[pd.DataFrame], str | None], ...]
+    check_columns: tuple[str, ...]
+    sequence_coupled_context: tuple[str, ...]
     scoring_scope: str
     code_paths: tuple[str, ...]
+
+    def __post_init__(self):
+        known = set(self.history_columns) | set(self.targets)
+        referenced = (
+            set(self.count_columns)
+            | set(self.must_observe)
+            | {column for relation in self.relations for column in relation}
+            | {column for column, _, _ in self.bounded_columns}
+            | set(self.check_columns)
+        )
+        if not referenced <= known:
+            raise ValueError(
+                f"{self.position} schema references columns outside its history and "
+                f"targets: {sorted(referenced - known)}"
+            )
+        if not set(self.sequence_coupled_context) <= set(self.feature_columns):
+            raise ValueError(f"{self.position} sequence-coupled context must be feature columns")
+
+    @property
+    def validated_columns(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys([*self.history_columns, *self.targets]))
 
 
 def _qb_interceptions_within_incompletions(frame: pd.DataFrame) -> str | None:
@@ -46,7 +75,7 @@ QB_SCHEMA = PositionHistorySchema(
     identity_columns=("position", "season_type", "recent_team", "opponent_team"),
     history_columns=tuple(_QB_CONFIG.attn_history_stats),
     targets=tuple(_QB_CONFIG.targets),
-    feature_columns=tuple(_qb_feature_columns()),
+    feature_columns=tuple(flatten_include_features(_QB_CONFIG.include_features)),
     max_history_games=int(_QB_CONFIG.attn_max_seq_len),
     count_columns=(
         "attempts",
@@ -67,11 +96,18 @@ QB_SCHEMA = PositionHistorySchema(
     ),
     bounded_columns=(("snap_pct_raw", 0.0, 1.0), ("qbr_total", 0.0, 100.0)),
     checks=(_qb_interceptions_within_incompletions,),
+    check_columns=("interceptions", "attempts", "completions"),
+    sequence_coupled_context=(
+        "week",
+        "days_rest",
+        "season_starts_to_date",
+        "is_returning_from_absence",
+        "rookie_early",
+    ),
     scoring_scope="QB projected components only; excludes receiving and two-point conversions",
     code_paths=(
         "features/engineer.py",
         "qb/config.py",
-        "qb/features.py",
         "config.py",
         "shared/aggregate_targets.py",
     ),
@@ -81,9 +117,4 @@ POSITION_HISTORY_SCHEMAS: dict[str, PositionHistorySchema] = {"QB": QB_SCHEMA}
 
 
 def position_schema(position: str) -> PositionHistorySchema:
-    try:
-        return POSITION_HISTORY_SCHEMAS[position]
-    except KeyError:
-        raise ValueError(
-            f"schema version 2 supports {sorted(POSITION_HISTORY_SCHEMAS)} histories only"
-        ) from None
+    return POSITION_HISTORY_SCHEMAS[position]

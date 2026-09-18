@@ -6,19 +6,23 @@ exists for it, so it is never forecast accuracy and never a training label
 determines: its static branch is the real forecast game's non-temporal context
 and its history branch is the synthetic tensor. Ridge, the base NN and
 LightGBM read windowed features the generator does not reconstruct, so they
-replay identity cohorts only and are otherwise recorded as excluded. LightGBM
-must be exercised on Linux/Batch: loading it beside torch and scikit-learn
-crashes on the maintainers' macOS libomp stack.
+replay exact identity cohorts only and are otherwise recorded as excluded.
+LightGBM must be exercised on Linux/Batch: loading it beside torch and
+scikit-learn crashes on the maintainers' macOS libomp stack, so ``all`` skips
+it there unless named explicitly.
+
+Replay shares production's code path, not its batch: serving predicts the
+whole prepared frame in one batch while a replay predicts the cohort, so the
+identity control compares predictions within a float tolerance and records the
+largest difference; the inputs themselves must match exactly.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import platform
 from dataclasses import dataclass
-from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -27,17 +31,15 @@ import torch
 
 from src.analysis.artifact_eval import resolve_model_dir, warn_if_sync_noop
 from src.analysis.synthetic_history import (
-    MODEL_FAMILIES,
     SCHEMA_VERSION,
-    HistoryRecipe,
-    _context_rows,
-    _source_frame,
-    consumed_values_hash,
+    code_hashes,
+    consume_source,
+    model_input_readiness,
     publish_artifact_dir,
+    runtime_versions,
 )
-from src.analysis.synthetic_history_schema import position_schema
-from src.prediction import bundle as bundle_module
-from src.prediction.bundle import bundled_families, file_digest
+from src.analysis.synthetic_history_schema import POSITION_HISTORY_SCHEMAS, position_schema
+from src.prediction.bundle import MODEL_FAMILIES, bundled_families, digest, file_digest
 from src.prediction.frames import SCORING_FORMATS
 from src.prediction.predictor import PredictionInputs, Predictor
 from src.shared.artifact_integrity import compute_feature_cols_hash
@@ -48,13 +50,20 @@ RESPONSE_SEMANTICS = (
     "recorded model responses to synthetic histories; no observed outcome exists; never "
     "report as forecast accuracy or use as training labels (ADR-0029)"
 )
-HISTORY_OPTION_KEYS = (
-    "attn_max_seq_len",
-    "attn_max_games",
-    "attn_max_kicks_per_game",
-    "opp_attn_max_seq_len",
-    "opp_attn_kind",
+PREDICTION_TOLERANCE = {"rtol": 1e-5, "atol": 1e-6}
+REQUIRED_MANIFEST_KEYS = (
+    "files",
+    "recipe",
+    "recipe_sha256",
+    "source_values_sha256",
+    "history_columns",
+    "model_input_readiness",
 )
+REQUIRED_RECIPE_KEYS = ("position", "mode", "history_games", "donor_seasons")
+COHORT_FILES = ("cases.parquet", "context.parquet", "history.npz")
+PROVENANCE_KEYS = ("data_id", "dataset_id", "image_sha", "code_id")
+LEGACY_OPTION_KEYS = ("attn_max_seq_len", "opp_attn_max_seq_len", "opp_attn_kind")
+MACOS_LGBM_REASON = "LightGBM is not loaded beside torch on macOS (libomp); name it explicitly"
 CODE_PATHS = (
     "analysis/synthetic_replay.py",
     "analysis/synthetic_history.py",
@@ -72,92 +81,168 @@ class LoadedCohort:
     directory: Path
     manifest: dict
     manifest_sha256: str
+    recipe: dict
     cases: pd.DataFrame
     context: pd.DataFrame
     arrays: dict[str, np.ndarray]
 
 
 def load_cohort(directory: Path) -> LoadedCohort:
-    """Read a schema-2 cohort after verifying every published file hash."""
+    """Read a schema-2 cohort after verifying its manifest shape and every file hash."""
     directory = Path(directory)
     manifest_path = directory / "manifest.json"
-    if not manifest_path.is_file():
-        raise FileNotFoundError(f"cohort manifest not found: {manifest_path}")
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(f"cohort schema_version {SCHEMA_VERSION} required; regenerate the cohort")
-    for name, digest in manifest["files"].items():
+    missing = [key for key in REQUIRED_MANIFEST_KEYS if key not in manifest]
+    if missing:
+        raise ValueError(f"cohort manifest is missing {missing}")
+    recipe = manifest["recipe"]
+    missing = [key for key in REQUIRED_RECIPE_KEYS if key not in recipe]
+    if missing:
+        raise ValueError(f"cohort recipe is missing {missing}")
+    if recipe["position"] not in POSITION_HISTORY_SCHEMAS:
+        raise ValueError(f"unsupported cohort position {recipe['position']!r}")
+    unlisted = sorted(set(COHORT_FILES) - set(manifest["files"]))
+    if unlisted:
+        raise ValueError(f"cohort manifest does not list {unlisted}")
+    for name, expected in manifest["files"].items():
         path = directory / name
-        if not path.is_file() or file_digest(path) != digest:
+        if not path.is_file() or file_digest(path) != expected:
             raise ValueError(f"cohort artifact mismatch: {name}")
     cases = pd.read_parquet(directory / "cases.parquet")
     context = pd.read_parquet(directory / "context.parquet")
     with np.load(directory / "history.npz", allow_pickle=False) as data:
         arrays = {key: data[key] for key in data.files}
+    if not {"history", "mask"} <= set(arrays) or "exact_window" not in cases:
+        raise ValueError("cohort arrays or cases predate schema 2; regenerate the cohort")
     if not cases["case_id"].equals(context["case_id"]) or len(cases) != len(arrays["history"]):
         raise ValueError("cohort cases, context and history disagree")
-    return LoadedCohort(directory, manifest, file_digest(manifest_path), cases, context, arrays)
+    # Readiness is a function of the recipe and the cases, never a trusted field.
+    declared = {f: e["ready"] for f, e in manifest["model_input_readiness"].items()}
+    derived = {f: e["ready"] for f, e in model_input_readiness(recipe["mode"], cases).items()}
+    if declared != derived:
+        raise ValueError("cohort manifest readiness disagrees with its recipe and cases")
+    return LoadedCohort(
+        directory, manifest, file_digest(manifest_path), recipe, cases, context, arrays
+    )
 
 
-def requested_families(names: list[str], model_dir: str) -> list[str]:
+def requested_families(names: list[str], model_dir: str) -> tuple[list[str], dict[str, str]]:
+    """Resolve ``--families``; ``all`` expands to the bundled families of the directory."""
     names = list(names)
+    excluded: dict[str, str] = {}
     if names == ["all"]:
         inventory = bundled_families(model_dir)
         if inventory is None:
             raise ValueError("name families explicitly for a legacy artifact directory")
         names = list(inventory)
+        if "lgbm" in names and platform.system() == "Darwin":
+            names.remove("lgbm")
+            excluded["lgbm"] = MACOS_LGBM_REASON
     unknown = sorted(set(names) - set(MODEL_FAMILIES))
     if unknown:
         raise ValueError(f"unknown model families: {unknown}")
-    return [family for family in MODEL_FAMILIES if family in names]
+    return [family for family in MODEL_FAMILIES if family in names], excluded
 
 
 def prediction_inputs(predictor: Predictor, cohort: LoadedCohort) -> PredictionInputs:
     """Hand-build the checkpoint's ordered inputs from context.parquet and history.npz."""
     schema = predictor.schema
+    if schema.structure != "flat" or schema.opponent_history:
+        raise ValueError(
+            f"{predictor.family} checkpoint needs a {schema.structure} history"
+            + (" with an opponent stream" if schema.opponent_history else "")
+            + "; schema 2 cohorts carry a flat player history only"
+        )
     missing = [column for column in schema.features if column not in cohort.context.columns]
     if missing:
         raise ValueError(
             f"context.parquet is missing features required by {predictor.family}: {missing}"
         )
-    # Row-major like the production builder's fancy-indexed batches; a column-major
-    # frame view takes a different BLAS path and differs in the last ulp.
-    values = np.ascontiguousarray(cohort.context[list(schema.features)].to_numpy(dtype=np.float32))
+    values = cohort.context[list(schema.features)].to_numpy(dtype=np.float32)
     if predictor.family != "attn_nn":
         return PredictionInputs(schema, values)
     if list(cohort.manifest["history_columns"]) != list(schema.history):
         raise ValueError("cohort history columns differ from the checkpoint's ordered history")
     history, mask = cohort.arrays["history"], cohort.arrays["mask"]
-    window = predictor.options.get("attn_max_seq_len") or 17
+    window = predictor.zero_inputs().history.shape[1]
     if history.shape[1] != window:
         raise ValueError(f"cohort history length {history.shape[1]} differs from window {window}")
     return PredictionInputs(schema, values, history, mask)
 
 
+def _loaded_files(root: Path, predictor: Predictor) -> list[Path]:
+    """The files the loader actually read for a legacy (bundle-less) family."""
+    family, position = predictor.family, predictor.position.lower()
+    if family == "ridge":
+        paths = [p for t in predictor.schema.targets for p in (root / t).rglob("*") if p.is_file()]
+        optional = ("non_negative_targets.json", "ridge_selection.json")
+        paths += [root / name for name in optional if (root / name).is_file()]
+    elif family == "lgbm":
+        paths = [p for p in (root / "lightgbm").rglob("*") if p.is_file()]
+    else:
+        stem = "attention_nn" if family == "attn_nn" else "nn"
+        weights = "attention_nn" if family == "attn_nn" else "multihead_nn"
+        paths = [root / f"{position}_{weights}.pt", root / f"{stem}_scaler.pkl"]
+        if (root / f"{stem}_scaler_meta.json").is_file():
+            paths.append(root / f"{stem}_scaler_meta.json")
+    return sorted(paths)
+
+
 def family_identity(predictor: Predictor, model_dir: str) -> dict:
     schema = predictor.schema
-    if predictor.bundle is not None:
-        files = predictor.bundle.to_dict()["files"]
-        bundle_id = predictor.bundle.bundle_id
-    else:
-        # The bundle module owns the one per-family file rule; legacy dirs have no bundle.
-        root = Path(model_dir)
-        paths = bundle_module._model_files(
-            root, predictor.position, predictor.family, list(schema.targets)
-        )
-        files = {str(path.relative_to(root)): file_digest(path) for path in paths}
-        bundle_id = None
-    return {
-        "bundle_id": bundle_id,
+    identity = {
         "feature_cols_hash": compute_feature_cols_hash(list(schema.features)),
         "features": list(schema.features),
         "history": list(schema.history),
         "targets": list(schema.targets),
-        "history_options": {
-            key: predictor.options[key] for key in HISTORY_OPTION_KEYS if key in predictor.options
-        },
-        "files": files,
     }
+    if predictor.bundle is not None:
+        document = predictor.bundle.to_dict()
+        identity.update(
+            bundle_id=predictor.bundle.bundle_id,
+            provenance=document["provenance"],
+            preprocessing_sha256=digest(document["preprocessing"]),
+            preparation_sha256=digest(document["preparation"]),
+            history_options=document["history_options"],
+            files=document["files"],
+        )
+        return identity
+    root = Path(model_dir)
+    identity.update(
+        bundle_id=None,
+        provenance=None,
+        preprocessing_sha256=None,
+        preparation_sha256=None,
+        history_options={
+            k: predictor.options[k] for k in LEGACY_OPTION_KEYS if k in predictor.options
+        },
+        files={str(p.relative_to(root)): file_digest(p) for p in _loaded_files(root, predictor)},
+    )
+    return identity
+
+
+def assert_coherent_families(identities: dict[str, dict]) -> None:
+    """Bundled families must share one training generation, as serving requires."""
+    bundled = {f: i for f, i in identities.items() if i["bundle_id"] is not None}
+    if len(bundled) < 2:
+        return
+    reference_family, reference = next(iter(bundled.items()))
+    for family, identity in bundled.items():
+        mismatched = [
+            key
+            for key in PROVENANCE_KEYS
+            if identity["provenance"].get(key) != reference["provenance"].get(key)
+        ]
+        for key in ("targets", "preprocessing_sha256", "preparation_sha256"):
+            if identity[key] != reference[key]:
+                mismatched.append(key)
+        if mismatched:
+            raise ValueError(
+                f"model families {reference_family} and {family} come from different "
+                f"training generations ({', '.join(mismatched)} differ)"
+            )
 
 
 def identity_control(
@@ -166,25 +251,31 @@ def identity_control(
     inputs: dict[str, PredictionInputs],
     raw: dict[str, dict[str, np.ndarray]],
     source: pd.DataFrame,
+    *,
+    source_file_sha256: str | None = None,
 ) -> dict:
     """Prove the hand-built inputs reproduce production on the real calendar.
 
-    Static values, the newest-first history prefix and the mask must match the
-    production tensor builder for every case; predictions must match on the
-    cases whose forecast game is exactly the (N+1)th of the season. Cases with
-    more real history than N are truncated windows: their inputs are checked,
-    their predictions legitimately differ and are only counted.
+    Static values must equal the production tensor builder's for every case in
+    every mode. For replay cohorts the newest-first history prefix and the mask
+    must match too, and predictions on exact windows (the forecast game is the
+    (N+1)th of the season) must match production's whole-frame predictions
+    within ``PREDICTION_TOLERANCE``; truncated windows only count.
     """
-    recipe = HistoryRecipe.from_dict(cohort.manifest["recipe"])
-    if recipe.mode != "replay":
-        raise ValueError("identity control requires a replay cohort")
-    schema = position_schema(recipe.position)
-    source = source.reset_index(drop=True)
-    frame = _source_frame(source, recipe, schema)
-    context_rows = _context_rows(source, frame.index, schema)
-    if consumed_values_hash(frame, context_rows) != cohort.manifest["source_values_sha256"]:
-        raise ValueError("source values differ from the cohort's consumed source")
-    reference_frame = source.loc[frame.index]
+    recipe = cohort.recipe
+    schema = position_schema(recipe["position"])
+    consumed = consume_source(
+        source, position=recipe["position"], donor_seasons=recipe["donor_seasons"], schema=schema
+    )
+    if consumed.values_sha256 != cohort.manifest["source_values_sha256"]:
+        message = "source values differ from the cohort's consumed source"
+        if source_file_sha256 is not None and source_file_sha256 == cohort.manifest.get(
+            "source_file_sha256"
+        ):
+            message += "; the file is the same, so the consuming code or configuration changed"
+        raise ValueError(message)
+    frame = consumed.frame
+    reference_frame = consumed.source.loc[frame.index]
     keyed = {
         key: row
         for row, key in enumerate(
@@ -200,53 +291,59 @@ def identity_control(
             )
         ]
     )
-    n = recipe.history_games
-    result = {"status": "passed", "reason": None, "families": {}}
+    n = int(recipe["history_games"])
+    replay_mode = recipe["mode"] == "replay"
+    exact = cases["exact_window"].to_numpy(dtype=bool) if replay_mode else np.zeros(len(rows), bool)
+    result = {"status": None, "prediction_tolerance": PREDICTION_TOLERANCE, "families": {}}
     for family, predictor in predictors.items():
         reference = predictor.inputs_from_frame(reference_frame)
         built = inputs[family]
-        checks = {"static_values": np.array_equal(built.values, reference.values[rows])}
+        if not np.array_equal(built.values, reference.values[rows]):
+            raise ValueError(f"identity control failed for {family}: static_values")
+        checks = ["static_values"]
+        compared = np.ones(len(rows), dtype=bool) if replay_mode else exact
         if family == "attn_nn":
-            checks["history_prefix"] = np.array_equal(
-                built.history[:, :n], reference.history[rows, :n]
-            )
-            checks["mask"] = bool(
-                built.history_mask[:, :n].all()
-                and not built.history_mask[:, n:].any()
-                and reference.history_mask[rows, :n].all()
-            )
-            exact = reference.history_mask[rows].sum(axis=1) == n
-            reference_inputs = PredictionInputs(
-                predictor.schema,
-                reference.values[rows],
-                reference.history[rows],
-                reference.history_mask[rows],
-            )
-        else:
-            exact = np.ones(len(rows), dtype=bool)
-            reference_inputs = PredictionInputs(predictor.schema, reference.values[rows])
-        reference_raw = predictor.predict_raw(reference_inputs)
-        checks["predictions_on_exact_windows"] = all(
-            np.array_equal(raw[family][target][exact], reference_raw[target][exact])
-            for target in predictor.schema.targets
-        )
-        failed = [name for name, ok in checks.items() if not ok]
-        if failed:
-            raise ValueError(f"identity control failed for {family}: {', '.join(failed)}")
+            compared = exact
+            if replay_mode:
+                if not np.array_equal(built.history[:, :n], reference.history[rows, :n]):
+                    raise ValueError(f"identity control failed for {family}: history_prefix")
+                mask_ok = (
+                    built.history_mask[:, :n].all()
+                    and not built.history_mask[:, n:].any()
+                    and reference.history_mask[rows, :n].all()
+                )
+                if not mask_ok:
+                    raise ValueError(f"identity control failed for {family}: mask")
+                checks += ["history_prefix", "mask"]
+        delta = None
+        if compared.any():
+            production = predictor.predict_raw(reference)
+            delta = 0.0
+            for target in predictor.schema.targets:
+                replayed = raw[family][target][compared]
+                expected = production[target][rows][compared]
+                delta = max(delta, float(np.max(np.abs(replayed - expected))))
+                if not np.allclose(replayed, expected, **PREDICTION_TOLERANCE):
+                    raise ValueError(
+                        f"identity control failed for {family}: predictions differ from "
+                        f"production by up to {delta:.3g} on {target}"
+                    )
+            checks.append("predictions_on_exact_windows")
         result["families"][family] = {
             "cases": int(len(rows)),
             "exact_window_cases": int(exact.sum()),
-            "checks": list(checks),
+            "compared_predictions": int(compared.sum()),
+            "max_abs_prediction_delta": delta,
+            "checks": checks,
         }
+    if not replay_mode:
+        result["status"] = "context_only"
+    elif all(entry["compared_predictions"] > 0 for entry in result["families"].values()):
+        result["status"] = "passed"
+    else:
+        result["status"] = "inputs_only"
+    result["source_file_sha256"] = source_file_sha256
     return result
-
-
-def _code_hashes() -> dict[str, str]:
-    src_root = Path(__file__).resolve().parents[1]
-    return {
-        f"src/{relative}": hashlib.sha256((src_root / relative).read_bytes()).hexdigest()
-        for relative in CODE_PATHS
-    }
 
 
 def replay_cohort(
@@ -256,21 +353,23 @@ def replay_cohort(
     *,
     source: pd.DataFrame | None = None,
     source_file_sha256: str | None = None,
-    synced: bool = False,
+    families_requested: list[str] | None = None,
+    excluded: dict[str, str] | None = None,
+    sync: dict | None = None,
 ) -> tuple[pd.DataFrame, dict]:
-    recipe = HistoryRecipe.from_dict(cohort.manifest["recipe"])
-    position = recipe.position
+    position = cohort.recipe["position"]
     spec = INFERENCE_REGISTRY[position]
     readiness = cohort.manifest["model_input_readiness"]
-    predictors, inputs, raw, totals, excluded = {}, {}, {}, {}, {}
+    predictors, inputs, raw, totals, identities = {}, {}, {}, {}, {}
+    excluded = dict(excluded or {})
     for family in families:
-        entry = readiness.get(family)
-        if entry is None or not entry["ready"]:
-            excluded[family] = (entry or {}).get("reason") or "cohort does not declare this family"
+        if not readiness[family]["ready"]:
+            excluded[family] = readiness[family]["reason"]
             continue
         predictor = Predictor.from_bundle(
             model_dir, family, position=position, legacy_spec=spec, device=torch.device("cpu")
         )
+        identities[family] = family_identity(predictor, model_dir)
         family_inputs = prediction_inputs(predictor, cohort)
         predictions = predictor.predict_raw(family_inputs)
         for target in predictor.schema.targets:
@@ -280,9 +379,11 @@ def replay_cohort(
         totals[family] = {fmt: predictor.score(predictions, fmt) for fmt in SCORING_FORMATS}
     if not predictors:
         raise ValueError(f"no requested family is replayable for this cohort: {excluded}")
+    assert_coherent_families(identities)
     if source is not None:
-        control = identity_control(cohort, predictors, inputs, raw, source)
-        control["source_file_sha256"] = source_file_sha256
+        control = identity_control(
+            cohort, predictors, inputs, raw, source, source_file_sha256=source_file_sha256
+        )
     else:
         control = {"status": "skipped", "reason": "no --source", "source_file_sha256": None}
     frame = cohort.cases.copy()
@@ -293,19 +394,18 @@ def replay_cohort(
         for fmt in SCORING_FORMATS:
             if fmt != "ppr":
                 frame[f"pred_{family}_total_{fmt}"] = totals[family][fmt]
-    identities = {family: family_identity(p, model_dir) for family, p in predictors.items()}
     manifest = {
         "schema_version": REPLAY_SCHEMA_VERSION,
         "cohort_dir": str(cohort.directory),
         "cohort_manifest_sha256": cohort.manifest_sha256,
         "cohort_files": dict(cohort.manifest["files"]),
-        "cohort_schema_version": cohort.manifest["schema_version"],
-        "recipe": dict(cohort.manifest["recipe"]),
+        "recipe": dict(cohort.recipe),
         "recipe_sha256": cohort.manifest["recipe_sha256"],
         "source_values_sha256": cohort.manifest["source_values_sha256"],
         "position": position,
         "model_dir": str(model_dir),
-        "synced": bool(synced),
+        "sync": sync,
+        "families_requested": list(families_requested or families),
         "families": identities,
         "bundle_ids": {family: identity["bundle_id"] for family, identity in identities.items()},
         "families_excluded": excluded,
@@ -314,15 +414,8 @@ def replay_cohort(
         "scoring": {"total_column_format": "ppr", "formats": list(SCORING_FORMATS)},
         "prediction_columns": [c for c in frame.columns if c.startswith("pred_")],
         "device": "cpu",
-        "versions": {
-            "python": platform.python_version(),
-            "numpy": np.__version__,
-            "pandas": pd.__version__,
-            "pyarrow": version("pyarrow"),
-            "torch": torch.__version__,
-            "scikit-learn": version("scikit-learn"),
-        },
-        "code_sha256": _code_hashes(),
+        "versions": runtime_versions("torch", "scikit-learn"),
+        "code_sha256": code_hashes(CODE_PATHS),
     }
     return frame, manifest
 
@@ -351,21 +444,25 @@ def main(argv: list[str] | None = None) -> int:
         "--source",
         type=Path,
         default=None,
-        help="The consumed source parquet; runs the identity control for replay cohorts",
+        help="The consumed source parquet; runs the identity control",
     )
     args = parser.parse_args(argv)
     try:
+        if args.output.exists():
+            raise FileExistsError(f"output already exists: {args.output}")
         cohort = load_cohort(args.cohort)
-        position = cohort.manifest["recipe"]["position"]
+        position = cohort.recipe["position"]
+        sync = None
         if args.sync:
             warn_if_sync_noop()
             from src.artifacts.model_sync import sync_models_from_s3
 
-            sync_models_from_s3()
+            summary = sync_models_from_s3()
+            sync = {"requested": True, "summary": json.loads(json.dumps(summary, default=str))}
         model_dir = resolve_model_dir(
             position, INFERENCE_REGISTRY[position], str(args.model_dir) if args.model_dir else None
         )
-        families = requested_families(args.families, model_dir)
+        families, excluded = requested_families(args.families, model_dir)
         source = pd.read_parquet(args.source) if args.source is not None else None
         predictions, manifest = replay_cohort(
             cohort,
@@ -373,7 +470,9 @@ def main(argv: list[str] | None = None) -> int:
             families,
             source=source,
             source_file_sha256=file_digest(args.source) if args.source is not None else None,
-            synced=args.sync,
+            families_requested=list(args.families),
+            excluded=excluded,
+            sync=sync,
         )
         output = publish_artifact_dir(
             args.output,
@@ -383,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest,
             manifest_name="replay_manifest.json",
         )
-    except (ValueError, TypeError, OSError) as exc:
+    except (ValueError, TypeError, OSError, RuntimeError) as exc:
         parser.exit(2, f"synthetic-replay: {exc}\n")
     print(
         json.dumps(

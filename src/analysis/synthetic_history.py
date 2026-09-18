@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import json
 import math
 import platform
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, fields
-from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -32,19 +32,30 @@ from src.analysis.synthetic_history_schema import (
 )
 from src.config import TRAIN_SEASONS
 from src.features.engineer import build_game_history_arrays
+from src.prediction.bundle import MODEL_FAMILIES, file_digest
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 SCHEMA_VERSION = 2
 KEYS = ["player_id", "season", "week"]
-MODEL_FAMILIES = ("ridge", "nn", "attn_nn", "lgbm")
-FLAT_FAMILY_REASON = (
+WINDOWS = ("any", "exact")
+FLAT_FAMILIES = tuple(family for family in MODEL_FAMILIES if family != "attn_nn")
+RESAMPLED_REASON = (
     "windowed rolling/ewma/trend/share/specific features are not reconstructed from "
     "resampled histories; identity replay only"
 )
+TRUNCATED_REASON = (
+    "{truncated} of {cases} cases truncate the real history (real_prior_games > "
+    "history_games); the forecast row's windowed features describe the full real history; "
+    "use window: exact"
+)
 CONTEXT_SEMANTICS = (
-    "unscaled production feature row of the real forecast game, held fixed; windowed and "
-    "season-to-date columns (e.g. season_starts_to_date, week, days_rest) describe the real "
-    "prior games, not the synthetic history"
+    "unscaled production feature row of the real forecast game, held fixed; the "
+    "sequence-coupled columns listed in context_sequence_coupled_columns and every windowed "
+    "column describe the real prior games, not the synthetic history"
+)
+SOURCE_VALUES_SCOPE = (
+    "history projection, recomputed history points and every production feature column of "
+    "the selected donor rows; a scoring or whitelist change alters it without a data change"
 )
 
 
@@ -58,6 +69,7 @@ class HistoryRecipe:
     history_games: int = 8
     mode: str = "replay"
     block_games: int = 3
+    window: str = "any"
     min_history_ppg: float | None = None
     max_history_ppg: float | None = None
     donor_seasons: tuple[int, ...] = tuple(TRAIN_SEASONS)
@@ -86,6 +98,8 @@ class HistoryRecipe:
             raise ValueError("block_games must be between 1 and history_games")
         if self.mode not in {"replay", "block_bootstrap"}:
             raise ValueError("mode must be replay or block_bootstrap")
+        if self.window not in WINDOWS:
+            raise ValueError("window must be any or exact")
         if not isinstance(self.donor_seasons, (list, tuple)):
             raise ValueError("donor_seasons must be a list of integer training seasons")
         seasons = tuple(self.donor_seasons)
@@ -96,8 +110,12 @@ class HistoryRecipe:
         object.__setattr__(self, "donor_seasons", tuple(sorted(seasons)))
         for name in ("min_history_ppg", "max_history_ppg"):
             value = getattr(self, name)
-            if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+            if value is None:
+                continue
+            if type(value) not in (int, float) or not math.isfinite(value):
                 raise ValueError(f"{name} must be finite or null")
+            # 15 and 15.0 are one recipe; canonical floats keep the recipe hash stable.
+            object.__setattr__(self, name, float(value) + 0.0)
         if (
             self.min_history_ppg is not None
             and self.max_history_ppg is not None
@@ -127,19 +145,34 @@ class HistoryCohort:
     manifest: dict
 
 
+@dataclass(frozen=True)
+class ConsumedSource:
+    """Everything generation reads from a source, with stable index labels.
+
+    ``frame`` and ``context_rows`` share labels that are positions into
+    ``source`` (the reset-index copy), so forecast rows can be selected in
+    either and production builders can run on ``source.loc[frame.index]``.
+    """
+
+    frame: pd.DataFrame
+    context_rows: pd.DataFrame
+    source: pd.DataFrame
+    values_sha256: str
+
+
 def _json_hash(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
-def _file_hash(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+def _dtype_label(dtype) -> str:
+    # object, str and arrow string columns hash the same rows; label them alike.
+    return "str" if getattr(dtype, "kind", "O") in "OUS" else str(dtype)
 
 
 def _frame_hash(frame: pd.DataFrame) -> str:
     """Fingerprint the canonical consumed values, including missingness and schema."""
     digest = hashlib.sha256()
-    digest.update(json.dumps([(c, str(frame[c].dtype)) for c in frame], sort_keys=True).encode())
+    digest.update(json.dumps([(c, _dtype_label(frame[c].dtype)) for c in frame]).encode())
     digest.update(pd.util.hash_pandas_object(frame, index=False).to_numpy().tobytes())
     return digest.hexdigest()
 
@@ -147,6 +180,26 @@ def _frame_hash(frame: pd.DataFrame) -> str:
 def consumed_values_hash(frame: pd.DataFrame, context_rows: pd.DataFrame) -> str:
     """Identity of everything generation reads: history projection plus static context."""
     return hashlib.sha256((_frame_hash(frame) + _frame_hash(context_rows)).encode()).hexdigest()
+
+
+def runtime_versions(*packages: str) -> dict[str, str]:
+    versions = {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+    }
+    for package in ("pyarrow", *packages):
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return versions
+
+
+def code_hashes(relative_paths: Iterable[str]) -> dict[str, str]:
+    """sha256 of implementation files, keyed by their repo-relative ``src/`` path."""
+    src_root = Path(__file__).resolve().parents[1]
+    return {f"src/{relative}": file_digest(src_root / relative) for relative in relative_paths}
 
 
 def validate_history_frame(
@@ -159,7 +212,10 @@ def validate_history_frame(
     violations name ``stage`` so a rewritten history fails as loudly as a bad
     source.
     """
-    for column in dict.fromkeys([*schema.history_columns, *schema.targets]):
+    missing = [column for column in schema.validated_columns if column not in frame.columns]
+    if missing:
+        raise ValueError(f"{stage} is missing schema columns: {missing}")
+    for column in schema.validated_columns:
         values = frame[column]
         if np.isinf(values).any():
             raise ValueError(f"{stage} {column} contains infinity")
@@ -186,13 +242,13 @@ def validate_history_frame(
 
 
 def _source_frame(
-    source: pd.DataFrame, recipe: HistoryRecipe, schema: PositionHistorySchema
+    source: pd.DataFrame,
+    *,
+    position: str,
+    donor_seasons: Iterable[int],
+    schema: PositionHistorySchema,
 ) -> pd.DataFrame:
-    """Project the donor pool onto raw game signals; index labels survive.
-
-    The returned frame keeps ``source``'s index labels so the forecast rows'
-    static context can be selected later; callers reset ``source`` first.
-    """
+    """Project the donor pool onto raw game signals; index labels survive."""
     history_columns = list(schema.history_columns)
     required = list(
         dict.fromkeys([*KEYS, *schema.identity_columns, *history_columns, *schema.targets])
@@ -202,7 +258,7 @@ def _source_frame(
         raise ValueError(f"source is missing production history columns: {missing}")
     # Project onto raw game signals only: cached rolling/static columns must not
     # survive resampling and masquerade as recomputed synthetic features.
-    selected = source["position"].eq(recipe.position)
+    selected = source["position"].eq(position)
     if "season_type" in schema.identity_columns:
         selected &= source["season_type"].eq("REG")
     frame = source.loc[selected, required].copy()
@@ -220,16 +276,16 @@ def _source_frame(
         frame[column] = numeric.astype("int64")
     if not frame["week"].between(1, 18).all():
         raise ValueError("regular-season week must be between 1 and 18")
-    frame = frame[frame["season"].isin(recipe.donor_seasons)]
+    frame = frame[frame["season"].isin(list(donor_seasons))]
     if frame.empty:
-        raise ValueError(f"no {recipe.position} records in the requested training seasons")
+        raise ValueError(f"no {position} records in the requested training seasons")
     if frame.duplicated(KEYS).any():
         raise ValueError("source has duplicate player/season/week keys")
-    for column in dict.fromkeys([*history_columns, *schema.targets]):
+    for column in schema.validated_columns:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype("float64")
     validate_history_frame(frame, schema, stage="source")
     frame["fantasy_points"] = predictions_to_fantasy_points(
-        recipe.position, {name: frame[name].to_numpy() for name in schema.targets}
+        position, {name: frame[name].to_numpy() for name in schema.targets}
     )
     return frame.sort_values(KEYS, kind="stable")
 
@@ -254,69 +310,86 @@ def _context_rows(
     return context
 
 
-def _model_input_readiness(recipe: HistoryRecipe) -> dict:
-    """Which saved-model families a cohort can feed coherently, and why not."""
-    identity = recipe.mode == "replay"
+def consume_source(
+    source: pd.DataFrame,
+    *,
+    position: str,
+    donor_seasons: Iterable[int],
+    schema: PositionHistorySchema,
+) -> ConsumedSource:
+    """Read a source the way generation does; the replay's control does the same."""
+    source = source.reset_index(drop=True)
+    frame = _source_frame(source, position=position, donor_seasons=donor_seasons, schema=schema)
+    context_rows = _context_rows(source, frame.index, schema)
+    return ConsumedSource(frame, context_rows, source, consumed_values_hash(frame, context_rows))
+
+
+def model_input_readiness(mode: str, cases: pd.DataFrame) -> dict:
+    """Which saved-model families a cohort can feed coherently, and why not.
+
+    The attention NN is always ready: its static branch is the forecast row's
+    non-temporal context and its history branch is the synthetic tensor. The
+    flat families read the forecast row's windowed features, which describe the
+    real history, so they are ready only when every case replays exactly the
+    real window.
+    """
     readiness = {
         "attn_nn": {"ready": True, "inputs": ["history.npz", "context.parquet"], "reason": None}
     }
-    for family in ("ridge", "nn", "lgbm"):
+    truncated = int((~cases["exact_window"].astype(bool)).sum())
+    if mode != "replay":
+        reason = RESAMPLED_REASON
+    elif truncated:
+        reason = TRUNCATED_REASON.format(truncated=truncated, cases=len(cases))
+    else:
+        reason = None
+    for family in FLAT_FAMILIES:
         readiness[family] = {
-            "ready": identity,
+            "ready": reason is None,
             "inputs": ["context.parquet"],
-            "reason": None if identity else FLAT_FAMILY_REASON,
+            "reason": reason,
         }
     return readiness
-
-
-def _code_hashes(schema: PositionHistorySchema) -> dict[str, str]:
-    src_root = Path(__file__).resolve().parents[1]
-    paths = [
-        Path(__file__).resolve(),
-        src_root / "analysis/synthetic_history_schema.py",
-        *(src_root / relative for relative in schema.code_paths),
-    ]
-    return {
-        str(path.relative_to(src_root.parent)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in paths
-    }
 
 
 def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohort:
     """Bootstrap isolated history cases, preserving whole donor-game records.
 
-    Each eligible forecast has N observed games earlier in the same season.
-    The forecast row contributes its key and its pre-kickoff static context;
-    its outcomes cannot select a case or enter a tensor. Sampling is with
-    replacement. In block mode, both source blocks and all their per-game
-    fields are sampled together from that case's eligible past; artificial
-    joins are explicitly recorded.
+    Each eligible forecast has N observed games earlier in the same season
+    (exactly N when ``window`` is ``exact``). The forecast row contributes its
+    key and its pre-kickoff static context; its outcomes cannot select a case
+    or enter a tensor. Sampling is with replacement. In block mode, both source
+    blocks and all their per-game fields are sampled together from that case's
+    eligible past; artificial joins are explicitly recorded.
     """
     schema = position_schema(recipe.position)
-    source = source.reset_index(drop=True)
-    frame = _source_frame(source, recipe, schema)
-    context_rows = _context_rows(source, frame.index, schema)
+    consumed = consume_source(
+        source, position=recipe.position, donor_seasons=recipe.donor_seasons, schema=schema
+    )
+    frame, context_rows = consumed.frame, consumed.context_rows
     history_columns = list(schema.history_columns)
     candidates = []
     n = recipe.history_games
     for (_, _), group in frame.groupby(["player_id", "season"], sort=True):
         indices = group.index.to_numpy()
         for offset in range(n, len(indices)):
+            if recipe.window == "exact" and offset != n:
+                continue
             past = indices[offset - n : offset]
             ppg = float(frame.loc[past, "fantasy_points"].mean())
             if recipe.min_history_ppg is not None and ppg < recipe.min_history_ppg:
                 continue
             if recipe.max_history_ppg is not None and ppg > recipe.max_history_ppg:
                 continue
-            candidates.append((past, indices[offset], ppg))
+            candidates.append((past, indices[offset], ppg, offset))
     if not candidates:
         raise ValueError("no eligible donor histories; cannot synthesize an unsupported archetype")
-    source_hash = consumed_values_hash(frame, context_rows)
+    source_hash = consumed.values_sha256
     recipe_hash = _json_hash(asdict(recipe))
     rng = np.random.default_rng(recipe.seed)
     game_parts, case_rows, history_frames, forecast_indices = [], [], [], []
     for case_number, candidate in enumerate(rng.integers(len(candidates), size=recipe.cases)):
-        past, forecast_idx, donor_ppg = candidates[candidate]
+        past, forecast_idx, donor_ppg, offset = candidates[candidate]
         forecast = frame.loc[forecast_idx]
         offsets = np.arange(n)
         block_ids = np.zeros(n, dtype=int)
@@ -343,6 +416,8 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
                 "donor_player_id": forecast["player_id"],
                 "donor_season": int(forecast["season"]),
                 "forecast_week": int(forecast["week"]),
+                "real_prior_games": int(offset),
+                "exact_window": bool(offset == n),
                 "donor_history_ppg": donor_ppg,
                 "generated_history_ppg": float(games["fantasy_points"].mean()),
                 "unique_donor_games": int(games["donor_week"].nunique()),
@@ -381,18 +456,21 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "recipe": asdict(recipe),
         "recipe_sha256": recipe_hash,
         "source_values_sha256": source_hash,
+        "source_values_scope": SOURCE_VALUES_SCOPE,
         "source_rows": len(frame),
         "eligible_windows": len(candidates),
         "unique_donor_windows": int(
             cases.drop_duplicates(["donor_player_id", "donor_season", "forecast_week"]).shape[0]
         ),
+        "exact_window_cases": int(cases["exact_window"].sum()),
         "diagnostic_scope": "attention_history_and_forecast_context",
-        "model_input_readiness": _model_input_readiness(recipe),
+        "model_input_readiness": model_input_readiness(recipe.mode, cases),
         "history_columns": history_columns,
         "history_shape": list(history.shape),
         "history_order": "newest_first",
         "history_scaling": "unscaled; the production attention model consumes raw history",
         "context_columns": list(schema.feature_columns),
+        "context_sequence_coupled_columns": list(schema.sequence_coupled_context),
         "context_semantics": CONTEXT_SEMANTICS,
         "scoring_format": "ppr",
         "scoring_scope": schema.scoring_scope,
@@ -403,13 +481,14 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "temporal_policy": "original_order"
         if recipe.mode == "replay"
         else "within_block_order_only; boundary transitions are synthetic",
-        "versions": {
-            "python": platform.python_version(),
-            "numpy": np.__version__,
-            "pandas": pd.__version__,
-            "pyarrow": version("pyarrow"),
-        },
-        "code_sha256": _code_hashes(schema),
+        "versions": runtime_versions(),
+        "code_sha256": code_hashes(
+            (
+                "analysis/synthetic_history.py",
+                "analysis/synthetic_history_schema.py",
+                *schema.code_paths,
+            )
+        ),
     }
     return HistoryCohort(games, cases, context, history, mask, manifest)
 
@@ -435,7 +514,7 @@ def publish_artifact_dir(
         write_files(temporary)
         manifest = dict(manifest)
         manifest["files"] = {
-            path.name: _file_hash(path) for path in sorted(temporary.iterdir()) if path.is_file()
+            path.name: file_digest(path) for path in sorted(temporary.iterdir()) if path.is_file()
         }
         (temporary / manifest_name).write_text(
             json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n"
@@ -468,9 +547,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
+        if args.output.exists():
+            raise FileExistsError(f"output already exists: {args.output}")
         recipe = HistoryRecipe.from_dict(json.loads(args.recipe.read_text()))
         cohort = generate_cohort(pd.read_parquet(args.source), recipe)
-        cohort.manifest["source_file_sha256"] = _file_hash(args.source)
+        cohort.manifest["source_file_sha256"] = file_digest(args.source)
         output = write_cohort(cohort, args.output)
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"synthetic-history: {exc}\n")
@@ -480,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
                 "output": str(output),
                 "cases": len(cohort.cases),
                 "eligible_windows": cohort.manifest["eligible_windows"],
+                "exact_window_cases": cohort.manifest["exact_window_cases"],
                 "model_input_readiness": {
                     family: entry["ready"]
                     for family, entry in cohort.manifest["model_input_readiness"].items()

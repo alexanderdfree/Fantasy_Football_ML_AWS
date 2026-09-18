@@ -32,11 +32,14 @@ the forecast game's static context:
   within-game values and within-block order, **not** a complete consistent NFL
   schedule or transitions between blocks. Bye/rest metadata is the donor game's
   context, not recomputed synthetic elapsed time.
-- Each candidate has N observed games preceding a real forecast key, within one
-  player-season. The forecast game's outcomes are excluded from selection and
-  tensors. Sampling is uniform over eligible windows, not over players; long
-  seasons contribute more windows. Overlapping/repeated windows are dependent,
-  so the case count is not an independent statistical sample size.
+- Each candidate has at least N observed games preceding a real forecast key,
+  within one player-season; `window: exact` restricts candidates to forecasts
+  with exactly N prior games, so every case replays the real window in full.
+  Each case records `real_prior_games` and `exact_window`. The forecast game's
+  outcomes are excluded from selection and tensors. Sampling is uniform over
+  eligible windows, not over players; long seasons contribute more windows.
+  Overlapping/repeated windows are dependent, so the case count is not an
+  independent statistical sample size.
 - PPG means the existing QB projected scoring components, excluding receiving
   and two-point conversions. Bounds select the **original donor window**; a
   bootstrap realization can have a different mean, and both means are recorded.
@@ -52,30 +55,43 @@ the forecast game's static context:
   in newest-first order. Internal ordinal slots are never presented as NFL
   calendar weeks.
 - The real forecast game's unscaled production feature row is exported as
-  `context.parquet` and held fixed. Its windowed and season-to-date columns
-  (`season_starts_to_date`, `week`, `days_rest`, rolling aggregates) describe the
-  real prior games, not the synthetic history; the manifest records this as
-  `context_semantics`.
+  `context.parquet` and held fixed. Its windowed columns and the sequence-coupled
+  columns the schema names (`week`, `days_rest`, `season_starts_to_date`,
+  `is_returning_from_absence`, `rookie_early`) describe the real prior games,
+  not the synthetic history; the manifest records both the list and this policy.
+- The consumed-values hash covers the history projection, the recomputed history
+  points and every feature column of the selected donor rows, labelled by dtype
+  kind so string spellings do not change it; a scoring or whitelist change does
+  change it, and the manifest says so.
 
 The manifest's `model_input_readiness` block states, per saved-model family,
-whether the artifact can feed it coherently. The attention NN is ready in every
-mode: its static branch is the non-temporal forecast context and its history
-branch is the synthetic tensor, which the production model consumes unscaled.
-Ridge, the base NN and LightGBM read windowed rolling/ewma/trend/share features
-that the generator does not reconstruct, so they are ready for identity
-(`replay`) cohorts only and are otherwise recorded with that reason.
+whether the artifact can feed it coherently, and the replay re-derives it from
+the recipe and the cases rather than trusting the field. The attention NN is
+ready in every mode: its static branch is the non-temporal forecast context and
+its history branch is the synthetic tensor, which the production model consumes
+unscaled. Ridge, the base NN and LightGBM read the forecast row's windowed
+rolling/ewma/trend/share features, which describe the real history; they are
+ready only for `replay` cohorts whose every case is an exact window, and are
+otherwise recorded with the reason (resampled history, or the count of cases
+that truncate the real history).
 
 `src/analysis/synthetic_replay.py` replays a cohort against a saved checkpoint
 directory (served or producer path, optionally synced from S3) through the
 production prediction adapter: it hand-builds the checkpoint's ordered inputs
 from `context.parquet` and `history.npz`, applies the checkpoint's fitted scaler
-and clip, and records raw per-target responses plus totals for every scoring
-format in a new directory. It never re-featurizes synthetic rows and never
-writes an outcome column. With the consumed source, an identity control
-rebuilds the forecast rows' inputs with the production tensor builder and
-requires equal static values, history prefix and mask for every case, and equal
-predictions on cases whose forecast game is exactly the (N+1)th of the season;
-a failed control publishes nothing.
+and clip, refuses bundled families from different training generations (the
+same provenance, target and fitted-preprocessing gate serving applies), and
+records raw per-target responses plus totals for every scoring format in a new
+directory. It never re-featurizes synthetic rows and never writes an outcome
+column. With the consumed source, an identity control rebuilds the forecast
+rows' inputs with the production tensor builder and requires equal static values
+for every case in every mode; for `replay` cohorts it also requires the equal
+newest-first history prefix and mask, and predictions on exact windows must
+match production's whole-frame predictions within a float tolerance (replay
+shares production's code path, not its batch, so the largest difference is
+recorded rather than assumed zero). The control reports `passed`,
+`inputs_only` (no exact window to compare) or `context_only` (bootstrap); a
+failed control publishes nothing.
 
 ## Operator workflow
 
@@ -119,15 +135,16 @@ Each new output directory contains:
 | File | Contents |
 |---|---|
 | `games.parquet` | Case/step/block IDs, original donor player/season/week, teams, raw history signals, historical projected-component points |
-| `cases.parquet` | Case index, forecast key, original/generated history averages, unique donor-game counts |
+| `cases.parquet` | Case index, forecast key, real prior games and exact-window flag, original/generated history averages, unique donor-game counts |
 | `context.parquet` | Per case, the forecast game's teams and every unscaled production feature column |
 | `history.npz` | Unscaled `history` and Boolean `mask`; load with `allow_pickle=False` |
-| `manifest.json` | Recipe, consumed-value/source-file hashes, implementation hashes, runtime versions, signal order, coverage, per-family readiness and artifact hashes |
+| `manifest.json` | Recipe, consumed-value/source-file hashes and their scope, implementation hashes, runtime versions, signal order, coverage, per-family readiness and artifact hashes |
 
 Replay a cohort against the served QB checkpoint (`--sync` pulls it from S3 via
 `FF_MODEL_S3_BUCKET`; `--model-dir` overrides the resolved directory). The
-default family is the attention NN; name the flat families explicitly, and run
-LightGBM only where it loads beside torch (Linux/Batch):
+default family is the attention NN; `all` expands to every bundled family but
+skips LightGBM on macOS (libomp), where it must be named explicitly and run on
+Linux/Batch instead:
 
 ```bash
 python -m src.analysis.synthetic_replay \
@@ -140,9 +157,11 @@ python -m src.analysis.synthetic_replay \
 The replay directory contains `predictions.parquet` (one row per case: the case
 metadata, `pred_{family}_{target}`, `pred_{family}_total` in PPR and
 `pred_{family}_total_{half_ppr,standard}`) and `replay_manifest.json` (cohort
-manifest and file hashes, recipe, model directory, per-family bundle ids or file
-hashes, feature-column hash, families excluded with reasons, the identity-control
-result, response semantics, runtime versions and code hashes).
+manifest and file hashes, recipe, model directory and sync summary, requested
+families, per-family bundle ids or file hashes with provenance and
+feature-column hash, families excluded with reasons, the identity-control result
+with its tolerance and largest prediction difference, response semantics,
+runtime versions and code hashes).
 
 Existing output directories are never overwritten. Source row order does not
 affect sampling; the recipe, consumed values, code and runtime identify a replay.
@@ -181,5 +200,7 @@ shared validator are the extension points):
 - 2026-09-10: Start versioned QB donor-history generation, provenance, consistency
   checks and production attention-history replay in a draft PR.
 - 2026-09-18: Schema 2 exports the forecast game's production feature context,
-  publishes per-family model-input readiness, and replays QB cohorts against
-  saved checkpoints with recorded responses and an identity control.
+  publishes per-family model-input readiness derived from exact-window cases,
+  adds the `window: exact` recipe guarantee, and replays QB cohorts against
+  saved checkpoints with recorded responses, a training-generation coherence
+  gate and a tolerance-aware identity control.

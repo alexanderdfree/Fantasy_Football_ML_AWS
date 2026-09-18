@@ -6,6 +6,7 @@
   "cases": 20,
   "history_games": 8,
   "mode": "replay",
+  "window": "exact",
   "min_history_ppg": 15.0,
   "max_history_ppg": 30.0
 }

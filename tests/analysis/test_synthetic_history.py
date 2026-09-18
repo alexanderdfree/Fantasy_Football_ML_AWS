@@ -1,5 +1,6 @@
 """Boundary, provenance, and production-history replay checks; no model training."""
 
+import dataclasses
 import json
 
 import numpy as np
@@ -8,17 +9,24 @@ import pytest
 
 from src.analysis.synthetic_history import (
     HistoryRecipe,
+    consume_source,
     generate_cohort,
     main,
     validate_history_frame,
     write_cohort,
 )
-from src.analysis.synthetic_history_schema import position_schema
+from src.analysis.synthetic_history_schema import (
+    POSITION_HISTORY_SCHEMAS,
+    PositionHistorySchema,
+    position_schema,
+)
 from src.features.engineer import build_game_history_arrays
 from src.qb.config import POSITION_CONFIG
 from src.qb.features import get_feature_columns
 
 pytestmark = pytest.mark.unit
+
+STRING_COLUMNS = ["player_id", "position", "season_type", "recent_team", "opponent_team"]
 
 
 @pytest.fixture
@@ -60,8 +68,25 @@ def test_whole_game_signals_survive_together_and_forecast_is_excluded(source, mo
     readiness = cohort.manifest["model_input_readiness"]
     assert readiness["attn_nn"]["ready"] is True
     for family in ("ridge", "nn", "lgbm"):
-        assert readiness[family]["ready"] is (mode == "replay")
-        assert (readiness[family]["reason"] is None) is (mode == "replay")
+        assert readiness[family]["ready"] is False
+        assert ("resampled" in readiness[family]["reason"]) is (mode == "block_bootstrap")
+        assert ("truncate" in readiness[family]["reason"]) is (mode == "replay")
+
+
+def test_exact_window_is_a_recipe_guarantee_and_unlocks_flat_families(source):
+    exact = generate_cohort(source, recipe(window="exact"))
+    assert exact.cases["exact_window"].all()
+    assert (exact.cases["real_prior_games"] == 3).all()
+    assert exact.manifest["exact_window_cases"] == 4
+    assert all(entry["ready"] for entry in exact.manifest["model_input_readiness"].values())
+    # Six games per season: only the forecast at the fourth game replays exactly.
+    assert exact.manifest["eligible_windows"] == 4
+    loose = generate_cohort(source, recipe())
+    assert loose.manifest["eligible_windows"] == 12
+    truncated = loose.cases[~loose.cases["exact_window"]]
+    assert (truncated["real_prior_games"] > 3).all()
+    reason = loose.manifest["model_input_readiness"]["ridge"]["reason"]
+    assert reason.startswith(f"{len(truncated)} of {len(loose.cases)} cases truncate")
 
 
 def test_context_is_the_forecast_row_only(source):
@@ -69,6 +94,8 @@ def test_context_is_the_forecast_row_only(source):
     assert list(cohort.context["case_id"]) == list(cohort.cases["case_id"])
     assert list(cohort.context["case_index"]) == list(range(len(cohort.cases)))
     assert cohort.manifest["context_columns"] == get_feature_columns()
+    assert not set(cohort.manifest["context_columns"]) & set(POSITION_CONFIG.targets)
+    assert set(cohort.manifest["context_sequence_coupled_columns"]) <= set(get_feature_columns())
     original = source.set_index(["player_id", "season", "week"], drop=False)
     for row in cohort.context.to_dict("records"):
         forecast = original.loc[(row["donor_player_id"], row["donor_season"], row["forecast_week"])]
@@ -130,6 +157,27 @@ def test_history_filter_uses_shared_scoring_and_never_final_forecast_outcomes(so
     assert row.fantasy_points == pytest.approx(row.passing_yards * 0.04 + 8 - 2 + 2)
 
 
+def test_recipe_hash_is_invariant_to_bound_spelling(source):
+    integer = generate_cohort(source, recipe(min_history_ppg=15, max_history_ppg=30))
+    floating = generate_cohort(source, recipe(min_history_ppg=15.0, max_history_ppg=30.0))
+    assert integer.manifest["recipe_sha256"] == floating.manifest["recipe_sha256"]
+    assert list(integer.cases["case_id"]) == list(floating.cases["case_id"])
+    assert integer.manifest["recipe"]["min_history_ppg"] == 15.0
+
+
+def test_consumed_values_hash_ignores_string_dtype_spelling(source, tmp_path):
+    schema = position_schema("QB")
+    seasons = tuple(range(2013, 2024))
+    as_object = source.astype({column: object for column in STRING_COLUMNS})
+    source.to_parquet(tmp_path / "source.parquet", index=False)
+    round_tripped = pd.read_parquet(tmp_path / "source.parquet")
+    hashes = {
+        consume_source(frame, position="QB", donor_seasons=seasons, schema=schema).values_sha256
+        for frame in (source, as_object, round_tripped)
+    }
+    assert len(hashes) == 1
+
+
 def test_unsupported_archetype_is_reported_instead_of_relaxing_recipe(source):
     with pytest.raises(ValueError, match="no eligible donor histories"):
         generate_cohort(source, recipe(min_history_ppg=100))
@@ -146,8 +194,8 @@ def test_unsupported_archetype_is_reported_instead_of_relaxing_recipe(source):
         ({"passing_yards": np.inf}, "infinity"),
         ({"passing_yards": 1e100}, "float32 range"),
         ({"fumbles_lost": np.nan}, "must be observed"),
-        ({"snap_pct_raw": 90}, "snap_pct_raw"),
-        ({"qbr_total": 101}, "qbr_total"),
+        ({"snap_pct_raw": 90}, "snap_pct_raw must be within"),
+        ({"qbr_total": 101}, "qbr_total must be within"),
         ({"team_rush_attempts": 3}, "carries <= team_rush_attempts"),
         ({"week": 1.5}, "finite integers"),
         ({"player_id": ""}, "nonempty string"),
@@ -180,6 +228,21 @@ def test_validate_history_frame_is_reusable_on_generated_games(source):
     broken.loc[0, "completions"] = broken.loc[0, "attempts"] + 1
     with pytest.raises(ValueError, match="generated violates completions <= attempts"):
         validate_history_frame(broken, schema, stage="generated")
+    with pytest.raises(ValueError, match="generated is missing schema columns"):
+        validate_history_frame(cohort.games.drop(columns="sacks"), schema, stage="generated")
+
+
+def test_schema_registry_matches_configuration_and_rejects_foreign_columns():
+    schema = POSITION_HISTORY_SCHEMAS["QB"]
+    assert schema.history_columns == tuple(POSITION_CONFIG.attn_history_stats)
+    assert schema.targets == tuple(POSITION_CONFIG.targets)
+    assert schema.feature_columns == tuple(get_feature_columns())
+    assert set(schema.count_columns) <= set(schema.validated_columns)
+    with pytest.raises(ValueError, match="outside its history and targets"):
+        dataclasses.replace(schema, relations=(("carries", "not_a_column"),))
+    with pytest.raises(ValueError, match="sequence-coupled context"):
+        dataclasses.replace(schema, sequence_coupled_context=("qbr_total",))
+    assert isinstance(schema, PositionHistorySchema)
 
 
 @pytest.mark.parametrize(
@@ -193,6 +256,7 @@ def test_validate_history_frame_is_reusable_on_generated_games(source):
         {"history_games": 18},
         {"block_games": 9, "mode": "block_bootstrap"},
         {"mode": "scale"},
+        {"window": "sometimes"},
         {"donor_seasons": [2025]},
         {"donor_seasons": 2022},
         {"donor_seasons": [2022, 2022]},
@@ -216,12 +280,10 @@ def test_artifacts_round_trip_hashes_no_overwrite_and_cli(tmp_path, source, caps
     assert main(["--source", str(src), "--recipe", str(config), "--output", str(output)]) == 0
     stdout = json.loads(capsys.readouterr().out)
     assert stdout["cases"] == 3
-    assert stdout["model_input_readiness"] == {
-        "attn_nn": True,
-        "ridge": True,
-        "nn": True,
-        "lgbm": True,
-    }
+    cases = pd.read_parquet(output / "cases.parquet")
+    assert stdout["exact_window_cases"] == int(cases["exact_window"].sum())
+    assert stdout["model_input_readiness"]["attn_nn"] is True
+    assert stdout["model_input_readiness"]["ridge"] is bool(cases["exact_window"].all())
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["source_file_sha256"] == hashlib.sha256(src.read_bytes()).hexdigest()
     assert set(manifest["files"]) == {
@@ -238,6 +300,9 @@ def test_artifacts_round_trip_hashes_no_overwrite_and_cli(tmp_path, source, caps
     assert len(pd.read_parquet(output / "context.parquet")) == 3
     with pytest.raises(FileExistsError):
         write_cohort(generate_cohort(source, recipe()), output)
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--source", str(src), "--recipe", str(config), "--output", str(output)])
+    assert exit_info.value.code == 2
     assert not list(tmp_path.glob(".run-*"))
 
 
