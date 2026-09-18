@@ -1,0 +1,1398 @@
+{
+  "kind": "weights",
+  "origins": [
+    2022,
+    2023
+  ],
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "records": 36,
+  "source_shas": [
+    "8cfd395973b4a2d278b5536e32e389f55741c671"
+  ],
+  "data_releases": [
+    "4d196674393af2bbdc09e4269117bfe84ef7d98cad3243b27b982c6270dfa6d7"
+  ],
+  "hardware": [
+    "NVIDIA A10G"
+  ],
+  "provenance_errors": [],
+  "numerical_findings": [
+    {
+      "cell": [
+        "WR",
+        2022,
+        123,
+        "gate_half"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.000208781753610254,
+            "n_outside_tolerance": 9
+          },
+          "d_mu": {
+            "max_scaled_error": 0.000002575336793255547,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.00010495237178588941,
+            "n_outside_tolerance": 1
+          }
+        },
+        "n_positive": 1941,
+        "observed_ranges": {
+          "log_alpha": [
+            -6.192210674285889,
+            1.8047164678573608
+          ],
+          "mu": [
+            0.12939639389514923,
+            7.713788032531738
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    },
+    {
+      "cell": [
+        "WR",
+        2022,
+        7,
+        "reception_half"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.00015844857687352407,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 5.03602344478313e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.000026978947549194894,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1941,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.074244022369385,
+            0.9349613189697266
+          ],
+          "mu": [
+            0.310962975025177,
+            8.125130653381348
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    },
+    {
+      "cell": [
+        "WR",
+        2023,
+        123,
+        "reception_half"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.00010165711781390957,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 4.857454379253922e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.000017063995880899785,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.333069324493408,
+            0.8315277099609375
+          ],
+          "mu": [
+            0.3608172535896301,
+            8.952369689941406
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    },
+    {
+      "cell": [
+        "WR",
+        2023,
+        7,
+        "baseline"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.0001015083401746781,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 5.852325976369276e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.000020769719569591077,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.434983730316162,
+            1.5454955101013184
+          ],
+          "mu": [
+            0.2324415147304535,
+            9.134099006652832
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    },
+    {
+      "cell": [
+        "WR",
+        2023,
+        7,
+        "reception_double"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.00011856709119429214,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 6.04053995209674e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.000024737428589058155,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.08605432510376,
+            0.9157592058181763
+          ],
+          "mu": [
+            0.26990389823913574,
+            8.872737884521484
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    },
+    {
+      "cell": [
+        "WR",
+        2023,
+        7,
+        "reception_half"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.0001190741646451496,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 7.889821179652789e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.00003064606948217394,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.198946952819824,
+            0.7412862181663513
+          ],
+          "mu": [
+            0.2857116460800171,
+            9.210679054260254
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    },
+    {
+      "cell": [
+        "WR",
+        2023,
+        7,
+        "gate_half"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.00012218514851068202,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 5.029794357232772e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.00002824742739683002,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.305941104888916,
+            0.7728841304779053
+          ],
+          "mu": [
+            0.2811541259288788,
+            8.694210052490234
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.0041706669236865794,
+          "std": 0.0010354253083341267,
+          "paired": [
+            -0.00511761902113772,
+            -0.0030650778605494367,
+            -0.004329303889372582
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.0019412793776284094,
+          "std": 0.007088979675633117,
+          "paired": [
+            0.0013509488728757901,
+            0.009306965492211994,
+            -0.0048340762322025554
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.02010865145022282,
+          "std": 0.02885882489228474,
+          "paired": [
+            -0.05088344581403792,
+            0.0063474312029692115,
+            -0.015789939739599745
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029681499271374534,
+          "std": 0.031043835734483553,
+          "paired": [
+            0.053853665321828004,
+            0.04051919273327087,
+            -0.005328360240975272
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.08266258211308337,
+          "std": 0.035179311618130114,
+          "paired": [
+            0.052127564351787115,
+            0.12113124363026007,
+            0.07472893835720296
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.004446790336679681,
+          "std": 0.03342584613502153,
+          "paired": [
+            -0.0005568826111108649,
+            0.026863911759440917,
+            -0.039647400158369095
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.04663701201820292,
+          "std": 0.04763275060483453,
+          "paired": [
+            -0.0028906376237189946,
+            -0.03963858728113134,
+            -0.09738181114975841
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.012484473378395458,
+          "std": 0.0865468534075834,
+          "paired": [
+            0.10528028026145009,
+            -0.0017877160096535505,
+            -0.06603914411661016
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.003956208206307821,
+          "std": 0.008809160922389236,
+          "paired": [
+            -0.006133936823174757,
+            0.007886360939380666,
+            0.010116200502717554
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.012265278862040022,
+          "std": 0.013187943520426015,
+          "paired": [
+            0.002478443645252959,
+            0.007054972076550925,
+            0.027262420864316184
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.02665880182766885,
+          "std": 0.05887541682673764,
+          "paired": [
+            -0.009595178435943374,
+            0.09459092616074294,
+            -0.005019342241793012
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029711094572549612,
+          "std": 0.05198083459385574,
+          "paired": [
+            -0.0014059345615411445,
+            0.0008195805853308258,
+            0.08971963769385916
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "corrected",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.05666782569538631,
+          "std": 0.015197499321462849,
+          "paired": [
+            0.07421638629308402,
+            0.04789470192675882,
+            0.04789238886631608
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.028493351626273682,
+          "std": 0.024059111214702274,
+          "paired": [
+            -0.02035021653784952,
+            -0.055567263521446364,
+            -0.00956257481952516
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.012564904718289563,
+          "std": 0.05313806259263444,
+          "paired": [
+            0.03514408541397529,
+            -0.06983411048971355,
+            -0.0030046890791304293
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.0634083544741723,
+          "std": 0.04082619586991168,
+          "paired": [
+            -0.10574775673514303,
+            -0.0601916344706801,
+            -0.024285672216693754
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_half",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.0041706669236865794,
+          "std": 0.0010354253083341267,
+          "paired": [
+            -0.00511761902113772,
+            -0.0030650778605494367,
+            -0.004329303889372582
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.0019412793776284094,
+          "std": 0.007088979675633117,
+          "paired": [
+            0.0013509488728757901,
+            0.009306965492211994,
+            -0.0048340762322025554
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.02010865145022282,
+          "std": 0.02885882489228474,
+          "paired": [
+            -0.05088344581403792,
+            0.0063474312029692115,
+            -0.015789939739599745
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029681499271374534,
+          "std": 0.031043835734483553,
+          "paired": [
+            0.053853665321828004,
+            0.04051919273327087,
+            -0.005328360240975272
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_half",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.07490432319451894,
+          "std": 0.02279564856750869,
+          "paired": [
+            0.049889649989244944,
+            0.09450681215199452,
+            0.08031650744231733
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.024161107100205765,
+          "std": 0.04456925675499674,
+          "paired": [
+            0.02517882595485421,
+            0.06821278889426363,
+            -0.020908293548500545
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.008306217556014536,
+          "std": 0.05657324192244633,
+          "paired": [
+            0.014903873866983552,
+            0.061291356034176125,
+            -0.05127657723311607
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.06330578174041257,
+          "std": 0.08460756135507122,
+          "paired": [
+            0.144948571339647,
+            0.06895244713587445,
+            -0.023983673254283744
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_half",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.003956208206307821,
+          "std": 0.008809160922389236,
+          "paired": [
+            -0.006133936823174757,
+            0.007886360939380666,
+            0.010116200502717554
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.012265278862040022,
+          "std": 0.013187943520426015,
+          "paired": [
+            0.002478443645252959,
+            0.007054972076550925,
+            0.027262420864316184
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.02665880182766885,
+          "std": 0.05887541682673764,
+          "paired": [
+            -0.009595178435943374,
+            0.09459092616074294,
+            -0.005019342241793012
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029711094572549612,
+          "std": 0.05198083459385574,
+          "paired": [
+            -0.0014059345615411445,
+            0.0008195805853308258,
+            0.08971963769385916
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_half",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.06373065880947386,
+          "std": 0.039455992293105965,
+          "paired": [
+            0.07169756464267119,
+            0.09859526422810427,
+            0.020899147557646103
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.007763538003475882,
+          "std": 0.01577578030740876,
+          "paired": [
+            0.001688699899048629,
+            -0.025975451083493972,
+            0.0009961371740176972
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.01710590293987598,
+          "std": 0.0851178354371974,
+          "paired": [
+            0.06294726993472288,
+            -0.10651531072272036,
+            -0.007749668031630463
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.04627520181326735,
+          "std": 0.04801489551298673,
+          "paired": [
+            0.0009189504146434047,
+            -0.09507077367081074,
+            -0.044673782183634714
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_double",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.0041706669236865794,
+          "std": 0.0010354253083341267,
+          "paired": [
+            -0.00511761902113772,
+            -0.0030650778605494367,
+            -0.004329303889372582
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.0019412793776284094,
+          "std": 0.007088979675633117,
+          "paired": [
+            0.0013509488728757901,
+            0.009306965492211994,
+            -0.0048340762322025554
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.02010865145022282,
+          "std": 0.02885882489228474,
+          "paired": [
+            -0.05088344581403792,
+            0.0063474312029692115,
+            -0.015789939739599745
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029681499271374534,
+          "std": 0.031043835734483553,
+          "paired": [
+            0.053853665321828004,
+            0.04051919273327087,
+            -0.005328360240975272
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_double",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.09379496808586534,
+          "std": 0.03638446859331676,
+          "paired": [
+            0.05179131089919853,
+            0.11402275402741235,
+            0.11557083933098511
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.011435707409397663,
+          "std": 0.021246162110492708,
+          "paired": [
+            0.013714876800344555,
+            0.03145039993133025,
+            -0.01085815450348182
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.01092280135120897,
+          "std": 0.018828769962641805,
+          "paired": [
+            -0.025683283280677927,
+            0.010282008619951988,
+            -0.01736712939290097
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.08266864034855577,
+          "std": 0.03237047976399423,
+          "paired": [
+            0.11756709085032213,
+            0.07681344694957737,
+            0.05362538324576782
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_double",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.003956208206307821,
+          "std": 0.008809160922389236,
+          "paired": [
+            -0.006133936823174757,
+            0.007886360939380666,
+            0.010116200502717554
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.012265278862040022,
+          "std": 0.013187943520426015,
+          "paired": [
+            0.002478443645252959,
+            0.007054972076550925,
+            0.027262420864316184
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.02665880182766885,
+          "std": 0.05887541682673764,
+          "paired": [
+            -0.009595178435943374,
+            0.09459092616074294,
+            -0.005019342241793012
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.029711094572549612,
+          "std": 0.05198083459385574,
+          "paired": [
+            -0.0014059345615411445,
+            0.0008195805853308258,
+            0.08971963769385916
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "gate_double",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.058850150126999345,
+          "std": 0.013129423051436941,
+          "paired": [
+            0.06995081159409056,
+            0.044357602894823156,
+            0.062242035892084324
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.019904086477400423,
+          "std": 0.02992632617304302,
+          "paired": [
+            -0.03535448181561751,
+            -0.03894732098380338,
+            0.014589543367219626
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.01757146270561864,
+          "std": 0.05023283267449365,
+          "paired": [
+            0.02907623056653197,
+            -0.0707504933604568,
+            -0.011040125322931083
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.0527005723642849,
+          "std": 0.033241711563592145,
+          "paired": [
+            -0.05516752911157852,
+            -0.08464007970163934,
+            -0.018294108279636845
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_half",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.007115169853882719,
+          "std": 0.0008960055790731585,
+          "paired": [
+            -0.006313064740623986,
+            -0.006950274941047496,
+            -0.008082169879976675
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.06185373217993965,
+          "std": 0.05116599296916149,
+          "paired": [
+            0.0027755013044998833,
+            0.09192276647131514,
+            0.09086292876400393
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.03846143551042699,
+          "std": 0.0799595809643577,
+          "paired": [
+            -0.0518283688460599,
+            0.10032004493590208,
+            0.06689263044143878
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.1920917351803825,
+          "std": 0.1242221768322691,
+          "paired": [
+            0.057144180635004815,
+            0.21745829978571152,
+            0.3016727251204312
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_half",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.09449819510055295,
+          "std": 0.046014862962015644,
+          "paired": [
+            0.048776734414260225,
+            0.09391689827139782,
+            0.14080095261600079
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.009641048380318947,
+          "std": 0.021106840838359658,
+          "paired": [
+            0.03383205672266154,
+            0.0001136304053996895,
+            -0.00502254198710439
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.039286756166902435,
+          "std": 0.04186846118058086,
+          "paired": [
+            0.008497963768341776,
+            -0.06953784613056246,
+            -0.05682038613848661
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.01853364112714395,
+          "std": 0.10991720091770564,
+          "paired": [
+            0.14314635018262756,
+            -0.06464244301009003,
+            -0.02290298379110567
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_half",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.018414358100043476,
+          "std": 0.04228606615018294,
+          "paired": [
+            -0.0021039100230773045,
+            0.013287517017133155,
+            -0.06642668129418627
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.10658594277564415,
+          "std": 0.09558031266169653,
+          "paired": [
+            0.11931043482494363,
+            0.005280757860979257,
+            0.19516663564100956
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.09239239104398174,
+          "std": 0.07939783138453146,
+          "paired": [
+            0.095042733167082,
+            0.011702571721764699,
+            0.17043186824309853
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.28281758886039005,
+          "std": 0.23941635658745097,
+          "paired": [
+            0.3883623317521465,
+            0.008763898190442987,
+            0.4513265366385806
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_half",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.09770494373737944,
+          "std": 0.06107983179428071,
+          "paired": [
+            0.11573000329934358,
+            0.1477438218384992,
+            0.02964100607429554
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.025061306613598216,
+          "std": 0.036823705679209395,
+          "paired": [
+            -0.00972088866703924,
+            -0.06707520471410611,
+            0.0016121735403507031
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.03257409005542389,
+          "std": 0.12893342302226962,
+          "paired": [
+            0.17969629512325813,
+            -0.060738472025147594,
+            -0.021235552931838875
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.06847398403870623,
+          "std": 0.024582229866143095,
+          "paired": [
+            -0.05695208118516959,
+            -0.09670091733066677,
+            -0.05176895360028233
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_double",
+      "position": "WR",
+      "origin": 2022,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.0023668963717877745,
+          "std": 0.028752699036910398,
+          "paired": [
+            0.027650503106446678,
+            -0.005090055897702506,
+            -0.029661136324107495
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.008014653178533374,
+          "std": 0.016154317370138904,
+          "paired": [
+            0.007271303983279687,
+            -0.024915958008313588,
+            -0.006399305510566222
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.01788923131709345,
+          "std": 0.04253610123927496,
+          "paired": [
+            0.06577234206491767,
+            -0.015524688464481073,
+            0.003420040350843756
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.021415925584459334,
+          "std": 0.06397941687070764,
+          "paired": [
+            0.03223587251324922,
+            -0.09222453946286713,
+            -0.004259109803760097
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_double",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.10000080699794249,
+          "std": 0.030889378674548242,
+          "paired": [
+            0.06553563765635939,
+            0.12518749699816212,
+            0.10927928633930595
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.011744515908191033,
+          "std": 0.010301038292346618,
+          "paired": [
+            0.01449518312339304,
+            0.020390996622547952,
+            0.0003473679786321071
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.014820037665578193,
+          "std": 0.04774081597106091,
+          "paired": [
+            -0.011093511069488748,
+            -0.06431491083804541,
+            0.030948308910799582
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.02320392740617372,
+          "std": 0.07587804817103375,
+          "paired": [
+            0.09634239647950693,
+            -0.05514510428716335,
+            0.028414490026177575
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_double",
+      "position": "WR",
+      "origin": 2023,
+      "family": "nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.0004665434767569347,
+          "std": 0.016276332037581515,
+          "paired": [
+            -0.017296617428948835,
+            0.004031022221337999,
+            0.01466522563788164
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.01071371265025789,
+          "std": 0.015366076652037063,
+          "paired": [
+            -0.002038453246641758,
+            0.0064055543818621885,
+            0.027774036815553238
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.04389698268167871,
+          "std": 0.049057354200825604,
+          "paired": [
+            0.04806758686526624,
+            0.09073589286502681,
+            -0.00711253168525694
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.01007624104414262,
+          "std": 0.07174282132715334,
+          "paired": [
+            -0.05821887299354778,
+            0.0036175736520185353,
+            0.0848300224739571
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "reception_double",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.04785639076374185,
+          "std": 0.005794287563225485,
+          "paired": [
+            0.0414178583061493,
+            0.04949998468848982,
+            0.05265132929658645
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.024984571622506262,
+          "std": 0.03636325159065662,
+          "paired": [
+            -0.018161968217164315,
+            -0.06427588347463864,
+            0.007484136824284171
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.022298437361630914,
+          "std": 0.04525780448050657,
+          "paired": [
+            0.019565333266951868,
+            -0.07031975600266094,
+            -0.016140889349183674
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.07692188954550024,
+          "std": 0.049968418259627806,
+          "paired": [
+            -0.02189186121656128,
+            -0.11945738339459488,
+            -0.08941642402534455
+          ]
+        }
+      },
+      "passes": false
+    }
+  ],
+  "development_qualified": [],
+  "merge_authorized": false,
+  "limitation": "Development evidence only; confirmation and current review/CI remain mandatory.",
+  "manifest_proofs": [
+    {
+      "file": "wr-dev-2022-s123-8cfd3959-38bb55690cfc5c288d6b6d3dacede380d2809d3c20439b6ff83d8f08ffec72a5-manifest.json",
+      "sha256": "38bb55690cfc5c288d6b6d3dacede380d2809d3c20439b6ff83d8f08ffec72a5",
+      "batch_job_id": "d610d2c8-a50c-4f4e-b8ef-af155f1e2404"
+    },
+    {
+      "file": "wr-dev-2022-s123-8cfd3959-4b24413f22fc947e3924b10baf0e1c95475e90c8e971cc5f57c327913f2e71b6-manifest.json",
+      "sha256": "4b24413f22fc947e3924b10baf0e1c95475e90c8e971cc5f57c327913f2e71b6",
+      "batch_job_id": "d610d2c8-a50c-4f4e-b8ef-af155f1e2404"
+    },
+    {
+      "file": "wr-dev-2022-s123-8cfd3959-6409260a33ed5f2a56c925a47c1e72ed36d517dc741c11859e85f1b25abff6c8-manifest.json",
+      "sha256": "6409260a33ed5f2a56c925a47c1e72ed36d517dc741c11859e85f1b25abff6c8",
+      "batch_job_id": "d610d2c8-a50c-4f4e-b8ef-af155f1e2404"
+    },
+    {
+      "file": "wr-dev-2022-s123-8cfd3959-6bce4cbfff7ef58f29ab201911d20cdf8b2dee594cac0513dc0c5b6849eb5ce7-manifest.json",
+      "sha256": "6bce4cbfff7ef58f29ab201911d20cdf8b2dee594cac0513dc0c5b6849eb5ce7",
+      "batch_job_id": "d610d2c8-a50c-4f4e-b8ef-af155f1e2404"
+    },
+    {
+      "file": "wr-dev-2022-s123-8cfd3959-6e851a7b52c8b0d37912085b1118929faffb70663f74ed94b92b2891872b049b-manifest.json",
+      "sha256": "6e851a7b52c8b0d37912085b1118929faffb70663f74ed94b92b2891872b049b",
+      "batch_job_id": "d610d2c8-a50c-4f4e-b8ef-af155f1e2404"
+    },
+    {
+      "file": "wr-dev-2022-s123-8cfd3959-bcf286a02c9ae812557cb22e0054089190e48b5c8a478d1a7f222af28d498977-manifest.json",
+      "sha256": "bcf286a02c9ae812557cb22e0054089190e48b5c8a478d1a7f222af28d498977",
+      "batch_job_id": "d610d2c8-a50c-4f4e-b8ef-af155f1e2404"
+    },
+    {
+      "file": "wr-dev-2022-s42-8cfd3959-171570b5a2a7fc98d1afcba470e77472952ec444161269373234c800e490aedf-manifest.json",
+      "sha256": "171570b5a2a7fc98d1afcba470e77472952ec444161269373234c800e490aedf",
+      "batch_job_id": "54bd7d59-f963-45b7-8833-a666bd8aa4e2"
+    },
+    {
+      "file": "wr-dev-2022-s42-8cfd3959-2f36ffef4dc8c6a829949c0f2737c64f3f34bacc5b0fb767887dd86f87f2f07f-manifest.json",
+      "sha256": "2f36ffef4dc8c6a829949c0f2737c64f3f34bacc5b0fb767887dd86f87f2f07f",
+      "batch_job_id": "54bd7d59-f963-45b7-8833-a666bd8aa4e2"
+    },
+    {
+      "file": "wr-dev-2022-s42-8cfd3959-76d9c6a41267fc101654731ab3e2c2e186558129138dc28cdaecc96bc97b025e-manifest.json",
+      "sha256": "76d9c6a41267fc101654731ab3e2c2e186558129138dc28cdaecc96bc97b025e",
+      "batch_job_id": "54bd7d59-f963-45b7-8833-a666bd8aa4e2"
+    },
+    {
+      "file": "wr-dev-2022-s42-8cfd3959-a1785ec4c72dadaff009ec4a814286f1acf19acd941f56784f836206e3fe1996-manifest.json",
+      "sha256": "a1785ec4c72dadaff009ec4a814286f1acf19acd941f56784f836206e3fe1996",
+      "batch_job_id": "54bd7d59-f963-45b7-8833-a666bd8aa4e2"
+    },
+    {
+      "file": "wr-dev-2022-s42-8cfd3959-c467061c98c6a1bcec6af7ebfe7c87bb852189a2b1275bfdde950435eda1a3f1-manifest.json",
+      "sha256": "c467061c98c6a1bcec6af7ebfe7c87bb852189a2b1275bfdde950435eda1a3f1",
+      "batch_job_id": "54bd7d59-f963-45b7-8833-a666bd8aa4e2"
+    },
+    {
+      "file": "wr-dev-2022-s42-8cfd3959-e859a89095d069a25e2553e55a58656d049fbf265b45f63643ec091841515b13-manifest.json",
+      "sha256": "e859a89095d069a25e2553e55a58656d049fbf265b45f63643ec091841515b13",
+      "batch_job_id": "54bd7d59-f963-45b7-8833-a666bd8aa4e2"
+    },
+    {
+      "file": "wr-dev-2022-s7-8cfd3959-09d3c9a444f7d02eae01f2effc8fbe7238ee0b353b22e6423b82f83d9e664d26-manifest.json",
+      "sha256": "09d3c9a444f7d02eae01f2effc8fbe7238ee0b353b22e6423b82f83d9e664d26",
+      "batch_job_id": "eeefde82-cff8-4e53-9280-acb08d92d98c"
+    },
+    {
+      "file": "wr-dev-2022-s7-8cfd3959-0a66e97ba603be7a767190740a139869734eba513eb42f4f69b96fdfc94da7a1-manifest.json",
+      "sha256": "0a66e97ba603be7a767190740a139869734eba513eb42f4f69b96fdfc94da7a1",
+      "batch_job_id": "eeefde82-cff8-4e53-9280-acb08d92d98c"
+    },
+    {
+      "file": "wr-dev-2022-s7-8cfd3959-11e1262850c81a213b50b3d8107b155b2b995980f3e4b3d033b5c081fd2bb415-manifest.json",
+      "sha256": "11e1262850c81a213b50b3d8107b155b2b995980f3e4b3d033b5c081fd2bb415",
+      "batch_job_id": "eeefde82-cff8-4e53-9280-acb08d92d98c"
+    },
+    {
+      "file": "wr-dev-2022-s7-8cfd3959-1cb7862dd1fc12bb9d2c0205856300424985e6ee8b3614a2ca04379f61fae324-manifest.json",
+      "sha256": "1cb7862dd1fc12bb9d2c0205856300424985e6ee8b3614a2ca04379f61fae324",
+      "batch_job_id": "eeefde82-cff8-4e53-9280-acb08d92d98c"
+    },
+    {
+      "file": "wr-dev-2022-s7-8cfd3959-2f254f934439c7a34be1f117ccb93b7229d20895f85eeecd5a5a22b3dc797895-manifest.json",
+      "sha256": "2f254f934439c7a34be1f117ccb93b7229d20895f85eeecd5a5a22b3dc797895",
+      "batch_job_id": "eeefde82-cff8-4e53-9280-acb08d92d98c"
+    },
+    {
+      "file": "wr-dev-2022-s7-8cfd3959-6f72cd6984ffc4834bb2e11175d2b08df75278ae4b51ad1ff9de4ced1ebe7ced-manifest.json",
+      "sha256": "6f72cd6984ffc4834bb2e11175d2b08df75278ae4b51ad1ff9de4ced1ebe7ced",
+      "batch_job_id": "eeefde82-cff8-4e53-9280-acb08d92d98c"
+    },
+    {
+      "file": "wr-dev-2023-s123-8cfd3959-1d78ecc9c4ce80ea6b4cfaedf22a77d2b22514ddd3abfc1eb608ffef3c2079aa-manifest.json",
+      "sha256": "1d78ecc9c4ce80ea6b4cfaedf22a77d2b22514ddd3abfc1eb608ffef3c2079aa",
+      "batch_job_id": "97d4a5b6-fece-4166-b213-f92fd0552671"
+    },
+    {
+      "file": "wr-dev-2023-s123-8cfd3959-375f8a898a66789ef89f1c2693376a6f87bb0c3ffe1e409e44fdca875eda984c-manifest.json",
+      "sha256": "375f8a898a66789ef89f1c2693376a6f87bb0c3ffe1e409e44fdca875eda984c",
+      "batch_job_id": "97d4a5b6-fece-4166-b213-f92fd0552671"
+    },
+    {
+      "file": "wr-dev-2023-s123-8cfd3959-44a4263ca569e52a3fcc4477ddcf258fe71b8702e7018be027cf22d4f8cda70a-manifest.json",
+      "sha256": "44a4263ca569e52a3fcc4477ddcf258fe71b8702e7018be027cf22d4f8cda70a",
+      "batch_job_id": "97d4a5b6-fece-4166-b213-f92fd0552671"
+    },
+    {
+      "file": "wr-dev-2023-s123-8cfd3959-7d1a6caabe04474aae2b41aa7314d1dc18ebb81dc0e5112e228c612b6c749e56-manifest.json",
+      "sha256": "7d1a6caabe04474aae2b41aa7314d1dc18ebb81dc0e5112e228c612b6c749e56",
+      "batch_job_id": "97d4a5b6-fece-4166-b213-f92fd0552671"
+    },
+    {
+      "file": "wr-dev-2023-s123-8cfd3959-941eb01415e05e980963b1335b858a0e7253b46c5f56fbd30b9e10419ae60242-manifest.json",
+      "sha256": "941eb01415e05e980963b1335b858a0e7253b46c5f56fbd30b9e10419ae60242",
+      "batch_job_id": "97d4a5b6-fece-4166-b213-f92fd0552671"
+    },
+    {
+      "file": "wr-dev-2023-s123-8cfd3959-d12f55244cedd90c0016b8439325d5b18cde5ecae8ffde200af7f986667d6c32-manifest.json",
+      "sha256": "d12f55244cedd90c0016b8439325d5b18cde5ecae8ffde200af7f986667d6c32",
+      "batch_job_id": "97d4a5b6-fece-4166-b213-f92fd0552671"
+    },
+    {
+      "file": "wr-dev-2023-s42-8cfd3959-19a7c7df82e27b1d1cc13bd3d1a2cd51f9a32c496c9151452201c3ebf7bc3509-manifest.json",
+      "sha256": "19a7c7df82e27b1d1cc13bd3d1a2cd51f9a32c496c9151452201c3ebf7bc3509",
+      "batch_job_id": "150237ca-7ad7-43a9-8620-e4f9e31ec127"
+    },
+    {
+      "file": "wr-dev-2023-s42-8cfd3959-3d24439c4499186989f63c30069c3d93bbe80496fae3e78355ac981545c185d0-manifest.json",
+      "sha256": "3d24439c4499186989f63c30069c3d93bbe80496fae3e78355ac981545c185d0",
+      "batch_job_id": "150237ca-7ad7-43a9-8620-e4f9e31ec127"
+    },
+    {
+      "file": "wr-dev-2023-s42-8cfd3959-7abc75b07a01e901337d7e33f7dd82046879ecccb1d5ff924eea54613dd87cad-manifest.json",
+      "sha256": "7abc75b07a01e901337d7e33f7dd82046879ecccb1d5ff924eea54613dd87cad",
+      "batch_job_id": "150237ca-7ad7-43a9-8620-e4f9e31ec127"
+    },
+    {
+      "file": "wr-dev-2023-s42-8cfd3959-a8e7b38a6530969cd70aa4f5697c866f64a2ec9cf645d81e1eb8c767811ccf2a-manifest.json",
+      "sha256": "a8e7b38a6530969cd70aa4f5697c866f64a2ec9cf645d81e1eb8c767811ccf2a",
+      "batch_job_id": "150237ca-7ad7-43a9-8620-e4f9e31ec127"
+    },
+    {
+      "file": "wr-dev-2023-s42-8cfd3959-de4608a7b22f2cae979ead0d32687ed158b026468269d2224696db4d4f7726f1-manifest.json",
+      "sha256": "de4608a7b22f2cae979ead0d32687ed158b026468269d2224696db4d4f7726f1",
+      "batch_job_id": "150237ca-7ad7-43a9-8620-e4f9e31ec127"
+    },
+    {
+      "file": "wr-dev-2023-s42-8cfd3959-e6ece18b26f3ab44057ee8b3097038d56f86610f36dd5a7362a9c9094fdac068-manifest.json",
+      "sha256": "e6ece18b26f3ab44057ee8b3097038d56f86610f36dd5a7362a9c9094fdac068",
+      "batch_job_id": "150237ca-7ad7-43a9-8620-e4f9e31ec127"
+    },
+    {
+      "file": "wr-dev-2023-s7-8cfd3959-09e3731b7cbbdee0fb38beff8d7741f47ff426c187282061c332657aa3bf1abd-manifest.json",
+      "sha256": "09e3731b7cbbdee0fb38beff8d7741f47ff426c187282061c332657aa3bf1abd",
+      "batch_job_id": "3185876f-edee-4b57-bc9e-2fbe7e614618"
+    },
+    {
+      "file": "wr-dev-2023-s7-8cfd3959-2d98c95216b0489d7b53a43ea3aa96bd7d791e0745b0d58cf0e6e4a5ce99e007-manifest.json",
+      "sha256": "2d98c95216b0489d7b53a43ea3aa96bd7d791e0745b0d58cf0e6e4a5ce99e007",
+      "batch_job_id": "3185876f-edee-4b57-bc9e-2fbe7e614618"
+    },
+    {
+      "file": "wr-dev-2023-s7-8cfd3959-506056e26c39aeec3be8d2362017a0ddd6ecbdb7e1ad24f268c18e6198e56ac5-manifest.json",
+      "sha256": "506056e26c39aeec3be8d2362017a0ddd6ecbdb7e1ad24f268c18e6198e56ac5",
+      "batch_job_id": "3185876f-edee-4b57-bc9e-2fbe7e614618"
+    },
+    {
+      "file": "wr-dev-2023-s7-8cfd3959-6521665206806b428fc971803dfa00ac3b5caf6ac7b8cc934ca32e8c5f5421ee-manifest.json",
+      "sha256": "6521665206806b428fc971803dfa00ac3b5caf6ac7b8cc934ca32e8c5f5421ee",
+      "batch_job_id": "3185876f-edee-4b57-bc9e-2fbe7e614618"
+    },
+    {
+      "file": "wr-dev-2023-s7-8cfd3959-b8838c8159d70ae3b7a88ec20eaeee3a060370503249132f08c694aea3ae0582-manifest.json",
+      "sha256": "b8838c8159d70ae3b7a88ec20eaeee3a060370503249132f08c694aea3ae0582",
+      "batch_job_id": "3185876f-edee-4b57-bc9e-2fbe7e614618"
+    },
+    {
+      "file": "wr-dev-2023-s7-8cfd3959-c246b01616784d2bb108f8e02463cf6d0e5bf23685843d933f500029997054c2-manifest.json",
+      "sha256": "c246b01616784d2bb108f8e02463cf6d0e5bf23685843d933f500029997054c2",
+      "batch_job_id": "3185876f-edee-4b57-bc9e-2fbe7e614618"
+    }
+  ]
+}
