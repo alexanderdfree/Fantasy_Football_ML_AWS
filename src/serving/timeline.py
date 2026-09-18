@@ -1,7 +1,8 @@
 """Retrospective weekly evaluation of cached forecasts and a release changelog.
 
-Each comparison group has a fixed source set. All MAEs and per-model edges
-use one regular-season player-week intersection and shared-component actuals.
+Each comparison group has a fixed source set matching the Comparison tab's
+displayed sources, so both surfaces grade one regular-season player-week
+intersection on shared-component actuals for every MAE and per-model edge.
 Models retain their own records throughout the season; no outcome-selected
 winner is used to construct a track record. Release entries remain historical.
 """
@@ -31,7 +32,7 @@ TIMELINE_GROUPS = {
     "offense": {
         "label": "Offense",
         "positions": ("QB", "RB", "WR", "TE"),
-        "experts": ("nflcom", "rotowire"),
+        "experts": ("nflcom", "rotowire", "espn"),
         "excluded_sources": {},
     },
     "k": {

@@ -28,6 +28,7 @@ from src.shared.comparison_scoring import (
 )
 from src.shared.evaluation import compute_metrics
 from src.shared.evaluation_cohorts import (
+    consensus_selection,
     load_reference,
     reference_selection,
     regular_season_rows,
@@ -52,12 +53,16 @@ _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_e
 # re-enabled.
 _EXPERT_INTERVALS_PATH = os.path.join(os.path.dirname(__file__), "expert_intervals.json")
 
-COMPARISON_SUBSETS = ("weekly_reference_top24", "all", "top30", "top12")
+COMPARISON_SUBSETS = ("weekly_consensus_top24", "weekly_reference_top24", "all", "top30", "top12")
 COMPARISON_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 
 def _shared_rows(frame, scoring, columns=None):
-    """One intersection for every available displayed source; zero is a forecast."""
+    """One intersection for every available displayed source.
+
+    A projected zero is a forecast. All-zero provider placeholder rows were
+    already made unavailable when their comparison totals were built.
+    """
     actual = _actual_col(scoring)
     columns = (
         columns
@@ -81,8 +86,11 @@ def _shared_rows(frame, scoring, columns=None):
 def comparison_tables(results, scoring="ppr", *, reference=None):
     """Shared-component, regular-season, same-player-week accuracy for every source.
 
-    Cohorts are selected before source coverage is applied. In particular, the
-    weekly reference already has ranks from the full pregame forecast pool.
+    The headline weekly cohort is selected by the equal-weight mean of every
+    displayed source on the common rows, so no graded source conditions the
+    population more than another. The archived expert reference remains a
+    secondary view selected before coverage from the full pregame forecast pool;
+    seasonal cohorts are selected before coverage from regular-season actuals.
     """
     subsets = {name: {} for name in COMPARISON_SUBSETS}
     coverage = {name: {} for name in COMPARISON_SUBSETS}
@@ -138,11 +146,30 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
             quartiles[pos] = None
             rankings[pos] = {}
             continue
-        df = df[df[actual].notna()]
-        masks = {"all": pd.Series(True, index=df.index)}
-        masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
+        graded = df[df[actual].notna()]
+        # Source admission and every metric use graded rows only; a source with
+        # forecasts solely on ungraded rows must not blank the position.
+        common_all, available_columns = _shared_rows(graded, scoring)
+        # Consensus membership is fixed before outcome availability is applied: a
+        # selected player-week without recorded actuals is dropped, never replaced.
+        consensus_mask, consensus_meta = consensus_selection(df, available_columns, 24)
+        excluded = EXCLUDED_SOURCES.get(pos, {})
+        unavailable_sources = [
+            prefix
+            for prefix in _ROW_PRED_PREFIXES
+            if prefix not in available_columns
+            and prefix not in excluded
+            and _pred_col(prefix, scoring) in graded
+        ]
+        df = graded
+        masks = {"weekly_consensus_top24": consensus_mask.reindex(df.index, fill_value=False)}
         masks["weekly_reference_top24"], ref_meta = reference_selection(pos, df, reference, 24)
-        common_all, available_columns = _shared_rows(df, scoring)
+        masks["all"] = pd.Series(True, index=df.index)
+        masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
+        selection_meta = {
+            "weekly_consensus_top24": consensus_meta,
+            "weekly_reference_top24": ref_meta,
+        }
         quartiles[pos] = _quartile_bias_from_results(common_all, scoring, pos)
         rankings[pos] = weekly_ranking_metrics(common_all, available_columns)
         for name, mask in masks.items():
@@ -163,10 +190,14 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                 "n": int(len(common)),
                 "cohort_n": int(len(cohort)),
                 "sources": list(columns),
+                "unavailable_sources": unavailable_sources,
                 "source_n": {
                     prefix: int(cohort[col].notna().sum()) for prefix, col in columns.items()
                 },
+                **{k: v for k, v in selection_meta.get(name, {}).items() if k != "status"},
             }
+            if name == "weekly_consensus_top24" and not len(common):
+                coverage[name][pos].setdefault("reason", "no_common_forecast_rows")
             if name == "weekly_reference_top24":
                 coverage[name][pos].update({k: v for k, v in ref_meta.items() if k != "status"})
                 coverage[name][pos]["reference_status"] = ref_meta["status"]
@@ -341,17 +372,17 @@ def _quartile_bias_from_results(results, scoring, pos, n_q=4):
     Bins the position's test rows into ``n_q`` quartiles by **actual** fantasy
     points — Q1 = lowest scorers … Q4 = highest / boom weeks — rank-based so tied
     actuals never collapse a bin. For every prediction source (our four models
-    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the two experts ``nflcom``/``rotowire``,
-    i.e. ``_ROW_PRED_PREFIXES``) it reports per-quartile ``{n, mae, bias}`` where
+    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the displayed experts
+    ``nflcom``/``rotowire``/``espn``, i.e. ``_ROW_PRED_PREFIXES``) it reports per-quartile ``{n, mae, bias}`` where
     ``bias = mean(pred − actual)`` — **bias > 0 ⇒ over-predicts** (same residual
     convention as ``_model_reliabilities_from_results`` / ``expert_uncertainty``).
 
     Computed live from the same cached per-row predictions as
     ``_model_blocks_from_results`` (so it auto-updates on every retrain). The
-    quartile partition is defined once by the shared actual column, so every
-    source is scored on the *same* rows and is directly comparable across the
-    quartile axis; a source's per-quartile ``n`` may still differ because experts
-    don't project every player — that coverage gap is real and surfaced, not hidden.
+    quartile partition is defined once by the shared actual column on the common
+    player-week sample, so every source is scored on the *same* rows and is
+    directly comparable across the quartile axis; per-quartile ``n`` is identical
+    for every displayed source.
 
     Returns ``{ "Q1": {source: {n,mae,bias}|None, ...}, ... }`` keyed by the same
     source prefixes as the accuracy tables, or ``None`` when the slice is missing or

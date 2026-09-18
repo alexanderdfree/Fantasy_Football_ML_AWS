@@ -18,7 +18,7 @@
     },
     "nflcom": {
       "label": "NFL.com",
-      "note": "NFL.com weekly projections from the hvpkod/NFL-Data archive, scored through our PPR aggregator. Curated to likely-to-play players (no DST projections).",
+      "note": "NFL.com weekly projections from the hvpkod/NFL-Data archive, scored through our PPR aggregator. Rostered players without a projection appear as all-zero rows and count as missing forecasts, never as zeros (no DST projections).",
       "seasons": "2025"
     },
     "rotowire": {

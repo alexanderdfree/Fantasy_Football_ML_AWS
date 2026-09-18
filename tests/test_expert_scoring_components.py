@@ -192,6 +192,18 @@ def test_reference_ranks_shared_components_while_display_preserves_full_forecast
     assert meta["status"] == "unavailable"
 
 
+def test_all_zero_roster_placeholder_rows_are_not_forecasts():
+    frame = _normalize_one_position(deebo_raw(), "WR").assign(player_id="00-0035719")
+    zeroed = {c: 0.0 for c in frame.columns if frame[c].dtype.kind == "f"}
+    placeholder = frame.assign(**zeroed, player_id="00-0000001")
+    both = pd.concat([frame, placeholder], ignore_index=True)
+    scored = project_expert_comparison(both, "WR", source="nflcom")
+    assert scored.expert_pred_total.iloc[0] == pytest.approx(13.174)
+    assert np.isnan(scored.expert_pred_total.iloc[1])
+    display = project_nflcom_to_fantasy(both, "WR")
+    assert display.nflcom_pred_total.iloc[1] == 0.0
+
+
 def test_full_forecast_and_shared_comparison_totals_are_distinct():
     frame = _normalize_one_position(deebo_raw(), "WR").assign(player_id="00-0035719")
     assert project_nflcom_to_fantasy(frame, "WR").iloc[0].nflcom_pred_total == pytest.approx(15.625)

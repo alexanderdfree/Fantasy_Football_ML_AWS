@@ -39,6 +39,23 @@ def test_espn_joins_all_formats_and_leaves_missing_players_null():
     assert results.attrs["espn_complete"] is True
 
 
+def test_all_zero_provider_rows_are_missing_comparison_forecasts_not_zeros():
+    results = _results_frame()
+    raw = _rotowire_raw()
+    stats = [c for c in raw.columns if c not in ("player_id", "season", "week", "position")]
+    raw[stats] = 0.0
+    core._apply_expert_predictions(
+        results,
+        nflcom_loader=lambda **kw: pd.DataFrame(),
+        rotowire_loader=lambda seasons: raw,
+    )
+    rb, dst = results.iloc[0], results.iloc[2]
+    assert rb.rotowire_pred_ppr == 0.0  # the published display total is still shown
+    assert pd.isna(rb.rotowire_comparison_pred_ppr)  # but it is not a graded forecast
+    assert pd.isna(dst.rotowire_pred_comparison)
+    assert results.attrs["rotowire_complete"] is True
+
+
 def test_serving_core_does_not_import_analysis_package():
     """Production Docker excludes src/analysis, so serving imports must not rely on it."""
     tree = ast.parse(Path(core.__file__).read_text(encoding="utf-8"))

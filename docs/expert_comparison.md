@@ -4,7 +4,9 @@
 > every source's metrics from the same cached player-weeks and regular-season
 > actuals restricted to shared projected components, with PPR weights. DST points
 > allowed is excluded because provider definitions differ. Its primary cohort
-> is the shared pregame weekly top 24; seasonal
+> is the consensus weekly top 24 (equal-weight mean of every displayed source);
+> the archived NFL.com/RotoWire reference is a secondary view, and provider rows
+> with every shared component at zero are missing forecasts, not zeros. Seasonal
 > top-12/top-30 and weekly leader capture are separate diagnostics. Earlier tables
 > below are dated research snapshots: the former static summary used modeled-stat
 > actuals and postseason-influenced leader IDs, and coverage was not always shared.

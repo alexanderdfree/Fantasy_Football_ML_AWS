@@ -7,6 +7,7 @@ position's comparison uses this same set and the same observed-stat total.
 import numpy as np
 import pandas as pd
 
+from src.config import SCORING_PPR
 from src.shared.aggregate_targets import (
     DST_TARGETS,
     K_TARGETS,
@@ -58,6 +59,35 @@ def score_actual_components(frame, position, scoring="ppr", *, prefix="") -> pd.
         scored["points_allowed"] = np.full(len(frame), 21.0)
     total = predictions_to_fantasy_points(position, scored, scoring)
     return pd.Series(np.where(valid, total, np.nan), index=frame.index)
+
+
+def projected_forecast_rows(frame, position, *, prefix="") -> pd.Series:
+    """True where a provider row carries at least one nonzero published stat.
+
+    Provider archives list unprojected roster players as all-zero stat rows
+    (NFL.com publishes every rostered player; ESPN and RotoWire omit them). Such
+    a row is not a forecast and is unavailable rather than a confident 0.0. The
+    check covers the shared components plus every other published offensive
+    stat on the frame, so a genuine forecast whose production lies outside the
+    shared set (a rushing-only WR week) keeps its 0.0 shared total. Model rows
+    are never filtered: every slate row carries a modeled forecast.
+    """
+    components = [f"{prefix}{name}" for name in scoring_components(position)]
+    if any(name not in frame for name in components):
+        return pd.Series(False, index=frame.index, dtype=bool)
+    published = components + [
+        f"{prefix}{name}"
+        for name in SCORING_PPR
+        if f"{prefix}{name}" in frame and f"{prefix}{name}" not in components
+    ]
+    values = frame[published].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    return pd.Series(values.ne(0.0).any(axis=1).to_numpy(), index=frame.index, dtype=bool)
+
+
+def score_forecast_components(frame, position, scoring="ppr", *, prefix="") -> pd.Series:
+    """Score a provider's forecast rows; all-zero placeholder rows are unavailable."""
+    scored = score_actual_components(frame, position, scoring, prefix=prefix)
+    return scored.where(projected_forecast_rows(frame, position, prefix=prefix))
 
 
 def comparison_actuals(frame, position, scoring="ppr", *, prefix="") -> pd.Series:

@@ -67,6 +67,37 @@ def test_weekly_reference_cannot_change_with_actuals_or_model_forecasts():
     assert original.loc[first, "player_id"].tolist() == [f"p{i:02}" for i in range(24)]
 
 
+def test_consensus_selection_weights_every_displayed_source_equally():
+    from src.shared.evaluation_cohorts import consensus_selection
+
+    base = frame().assign(pred_expert_total=np.arange(30, dtype=float) + 1)
+    columns = {"ridge": "pred_ridge_total", "nn": "pred_nn_total", "expert": "pred_expert_total"}
+    baseline, meta = consensus_selection(base, columns, 24)
+    assert meta["selection_sources"] == list(columns) and meta["selection_n"] == 24
+    assert base.loc[baseline, "player_id"].tolist() == [f"p{i:02}" for i in range(6, 30)]
+    memberships = set()
+    for col in columns.values():
+        boosted = base.copy()
+        boosted.loc[0, col] = 1000.0
+        mask, _ = consensus_selection(boosted, columns, 24)
+        memberships.add(tuple(boosted.loc[mask, "player_id"]))
+    assert len(memberships) == 1 and "p00" in next(iter(memberships))
+    flipped = base.assign(fantasy_points=-base.fantasy_points)
+    mask, _ = consensus_selection(flipped, columns, 24)
+    assert flipped.loc[mask, "player_id"].tolist() == base.loc[baseline, "player_id"].tolist()
+    partial = base.copy()
+    partial.loc[29, "pred_nn_total"] = np.nan
+    mask, _ = consensus_selection(partial, columns, 24)
+    assert "p29" not in partial.loc[mask, "player_id"].tolist()
+    empty, meta = consensus_selection(base, {}, 24)
+    assert not empty.any() and meta["status"] == "unavailable"
+    absent, meta = consensus_selection(base, {**columns, "missing": "pred_missing_total"}, 24)
+    assert meta["selection_sources"] == list(columns)  # absent columns are skipped, not KeyError
+    assert base.loc[absent, "player_id"].tolist() == base.loc[baseline, "player_id"].tolist()
+    nothing, meta = consensus_selection(base.assign(pred_ridge_total=np.nan), columns, 24)
+    assert not nothing.any() and meta["reason"] == "no_common_forecast_rows"
+
+
 def test_missing_actuals_do_not_promote_reference_rank_25():
     observed = frame().iloc[1:]
     mask, meta = reference_selection("WR", observed, reference(), 24)

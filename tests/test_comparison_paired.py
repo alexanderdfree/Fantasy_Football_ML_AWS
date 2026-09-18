@@ -60,6 +60,48 @@ def test_zero_projection_is_retained_and_infinite_prediction_is_excluded():
     assert subsets["all"]["WR"]["nflcom"]["n"] == 29
 
 
+def test_consensus_cohort_is_selected_by_all_displayed_sources_on_common_rows():
+    data = records()
+    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan  # top forecast lacks one source
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["weekly_consensus_top24"]["WR"]
+    assert cell["status"] == "available"
+    assert cell["n"] == cell["cohort_n"] == cell["selection_n"] == 24
+    assert cell["selection_basis"] == "equal_weight_mean_of_displayed_sources"
+    assert cell["selection_sources"] == list(coverage["all"]["WR"]["sources"])
+    cells = subsets["weekly_consensus_top24"]["WR"]
+    assert all(value["n"] == 24 and value["mae"] == 7 for value in cells.values())
+
+
+def test_consensus_cohort_is_selected_before_outcome_availability():
+    data = records()
+    data.loc[29, "actual_receptions"] = np.nan  # the top consensus pick has no recorded outcome
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["weekly_consensus_top24"]["WR"]
+    assert cell["selection_n"] == 24
+    assert cell["n"] == cell["cohort_n"] == 23  # dropped, never replaced by rank 25
+    assert all(value["n"] == 23 for value in subsets["weekly_consensus_top24"]["WR"].values())
+
+
+def test_source_with_forecasts_only_on_ungraded_rows_cannot_blank_the_position():
+    data = records()
+    data.loc[:4, "actual_receptions"] = np.nan  # ungraded rows
+    data["espn_comparison_pred_ppr"] = np.nan
+    data.loc[:4, "espn_comparison_pred_ppr"] = 1.0  # ESPN forecasts only where nothing is graded
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["all"]["WR"]
+    assert cell["status"] == "available" and cell["n"] == 25
+    assert "espn" not in cell["sources"] and cell["unavailable_sources"] == ["espn"]
+
+
+def test_wholly_unavailable_source_is_named_not_silently_dropped():
+    data = records()
+    data["espn_comparison_pred_ppr"] = np.nan
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    assert "espn" not in coverage["all"]["WR"]["sources"]
+    assert coverage["all"]["WR"]["unavailable_sources"] == ["espn"]
+
+
 def test_weekly_list_is_reference_selected_before_coverage_filter():
     data = records()
     ref = data[["player_id", "position", "season", "week"]].copy()

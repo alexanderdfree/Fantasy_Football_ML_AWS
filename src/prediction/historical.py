@@ -64,7 +64,7 @@ from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     predictions_to_fantasy_points,
 )
-from src.shared.comparison_scoring import score_actual_components
+from src.shared.comparison_scoring import score_actual_components, score_forecast_components
 from src.shared.evaluation import compute_metrics
 from src.shared.model_sync import (
     refresh_sentinel_mtime,
@@ -285,7 +285,7 @@ def _apply_expert_predictions(
         if raw is not None and {*_EXPERT_KEY_COLS, "position"}.issubset(raw.columns):
             dst = raw.loc[raw["position"].eq("DST") & raw["player_id"].notna()]
             scored = dst[_EXPERT_KEY_COLS].copy()
-            scored["comparison_total"] = score_actual_components(dst, "DST")
+            scored["comparison_total"] = score_forecast_components(dst, "DST")
             _assign_expert_totals(results, source, "comparison", scored, "comparison_total")
 
     for fmt in _VALID_SCORING:

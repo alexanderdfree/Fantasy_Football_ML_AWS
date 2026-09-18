@@ -27,7 +27,7 @@ struct Comparison: Codable, Sendable {
     var isUnavailable: Bool { modelSource == "unavailable" }
 
     var displayedSubsets: [String] {
-        let order = ["weekly_reference_top24", "all", "top30", "top12"]
+        let order = ["weekly_consensus_top24", "weekly_reference_top24", "all", "top30", "top12"]
         return order.filter { subsets[$0] != nil } + subsets.keys.filter { !order.contains($0) }.sorted()
     }
 
@@ -43,7 +43,8 @@ struct Comparison: Codable, Sendable {
 
     func subsetTitle(_ subset: String) -> String {
         switch subset {
-        case "weekly_reference_top24": return "Expected starters · weekly top \(weeklyTopN ?? 24)"
+        case "weekly_consensus_top24": return "Expected starters · consensus top \(weeklyTopN ?? 24)"
+        case "weekly_reference_top24": return "Expert reference · weekly top \(weeklyTopN ?? 24)"
         case "all": return "All players"
         case "top30": return "Season leaders · top \(topN ?? 30)"
         case "top12": return "Season leaders · top \(top12N ?? 12)"
@@ -54,7 +55,7 @@ struct Comparison: Codable, Sendable {
     var sampleBasisDescription: String {
         switch sampleBasis {
         case "shared_player_weeks":
-            return "Every displayed source for a position is scored on the same regular-season player-weeks. Missing forecasts are excluded; a forecast of zero is retained."
+            return "Every displayed source for a position is scored on the same regular-season player-weeks. Missing forecasts are excluded. A projected zero is retained, but a provider row with every published stat at zero is an unprojected placeholder and counts as missing."
         case .some(let basis): return "Server sample basis: \(basis)."
         case .none: return "This response does not specify its sample basis or whether sources share the same player-weeks."
         }
