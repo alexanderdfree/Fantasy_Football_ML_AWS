@@ -22,6 +22,20 @@ from src.shared.position_pipeline import build_pipeline_config
 from src.shared.registry import INFERENCE_REGISTRY, _nested_attn_kwargs_static
 
 
+def _served_nested_net(pc, served_kwargs) -> MultiHeadNetWithNestedHistory:
+    """Rebuild K's served attention net the way app.py does: the registry's
+    static kwargs plus the runtime dims the config's feature lists imply
+    (``attn_static_features`` / ``attn_kick_stats`` / ``targets`` — the lists
+    the registry spec mirrors, pinned by ``test_kwargs_align_with_training_config``).
+    """
+    return MultiHeadNetWithNestedHistory(
+        static_dim=len(pc.attn_static_features),
+        kick_dim=len(pc.attn_kick_stats),
+        target_names=list(pc.targets),
+        **served_kwargs,
+    )
+
+
 @pytest.mark.unit
 class TestKAttentionRegistryWiring:
     @pytest.fixture
@@ -57,31 +71,18 @@ class TestKAttentionRegistryWiring:
         strict load. Fails if the kwargs set has drifted away from the model
         signature (e.g. a renamed/removed kwarg in the network class).
         """
-        static_dim = len(reg["attn_static_features"])
-        kick_dim = len(reg["attn_kick_stats"])
-        targets = reg["targets"]
-        assert static_dim > 0, "ATTN_STATIC_FEATURES must not be empty"
-        assert kick_dim > 0, "ATTN_KICK_STATS must not be empty"
+        assert len(reg["attn_static_features"]) > 0, "ATTN_STATIC_FEATURES must not be empty"
+        assert len(reg["attn_kick_stats"]) > 0, "ATTN_KICK_STATS must not be empty"
 
-        model = MultiHeadNetWithNestedHistory(
-            static_dim=static_dim,
-            kick_dim=kick_dim,
-            target_names=targets,
-            **reg["attn_nn_kwargs_static"],
-        )
+        model = _served_nested_net(POSITION_CONFIG, reg["attn_nn_kwargs_static"])
         # Round-trip: save → load strict. Confirms kwargs fully determine shape.
         state = model.state_dict()
-        fresh = MultiHeadNetWithNestedHistory(
-            static_dim=static_dim,
-            kick_dim=kick_dim,
-            target_names=targets,
-            **reg["attn_nn_kwargs_static"],
-        )
+        fresh = _served_nested_net(POSITION_CONFIG, reg["attn_nn_kwargs_static"])
         fresh.load_state_dict(state, strict=True)
 
     def test_kwargs_align_with_training_config(self, reg):
         """Registry kwargs must mirror the POSITION_CONFIG values used at training."""
-        from src.k.config import POSITION_CONFIG as pc
+        pc = POSITION_CONFIG
 
         kw = reg["attn_nn_kwargs_static"]
         assert kw["d_kick"] == pc.attn_kick_dim
@@ -93,6 +94,7 @@ class TestKAttentionRegistryWiring:
         assert reg["attn_max_kicks_per_game"] == pc.attn_max_kicks_per_game
         assert reg["attn_kick_stats"] == list(pc.attn_kick_stats)
         assert reg["attn_static_features"] == list(pc.attn_static_features)
+        assert list(reg["targets"]) == list(pc.targets)
 
     def test_predict_numpy_end_to_end(self, reg):
         """Tiny forward pass through predict_numpy — catches signature drift
@@ -102,12 +104,7 @@ class TestKAttentionRegistryWiring:
         static_dim = len(reg["attn_static_features"])
         kick_dim = len(reg["attn_kick_stats"])
         targets = reg["targets"]
-        model = MultiHeadNetWithNestedHistory(
-            static_dim=static_dim,
-            kick_dim=kick_dim,
-            target_names=targets,
-            **reg["attn_nn_kwargs_static"],
-        )
+        model = _served_nested_net(POSITION_CONFIG, reg["attn_nn_kwargs_static"])
         model.eval()
         B, G, K = 2, reg["attn_max_games"], reg["attn_max_kicks_per_game"]
         X = np.zeros((B, static_dim), dtype=np.float32)
@@ -140,50 +137,42 @@ class TestKHeadHiddenOverridesForwarded:
     """
 
     # Deliberately != K's production ``nn_head_hidden`` so the override really
-    # changes the head shape (asserted in the fixture) — a same-width override
-    # would make the shape-parity checks below vacuous.
+    # changes the head shape (asserted in the shape-parity test) — a same-width
+    # override would make its shape checks vacuous.
     _OVERRIDE = {"fg_misses": 40}
 
     @pytest.fixture
     def pc_override(self):
-        pc = replace(POSITION_CONFIG, nn_head_hidden_overrides=dict(self._OVERRIDE))
-        assert set(self._OVERRIDE) <= set(pc.targets)
-        assert all(width != pc.nn_head_hidden for width in self._OVERRIDE.values())
-        return pc
+        return replace(POSITION_CONFIG, nn_head_hidden_overrides=dict(self._OVERRIDE))
 
-    def test_unmodified_k_config_emits_no_override_key(self):
-        """K configures no override today -> today's served kwargs are unchanged."""
-        assert not POSITION_CONFIG.nn_head_hidden_overrides
-        assert "head_hidden_overrides" not in _nested_attn_kwargs_static(POSITION_CONFIG)
-
-    def test_override_is_forwarded_to_served_kwargs(self, pc_override):
-        kw = _nested_attn_kwargs_static(pc_override)
-        assert kw["head_hidden_overrides"] == self._OVERRIDE
+    def test_empty_override_emits_no_key(self):
+        """An override-free config — an explicit ``{}``, not whatever production
+        happens to set — must yield served kwargs WITHOUT the key, so serving
+        rebuilds the training factory's plain head shape."""
+        pc_empty = replace(POSITION_CONFIG, nn_head_hidden_overrides={})
+        assert "head_hidden_overrides" not in _nested_attn_kwargs_static(pc_empty)
 
     def test_trained_and_served_shapes_match_under_override(self, pc_override):
         """Shape parity between the two rebuild paths: the training factory
         (cfg-dict path, via ``build_pipeline_config`` exactly as K's
         ``run_pipeline`` does) and the served kwargs (registry path) must
         produce state_dicts with identical keys + shapes that strict-load."""
-        cfg = build_pipeline_config("K", pc_override)
-        static_dim = len(pc_override.attn_static_features)
-        kick_dim = len(pc_override.attn_kick_stats)
-        targets = list(pc_override.targets)
+        # Fixture guards: the override must name a real K head at a width that
+        # differs from K's ``nn_head_hidden``, else the parity check and the
+        # positive control below are vacuous.
+        assert set(self._OVERRIDE) <= set(pc_override.targets)
+        assert all(width != pc_override.nn_head_hidden for width in self._OVERRIDE.values())
 
+        cfg = build_pipeline_config("K", pc_override)
         trained = build_multihead_net_with_nested_history(
             cfg,
-            static_dim=static_dim,
-            kick_dim=kick_dim,
+            static_dim=len(pc_override.attn_static_features),
+            kick_dim=len(pc_override.attn_kick_stats),
             max_games=pc_override.attn_max_games,
-            targets=targets,
+            targets=list(pc_override.targets),
             game_dim=len(pc_override.attn_history_stats),
         )
-        served = MultiHeadNetWithNestedHistory(
-            static_dim=static_dim,
-            kick_dim=kick_dim,
-            target_names=targets,
-            **_nested_attn_kwargs_static(pc_override),
-        )
+        served = _served_nested_net(pc_override, _nested_attn_kwargs_static(pc_override))
 
         def _shapes(model):
             return {k: tuple(v.shape) for k, v in model.state_dict().items()}
@@ -191,14 +180,10 @@ class TestKHeadHiddenOverridesForwarded:
         assert _shapes(served) == _shapes(trained)
         served.load_state_dict(trained.state_dict(), strict=True)
 
-        # Positive control — the override genuinely changes the head shape:
-        # a model rebuilt from the UN-overridden served kwargs (what the
-        # pre-fix builder emitted for this config) cannot load the checkpoint.
-        stale = MultiHeadNetWithNestedHistory(
-            static_dim=static_dim,
-            kick_dim=kick_dim,
-            target_names=targets,
-            **_nested_attn_kwargs_static(POSITION_CONFIG),
-        )
+        # Positive control — the override genuinely changes the head shape: a
+        # model rebuilt from override-FREE served kwargs (what the pre-fix
+        # builder emitted for this config) cannot load the checkpoint.
+        pc_empty = replace(pc_override, nn_head_hidden_overrides={})
+        stale = _served_nested_net(pc_override, _nested_attn_kwargs_static(pc_empty))
         with pytest.raises(RuntimeError, match="size mismatch"):
             stale.load_state_dict(trained.state_dict(), strict=True)

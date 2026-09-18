@@ -357,17 +357,19 @@ def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypat
 
 
 @pytest.mark.unit
-def test_unplayed_fixture_dropped_by_default(synthetic_parquets):
+def test_unplayed_fixture_dropped_by_default(monkeypatch):
     """An in-season schedule cache lists not-yet-played REG fixtures with NaN
     scores. By default build_data must drop them, so compute_targets has no
     row on which to fabricate points_allowed=21 / fantasy_points (#1520)."""
-    from src.dst.data import build_data
+    import src.dst.data as dst_data
     from src.dst.targets import compute_targets
 
+    # Every input is injected; only the logo lookup would still reach nflverse.
+    monkeypatch.setattr(dst_data.nfl_source, "teams", lambda: pd.DataFrame())
     kw = _injected_kwargs()
     kw["schedules"] = _with_unplayed_fixture(kw["schedules"])
 
-    df = build_data(**kw)
+    df = dst_data.build_data(**kw)
     assert not df["week"].eq(_UNPLAYED_WEEK).any()
     assert len(df) == len(_TEAMS) * len(_WEEKS) * len(_SEASONS)
     assert df["points_allowed"].notna().all()
@@ -376,7 +378,7 @@ def test_unplayed_fixture_dropped_by_default(synthetic_parquets):
     # Positive control: the same input with the fixture kept is exactly the
     # fabrication the default prevents — a league-average points_allowed and a
     # real-looking fantasy_points for a game nobody played.
-    phantom = compute_targets(build_data(**kw, include_unplayed=True))
+    phantom = compute_targets(dst_data.build_data(**kw, include_unplayed=True))
     phantom = phantom[phantom["week"].eq(_UNPLAYED_WEEK)]
     assert len(phantom) == 2
     assert phantom["points_allowed"].eq(21).all()
@@ -384,20 +386,21 @@ def test_unplayed_fixture_dropped_by_default(synthetic_parquets):
 
 
 @pytest.mark.unit
-def test_unplayed_fixture_kept_when_opted_in(synthetic_parquets):
+def test_unplayed_fixture_kept_when_opted_in(monkeypatch):
     """The live upcoming-week builder NaNs the target week's scores by design and
     needs that week's fixture context, so include_unplayed=True keeps both teams'
     rows: points_allowed stays NaN (build_data fabricates nothing) while the
     schedule context — spread (sign-flipped for the away side), is_home,
     opponent_team — is the fixture's own, not a fill."""
-    from src.dst.data import build_data
+    import src.dst.data as dst_data
 
+    monkeypatch.setattr(dst_data.nfl_source, "teams", lambda: pd.DataFrame())
     kw = _injected_kwargs()
     kw["schedules"] = _with_unplayed_fixture(kw["schedules"])
     fixture = kw["schedules"].iloc[-1]
     home, away = fixture["home_team"], fixture["away_team"]
 
-    df = build_data(**kw, include_unplayed=True)
+    df = dst_data.build_data(**kw, include_unplayed=True)
     rows = df[df["week"].eq(_UNPLAYED_WEEK)].set_index("team")
     assert sorted(rows.index) == sorted([home, away])
     assert rows["points_allowed"].isna().all()
@@ -414,14 +417,17 @@ def test_unplayed_fixture_kept_when_opted_in(synthetic_parquets):
 
 
 @pytest.mark.unit
-def test_include_unplayed_is_noop_on_fully_played_schedule(synthetic_parquets):
+def test_include_unplayed_is_noop_on_fully_played_schedule(monkeypatch):
     """Δ=0 guard: with every fixture played (today's 2012-2025 cache has zero
     NaN-score REG rows) the default drop removes nothing, so both modes build
     the identical frame — the training path is inert to the #1520 fix."""
-    from src.dst.data import build_data
+    import src.dst.data as dst_data
 
+    monkeypatch.setattr(dst_data.nfl_source, "teams", lambda: pd.DataFrame())
     kw = _injected_kwargs()
-    pd.testing.assert_frame_equal(build_data(**kw), build_data(**kw, include_unplayed=True))
+    pd.testing.assert_frame_equal(
+        dst_data.build_data(**kw), dst_data.build_data(**kw, include_unplayed=True)
+    )
 
 
 @pytest.mark.unit
