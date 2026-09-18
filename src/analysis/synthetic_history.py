@@ -1,11 +1,12 @@
 """Reproducible donor-based player histories for offline behavioral diagnostics.
 
 The generator resamples whole observed game records so opaque signals (QBR,
-opportunity, game context) travel with their box scores, and exports the real
-forecast game's unscaled production feature row as the fixed static context.
-Together with a saved checkpoint that is a complete attention-model input;
-families that read windowed features are replayable for identity cohorts only.
-Synthetic histories carry no observed outcome. No source is fetched.
+opportunity, game context) travel with their box scores, optionally rewrites
+them through declared transforms, and exports the real forecast game's unscaled
+production feature row as the fixed static context. Together with a saved
+checkpoint that is a complete attention-model input; families that read
+windowed features are replayable for exact identity cohorts only. Synthetic
+histories carry no observed outcome. No source is fetched.
 """
 
 from __future__ import annotations
@@ -30,18 +31,24 @@ from src.analysis.synthetic_history_schema import (
     PositionHistorySchema,
     position_schema,
 )
+from src.analysis.synthetic_transforms import OPAQUE_POLICIES, apply_transforms, parse_transform
 from src.config import TRAIN_SEASONS
 from src.features.engineer import build_game_history_arrays
 from src.prediction.bundle import MODEL_FAMILIES, file_digest
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 KEYS = ["player_id", "season", "week"]
 WINDOWS = ("any", "exact")
 FLAT_FAMILIES = tuple(family for family in MODEL_FAMILIES if family != "attn_nn")
+SAMPLING_IDENTITY_EXCLUDED = ("name", "transforms", "opaque_signal_policy")
 RESAMPLED_REASON = (
     "windowed rolling/ewma/trend/share/specific features are not reconstructed from "
     "resampled histories; identity replay only"
+)
+TRANSFORMED_REASON = (
+    "history transformed; the forecast row's windowed features describe the donor history, "
+    "not the rewritten one"
 )
 TRUNCATED_REASON = (
     "{truncated} of {cases} cases truncate the real history (real_prior_games > "
@@ -53,6 +60,24 @@ CONTEXT_SEMANTICS = (
     "sequence-coupled columns listed in context_sequence_coupled_columns and every windowed "
     "column describe the real prior games, not the synthetic history"
 )
+STATIC_CONTEXT_POLICY = (
+    "non-temporal static features (prior-season, matchup, contextual, weather/vegas) are held "
+    "at the donor forecast row's context in context.parquet; transforms never rewrite them"
+)
+FORECAST_OUTCOME = (
+    "none: synthetic histories carry no observed future score; recorded model outputs are "
+    "responses, not accuracy"
+)
+EXTERNAL_SIGNAL_POLICY = {
+    "donor": "preserve_whole_donor_game; missingness preserved in parquet",
+    "keep_donor": (
+        "opaque signals kept as measured on the untransformed donor game; stale under the transform"
+    ),
+    "mark_missing": (
+        "opaque signals marked missing on rewritten rows; the tensors carry the production "
+        "missing-value zero"
+    ),
+}
 SOURCE_VALUES_SCOPE = (
     "history projection, recomputed history points and every production feature column of "
     "the selected donor rows; a scoring or whitelist change alters it without a data change"
@@ -75,6 +100,8 @@ class HistoryRecipe:
     donor_seasons: tuple[int, ...] = tuple(TRAIN_SEASONS)
     position: str = "QB"
     schema_version: int = SCHEMA_VERSION
+    transforms: tuple = ()
+    opaque_signal_policy: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name.strip():
@@ -122,6 +149,16 @@ class HistoryRecipe:
             and self.min_history_ppg > self.max_history_ppg
         ):
             raise ValueError("min_history_ppg must not exceed max_history_ppg")
+        if not isinstance(self.transforms, (list, tuple)):
+            raise ValueError("transforms must be a list of transform objects")
+        ops = tuple(parse_transform(op, schema, self.history_games) for op in self.transforms)
+        object.__setattr__(self, "transforms", ops)
+        if ops and self.opaque_signal_policy is None:
+            raise ValueError("opaque_signal_policy is required when transforms are present")
+        if not ops and self.opaque_signal_policy is not None:
+            raise ValueError("opaque_signal_policy has no effect without transforms")
+        if ops and self.opaque_signal_policy not in OPAQUE_POLICIES:
+            raise ValueError(f"opaque_signal_policy must be one of {OPAQUE_POLICIES}")
 
     @classmethod
     def from_dict(cls, value: dict) -> HistoryRecipe:
@@ -143,6 +180,7 @@ class HistoryCohort:
     history: np.ndarray
     mask: np.ndarray
     manifest: dict
+    donor_games: pd.DataFrame | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +200,11 @@ class ConsumedSource:
 
 def _json_hash(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def sampling_identity_hash(recipe: dict) -> str:
+    """Identity of the sampled donors: the recipe without its name or transforms."""
+    return _json_hash({k: v for k, v in recipe.items() if k not in SAMPLING_IDENTITY_EXCLUDED})
 
 
 def _dtype_label(dtype) -> str:
@@ -205,7 +248,7 @@ def code_hashes(relative_paths: Iterable[str]) -> dict[str, str]:
 def validate_history_frame(
     frame: pd.DataFrame, schema: PositionHistorySchema, *, stage: str = "source"
 ) -> None:
-    """Value checks shared by donor validation and any later per-game rewrite.
+    """Value checks shared by donor validation and transformed histories.
 
     ``frame`` holds float64 history/target columns. Missing external signals
     are allowed; missing raw outcomes are not, and count/relation/bound
@@ -232,10 +275,9 @@ def validate_history_frame(
     for smaller, larger in schema.relations:
         if (frame[smaller] > frame[larger]).any():
             raise ValueError(f"{stage} violates {smaller} <= {larger}")
-    for check in schema.checks:
-        message = check(frame)
-        if message:
-            raise ValueError(f"{stage} {message}")
+    for name, violated in schema.derived_checks:
+        if violated(frame).any():
+            raise ValueError(f"{stage} {name}")
     for column, low, high in schema.bounded_columns:
         if not frame[column].dropna().between(low, high).all():
             raise ValueError(f"{stage} {column} must be within [{low}, {high}]")
@@ -324,20 +366,22 @@ def consume_source(
     return ConsumedSource(frame, context_rows, source, consumed_values_hash(frame, context_rows))
 
 
-def model_input_readiness(mode: str, cases: pd.DataFrame) -> dict:
+def model_input_readiness(mode: str, cases: pd.DataFrame, *, transformed: bool = False) -> dict:
     """Which saved-model families a cohort can feed coherently, and why not.
 
     The attention NN is always ready: its static branch is the forecast row's
     non-temporal context and its history branch is the synthetic tensor. The
     flat families read the forecast row's windowed features, which describe the
     real history, so they are ready only when every case replays exactly the
-    real window.
+    real, untransformed window.
     """
     readiness = {
         "attn_nn": {"ready": True, "inputs": ["history.npz", "context.parquet"], "reason": None}
     }
     truncated = int((~cases["exact_window"].astype(bool)).sum())
-    if mode != "replay":
+    if transformed:
+        reason = TRANSFORMED_REASON
+    elif mode != "replay":
         reason = RESAMPLED_REASON
     elif truncated:
         reason = TRUNCATED_REASON.format(truncated=truncated, cases=len(cases))
@@ -355,12 +399,14 @@ def model_input_readiness(mode: str, cases: pd.DataFrame) -> dict:
 def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohort:
     """Bootstrap isolated history cases, preserving whole donor-game records.
 
-    Each eligible forecast has N observed games earlier in the same season
-    (exactly N when ``window`` is ``exact``). The forecast row contributes its
-    key and its pre-kickoff static context; its outcomes cannot select a case
-    or enter a tensor. Sampling is with replacement. In block mode, both source
-    blocks and all their per-game fields are sampled together from that case's
-    eligible past; artificial joins are explicitly recorded.
+    Each eligible forecast has at least N observed games earlier in the same
+    season (exactly N when ``window`` is ``exact``). The forecast row
+    contributes its key and its pre-kickoff static context; its outcomes cannot
+    select a case or enter a tensor. Sampling is with replacement. In block
+    mode, both source blocks and all their per-game fields are sampled together
+    from that case's eligible past; artificial joins are explicitly recorded.
+    Declared transforms then rewrite the sampled games; the untransformed donor
+    window is kept beside them.
     """
     schema = position_schema(recipe.position)
     consumed = consume_source(
@@ -385,9 +431,10 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
     if not candidates:
         raise ValueError("no eligible donor histories; cannot synthesize an unsupported archetype")
     source_hash = consumed.values_sha256
-    recipe_hash = _json_hash(asdict(recipe))
+    recipe_dict = asdict(recipe)
+    recipe_hash = _json_hash(recipe_dict)
     rng = np.random.default_rng(recipe.seed)
-    game_parts, case_rows, history_frames, forecast_indices = [], [], [], []
+    game_parts, case_rows, forecast_indices = [], [], []
     for case_number, candidate in enumerate(rng.integers(len(candidates), size=recipe.cases)):
         past, forecast_idx, donor_ppg, offset = candidates[candidate]
         forecast = frame.loc[forecast_idx]
@@ -419,26 +466,39 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
                 "real_prior_games": int(offset),
                 "exact_window": bool(offset == n),
                 "donor_history_ppg": donor_ppg,
-                "generated_history_ppg": float(games["fantasy_points"].mean()),
+                "sampled_history_ppg": float(games["fantasy_points"].mean()),
                 "unique_donor_games": int(games["donor_week"].nunique()),
             }
         )
-        # These are ordinal history slots, NOT a fabricated NFL calendar. Every
-        # case has a separate identity, so duplicated donors cannot mix tokens.
-        tensor_frame = games[history_columns].copy()
+    games = pd.concat(game_parts, ignore_index=True)
+    cases = pd.DataFrame(case_rows)
+    donor_games, transform_report = None, None
+    if recipe.transforms:
+        donor_games = games.copy()
+        games, transform_report = apply_transforms(
+            games, recipe.transforms, schema=schema, policy=recipe.opaque_signal_policy
+        )
+        validate_history_frame(games, schema, stage="transformed")
+    # These are ordinal history slots, NOT a fabricated NFL calendar. Every
+    # case has a separate identity, so duplicated donors cannot mix tokens.
+    history_frames, generated_ppg = [], []
+    for case_id, season in zip(cases["case_id"], cases["donor_season"], strict=True):
+        case_games = games[games["case_id"].eq(case_id)]
+        # Same reduction as the sampled mean, so untransformed cohorts agree exactly.
+        generated_ppg.append(float(case_games["fantasy_points"].mean()))
+        tensor_frame = case_games[history_columns].copy()
         tensor_frame["player_id"] = case_id
-        tensor_frame["season"] = int(forecast["season"])
+        tensor_frame["season"] = int(season)
         tensor_frame["week"] = np.arange(1, n + 1)
         probe = {col: 0.0 for col in history_columns}
-        probe.update(player_id=case_id, season=int(forecast["season"]), week=n + 1)
+        probe.update(player_id=case_id, season=int(season), week=n + 1)
         history_frames.append(pd.concat([tensor_frame, pd.DataFrame([probe])], ignore_index=True))
+    cases["generated_history_ppg"] = generated_ppg
     history_input = pd.concat(history_frames, ignore_index=True)
     arrays, masks = build_game_history_arrays(
         history_input, history_stats=history_columns, max_seq_len=schema.max_history_games
     )
     probe_indices = np.arange(n, len(history_input), n + 1)
-    games = pd.concat(game_parts, ignore_index=True)
-    cases = pd.DataFrame(case_rows)
     # The static branch is the real forecast game's own pre-kickoff row.
     team_columns = [c for c in ("recent_team", "opponent_team") if c in schema.identity_columns]
     forecast_rows = frame.loc[forecast_indices]
@@ -451,10 +511,12 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         axis=1,
     )
     history, mask = arrays[probe_indices], masks[probe_indices]
+    transformed = transform_report is not None
     manifest = {
         "schema_version": SCHEMA_VERSION,
-        "recipe": asdict(recipe),
+        "recipe": recipe_dict,
         "recipe_sha256": recipe_hash,
+        "sampling_identity_sha256": sampling_identity_hash(recipe_dict),
         "source_values_sha256": source_hash,
         "source_values_scope": SOURCE_VALUES_SCOPE,
         "source_rows": len(frame),
@@ -464,7 +526,10 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         ),
         "exact_window_cases": int(cases["exact_window"].sum()),
         "diagnostic_scope": "attention_history_and_forecast_context",
-        "model_input_readiness": model_input_readiness(recipe.mode, cases),
+        "history_kind": "transformed" if transformed else "donor",
+        "fixture": transformed,
+        "forecast_outcome": FORECAST_OUTCOME,
+        "model_input_readiness": model_input_readiness(recipe.mode, cases, transformed=transformed),
         "history_columns": history_columns,
         "history_shape": list(history.shape),
         "history_order": "newest_first",
@@ -472,25 +537,32 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "context_columns": list(schema.feature_columns),
         "context_sequence_coupled_columns": list(schema.sequence_coupled_context),
         "context_semantics": CONTEXT_SEMANTICS,
+        "static_context_policy": STATIC_CONTEXT_POLICY,
         "scoring_format": "ppr",
         "scoring_scope": schema.scoring_scope,
-        "external_signal_policy": "preserve_whole_donor_game; missingness preserved in parquet",
+        "external_signal_policy": EXTERNAL_SIGNAL_POLICY[
+            recipe.opaque_signal_policy if transformed else "donor"
+        ],
         "missing_history_values": {
             c: int(games[c].isna().sum()) for c in history_columns if games[c].isna().any()
         },
         "temporal_policy": "original_order"
         if recipe.mode == "replay"
         else "within_block_order_only; boundary transitions are synthetic",
+        "transform_support": dict(schema.transform_support),
         "versions": runtime_versions(),
         "code_sha256": code_hashes(
             (
                 "analysis/synthetic_history.py",
                 "analysis/synthetic_history_schema.py",
+                "analysis/synthetic_transforms.py",
                 *schema.code_paths,
             )
         ),
     }
-    return HistoryCohort(games, cases, context, history, mask, manifest)
+    if transformed:
+        manifest.update(transform_report)
+    return HistoryCohort(games, cases, context, history, mask, manifest, donor_games)
 
 
 def publish_artifact_dir(
@@ -531,6 +603,8 @@ def write_cohort(cohort: HistoryCohort, output: Path) -> Path:
         cohort.games.to_parquet(directory / "games.parquet", index=False)
         cohort.cases.to_parquet(directory / "cases.parquet", index=False)
         cohort.context.to_parquet(directory / "context.parquet", index=False)
+        if cohort.donor_games is not None:
+            cohort.donor_games.to_parquet(directory / "donor_games.parquet", index=False)
         np.savez_compressed(directory / "history.npz", history=cohort.history, mask=cohort.mask)
 
     return publish_artifact_dir(output, _write, cohort.manifest)
@@ -562,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
                 "cases": len(cohort.cases),
                 "eligible_windows": cohort.manifest["eligible_windows"],
                 "exact_window_cases": cohort.manifest["exact_window_cases"],
+                "history_kind": cohort.manifest["history_kind"],
                 "model_input_readiness": {
                     family: entry["ready"]
                     for family, entry in cohort.manifest["model_input_readiness"].items()

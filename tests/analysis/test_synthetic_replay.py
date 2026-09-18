@@ -135,6 +135,41 @@ def test_replay_records_attention_responses_from_context_and_history(tmp_path, q
     assert not any(column.startswith("actual") for column in predictions.columns)
 
 
+def test_transformed_cohort_replays_attention_only_with_context_control(tmp_path, qb_source):
+    models = tmp_path / "models"
+    _qb_artifacts(models, families=("attn_nn", "ridge"))
+    transforms = [{"op": "scale", "stats": ["passing_yards"], "factor": 1.5}]
+    cohort = load_cohort(
+        _cohort(
+            tmp_path,
+            qb_source,
+            name="fixture",
+            transforms=transforms,
+            opaque_signal_policy="keep_donor",
+        )
+    )
+    assert cohort.manifest["history_kind"] == "transformed"
+    predictions, manifest = replay_cohort(
+        cohort, str(models), ["attn_nn", "ridge"], source=qb_source
+    )
+    assert list(manifest["families"]) == ["attn_nn"]
+    assert "transformed" in manifest["families_excluded"]["ridge"]
+    assert manifest["history_kind"] == "transformed" and manifest["fixture"] is True
+    assert manifest["cohort_name"] == "fixture"
+    assert manifest["sampling_identity_sha256"] == cohort.manifest["sampling_identity_sha256"]
+    control = manifest["identity_control"]
+    assert control["status"] == "context_only"
+    assert control["families"]["attn_nn"]["checks"] == ["static_values"]
+    baseline = load_cohort(_cohort(tmp_path, qb_source, name="donor"))
+    plain, _ = replay_cohort(baseline, str(models), ["attn_nn"])
+    assert list(plain["case_id"]) != list(predictions["case_id"])
+    assert list(plain["donor_player_id"]) == list(predictions["donor_player_id"])
+    field = cohort.manifest["history_columns"].index("passing_yards")
+    np.testing.assert_allclose(
+        cohort.arrays["history"][:, :3, field], 1.5 * baseline.arrays["history"][:, :3, field]
+    )
+
+
 def test_identity_control_matches_production_inputs_and_predictions(tmp_path, qb_source):
     models = tmp_path / "models"
     _qb_artifacts(models, families=("attn_nn", "ridge", "nn"))
@@ -239,7 +274,7 @@ def test_cohort_manifest_shape_and_files_are_verified(tmp_path, qb_source):
     manifest_path = stale / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest_path.write_text(json.dumps({**manifest, "schema_version": 1}))
-    with pytest.raises(ValueError, match="schema_version 2 required"):
+    with pytest.raises(ValueError, match="schema_version 3 required"):
         load_cohort(stale)
     manifest_path.write_text(json.dumps({k: v for k, v in manifest.items() if k != "recipe"}))
     with pytest.raises(ValueError, match="manifest is missing"):

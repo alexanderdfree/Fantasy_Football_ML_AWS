@@ -55,11 +55,13 @@ REQUIRED_MANIFEST_KEYS = (
     "files",
     "recipe",
     "recipe_sha256",
+    "sampling_identity_sha256",
     "source_values_sha256",
     "history_columns",
+    "history_kind",
     "model_input_readiness",
 )
-REQUIRED_RECIPE_KEYS = ("position", "mode", "history_games", "donor_seasons")
+REQUIRED_RECIPE_KEYS = ("name", "position", "mode", "history_games", "donor_seasons")
 COHORT_FILES = ("cases.parquet", "context.parquet", "history.npz")
 PROVENANCE_KEYS = ("data_id", "dataset_id", "image_sha", "code_id")
 LEGACY_OPTION_KEYS = ("attn_max_seq_len", "opp_attn_max_seq_len", "opp_attn_kind")
@@ -85,10 +87,11 @@ class LoadedCohort:
     cases: pd.DataFrame
     context: pd.DataFrame
     arrays: dict[str, np.ndarray]
+    transformed: bool
 
 
 def load_cohort(directory: Path) -> LoadedCohort:
-    """Read a schema-2 cohort after verifying its manifest shape and every file hash."""
+    """Read a schema-3 cohort after verifying its manifest shape and every file hash."""
     directory = Path(directory)
     manifest_path = directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -115,16 +118,27 @@ def load_cohort(directory: Path) -> LoadedCohort:
     with np.load(directory / "history.npz", allow_pickle=False) as data:
         arrays = {key: data[key] for key in data.files}
     if not {"history", "mask"} <= set(arrays) or "exact_window" not in cases:
-        raise ValueError("cohort arrays or cases predate schema 2; regenerate the cohort")
+        raise ValueError("cohort arrays or cases predate schema 3; regenerate the cohort")
     if not cases["case_id"].equals(context["case_id"]) or len(cases) != len(arrays["history"]):
         raise ValueError("cohort cases, context and history disagree")
-    # Readiness is a function of the recipe and the cases, never a trusted field.
+    # Readiness and the history kind follow from the recipe and the cases, never a
+    # trusted manifest field.
+    transformed = bool(recipe.get("transforms"))
+    if manifest["history_kind"] != ("transformed" if transformed else "donor"):
+        raise ValueError("cohort manifest history_kind disagrees with its recipe")
     declared = {f: e["ready"] for f, e in manifest["model_input_readiness"].items()}
-    derived = {f: e["ready"] for f, e in model_input_readiness(recipe["mode"], cases).items()}
-    if declared != derived:
+    derived = model_input_readiness(recipe["mode"], cases, transformed=transformed)
+    if declared != {f: e["ready"] for f, e in derived.items()}:
         raise ValueError("cohort manifest readiness disagrees with its recipe and cases")
     return LoadedCohort(
-        directory, manifest, file_digest(manifest_path), recipe, cases, context, arrays
+        directory,
+        manifest,
+        file_digest(manifest_path),
+        recipe,
+        cases,
+        context,
+        arrays,
+        transformed,
     )
 
 
@@ -153,7 +167,7 @@ def prediction_inputs(predictor: Predictor, cohort: LoadedCohort) -> PredictionI
         raise ValueError(
             f"{predictor.family} checkpoint needs a {schema.structure} history"
             + (" with an opponent stream" if schema.opponent_history else "")
-            + "; schema 2 cohorts carry a flat player history only"
+            + "; schema 3 cohorts carry a flat player history only"
         )
     missing = [column for column in schema.features if column not in cohort.context.columns]
     if missing:
@@ -257,10 +271,12 @@ def identity_control(
     """Prove the hand-built inputs reproduce production on the real calendar.
 
     Static values must equal the production tensor builder's for every case in
-    every mode. For replay cohorts the newest-first history prefix and the mask
-    must match too, and predictions on exact windows (the forecast game is the
-    (N+1)th of the season) must match production's whole-frame predictions
-    within ``PREDICTION_TOLERANCE``; truncated windows only count.
+    every mode. For untransformed replay cohorts the newest-first history
+    prefix and the mask must match too, and predictions on exact windows (the
+    forecast game is the (N+1)th of the season) must match production's
+    whole-frame predictions within ``PREDICTION_TOLERANCE``; truncated windows
+    only count. Transformed histories are fixtures, so only their context is
+    compared.
     """
     recipe = cohort.recipe
     schema = position_schema(recipe["position"])
@@ -292,8 +308,9 @@ def identity_control(
         ]
     )
     n = int(recipe["history_games"])
-    replay_mode = recipe["mode"] == "replay"
-    exact = cases["exact_window"].to_numpy(dtype=bool) if replay_mode else np.zeros(len(rows), bool)
+    identity_mode = recipe["mode"] == "replay" and not cohort.transformed
+    exact_cases = cases["exact_window"].to_numpy(dtype=bool)
+    exact = exact_cases if identity_mode else np.zeros(len(rows), bool)
     result = {"status": None, "prediction_tolerance": PREDICTION_TOLERANCE, "families": {}}
     for family, predictor in predictors.items():
         reference = predictor.inputs_from_frame(reference_frame)
@@ -301,10 +318,10 @@ def identity_control(
         if not np.array_equal(built.values, reference.values[rows]):
             raise ValueError(f"identity control failed for {family}: static_values")
         checks = ["static_values"]
-        compared = np.ones(len(rows), dtype=bool) if replay_mode else exact
+        compared = np.ones(len(rows), dtype=bool) if identity_mode else exact
         if family == "attn_nn":
             compared = exact
-            if replay_mode:
+            if identity_mode:
                 if not np.array_equal(built.history[:, :n], reference.history[rows, :n]):
                     raise ValueError(f"identity control failed for {family}: history_prefix")
                 mask_ok = (
@@ -331,12 +348,12 @@ def identity_control(
             checks.append("predictions_on_exact_windows")
         result["families"][family] = {
             "cases": int(len(rows)),
-            "exact_window_cases": int(exact.sum()),
+            "exact_window_cases": int(exact_cases.sum()),
             "compared_predictions": int(compared.sum()),
             "max_abs_prediction_delta": delta,
             "checks": checks,
         }
-    if not replay_mode:
+    if not identity_mode:
         result["status"] = "context_only"
     elif all(entry["compared_predictions"] > 0 for entry in result["families"].values()):
         result["status"] = "passed"
@@ -397,11 +414,15 @@ def replay_cohort(
     manifest = {
         "schema_version": REPLAY_SCHEMA_VERSION,
         "cohort_dir": str(cohort.directory),
+        "cohort_name": cohort.recipe["name"],
         "cohort_manifest_sha256": cohort.manifest_sha256,
         "cohort_files": dict(cohort.manifest["files"]),
         "recipe": dict(cohort.recipe),
         "recipe_sha256": cohort.manifest["recipe_sha256"],
+        "sampling_identity_sha256": cohort.manifest["sampling_identity_sha256"],
         "source_values_sha256": cohort.manifest["source_values_sha256"],
+        "history_kind": cohort.manifest["history_kind"],
+        "fixture": bool(cohort.manifest.get("fixture", False)),
         "position": position,
         "model_dir": str(model_dir),
         "sync": sync,
@@ -423,7 +444,7 @@ def replay_cohort(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--cohort", type=Path, required=True, help="Cohort artifact directory (schema_version 2)"
+        "--cohort", type=Path, required=True, help="Cohort artifact directory (schema_version 3)"
     )
     parser.add_argument(
         "--output", type=Path, required=True, help="New replay directory (never overwritten)"
@@ -490,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
                 "output": str(output),
                 "position": position,
                 "cases": len(predictions),
+                "history_kind": manifest["history_kind"],
                 "families": sorted(manifest["families"]),
                 "families_excluded": manifest["families_excluded"],
                 "identity_control": manifest["identity_control"]["status"],

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "name": "qb-eight-game-replay",
   "position": "QB",
   "seed": 42,

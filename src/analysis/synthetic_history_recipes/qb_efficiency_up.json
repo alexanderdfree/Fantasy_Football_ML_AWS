@@ -1,0 +1,20 @@
+{
+  "schema_version": 3,
+  "name": "qb-efficiency-up",
+  "position": "QB",
+  "seed": 42,
+  "cases": 20,
+  "history_games": 8,
+  "mode": "replay",
+  "window": "exact",
+  "min_history_ppg": 15.0,
+  "max_history_ppg": 30.0,
+  "transforms": [
+    {
+      "op": "scale",
+      "factor": 1.25,
+      "stats": ["passing_yards", "rushing_yards"]
+    }
+  ],
+  "opaque_signal_policy": "keep_donor"
+}

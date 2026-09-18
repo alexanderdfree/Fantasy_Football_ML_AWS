@@ -6,12 +6,14 @@ import pytest
 from src.qb.config import POSITION_CONFIG as QB_CONFIG
 from src.qb.features import get_feature_columns as qb_feature_columns
 
+SHORT_WEEKS = (1, 2, 4, 5, 6, 7)
+LONG_WEEKS = (1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
 
-@pytest.fixture
-def qb_source():
+
+def qb_rows(weeks):
     """A prepared QB frame: every production feature column plus the raw history stats.
 
-    Two players, three seasons (2025 is a held-out season), six regular-season
+    Two players, three seasons (2025 is a held-out season), regular-season
     games with a deliberate week-3 gap. Opaque per-game signals are distinctive
     so resampling tests can prove they travel with their game, and the rolling
     column is a poison value that must reach the static context but never a
@@ -20,7 +22,7 @@ def qb_source():
     rows = []
     for player in ("p1", "p2"):
         for season in (2022, 2023, 2025):
-            for week in (1, 2, 4, 5, 6, 7):
+            for week in weeks:
                 row = dict.fromkeys(qb_feature_columns(), 0.0)
                 row.update(dict.fromkeys(QB_CONFIG.attn_history_stats, 0.0))
                 row.update(
@@ -42,7 +44,7 @@ def qb_source():
                     fumbles_lost=0,
                     snap_pct_raw=0.9,
                     # Deliberately distinctive correlated opaque fields.
-                    qbr_total=week * 10,
+                    qbr_total=week * 5,
                     pts_added=week,
                     pass_yards_gained_exp=150 + week,
                     team_rush_attempts=25,
@@ -58,3 +60,14 @@ def qb_source():
                 )
                 rows.append(row)
     return pd.DataFrame(rows)
+
+
+@pytest.fixture
+def qb_source():
+    return qb_rows(SHORT_WEEKS)
+
+
+@pytest.fixture
+def qb_source_long():
+    """Twelve games per season, long enough for the shipped eight-game recipes."""
+    return qb_rows(LONG_WEEKS)
