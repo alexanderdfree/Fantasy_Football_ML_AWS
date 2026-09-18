@@ -42,16 +42,14 @@ jobs:
         run: |
           python3 harness/src/analysis/ci_image_cache_benchmark.py prepare \
             --image "$IMAGE" --variant "$VARIANT" --sample "$SAMPLE"
-      - name: Restore baseline local cache
+      - name: Restore local image cache
         id: local-cache
-        if: inputs.variant == 'baseline'
         uses: actions/cache@v6
         with:
           path: /tmp/.buildx-cache
-          key: ci-roi-local-${{ github.run_id }}-${{ inputs.image }}
+          key: ci-roi-local-${{ github.run_id }}-${{ inputs.variant }}-${{ inputs.image }}
           fail-on-cache-miss: ${{ inputs.sample != 0 }}
-      - name: Verify baseline cache regime
-        if: inputs.variant == 'baseline'
+      - name: Verify local cache regime
         env:
           SAMPLE: ${{ inputs.sample }}
           CACHE_HIT: ${{ steps.local-cache.outputs.cache-hit }}
@@ -77,8 +75,7 @@ jobs:
           cache-from: ${{ steps.probe.outputs.cache_from }}
           cache-to: ${{ steps.probe.outputs.cache_to }}
           outputs: type=oci,dest=${{ runner.temp }}/ci-image.tar
-      - name: Complete baseline local cache export
-        if: inputs.variant == 'baseline'
+      - name: Complete local cache export
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache

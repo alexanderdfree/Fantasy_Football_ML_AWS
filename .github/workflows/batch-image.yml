@@ -118,13 +118,23 @@ jobs:
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
 
-      - name: Resolve training image metadata
+      # One local layer-cache archive per image/architecture. Native cold/warm
+      # comparisons favored this over per-layer GHA exports. Layer archives
+      # do not persist uv download-cache mounts across fresh builders.
+      - name: Cache BuildKit state
+        uses: actions/cache@v6
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-training-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/batch/requirements.txt', 'src/batch/Dockerfile.train') }}
+          restore-keys: |
+            buildx-training-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build & push training image
         id: build
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          set -euo pipefail
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
 
           # Cold-start opt 2c (docs/batch_design.md): when the operator has
@@ -133,14 +143,14 @@ jobs:
           # base layers from inside AWS instead of dockerhub. Auto-detect to
           # keep this safe to merge regardless of whether the rule exists
           # yet — first build without the rule just hits dockerhub directly.
-          PULL_THROUGH_PREFIX=""
+          PULL_THROUGH_ARG=""
           RULE_COUNT=$(aws ecr describe-pull-through-cache-rules \
             --ecr-repository-prefixes dockerhub \
             --region "$AWS_REGION" \
             --query 'length(pullThroughCacheRules)' \
             --output text 2>/dev/null || echo 0)
           if [ "$RULE_COUNT" != "0" ] && [ "$RULE_COUNT" != "None" ]; then
-            PULL_THROUGH_PREFIX="$ECR_REGISTRY/dockerhub/"
+            PULL_THROUGH_ARG="--build-arg=PULL_THROUGH_PREFIX=$ECR_REGISTRY/dockerhub/"
             echo "Pull-through cache 'dockerhub' detected; base image routed through ECR."
           else
             echo "Pull-through cache not configured; base image pulls from dockerhub directly."
@@ -153,34 +163,31 @@ jobs:
           # workflows all resolve :latest, so tagging it from a branch would
           # silently route their next run onto unmerged code. The SHA tag is
           # all the A/B job definition needs.
-          {
-            echo "image_uri=$IMAGE_URI:$IMAGE_TAG"
-            echo "source_sha=$(git rev-parse HEAD)"
-            echo "pull_through_prefix=$PULL_THROUGH_PREFIX"
-            echo 'tags<<TAGS'
-            echo "$IMAGE_URI:$IMAGE_TAG"
-            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-              echo "$IMAGE_URI:latest"
-            fi
-            echo 'TAGS'
-          } >> "$GITHUB_OUTPUT"
+          LATEST_TAG_ARG="--tag $IMAGE_URI:latest"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            LATEST_TAG_ARG=""
+            echo "Non-main ref $GITHUB_REF: skipping the :latest tag."
+          fi
 
-      # Cache immutable layers once, in a scope separate from serving/ARM64.
-      # Layer exports do not persist uv cache mounts across fresh builders.
-      - name: Build & push training image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
-        with:
-          context: .
-          file: src/batch/Dockerfile.train
-          platforms: linux/amd64
-          provenance: false
-          push: true
-          tags: ${{ steps.build.outputs.tags }}
-          build-args: |
-            TRAIN_GIT_SHA=${{ steps.build.outputs.source_sha }}
-            PULL_THROUGH_PREFIX=${{ steps.build.outputs.pull_through_prefix }}
-          cache-from: type=gha,version=2,scope=ff-training-linux-amd64
-          cache-to: type=gha,version=2,scope=ff-training-linux-amd64,mode=max
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --file src/batch/Dockerfile.train \
+            --build-arg TRAIN_GIT_SHA="$(git rev-parse HEAD)" \
+            $PULL_THROUGH_ARG \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --tag "$IMAGE_URI:$IMAGE_TAG" \
+            $LATEST_TAG_ARG \
+            --push .
+          echo "image_uri=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      # Swap caches so actions/cache stores the freshly-written one on
+      # post-job save, rather than the (now stale) input cache.
+      - name: Move BuildKit cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       # NOTE: a "Publish SOCI index" step was removed 2026-06-07. SOCI
       # lazy-loading cannot work on AWS Batch — Batch runs on ECS-managed EC2

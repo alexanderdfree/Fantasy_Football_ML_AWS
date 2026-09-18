@@ -15,12 +15,15 @@ Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies 
   Any unclassified non-documentation path still selects every shard, including
   mixed changes. Keep the allowlist in `scope_positions.py` and its tests;
   broader script/configuration changes must not inherit a tooling exemption.
-- Training/AMD64 and serving/ARM64 images use separate GHA v2 layer-cache
-  scopes through the pinned Docker build action. Do not duplicate those exports
-  into a multi-GB local Actions cache or treat a layer export as a persistent uv
-  cache mount. Training source identity is validated in a small metadata stage
+- Training/AMD64 and serving/ARM64 use separate local layer-cache archives,
+  keyed and restored by image and architecture. Native comparisons rejected
+  per-layer GHA exports because of upload costs. Each build exports to one
+  backend; layer exports do not preserve uv cache mounts. Training source
+  identity is validated in a small metadata stage
   and copied with the source using independent layers; preserve the source-SHA
   contract and dependency/import smoke checks when changing this layout.
+  Verify cache writes before timing warm builds: budget exhaustion can make
+  storage read-only. Keep benchmark caches isolated and remove them afterwards.
 - [batch-image.yml](../.github/workflows/batch-image.yml) builds the image;
   `BATCH_ACTIVE` selects [Batch](../.github/workflows/train-batch.yml) versus
   [EC2 rollback](../.github/workflows/train-ec2.yml). `BATCH_SPLIT_ACTIVE`
