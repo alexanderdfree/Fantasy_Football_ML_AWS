@@ -1,5 +1,7 @@
 # Fixed archive — index
 
+### [FIXED] Comparison coverage, FFToday cache identity and analysis reporting seeds (from #1565)
+[Read the incident record](fixed-archive/runtime-serving-analysis-audit-2026-09.md).
 ### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
 [Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
 ### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
