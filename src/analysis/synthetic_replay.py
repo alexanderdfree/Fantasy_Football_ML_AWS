@@ -87,10 +87,11 @@ class LoadedCohort:
     cases: pd.DataFrame
     context: pd.DataFrame
     arrays: dict[str, np.ndarray]
+    transformed: bool
 
 
 def load_cohort(directory: Path) -> LoadedCohort:
-    """Read a schema-2 cohort after verifying its manifest shape and every file hash."""
+    """Read a schema-3 cohort after verifying its manifest shape and every file hash."""
     directory = Path(directory)
     manifest_path = directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -117,18 +118,27 @@ def load_cohort(directory: Path) -> LoadedCohort:
     with np.load(directory / "history.npz", allow_pickle=False) as data:
         arrays = {key: data[key] for key in data.files}
     if not {"history", "mask"} <= set(arrays) or "exact_window" not in cases:
-        raise ValueError("cohort arrays or cases predate schema 2; regenerate the cohort")
+        raise ValueError("cohort arrays or cases predate schema 3; regenerate the cohort")
     if not cases["case_id"].equals(context["case_id"]) or len(cases) != len(arrays["history"]):
         raise ValueError("cohort cases, context and history disagree")
-    # Readiness is a function of the recipe and the cases, never a trusted field.
+    # Readiness and the history kind follow from the recipe and the cases, never a
+    # trusted manifest field.
+    transformed = bool(recipe.get("transforms"))
+    if manifest["history_kind"] != ("transformed" if transformed else "donor"):
+        raise ValueError("cohort manifest history_kind disagrees with its recipe")
     declared = {f: e["ready"] for f, e in manifest["model_input_readiness"].items()}
-    derived = model_input_readiness(
-        recipe["mode"], cases, transformed=manifest["history_kind"] == "transformed"
-    )
+    derived = model_input_readiness(recipe["mode"], cases, transformed=transformed)
     if declared != {f: e["ready"] for f, e in derived.items()}:
         raise ValueError("cohort manifest readiness disagrees with its recipe and cases")
     return LoadedCohort(
-        directory, manifest, file_digest(manifest_path), recipe, cases, context, arrays
+        directory,
+        manifest,
+        file_digest(manifest_path),
+        recipe,
+        cases,
+        context,
+        arrays,
+        transformed,
     )
 
 
@@ -157,7 +167,7 @@ def prediction_inputs(predictor: Predictor, cohort: LoadedCohort) -> PredictionI
         raise ValueError(
             f"{predictor.family} checkpoint needs a {schema.structure} history"
             + (" with an opponent stream" if schema.opponent_history else "")
-            + "; schema 2 cohorts carry a flat player history only"
+            + "; schema 3 cohorts carry a flat player history only"
         )
     missing = [column for column in schema.features if column not in cohort.context.columns]
     if missing:
@@ -298,10 +308,9 @@ def identity_control(
         ]
     )
     n = int(recipe["history_games"])
-    identity_mode = recipe["mode"] == "replay" and cohort.manifest["history_kind"] == "donor"
-    exact = (
-        cases["exact_window"].to_numpy(dtype=bool) if identity_mode else np.zeros(len(rows), bool)
-    )
+    identity_mode = recipe["mode"] == "replay" and not cohort.transformed
+    exact_cases = cases["exact_window"].to_numpy(dtype=bool)
+    exact = exact_cases if identity_mode else np.zeros(len(rows), bool)
     result = {"status": None, "prediction_tolerance": PREDICTION_TOLERANCE, "families": {}}
     for family, predictor in predictors.items():
         reference = predictor.inputs_from_frame(reference_frame)
@@ -339,7 +348,7 @@ def identity_control(
             checks.append("predictions_on_exact_windows")
         result["families"][family] = {
             "cases": int(len(rows)),
-            "exact_window_cases": int(exact.sum()),
+            "exact_window_cases": int(exact_cases.sum()),
             "compared_predictions": int(compared.sum()),
             "max_abs_prediction_delta": delta,
             "checks": checks,
@@ -435,7 +444,7 @@ def replay_cohort(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--cohort", type=Path, required=True, help="Cohort artifact directory (schema_version 2)"
+        "--cohort", type=Path, required=True, help="Cohort artifact directory (schema_version 3)"
     )
     parser.add_argument(
         "--output", type=Path, required=True, help="New replay directory (never overwritten)"

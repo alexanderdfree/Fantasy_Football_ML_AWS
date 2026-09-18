@@ -37,7 +37,7 @@ from src.features.engineer import build_game_history_arrays
 from src.prediction.bundle import MODEL_FAMILIES, file_digest
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 KEYS = ["player_id", "season", "week"]
 WINDOWS = ("any", "exact")
 FLAT_FAMILIES = tuple(family for family in MODEL_FAMILIES if family != "attn_nn")
@@ -68,6 +68,16 @@ FORECAST_OUTCOME = (
     "none: synthetic histories carry no observed future score; recorded model outputs are "
     "responses, not accuracy"
 )
+EXTERNAL_SIGNAL_POLICY = {
+    "donor": "preserve_whole_donor_game; missingness preserved in parquet",
+    "keep_donor": (
+        "opaque signals kept as measured on the untransformed donor game; stale under the transform"
+    ),
+    "mark_missing": (
+        "opaque signals marked missing on rewritten rows; the tensors carry the production "
+        "missing-value zero"
+    ),
+}
 SOURCE_VALUES_SCOPE = (
     "history projection, recomputed history points and every production feature column of "
     "the selected donor rows; a scoring or whitelist change alters it without a data change"
@@ -469,23 +479,21 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
             games, recipe.transforms, schema=schema, policy=recipe.opaque_signal_policy
         )
         validate_history_frame(games, schema, stage="transformed")
-    cases["generated_history_ppg"] = (
-        games.groupby("case_id", sort=False)["fantasy_points"]
-        .mean()
-        .loc[cases["case_id"]]
-        .to_numpy()
-    )
     # These are ordinal history slots, NOT a fabricated NFL calendar. Every
     # case has a separate identity, so duplicated donors cannot mix tokens.
-    history_frames = []
+    history_frames, generated_ppg = [], []
     for case_id, season in zip(cases["case_id"], cases["donor_season"], strict=True):
-        tensor_frame = games.loc[games["case_id"].eq(case_id), history_columns].copy()
+        case_games = games[games["case_id"].eq(case_id)]
+        # Same reduction as the sampled mean, so untransformed cohorts agree exactly.
+        generated_ppg.append(float(case_games["fantasy_points"].mean()))
+        tensor_frame = case_games[history_columns].copy()
         tensor_frame["player_id"] = case_id
         tensor_frame["season"] = int(season)
         tensor_frame["week"] = np.arange(1, n + 1)
         probe = {col: 0.0 for col in history_columns}
         probe.update(player_id=case_id, season=int(season), week=n + 1)
         history_frames.append(pd.concat([tensor_frame, pd.DataFrame([probe])], ignore_index=True))
+    cases["generated_history_ppg"] = generated_ppg
     history_input = pd.concat(history_frames, ignore_index=True)
     arrays, masks = build_game_history_arrays(
         history_input, history_stats=history_columns, max_seq_len=schema.max_history_games
@@ -532,7 +540,9 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "static_context_policy": STATIC_CONTEXT_POLICY,
         "scoring_format": "ppr",
         "scoring_scope": schema.scoring_scope,
-        "external_signal_policy": "preserve_whole_donor_game; missingness preserved in parquet",
+        "external_signal_policy": EXTERNAL_SIGNAL_POLICY[
+            recipe.opaque_signal_policy if transformed else "donor"
+        ],
         "missing_history_values": {
             c: int(games[c].isna().sum()) for c in history_columns if games[c].isna().any()
         },

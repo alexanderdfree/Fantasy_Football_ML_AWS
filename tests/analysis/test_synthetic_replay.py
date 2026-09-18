@@ -274,7 +274,7 @@ def test_cohort_manifest_shape_and_files_are_verified(tmp_path, qb_source):
     manifest_path = stale / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest_path.write_text(json.dumps({**manifest, "schema_version": 1}))
-    with pytest.raises(ValueError, match="schema_version 2 required"):
+    with pytest.raises(ValueError, match="schema_version 3 required"):
         load_cohort(stale)
     manifest_path.write_text(json.dumps({k: v for k, v in manifest.items() if k != "recipe"}))
     with pytest.raises(ValueError, match="manifest is missing"):

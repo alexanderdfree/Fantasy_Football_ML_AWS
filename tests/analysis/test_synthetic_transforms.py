@@ -24,7 +24,7 @@ from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 pytestmark = pytest.mark.unit
 
-RECIPES = Path("src/analysis/synthetic_history_recipes")
+RECIPES = Path(__file__).resolve().parents[2] / "src/analysis/synthetic_history_recipes"
 HISTORY = ["case_id", "history_step", "block_id"]
 
 

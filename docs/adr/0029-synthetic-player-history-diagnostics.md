@@ -1,6 +1,6 @@
 # ADR-0029: Synthetic player-history diagnostics
 
-**Status:** Accepted (schema 2: QB forecast context, full-model replay and declared transforms; other positions tracked below)
+**Status:** Accepted (schema 3: QB forecast context, full-model replay and declared transforms; other positions tracked below)
 
 ## Context
 
@@ -17,7 +17,7 @@ recipes and artifacts separate from training splits, evaluation cohorts and
 `benchmark_history/`. Synthetic responses have no observed future outcome and
 must not be reported as forecast accuracy or used as synthetic training labels.
 
-Schema version 2 supports QB and exports, per case, the attention history and
+Schema version 3 supports QB and exports, per case, the attention history and
 the forecast game's static context:
 
 - A versioned JSON recipe specifies the seed, case count, history length, allowed
@@ -257,7 +257,7 @@ no actual to compare against.
 Follow-up sequence (one PR each; the per-position schema registry and the
 shared validator are the extension points):
 
-1. **Delivered (schema 2):** full-model replay against saved checkpoints with
+1. **Delivered (schema 2, now 3):** full-model replay against saved checkpoints with
    the forecast context, fixed fitted scalers and recorded responses. Production
    feature reconstruction for resampled histories is deliberately out of scope.
 2. **Delivered:** declared transformations for usage, efficiency and role
