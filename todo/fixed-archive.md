@@ -1,5 +1,7 @@
 # Fixed archive — index
 
+### [FIXED] Validation loss averaged batch means, over-weighting a short final batch
+[Read the incident record](fixed-archive/validation-sample-weighting-2026-09.md).
 ### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
 [Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
 ### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
