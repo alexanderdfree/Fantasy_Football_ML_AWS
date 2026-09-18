@@ -93,7 +93,7 @@ from src.shared.comparison_scoring import (
     ACTUAL_BASIS,
     comparison_actuals,
     comparison_model_totals,
-    score_actual_components,
+    score_forecast_components,
     scoring_components,
 )
 from src.shared.evaluation import compute_metrics, compute_ranking_metrics
@@ -189,7 +189,7 @@ def _project_espn_expert(raw_df: pd.DataFrame, pos: str, scoring_format: str) ->
 def _project_dst_comparison(raw_df: pd.DataFrame) -> pd.DataFrame:
     frame = raw_df.loc[raw_df["position"].eq("DST") & raw_df["player_id"].notna()]
     out = frame[_KEY_COLS].copy()
-    out[_EXPERT_PRED_COL] = score_actual_components(frame, "DST")
+    out[_EXPERT_PRED_COL] = score_forecast_components(frame, "DST")
     return out
 
 

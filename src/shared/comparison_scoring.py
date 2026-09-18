@@ -60,6 +60,28 @@ def score_actual_components(frame, position, scoring="ppr", *, prefix="") -> pd.
     return pd.Series(np.where(valid, total, np.nan), index=frame.index)
 
 
+def projected_forecast_rows(frame, position, *, prefix="") -> pd.Series:
+    """True where a provider row carries at least one nonzero shared component.
+
+    Provider archives list unprojected roster players as all-zero stat rows
+    (NFL.com publishes every rostered player; ESPN and RotoWire omit them). Such
+    a row is not a forecast and is unavailable rather than a confident 0.0. A
+    projected row keeps whatever total its components produce, including 0.0.
+    Model rows are never filtered: every slate row carries a modeled forecast.
+    """
+    components = [f"{prefix}{name}" for name in scoring_components(position)]
+    if any(name not in frame for name in components):
+        return pd.Series(False, index=frame.index, dtype=bool)
+    values = frame[components].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    return pd.Series(values.ne(0.0).any(axis=1).to_numpy(), index=frame.index, dtype=bool)
+
+
+def score_forecast_components(frame, position, scoring="ppr", *, prefix="") -> pd.Series:
+    """Score a provider's forecast rows; all-zero placeholder rows are unavailable."""
+    scored = score_actual_components(frame, position, scoring, prefix=prefix)
+    return scored.where(projected_forecast_rows(frame, position, prefix=prefix))
+
+
 def comparison_actuals(frame, position, scoring="ppr", *, prefix="") -> pd.Series:
     """Use certified pre-imputation truth and preserve its missing-value mask."""
     metadata = (frame.attrs.get("actual_projected_total_metadata_by_position") or {}).get(position)

@@ -257,6 +257,8 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                 # RotoWire has no K feed.
                 base_nflcom = float(actual + rng.normal(0, 2)) if pos != "DST" else np.nan
                 base_rotowire = float(actual + rng.normal(0, 2)) if pos != "K" else np.nan
+                # ESPN covers every position (historical comparison source since #1539).
+                base_espn = float(actual + rng.normal(0, 2))
                 row = {
                     "player_id": f"{pos}{i:03d}",
                     "player_display_name": f"{pos} Player {i}",
@@ -280,6 +282,7 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                     "lgbm_pred": base_lgbm,
                     "nflcom_pred": base_nflcom,
                     "rotowire_pred": base_rotowire,
+                    "espn_pred": base_espn,
                 }
                 if pos == "DST":
                     # Schema 10 has independent comparison totals. Their
@@ -290,6 +293,7 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                         attn_nn_pred_comparison=base_attn,
                         lgbm_pred_comparison=base_lgbm,
                         rotowire_pred_comparison=base_rotowire,
+                        espn_pred_comparison=base_espn,
                     )
                 # Per-format pred columns. NaN preds (K/DST attn/lgbm) stay NaN
                 # across all three formats — multiplying by a constant preserves
@@ -307,8 +311,10 @@ def _synthetic_results(seed: int = 42, n_per_position: int = 4) -> pd.DataFrame:
                     row[f"rotowire_pred_{fmt}"] = (
                         base_rotowire * m if not np.isnan(base_rotowire) else np.nan
                     )
+                    row[f"espn_pred_{fmt}"] = base_espn * m
                     row[f"nflcom_comparison_pred_{fmt}"] = row[f"nflcom_pred_{fmt}"]
                     row[f"rotowire_comparison_pred_{fmt}"] = row[f"rotowire_pred_{fmt}"]
+                    row[f"espn_comparison_pred_{fmt}"] = row[f"espn_pred_{fmt}"]
                 # Per-target raw-stat columns: NaN everywhere, then fill this
                 # position's own targets (sparse, mirrors _load_base_data_locked).
                 # lgbm stays NaN for K/DST (no LightGBM trained there).

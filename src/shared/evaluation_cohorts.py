@@ -23,7 +23,7 @@ from src.shared.comparison_scoring import (
 )
 
 REFERENCE_FILENAME = "weekly_evaluation_reference_v1.parquet"
-REFERENCE_VERSION = "shared_components_v3"
+REFERENCE_VERSION = "shared_components_v4"
 KEYS = ["player_id", "season", "week"]
 MODEL_COLUMNS = {
     "Ridge": "pred_ridge_total",
@@ -130,6 +130,31 @@ def reference_selection(position: str, frame: pd.DataFrame, reference: pd.DataFr
         "reference_hash": digest,
         "reference_n": int(len(top)),
         "missing_reference_weeks": missing,
+    }
+
+
+def consensus_selection(frame: pd.DataFrame, columns: dict[str, str], n: int):
+    """Top-N per week by the equal-weight mean of every displayed source's forecast.
+
+    Models and experts contribute identically, so no graded source's errors are
+    conditioned on its own selection more than any other's. Rows missing any
+    displayed source cannot be ranked, so the pool is the common slate itself;
+    actual outcomes never enter the ranking.
+    """
+    empty = pd.Series(False, index=frame.index)
+    if not columns or not set(KEYS).issubset(frame):
+        return empty, {"status": "unavailable", "reason": "no_displayed_sources"}
+    values = frame[list(columns.values())].apply(pd.to_numeric, errors="coerce")
+    values = values.replace([np.inf, -np.inf], np.nan)
+    pool = frame[KEYS].assign(consensus=values.mean(axis=1).where(values.notna().all(axis=1)))
+    top = ranked_rows(pool, "consensus", ["season", "week"], n)
+    selected = pd.MultiIndex.from_frame(top[KEYS])
+    keys = pd.MultiIndex.from_frame(frame[KEYS].assign(player_id=frame["player_id"].astype(str)))
+    return pd.Series(keys.isin(selected), index=frame.index), {
+        "status": "available" if len(top) else "unavailable",
+        "selection_basis": "equal_weight_mean_of_displayed_sources",
+        "selection_sources": list(columns),
+        "selection_n": int(len(top)),
     }
 
 

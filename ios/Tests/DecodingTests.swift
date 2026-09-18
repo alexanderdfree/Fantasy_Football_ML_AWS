@@ -120,7 +120,11 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(comparison.sampleBasis, "shared_player_weeks")
         XCTAssertEqual(comparison.actualBasis, "shared_projected_components_v2")
         XCTAssertNotNil(comparison.excludedComponents?["DST"]?["points_allowed"])
-        XCTAssertEqual(comparison.displayedSubsets, ["weekly_reference_top24", "all", "top30", "top12"])
+        XCTAssertEqual(
+            comparison.displayedSubsets,
+            ["weekly_consensus_top24", "weekly_reference_top24", "all", "top30", "top12"]
+        )
+        XCTAssertEqual(comparison.subsetTitle("weekly_consensus_top24"), "Expected starters · consensus top 24")
         XCTAssertNil(comparison.intervals)
         XCTAssertNil(comparison.expertReliability)
         for position in Position.displayOrder {
@@ -136,8 +140,13 @@ final class DecodingTests: XCTestCase {
                 }
             }
         }
-        XCTAssertEqual(comparison.cohortDefinitions?["weekly_reference_top24"],
-                       "Top 24 per week by shared-component NFL.com/RotoWire mean; ESPN for K, RotoWire for DST")
+        XCTAssertEqual(
+            comparison.cohortDefinitions?["weekly_reference_top24"],
+            "Top 24 per week by the archived shared-component NFL.com/RotoWire mean (ESPN for K, RotoWire for DST). "
+                + "Selected by graded expert forecasts, so those sources' errors are conditioned on their own selection; "
+                + "compare sources on the consensus cohort"
+        )
+        XCTAssertNotNil(comparison.cohortDefinitions?["weekly_consensus_top24"])
         XCTAssertEqual(comparison.subsetTitle("top12"), "Season leaders · top 12")
         XCTAssertEqual(CmpSource.resolve("espn", comparison: comparison).label, "ESPN")
     }

@@ -22,7 +22,7 @@ from src.shared.comparison_scoring import ACTUAL_BASIS, scoring_components
 pytestmark = pytest.mark.unit
 
 _MODELS = ("ridge", "nn", "attn_nn", "lgbm")
-_EXPERTS = ("nflcom", "rotowire")
+_EXPERTS = ("nflcom", "rotowire", "espn")
 
 
 def comparison_column(source):
@@ -206,6 +206,18 @@ def test_native_forecasts_cannot_change_shared_comparison_errors(monkeypatch, po
     unavailable = evaluate(monkeypatch, data.drop(columns=comparison), group=group)
     assert unavailable["summary"]["n"] == 0
     assert unavailable["summary"]["status"] == "unavailable"
+
+
+def test_offense_group_grades_the_same_sources_and_rows_as_the_comparison_tab(monkeypatch):
+    from src.serving.comparison import comparison_tables
+
+    data = records(positions=("WR",), weeks=(1, 2), players=30)
+    data.loc[0, comparison_column("espn")] = np.nan
+    data.loc[1, comparison_column("nflcom")] = np.nan
+    payload = evaluate(monkeypatch, data)
+    _, coverage, _, _ = comparison_tables(data, reference=pd.DataFrame())
+    assert set(payload["sources"]) == set(coverage["all"]["WR"]["sources"])
+    assert payload["summary"]["n"] == coverage["all"]["WR"]["n"] == 58
 
 
 def test_timeline_rejects_cached_backfilled_nflcom_comparison_totals(monkeypatch):
