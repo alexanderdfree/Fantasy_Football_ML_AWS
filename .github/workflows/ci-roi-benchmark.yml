@@ -1,0 +1,292 @@
+name: CI ROI build comparison
+
+# Temporary draft-only experiment. Remove after retaining measurement evidence.
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  cold:
+    if: >-
+      ${{ github.head_ref == 'codex/ci-roi-top3' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          contains(github.event.pull_request.body, '<!-- measure-ci-roi -->') }}
+    name: ${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - variant: baseline
+            image: training
+            sample: 0
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: baseline
+            image: serving
+            sample: 0
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+          - variant: candidate
+            image: training
+            sample: 0
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: candidate
+            image: serving
+            sample: 0
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.event.pull_request.head.sha }}
+          path: source
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Prepare isolated cache and source identity
+        id: probe
+        env:
+          IMAGE: ${{ matrix.image }}
+          VARIANT: ${{ matrix.variant }}
+          SAMPLE: ${{ matrix.sample }}
+        run: |
+          python3 harness/src/analysis/ci_image_cache_benchmark.py prepare \
+            --image "$IMAGE" --variant "$VARIANT" --sample "$SAMPLE"
+      - name: Restore baseline local cache
+        id: local-cache
+        if: matrix.variant == 'baseline'
+        uses: actions/cache@v6
+        with:
+          path: /tmp/.buildx-cache
+          key: ci-roi-local-${{ github.run_id }}-${{ matrix.image }}
+          fail-on-cache-miss: ${{ matrix.sample != 0 }}
+      - name: Verify baseline cache regime
+        if: matrix.variant == 'baseline'
+        env:
+          SAMPLE: ${{ matrix.sample }}
+          CACHE_HIT: ${{ steps.local-cache.outputs.cache-hit }}
+        run: |
+          if [ "$SAMPLE" = 0 ]; then
+            test "$CACHE_HIT" != true
+          else
+            test "$CACHE_HIT" = true
+          fi
+      - name: Build comparison image
+        id: image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: ./source
+          file: source/${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          push: false
+          provenance: false
+          tags: ci-roi:${{ matrix.image }}
+          build-args: |
+            TRAIN_GIT_SHA=${{ steps.probe.outputs.source_sha }}
+            PULL_THROUGH_PREFIX=
+          cache-from: ${{ steps.probe.outputs.cache_from }}
+          cache-to: ${{ steps.probe.outputs.cache_to }}
+          outputs: type=oci,dest=${{ runner.temp }}/ci-image.tar
+      - name: Complete baseline local cache export
+        if: matrix.variant == 'baseline'
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+      - name: Verify exported image and capture metadata
+        env:
+          BUILD_METADATA: ${{ steps.image.outputs.metadata }}
+          IMAGE_ARCHIVE: ${{ runner.temp }}/ci-image.tar
+        run: |
+          python3 -c 'import os; from pathlib import Path; Path("build-metadata.json").write_text(os.environ["BUILD_METADATA"])'
+          python3 harness/src/analysis/ci_image_cache_benchmark.py inspect --archive "$IMAGE_ARCHIVE"
+      - name: Verify invalid source identities fail the build
+        if: matrix.variant == 'candidate' && matrix.image == 'training' && matrix.sample == 0
+        run: python3 harness/src/analysis/ci_image_cache_benchmark.py reject-invalid
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-roi-${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
+          path: |
+            measurement.json
+            build-metadata.json
+          retention-days: 14
+  warm:
+    needs: cold
+    if: >-
+      ${{ github.head_ref == 'codex/ci-roi-top3' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          contains(github.event.pull_request.body, '<!-- measure-ci-roi -->') }}
+    name: ${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - variant: baseline
+            image: training
+            sample: 1
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: baseline
+            image: training
+            sample: 2
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: baseline
+            image: training
+            sample: 3
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: baseline
+            image: serving
+            sample: 1
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+          - variant: baseline
+            image: serving
+            sample: 2
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+          - variant: baseline
+            image: serving
+            sample: 3
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+          - variant: candidate
+            image: training
+            sample: 1
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: candidate
+            image: training
+            sample: 2
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: candidate
+            image: training
+            sample: 3
+            runner: ubuntu-latest
+            platform: linux/amd64
+            dockerfile: src/batch/Dockerfile.train
+          - variant: candidate
+            image: serving
+            sample: 1
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+          - variant: candidate
+            image: serving
+            sample: 2
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+          - variant: candidate
+            image: serving
+            sample: 3
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            dockerfile: Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.event.pull_request.head.sha }}
+          path: source
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Prepare isolated cache and source identity
+        id: probe
+        env:
+          IMAGE: ${{ matrix.image }}
+          VARIANT: ${{ matrix.variant }}
+          SAMPLE: ${{ matrix.sample }}
+        run: |
+          python3 harness/src/analysis/ci_image_cache_benchmark.py prepare \
+            --image "$IMAGE" --variant "$VARIANT" --sample "$SAMPLE"
+      - name: Restore baseline local cache
+        id: local-cache
+        if: matrix.variant == 'baseline'
+        uses: actions/cache@v6
+        with:
+          path: /tmp/.buildx-cache
+          key: ci-roi-local-${{ github.run_id }}-${{ matrix.image }}
+          fail-on-cache-miss: ${{ matrix.sample != 0 }}
+      - name: Verify baseline cache regime
+        if: matrix.variant == 'baseline'
+        env:
+          SAMPLE: ${{ matrix.sample }}
+          CACHE_HIT: ${{ steps.local-cache.outputs.cache-hit }}
+        run: |
+          if [ "$SAMPLE" = 0 ]; then
+            test "$CACHE_HIT" != true
+          else
+            test "$CACHE_HIT" = true
+          fi
+      - name: Build comparison image
+        id: image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: ./source
+          file: source/${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          push: false
+          provenance: false
+          tags: ci-roi:${{ matrix.image }}
+          build-args: |
+            TRAIN_GIT_SHA=${{ steps.probe.outputs.source_sha }}
+            PULL_THROUGH_PREFIX=
+          cache-from: ${{ steps.probe.outputs.cache_from }}
+          cache-to: ${{ steps.probe.outputs.cache_to }}
+          outputs: type=oci,dest=${{ runner.temp }}/ci-image.tar
+      - name: Complete baseline local cache export
+        if: matrix.variant == 'baseline'
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+      - name: Verify exported image and capture metadata
+        env:
+          BUILD_METADATA: ${{ steps.image.outputs.metadata }}
+          IMAGE_ARCHIVE: ${{ runner.temp }}/ci-image.tar
+        run: |
+          python3 -c 'import os; from pathlib import Path; Path("build-metadata.json").write_text(os.environ["BUILD_METADATA"])'
+          python3 harness/src/analysis/ci_image_cache_benchmark.py inspect --archive "$IMAGE_ARCHIVE"
+      - name: Verify invalid source identities fail the build
+        if: matrix.variant == 'candidate' && matrix.image == 'training' && matrix.sample == 0
+        run: python3 harness/src/analysis/ci_image_cache_benchmark.py reject-invalid
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-roi-${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
+          path: |
+            measurement.json
+            build-metadata.json
+          retention-days: 14
