@@ -47,6 +47,10 @@ def test_all_zero_provider_rows_are_unavailable_but_projected_zero_totals_are_ke
     assert score_forecast_components(raw.drop(columns="receptions"), "WR").isna().all()
     served = raw.add_prefix("pred_")
     assert projected_forecast_rows(served, "WR", prefix="pred_").tolist() == [False, True, True]
+    # A rushing-only WR week is a genuine forecast of zero shared production, not a placeholder.
+    rushing_only = raw.iloc[[0]].assign(rushing_yards=24.0, rushing_tds=0.0)
+    assert projected_forecast_rows(rushing_only, "WR").tolist() == [True]
+    assert score_forecast_components(rushing_only, "WR").iloc[0] == 0.0
 
 
 @pytest.mark.parametrize("pos", ["K", "DST"])

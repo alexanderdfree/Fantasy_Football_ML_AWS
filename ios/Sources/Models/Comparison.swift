@@ -55,7 +55,7 @@ struct Comparison: Codable, Sendable {
     var sampleBasisDescription: String {
         switch sampleBasis {
         case "shared_player_weeks":
-            return "Every displayed source for a position is scored on the same regular-season player-weeks. Missing forecasts are excluded; a forecast of zero is retained."
+            return "Every displayed source for a position is scored on the same regular-season player-weeks. Missing forecasts are excluded. A projected zero is retained, but a provider row with every published stat at zero is an unprojected placeholder and counts as missing."
         case .some(let basis): return "Server sample basis: \(basis)."
         case .none: return "This response does not specify its sample basis or whether sources share the same player-weeks."
         }

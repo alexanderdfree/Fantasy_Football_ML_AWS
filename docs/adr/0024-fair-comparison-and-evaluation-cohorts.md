@@ -33,7 +33,7 @@ The UI reports common sample sizes and missing data. Quartile bias uses the same
 common sample. Ranking metrics evaluate each source's own selections on that
 shared slate.
 
-Four cohort definitions remain separate:
+Five cohort definitions remain separate:
 
 | Name | Selection | Purpose |
 |---|---|---|
@@ -82,7 +82,8 @@ The cache stores full offensive forecasts in `<source>_pred_<format>` and
 shared-component totals in `<source>_comparison_pred_<format>`. DST comparisons
 use their dedicated format-independent `<source>_pred_comparison` columns for
 every model and expert. Missing comparison values never fall back to display
-forecasts. Cache schema 11 requires these separate fields. Timeline applies the
+forecasts. Cache schema 12 requires these separate fields and the placeholder
+rule (schema 11 introduced the separate totals). Timeline applies the
 same NFL.com eligibility rule as the other metric boundaries.
 
 ## Reference artifact

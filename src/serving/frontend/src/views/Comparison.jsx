@@ -101,7 +101,7 @@ function ComparisonRows({ posMap, metric, coverage }) {
 }
 
 /* One of the three accuracy tables (all / top-30 / top-12). */
-function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage, definition, loaded = false }) {
+function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage, definition }) {
     return (
         <div className="comparison-table-block">
             <div className="section-header">{header}</div>
@@ -114,8 +114,6 @@ function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage
                             <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-error">Failed to load: {error}</td></tr>
                         ) : posMap ? (
                             <ComparisonRows posMap={posMap} metric={metric} coverage={coverage} />
-                        ) : loaded ? (
-                            <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="comparison-empty">Not supplied by this response.</td></tr>
                         ) : (
                             <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-loading">Loading comparison…</td></tr>
                         )}
@@ -246,18 +244,17 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
             <ComparisonSubsetBlock
                 header="Expected starters · weekly top 24 · consensus of all sources"
                 bodyId="comparison-weekly-consensus"
-                posMap={data?.subsets?.weekly_consensus_top24}
+                posMap={data ? (subsets.weekly_consensus_top24 || {}) : null}
                 coverage={data?.coverage?.weekly_consensus_top24}
                 definition={data?.cohort_definitions?.weekly_consensus_top24}
                 metric={metric}
                 error={error}
-                loaded={!!data}
             />
 
             <ComparisonSubsetBlock
                 header="Expert-reference top 24 · secondary view"
                 bodyId="comparison-weekly-top24"
-                posMap={data?.subsets?.weekly_reference_top24}
+                posMap={data ? (subsets.weekly_reference_top24 || {}) : null}
                 coverage={data?.coverage?.weekly_reference_top24}
                 definition={data?.cohort_definitions?.weekly_reference_top24}
                 metric={metric}
@@ -294,7 +291,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
             <ComparisonSubsetBlock
                 header="Weekly top-24 leader capture · higher is better"
                 bodyId="comparison-weekly-capture"
-                posMap={data?.weekly_ranking}
+                posMap={data ? (data.weekly_ranking || {}) : null}
                 metric="hit_rate"
                 error={error}
             />
