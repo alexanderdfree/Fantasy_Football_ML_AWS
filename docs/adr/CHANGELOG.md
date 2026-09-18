@@ -1,6 +1,8 @@
 # ADR Changelog
 
-- 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
+- 2026-09-18 · DST synthetic-history schema with team donors, the never-resampled opponent-offense stream in generation and replay, a raw-cache DST exporter and two recipes · (PR pending) · → ADR-0029
+
+- 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR #1593) · → ADR-0029
 
 - 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR #1592) · → ADR-0029
 
