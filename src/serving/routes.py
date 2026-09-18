@@ -661,10 +661,10 @@ def api_model_architecture():
                 },
                 "training_loop": {
                     "optimizer": "AdamW",
-                    "loss": "MultiTargetLoss: per-target Huber or Poisson NLL + optional BCE on TD gate",
+                    "loss": "MultiTargetLoss: per-head MSE (yards/points; all K heads; DST's common counts), Poisson NLL (skill-position TD/INT/fumble counts + DST's four rare counts) or hurdle NegBin (RB/WR/TE receptions on the attention NN; dense NN falls back to Huber) + optional BCE on TD gate",
                     "gradient_clip": "clip_grad_norm_(max_norm=1.0)",
                     "feature_scaling": "Training-fitted feature scaling, bounded to [-4, 4]",
-                    "early_stopping": "Best loss-weighted val MAE restored on patience",
+                    "early_stopping": "Best loss-weighted val MAE state restored when training stops (patience or epoch budget)",
                     "checkpoint": "Best state_dict kept in memory, saved as .pt",
                 },
                 "positions": positions,

@@ -1,5 +1,11 @@
 # Fixed archive — index
 
+### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
+[Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
+
+### [FIXED] Architecture tab still described the pre-#870 Huber loss and the retired `val_mae_total` monitor
+[Read the incident record](fixed-archive/audit-1499-architecture-tab-training-loop-copy.md).
+
 ### [FIXED] A/B job revisions retained mutable image tags
 [Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
 

@@ -95,6 +95,18 @@ DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 10800
 # 100-trial ceiling: 120 cells x ~5 min on g6 Spot is ~$3; past that is
 # usually a typo'd --seeds/--positions. Raise consciously via --max-cells.
 DEFAULT_MAX_CELLS = 120
+# The only tag batch-image.yml pushes is the full lowercase commit SHA. An
+# abbreviated or uppercase value would still mint a real ff-ab-job revision
+# pointing at a non-existent ff-training:<tag> (and only fail at submit / run
+# time), so both entry points that hand the SHA to AWS reject anything else
+# before any Batch/ECR call — the consumer-side twin of benchmark-batch.yml's
+# dispatch-input validation.
+_IMAGE_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def _require_full_image_sha(image_sha: str) -> None:
+    if not isinstance(image_sha, str) or not _IMAGE_SHA.fullmatch(image_sha):
+        raise ValueError(f"image_sha must be the full 40-char lowercase git SHA, got {image_sha!r}")
 
 
 def _git_head_sha() -> str | None:
@@ -129,7 +141,10 @@ def resolve_job_definition(image_sha: str, batch_client, *, image_digest: str | 
     revision when the latest active one doesn't already point at that image.
     Mirrors batch-image.yml's jq re-registration, minus the baked training
     ``timeout`` — A/B jobs set their attempt timeout at submit time.
+    ``image_sha`` must be the full 40-char lowercase SHA (``ValueError``
+    otherwise, raised before any Batch call).
     """
+    _require_full_image_sha(image_sha)
     template = _describe_latest_active(batch_client, JOB_DEFINITION)
     if template is None:
         raise RuntimeError(f"no ACTIVE {JOB_DEFINITION} job definition to clone")
@@ -165,7 +180,10 @@ def resolve_job_definition(image_sha: str, batch_client, *, image_digest: str | 
 
 def check_image_exists(image_sha: str, ecr_client) -> bool | None:
     """True/False when ECR answers; None when we can't check (e.g. no
-    ecr:DescribeImages permission) — the caller degrades to a warning."""
+    ecr:DescribeImages permission) — the caller degrades to a warning.
+    ``image_sha`` must be the full 40-char lowercase SHA (``ValueError``
+    otherwise, raised before any ECR call)."""
+    _require_full_image_sha(image_sha)
     try:
         ecr_client.describe_images(repositoryName="ff-training", imageIds=[{"imageTag": image_sha}])
         return True
