@@ -366,6 +366,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="S3 prefix containing train/val/test.parquet; use a separate prefix for data-change validation",
     )
     p.add_argument("--seeds", type=int, nargs="+", help="Override the spec's SEEDS")
+    p.add_argument("--fresh", action="store_true", help="Require fresh fits for every A/B cell")
     p.add_argument("--only", nargs="+", help="Run only these variant names (baseline always kept)")
     p.add_argument(
         "--image-sha",
@@ -489,6 +490,8 @@ def _parse_env_pairs(pairs: list[str] | None) -> dict[str, str]:
 def main() -> None:
     args = _build_parser().parse_args()
     extra_env = _parse_env_pairs(args.env)
+    if args.fresh:
+        extra_env["FF_FRESH"] = "1"
     wait = args.wait.lower() == "true"
     wait_timeout = args.wait_timeout if args.wait_timeout is not None else WAIT_TIMEOUT_SECONDS
 

@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Exact experiment reuse and prediction-cache identity
+[Read the incident record](fixed-archive/exact-experiment-reuse.md).
+
 ### [FIXED] A/B job revisions retained mutable image tags
 [Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
 

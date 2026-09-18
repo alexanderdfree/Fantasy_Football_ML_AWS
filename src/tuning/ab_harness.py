@@ -89,7 +89,7 @@ import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -382,6 +382,7 @@ def run_cell(
     parameters = inspect.signature(run_fn).parameters
     context_aware = "context" in parameters
     with isolated_outputs(data_dir, legacy_cwd=not context_aware, seed=cell.seed) as context:
+        context = replace(context, reuse_results=True)
         # K/DST build their own splits inside run(seed, config) and take no
         # train/val/test args; the skill positions take (train_df, val_df,
         # test_df, seed, config) and support frame injection.
@@ -414,6 +415,7 @@ def run_cell(
         return {
             "position": pos,
             "variant": cell.variant,
+            "reuse": result.get("reuse", {}),
             "seed": cell.seed,
             "label": variant.label or cell.variant,
             "ok": True,
@@ -521,6 +523,7 @@ def run_group_stacked(
 
     context_aware = "context" in inspect.signature(run_fn).parameters
     with isolated_outputs(data_dir, legacy_cwd=not context_aware, seed=group.seeds[0]) as context:
+        reuse_context = replace(context, reuse_results=True)
         frames = None
         if variant.frame_injector is not None:
             frames = variant.frame_injector(*_load_general_splits())
@@ -535,7 +538,7 @@ def run_group_stacked(
                 frames[2].copy(),
                 seed=seed0,
                 config=cfg_a,
-                **({"context": context} if context_aware else {}),
+                **({"context": reuse_context} if context_aware else {}),
             )
         else:
             result0 = run_fn(
@@ -544,7 +547,7 @@ def run_group_stacked(
                 None,
                 seed=seed0,
                 config=cfg_a,
-                **({"context": context} if context_aware else {}),
+                **({"context": reuse_context} if context_aware else {}),
             )
         # metric_fn is NOT called on the Phase-A result: its test_df has no
         # attention column yet, and a custom metric_fn may require it. Each
@@ -585,6 +588,7 @@ def run_group_stacked(
                     "ridge_mae": metrics_k.get(RIDGE_MODEL, {}).get("mae"),
                     "error": None,
                     "stacked": True,
+                    "baseline_reuse": result0.get("reuse", {}),
                 }
             )
         return out
@@ -1004,6 +1008,7 @@ def run_ab(
     data_dir: str | None = None,
     stacked_seeds: bool | None = None,
     stacked_epochs: int = DEFAULT_STACKED_EPOCHS,
+    fresh: bool = False,
 ) -> dict:
     """Resolve the spec, run the grid (parallel or sequential), aggregate, print.
 
@@ -1062,6 +1067,9 @@ def run_ab(
     # (not just when disabling) so subprocess workers inherit the right value and
     # ``--feature-cache`` is honoured in parallel mode too, not only sequential.
     prev_cache = os.environ.get(_ENV_CACHE_DISABLE)
+    prev_fresh = os.environ.get("FF_FRESH")
+    if fresh:
+        os.environ["FF_FRESH"] = "1"
     os.environ[_ENV_CACHE_DISABLE] = "0" if feature_cache else "1"
     try:
         if stacked_seeds:
@@ -1078,6 +1086,10 @@ def run_ab(
         else:
             results = run_parallel(resolved, cells, jobs, data_dir)
     finally:
+        if prev_fresh is None:
+            os.environ.pop("FF_FRESH", None)
+        else:
+            os.environ["FF_FRESH"] = prev_fresh
         if prev_cache is None:
             os.environ.pop(_ENV_CACHE_DISABLE, None)
         else:
@@ -1100,6 +1112,9 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Shared parallel A/B / ablation harness (device-autodetect, artifact-isolated)."
     )
     p.add_argument("--spec", help="Dotted module path of the A/B spec (e.g. src.tuning.ab_example)")
+    p.add_argument(
+        "--fresh", action="store_true", help="Bypass exact result reuse for fresh training evidence"
+    )
     p.add_argument("--positions", nargs="+", help="Override the spec's POSITIONS")
     p.add_argument("--seeds", type=int, nargs="+", help="Override the spec's SEEDS")
     p.add_argument("--only", nargs="+", help="Run only these variant names (baseline always kept)")
@@ -1192,6 +1207,7 @@ def main(argv: list[str] | None = None, *, default_spec: str | None = None) -> i
         feature_cache=args.feature_cache,
         stacked_seeds=args.stacked_seeds,
         stacked_epochs=args.stacked_epochs,
+        fresh=args.fresh,
     )
     return 0
 
