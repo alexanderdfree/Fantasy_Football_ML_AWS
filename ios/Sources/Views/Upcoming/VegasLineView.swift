@@ -12,9 +12,9 @@ struct VegasLineView: View {
             chip(label: "Impl", value: Fmt.num(impliedTeamTotal), color: FFColor.accent)
             if let spread {
                 chip(
-                    label: spread <= 0 ? "Fav" : "Dog",
-                    value: Fmt.delta(spread),
-                    color: spread <= 0 ? FFColor.accent : FFColor.textSecondary
+                    label: Fmt.vegasSpread(spread).label,
+                    value: Fmt.vegasSpread(spread).value,
+                    color: spread >= 0 ? FFColor.accent : FFColor.textSecondary
                 )
             }
             if let total {

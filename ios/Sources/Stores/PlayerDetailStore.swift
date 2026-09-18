@@ -5,6 +5,7 @@ import Foundation
 @Observable
 final class PlayerDetailStore {
     private let api: any APIProviding
+    private var loadGeneration = 0
 
     init(api: any APIProviding = APIClient.shared) { self.api = api }
 
@@ -13,18 +14,26 @@ final class PlayerDetailStore {
     var breakdown: LoadState<Breakdown>?
 
     func load(playerID: String, week: Int?, scoring: ScoringFormat) async {
+        loadGeneration += 1
+        let generation = loadGeneration
         detail = .loading
         do {
-            detail = .loaded(try await api.get(.player(id: playerID, scoring: scoring), as: PlayerDetail.self))
+            let value = try await api.get(.player(id: playerID, scoring: scoring), as: PlayerDetail.self)
+            guard generation == loadGeneration else { return }
+            detail = .loaded(value)
         } catch {
+            guard generation == loadGeneration else { return }
             detail = .failed(message(error))
         }
         // Breakdown is scoring-invariant — fetch once when a week is known.
         if let week, breakdown?.value == nil {
             breakdown = .loading
             do {
-                breakdown = .loaded(try await api.get(.breakdown(playerID: playerID, week: week), as: Breakdown.self))
+                let value = try await api.get(.breakdown(playerID: playerID, week: week), as: Breakdown.self)
+                guard generation == loadGeneration else { return }
+                breakdown = .loaded(value)
             } catch {
+                guard generation == loadGeneration else { return }
                 breakdown = .failed(message(error))
             }
         }

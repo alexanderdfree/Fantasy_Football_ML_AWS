@@ -15,6 +15,11 @@ enum Fmt {
         (d > 0 ? "+" : "") + num(d, 1)
     }
 
+    /// The API uses positive team margin for favorites; betting lines use the opposite sign.
+    static func vegasSpread(_ teamMargin: Double) -> (label: String, value: String) {
+        (teamMargin >= 0 ? "Fav" : "Dog", delta(-teamMargin))
+    }
+
     /// pred − actual, or nil when either is missing.
     static func errDelta(_ pred: Double?, _ actual: Double?) -> Double? {
         guard let pred, let actual else { return nil }

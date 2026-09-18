@@ -13,15 +13,20 @@ enum UpcomingScreenState {
 @Observable
 final class UpcomingStore {
     private let api: any APIProviding
+    private var loadGeneration = 0
 
     init(api: any APIProviding = APIClient.shared) { self.api = api }
     private let decoder = JSONDecoder()
     var state: UpcomingScreenState = .loading
 
     func load() async {
+        guard !Task.isCancelled else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
         state = .loading
         do {
             let data = try await api.rawData(.upcomingWeek)
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             let week = try decoder.decode(UpcomingWeek.self, from: data)
             if week.available == false {
                 state = .offseason(Self.reasonMessage(week.reason))
@@ -31,8 +36,13 @@ final class UpcomingStore {
                 state = .ready(week)
             }
         } catch let error as APIError where error.isWarming {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             state = .warming
         } catch {
+            // SwiftUI cancels this task when its tab disappears. Keep loading
+            // so the view's next appearance restarts it; cancellation is not a
+            // failed network request. Genuine failures still offer manual retry.
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             state = .failed((error as? APIError)?.errorDescription ?? error.localizedDescription)
         }
     }

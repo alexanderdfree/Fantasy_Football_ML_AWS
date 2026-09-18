@@ -42,7 +42,7 @@
 		<true/>
 	</dict>
 	<!-- Optional runtime override of the API base URL; AppConfig falls back to
-	     #if DEBUG localhost / release fantasy.alexfree.me when this is absent. -->
+	     fantasy.alexfree.me when this is absent. -->
 	<key>API_BASE_URL</key>
 	<string></string>
 </dict>

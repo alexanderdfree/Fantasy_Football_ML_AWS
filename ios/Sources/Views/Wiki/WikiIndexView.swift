@@ -10,7 +10,9 @@ struct WikiIndexView: View {
                 ForEach(grouped(entries), id: \.group) { section in
                     Section(section.group) {
                         ForEach(section.items) { item in
-                            NavigationLink(value: WikiRoute(slug: item.slug, name: item.name)) {
+                            NavigationLink {
+                                WikiDocView(slug: item.slug, title: item.name)
+                            } label: {
                                 Text(item.name).font(.subheadline)
                             }
                         }
