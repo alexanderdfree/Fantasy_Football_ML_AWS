@@ -574,6 +574,64 @@ class TestComputeTestShards:
     def test_empty_input(self):
         assert scope_positions.compute_test_shards([]) == []
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            ".codex/config.toml",
+            ".codex/hooks.json",
+            ".claude/settings.json",
+            ".gemini/settings.json",
+            ".codex/hooks/pre-pr.sh",
+            ".claude/hooks/lib.sh",
+            ".gemini/hooks/guard-worktree-path.sh",
+        ],
+    )
+    def test_tooling_uses_shared_without_changing_training_scope(self, path):
+        assert scope_positions.compute_test_shards(["README.md", path]) == ["shared"]
+        assert scope_positions.compute_positions([path]) == []
+        assert scope_positions.compute_benchmark_scope([path]) == {
+            "positions": [],
+            "shared": False,
+            "exempt": [],
+        }
+
+    @pytest.mark.parametrize("pos", ALL_SIX)
+    def test_tooling_and_position_union(self, pos):
+        assert scope_positions.compute_test_shards(
+            [".codex/config.toml", f"src/{pos.lower()}/config.py"]
+        ) == [pos, "shared"]
+
+    def test_tooling_and_serving_union(self):
+        assert scope_positions.compute_test_shards(
+            [".claude/settings.json", "src/serving/routes.py"]
+        ) == ["serving", "shared"]
+
+    def test_tooling_does_not_narrow_global_runtime_changes(self):
+        assert (
+            scope_positions.compute_test_shards([".gemini/settings.json", "src/shared/training.py"])
+            == ALL_EIGHT
+        )
+
+    @pytest.mark.parametrize(
+        "unknown",
+        [
+            "Dockerfile",
+            ".github/workflows/deploy.yml",
+            "scripts/train-local-parallel.sh",
+            "scripts/pytest-fair.sh",
+            ".codex/unknown.toml",
+            ".codex/config.toml.backup",
+            "nested/.codex/hooks/pre-pr.sh",
+            "unrelated/path/file.py",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "known", [".codex/config.toml", "src/qb/config.py", "tests/scripts/test_scope_positions.py"]
+    )
+    def test_unclassified_file_cannot_hide_in_a_scoped_diff(self, unknown, known):
+        assert scope_positions.compute_test_shards([known, unknown]) == ALL_EIGHT
+        assert scope_positions.compute_test_shards([unknown, known]) == ALL_EIGHT
+
 
 @pytest.mark.parametrize(
     "changed_path,shard,expected_files",

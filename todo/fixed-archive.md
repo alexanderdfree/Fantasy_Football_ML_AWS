@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] CI tooling scope and image-cache work inflated turnaround
+[Read the incident record](fixed-archive/ci-roi-scoping-image-cache-2026-09.md).
+
 ### [FIXED] A/B job revisions retained mutable image tags
 [Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
 
