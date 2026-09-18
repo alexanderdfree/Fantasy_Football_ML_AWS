@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from src.config import TEST_SEASONS, TRAIN_SEASONS, VAL_SEASONS
 from src.k.config import POSITION_CONFIG
-from src.k.data import load_data, load_kicks, season_split
+from src.k.data import impute_context_from_train, load_data, load_kicks, season_split
 from src.k.features import build_nested_kick_history, compute_features
 from src.k.targets import compute_targets
 from src.shared.pipeline import run_cv_pipeline, run_pipeline
@@ -33,10 +33,31 @@ from src.training.contracts import DatasetSplits
 CONFIG = build_pipeline_config("K", POSITION_CONFIG)
 
 
+def _fill_fold_context(train_df, val_df, test_df, feature_cols, *, fill_nans_fn):
+    """Fit the deferred Vegas-context fills on this preparation's own train frame."""
+    frames = [
+        impute_context_from_train(frame, fit_on=train_df) for frame in (train_df, val_df, test_df)
+    ]
+    return fill_nans_fn(*frames, feature_cols)
+
+
+def with_fold_imputation(config):
+    """Bind fold-local Vegas fills without changing the ordinary K pipeline."""
+    cfg = dict(config)
+    cfg["fill_nans_fn"] = functools.partial(_fill_fold_context, fill_nans_fn=cfg["fill_nans_fn"])
+    return cfg
+
+
 def provide_dataset(cfg, *, cross_validation=False) -> DatasetSplits:
-    """Keep kicker reconstruction and nested per-kick state at the provider boundary."""
+    """Keep kicker reconstruction and nested per-kick state at the provider boundary.
+
+    Cross-validation loads with ``impute_context=False`` so every shared CV
+    fold, rolling origin and the final refit fits the Vegas-context fills on
+    its own training frame (``with_fold_imputation``); ``run()`` keeps the
+    loader's default training-season fill.
+    """
     print("Loading kicker data...")
-    k_df = compute_targets(load_data())
+    k_df = compute_targets(load_data(impute_context=False) if cross_validation else load_data())
     compute_features(k_df)
     kicks_df = load_kicks(k_df)
     if cross_validation:
@@ -83,7 +104,7 @@ def _build_kick_history_closure(cfg, kicks_df):
 
 @runner_context
 def run_cv(seed=42, config=None, *, context=None):
-    cfg = dict(config if config is not None else CONFIG)
+    cfg = with_fold_imputation(config if config is not None else CONFIG)
     dataset = provide_dataset(cfg, cross_validation=True)
     cfg.update(dataset.bindings)
     return run_cv_pipeline(
