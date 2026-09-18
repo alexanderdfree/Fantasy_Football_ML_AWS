@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] WR/TE opportunity and red-zone share windows crossed mid-season team stints
+[Read the incident record](fixed-archive/wr-te-stint-window-reset-2026-09.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 
