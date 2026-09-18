@@ -93,8 +93,9 @@ jobs:
           ATTEMPT_TIMEOUT_SECONDS: ${{ github.event.inputs.attempt_timeout_seconds }}
         run: |
           set -euo pipefail
-          # Validate every dispatch input before it is spliced unquoted into the
-          # ARGS string below (same hardening as retune-lgbm.yml / ablate-scheduler.yml).
+          set -f  # Input lists are words, not filename patterns.
+          # Validate every dispatch input before it is forwarded to the launcher
+          # (same hardening as retune-lgbm.yml / ablate-scheduler.yml).
           if ! printf '%s' "$SPEC" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$'; then
             echo "Invalid spec: $SPEC (expected a dotted module path, e.g. src.tuning.ab_example)"; exit 1
           fi
@@ -129,15 +130,18 @@ jobs:
           if [ -z "$IMAGE_SHA" ]; then
             IMAGE_SHA="$GITHUB_SHA"
           fi
-          ARGS="--spec $SPEC --image-sha $IMAGE_SHA --cuda-graph $CUDA_GRAPH --attempt-timeout $ATTEMPT_TIMEOUT_SECONDS"
+          # Build argv as an array: every validated input reaches the launcher as
+          # data (one argv entry each), never re-parsed through a string splice.
+          ARGS=(--spec "$SPEC" --image-sha "$IMAGE_SHA" --cuda-graph "$CUDA_GRAPH" --attempt-timeout "$ATTEMPT_TIMEOUT_SECONDS")
           # Inputs are space-separated lists; intentionally unquoted below so
           # argparse nargs="+" sees separate argv entries (same convention as
-          # retune-nn-batch.yml's $POSITIONS).
-          if [ -n "$POSITIONS" ]; then ARGS="$ARGS --positions $POSITIONS"; fi
-          if [ -n "$SEEDS" ]; then ARGS="$ARGS --seeds $SEEDS"; fi
-          if [ -n "$ONLY" ]; then ARGS="$ARGS --only $ONLY"; fi
-          echo "launch_ab args: $ARGS"
-          python -m src.tuning.launch_ab $ARGS 2>&1 | tee /tmp/ab_run.log
+          # retune-nn-batch.yml's $POSITIONS). `set -f` above keeps word
+          # splitting from also expanding filename patterns.
+          if [ -n "$POSITIONS" ]; then ARGS+=(--positions $POSITIONS); fi
+          if [ -n "$SEEDS" ]; then ARGS+=(--seeds $SEEDS); fi
+          if [ -n "$ONLY" ]; then ARGS+=(--only $ONLY); fi
+          printf 'launch_ab args: %s\n' "${ARGS[*]}"
+          python -m src.tuning.launch_ab "${ARGS[@]}" 2>&1 | tee /tmp/ab_run.log
 
       - name: Publish report to step summary
         # always(): a failed cell or Spot timeout still produced a partial
