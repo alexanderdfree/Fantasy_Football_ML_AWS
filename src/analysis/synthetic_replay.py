@@ -119,6 +119,18 @@ def load_cohort(directory: Path) -> LoadedCohort:
         arrays = {key: data[key] for key in data.files}
     if not {"history", "mask"} <= set(arrays) or "exact_window" not in cases:
         raise ValueError("cohort arrays or cases predate schema 3; regenerate the cohort")
+    stream = bool(position_schema(recipe["position"]).opponent_history_columns)
+    if stream != ("opponent_history" in arrays):
+        raise ValueError(
+            "cohort opponent stream disagrees with its position; regenerate the cohort"
+        )
+    if stream and (
+        "opponent_mask" not in arrays
+        or "opponent_history_columns" not in manifest
+        or "opponent_games.parquet" not in manifest["files"]
+        or len(arrays["opponent_history"]) != len(cases)
+    ):
+        raise ValueError("cohort opponent stream is incomplete; regenerate the cohort")
     if not cases["case_id"].equals(context["case_id"]) or len(cases) != len(arrays["history"]):
         raise ValueError("cohort cases, context and history disagree")
     # Readiness and the history kind follow from the recipe and the cases, never a
@@ -163,11 +175,10 @@ def requested_families(names: list[str], model_dir: str) -> tuple[list[str], dic
 def prediction_inputs(predictor: Predictor, cohort: LoadedCohort) -> PredictionInputs:
     """Hand-build the checkpoint's ordered inputs from context.parquet and history.npz."""
     schema = predictor.schema
-    if schema.structure != "flat" or schema.opponent_history:
+    if schema.structure != "flat":
         raise ValueError(
-            f"{predictor.family} checkpoint needs a {schema.structure} history"
-            + (" with an opponent stream" if schema.opponent_history else "")
-            + "; schema 3 cohorts carry a flat player history only"
+            f"{predictor.family} checkpoint needs a {schema.structure} history; "
+            "schema 3 cohorts carry flat histories only"
         )
     missing = [column for column in schema.features if column not in cohort.context.columns]
     if missing:
@@ -180,10 +191,31 @@ def prediction_inputs(predictor: Predictor, cohort: LoadedCohort) -> PredictionI
     if list(cohort.manifest["history_columns"]) != list(schema.history):
         raise ValueError("cohort history columns differ from the checkpoint's ordered history")
     history, mask = cohort.arrays["history"], cohort.arrays["mask"]
-    window = predictor.zero_inputs().history.shape[1]
+    zeros = predictor.zero_inputs()
+    window = zeros.history.shape[1]
     if history.shape[1] != window:
         raise ValueError(f"cohort history length {history.shape[1]} differs from window {window}")
-    return PredictionInputs(schema, values, history, mask)
+    streamed = "opponent_history" in cohort.arrays
+    if bool(schema.opponent_history) != streamed:
+        raise ValueError(
+            f"{predictor.family} checkpoint "
+            + ("needs" if schema.opponent_history else "has no")
+            + " opponent stream but the cohort "
+            + ("carries one" if streamed else "has none")
+        )
+    opponent = opponent_mask = None
+    if streamed:
+        if list(cohort.manifest["opponent_history_columns"]) != list(schema.opponent_history):
+            raise ValueError("cohort opponent columns differ from the checkpoint's ordered stream")
+        opponent, opponent_mask = cohort.arrays["opponent_history"], cohort.arrays["opponent_mask"]
+        opponent_window = zeros.opponent_history.shape[1]
+        if opponent.shape[1] != opponent_window:
+            raise ValueError(
+                f"cohort opponent length {opponent.shape[1]} differs from window {opponent_window}"
+            )
+    return PredictionInputs(
+        schema, values, history, mask, opponent_history=opponent, opponent_mask=opponent_mask
+    )
 
 
 def _loaded_files(root: Path, predictor: Predictor) -> list[Path]:
@@ -267,6 +299,7 @@ def identity_control(
     source: pd.DataFrame,
     *,
     source_file_sha256: str | None = None,
+    opponent_weekly: pd.DataFrame | None = None,
 ) -> dict:
     """Prove the hand-built inputs reproduce production on the real calendar.
 
@@ -276,10 +309,18 @@ def identity_control(
     forecast game is the (N+1)th of the season) must match production's
     whole-frame predictions within ``PREDICTION_TOLERANCE``; truncated windows
     only count. Transformed histories are fixtures, so only their context is
-    compared.
+    compared. An opponent stream is compared for every case in every mode: it
+    is never synthetic, so production must rebuild it exactly from the weekly
+    frame the stream was exported from.
     """
     recipe = cohort.recipe
     schema = position_schema(recipe["position"])
+    streamed = bool(schema.opponent_history_columns)
+    if streamed and opponent_weekly is None:
+        raise ValueError(
+            f"identity control for {recipe['position']} needs the opponent weekly frame "
+            "(--opponent-weekly)"
+        )
     consumed = consume_source(
         source, position=recipe["position"], donor_seasons=recipe["donor_seasons"], schema=schema
     )
@@ -313,7 +354,7 @@ def identity_control(
     exact = exact_cases if identity_mode else np.zeros(len(rows), bool)
     result = {"status": None, "prediction_tolerance": PREDICTION_TOLERANCE, "families": {}}
     for family, predictor in predictors.items():
-        reference = predictor.inputs_from_frame(reference_frame)
+        reference = predictor.inputs_from_frame(reference_frame, opponent_weekly=opponent_weekly)
         built = inputs[family]
         if not np.array_equal(built.values, reference.values[rows]):
             raise ValueError(f"identity control failed for {family}: static_values")
@@ -321,6 +362,13 @@ def identity_control(
         compared = np.ones(len(rows), dtype=bool) if identity_mode else exact
         if family == "attn_nn":
             compared = exact
+            if streamed:
+                stream_ok = np.array_equal(
+                    built.opponent_history, reference.opponent_history[rows]
+                ) and np.array_equal(built.opponent_mask, reference.opponent_mask[rows])
+                if not stream_ok:
+                    raise ValueError(f"identity control failed for {family}: opponent_stream")
+                checks.append("opponent_stream")
             if identity_mode:
                 if not np.array_equal(built.history[:, :n], reference.history[rows, :n]):
                     raise ValueError(f"identity control failed for {family}: history_prefix")
@@ -373,6 +421,8 @@ def replay_cohort(
     families_requested: list[str] | None = None,
     excluded: dict[str, str] | None = None,
     sync: dict | None = None,
+    opponent_weekly: pd.DataFrame | None = None,
+    opponent_weekly_file_sha256: str | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     position = cohort.recipe["position"]
     spec = INFERENCE_REGISTRY[position]
@@ -399,8 +449,15 @@ def replay_cohort(
     assert_coherent_families(identities)
     if source is not None:
         control = identity_control(
-            cohort, predictors, inputs, raw, source, source_file_sha256=source_file_sha256
+            cohort,
+            predictors,
+            inputs,
+            raw,
+            source,
+            source_file_sha256=source_file_sha256,
+            opponent_weekly=opponent_weekly,
         )
+        control["opponent_weekly_file_sha256"] = opponent_weekly_file_sha256
     else:
         control = {"status": "skipped", "reason": "no --source", "source_file_sha256": None}
     frame = cohort.cases.copy()
@@ -423,6 +480,7 @@ def replay_cohort(
         "source_values_sha256": cohort.manifest["source_values_sha256"],
         "history_kind": cohort.manifest["history_kind"],
         "fixture": bool(cohort.manifest.get("fixture", False)),
+        "opponent_stream": "opponent_history" in cohort.arrays,
         "position": position,
         "model_dir": str(model_dir),
         "sync": sync,
@@ -467,6 +525,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="The consumed source parquet; runs the identity control",
     )
+    parser.add_argument(
+        "--opponent-weekly",
+        type=Path,
+        default=None,
+        help="Regular-season weekly player frame the opponent stream was exported from; "
+        "required by the identity control of positions with an opponent stream",
+    )
     args = parser.parse_args(argv)
     try:
         if args.output.exists():
@@ -485,6 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         families, excluded = requested_families(args.families, model_dir)
         source = pd.read_parquet(args.source) if args.source is not None else None
+        weekly = pd.read_parquet(args.opponent_weekly) if args.opponent_weekly is not None else None
         predictions, manifest = replay_cohort(
             cohort,
             model_dir,
@@ -494,6 +560,10 @@ def main(argv: list[str] | None = None) -> int:
             families_requested=list(args.families),
             excluded=excluded,
             sync=sync,
+            opponent_weekly=weekly,
+            opponent_weekly_file_sha256=(
+                file_digest(args.opponent_weekly) if args.opponent_weekly is not None else None
+            ),
         )
         output = publish_artifact_dir(
             args.output,

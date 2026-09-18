@@ -3,8 +3,9 @@
 Every column list is read from the production inference registry (which
 projects each ``POSITION_CONFIG``) at import time, so a whitelist change is a
 configuration change rather than a drifting copy. The skill positions (QB,
-RB, WR, TE) share one flat history structure and one loading path; DST and K
-are later slices.
+RB, WR, TE) share one flat history structure and one loading path. DST is a
+flat team-identity history with a second, opponent-offense stream that is
+never resampled. K (nested per-kick history) is a later slice.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from src.shared.registry import get_inference_spec
 
 BoundFn = Callable[[pd.DataFrame], pd.Series]
 
+DONOR_IDENTITIES = ("player", "team")
+FANTASY_POINTS_POLICIES = ("recompute", "assert_equal")
 SKILL_IDENTITY_COLUMNS = ("position", "season_type", "recent_team", "opponent_team")
 SKILL_HELD_CONTEXT = (
     "implied_team_total",
@@ -40,6 +43,14 @@ class PositionHistorySchema:
     points are never computed from a missing outcome. ``derived_checks`` are
     validity rules that are not a plain ``a <= b`` pair; ``derived_caps`` bound
     a count that integer rounding may push over such a rule.
+
+    ``opponent_history_columns`` names a second attention stream (the
+    forecast game's real opponent's prior games, ``opponent_max_history_games``
+    long) that generation builds from a supplied per-game frame and never
+    resamples. ``donor_identity`` is ``player`` or ``team`` (``player_id`` must
+    equal ``recent_team``). ``fantasy_points_policy`` is ``recompute`` (history
+    points come from the shared scoring) or ``assert_equal`` (the source carries
+    its own points column, which must equal the shared scoring).
 
     Transform declarations partition the history columns: ``transformable``
     production/usage stats an op may rewrite, ``opaque`` externally modeled
@@ -70,8 +81,22 @@ class PositionHistorySchema:
     team_accounting: dict[str, tuple[str, float]] = field(default_factory=dict)
     held_context_columns: tuple[str, ...] = ()
     transform_support: dict[str, str | None] = field(default_factory=dict)
+    opponent_history_columns: tuple[str, ...] = ()
+    opponent_max_history_games: int = 0
+    donor_identity: str = "player"
+    fantasy_points_policy: str = "recompute"
 
     def __post_init__(self):
+        if self.donor_identity not in DONOR_IDENTITIES:
+            raise ValueError(f"{self.position} donor_identity must be one of {DONOR_IDENTITIES}")
+        if self.fantasy_points_policy not in FANTASY_POINTS_POLICIES:
+            raise ValueError(
+                f"{self.position} fantasy_points_policy must be one of {FANTASY_POINTS_POLICIES}"
+            )
+        if bool(self.opponent_history_columns) != (self.opponent_max_history_games > 0):
+            raise ValueError(f"{self.position} opponent stream needs columns and a length")
+        if set(self.opponent_history_columns) & set(self.history_columns):
+            raise ValueError(f"{self.position} opponent stream columns overlap the history")
         known = set(self.history_columns) | set(self.targets)
         referenced = (
             set(self.count_columns)
@@ -377,11 +402,70 @@ TE_SCHEMA = _skill_schema(
     **_RECEIVER_DECLARATIONS,
 )
 
+
+def _dst_schema() -> PositionHistorySchema:
+    """DST: team-coded rows, no season type, an opponent-offense stream, tier scoring.
+
+    The ten targets are the counts and the two allowed totals; ``opp_qb_epa``
+    is an externally modeled per-game signal (opaque). No relation holds by
+    construction (fumble recoveries are not bounded by forced fumbles in the
+    data) and no team total lives on the frame, so there is no accounting.
+    Points include piecewise-constant tier bonuses, so ``set_history_ppg``
+    is declined: no per-case factor inverts them.
+    """
+    spec = get_inference_spec("DST")
+    targets = tuple(spec["targets"])
+    return PositionHistorySchema(
+        position="DST",
+        identity_columns=("position", "recent_team", "opponent_team"),
+        history_columns=tuple(spec["attn_history_stats"]),
+        targets=targets,
+        feature_columns=tuple(spec["get_feature_columns_fn"]()),
+        max_history_games=int(spec["attn_max_seq_len"]),
+        count_columns=targets,
+        must_observe=targets,
+        relations=(),
+        bounded_columns=(("points_allowed", 0.0, 100.0), ("yards_allowed", 0.0, 1000.0)),
+        derived_checks=(),
+        derived_caps=(),
+        sequence_coupled_context=("week", "rest_days"),
+        scoring_scope=(
+            "DST linear components plus points- and yards-allowed tier bonuses; exact; "
+            "scoring-format invariant"
+        ),
+        code_paths=(
+            "features/engineer.py",
+            "dst/config.py",
+            "dst/targets.py",
+            "config.py",
+            "shared/aggregate_targets.py",
+        ),
+        transformable_columns=targets,
+        opaque_columns=("opp_qb_epa",),
+        team_accounting={},
+        held_context_columns=(),
+        transform_support={
+            "scale": None,
+            "set_history_ppg": (
+                "DST points include piecewise-constant points- and yards-allowed tier "
+                "bonuses; no per-case factor reaches a target mean exactly"
+            ),
+        },
+        opponent_history_columns=tuple(spec["opp_attn_history_stats"]),
+        opponent_max_history_games=int(spec["opp_attn_max_seq_len"]),
+        donor_identity="team",
+        fantasy_points_policy="assert_equal",
+    )
+
+
+DST_SCHEMA = _dst_schema()
+
 POSITION_HISTORY_SCHEMAS: dict[str, PositionHistorySchema] = {
     "QB": QB_SCHEMA,
     "RB": RB_SCHEMA,
     "WR": WR_SCHEMA,
     "TE": TE_SCHEMA,
+    "DST": DST_SCHEMA,
 }
 
 
