@@ -1784,7 +1784,7 @@ class MultiHeadTrainer:
                 history[f"val_{metric}_weighted"].append(float(weighted))
             if self.selection_position is not None:
                 for fmt in ("ppr", "half_ppr", "standard"):
-                    if n_val_batches > 0:
+                    if n_val_samples > 0:
                         pred_points = predictions_to_fantasy_points(
                             self.selection_position, val_preds, fmt
                         )
