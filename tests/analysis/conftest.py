@@ -153,6 +153,136 @@ def position_rows(position: str, weeks=SHORT_WEEKS) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# DST: team-coded rows, no season type, an opponent-offense stream. Two
+# defenses (KC, BUF) face a rotating set of opponents whose offenses are the
+# per-game rows below; the weekly player slice aggregates to exactly those rows.
+DST_TEAMS = ("KC", "BUF")
+DST_OPPONENTS = ("DEN", "LV", "MIA", "NYJ")
+DST_BASE = dict(
+    def_sacks=3,
+    def_ints=1,
+    def_fumble_rec=1,
+    def_fumbles_forced=1,
+    def_safeties=0,
+    def_tds=0,
+    def_blocked_kicks=0,
+    special_teams_tds=0,
+    points_allowed=17,
+    yards_allowed=330,
+)
+DST_POISON = "sacks_L3"
+
+
+def dst_opponent(team: str, season: int, week: int) -> str:
+    offset = 0 if team == "KC" else 2
+    return DST_OPPONENTS[(week + offset + season) % len(DST_OPPONENTS)]
+
+
+def dst_rows(weeks=SHORT_WEEKS) -> pd.DataFrame:
+    """A prepared DST frame: 38 feature columns, 11 history stats, team identities."""
+    from src.shared.aggregate_targets import predictions_to_fantasy_points
+
+    spec = get_inference_spec("DST")
+    features = list(spec["get_feature_columns_fn"]())
+    history = list(spec["attn_history_stats"])
+    assert DST_POISON in features
+    rows = []
+    for team in DST_TEAMS:
+        for season in (2022, 2023, 2025):
+            for week in weeks:
+                row = dict.fromkeys(features, 0.0)
+                row.update(dict.fromkeys(history, 0.0))
+                row.update(DST_BASE)
+                row.update(
+                    player_id=team,
+                    recent_team=team,
+                    team=team,
+                    opponent_team=dst_opponent(team, season, week),
+                    season=season,
+                    week=week,
+                    position="DST",
+                    rest_days=7.0,
+                    is_home=float(week % 2),
+                )
+                row["yards_allowed"] = 300 + week * 5 + (20 if team == "BUF" else 0)
+                row["opp_qb_epa"] = week * 0.5 - (1.0 if team == "BUF" else 0.0)
+                row[DST_POISON] = 9999
+                rows.append(row)
+    frame = pd.DataFrame(rows)
+    targets = list(spec["targets"])
+    frame["fantasy_points"] = predictions_to_fantasy_points(
+        "DST", {t: frame[t].to_numpy(dtype="float64") for t in targets}
+    )
+    return frame
+
+
+def opponent_weekly_rows(weeks=range(1, 14)) -> pd.DataFrame:
+    """Two offensive players per opponent game; aggregates to the per-game frame."""
+    rows = []
+    for team_index, team in enumerate(DST_OPPONENTS):
+        for season in (2022, 2023, 2025):
+            for week in weeks:
+                for player in ("a", "b"):
+                    rows.append(
+                        {
+                            "player_id": f"{team}-{player}",
+                            "position": "QB" if player == "a" else "RB",
+                            "recent_team": team,
+                            "season": season,
+                            "week": week,
+                            "season_type": "REG",
+                            "passing_yards": 100.0 + week + team_index * 10,
+                            "passing_tds": 1.0,
+                            "rushing_yards": 30.0 + team_index,
+                            "rushing_tds": 0.0 if player == "a" else 1.0,
+                            "interceptions": 0.0 if player == "b" else 1.0,
+                            "sack_fumbles_lost": 0.0,
+                            "rushing_fumbles_lost": 0.0 if player == "a" else 1.0,
+                            "receiving_fumbles_lost": 0.0,
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def fake_schedules(weeks=range(1, 14)) -> pd.DataFrame:
+    """Scores for every opponent game so ``off_pts_scored`` is nonzero and distinctive."""
+    rows = []
+    for team_index, team in enumerate(DST_OPPONENTS):
+        for season in (2022, 2023, 2025):
+            for week in weeks:
+                rows.append(
+                    {
+                        "season": season,
+                        "week": week,
+                        "game_type": "REG",
+                        "home_team": team,
+                        "away_team": "ZZZ",
+                        "home_score": 14 + week + team_index,
+                        "away_score": 10,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def opponent_per_game_rows(weeks=range(1, 14)) -> pd.DataFrame:
+    """The production aggregation of the weekly slice, with the fake schedule scores."""
+    from src.features.engineer import build_opp_offense_per_game_df
+    from src.shared import weather_features
+
+    original = weather_features._load_schedules
+    weather_features._load_schedules = lambda: fake_schedules(weeks)
+    try:
+        return build_opp_offense_per_game_df(opponent_weekly_rows(weeks))
+    finally:
+        weather_features._load_schedules = original
+
+
+@pytest.fixture
+def dst_schedules(monkeypatch):
+    """Route the production opponent builder to the fake schedule scores."""
+    monkeypatch.setattr("src.shared.weather_features._load_schedules", lambda: fake_schedules())
+
+
 @pytest.fixture
 def qb_source():
     return position_rows("QB")

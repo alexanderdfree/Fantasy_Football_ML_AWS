@@ -33,12 +33,18 @@ from src.analysis.synthetic_history_schema import (
 )
 from src.analysis.synthetic_transforms import OPAQUE_POLICIES, apply_transforms, parse_transform
 from src.config import TRAIN_SEASONS
-from src.features.engineer import build_game_history_arrays
+from src.features.engineer import build_game_history_arrays, build_opp_defense_history_arrays
 from src.prediction.bundle import MODEL_FAMILIES, file_digest
 from src.shared.aggregate_targets import predictions_to_fantasy_points
 
 SCHEMA_VERSION = 3
 KEYS = ["player_id", "season", "week"]
+OPPONENT_KEYS = ["opponent_team", "season", "week"]
+OPPONENT_STREAM_POLICY = (
+    "the forecast game's real opponent's real prior regular-season games, newest first, "
+    "built with the production opponent-history builder from the supplied per-game "
+    "frame; never resampled or transformed in any mode"
+)
 WINDOWS = ("any", "exact")
 FLAT_FAMILIES = tuple(family for family in MODEL_FAMILIES if family != "attn_nn")
 SAMPLING_IDENTITY_EXCLUDED = ("name", "transforms", "opaque_signal_policy")
@@ -185,6 +191,9 @@ class HistoryCohort:
     mask: np.ndarray
     manifest: dict
     donor_games: pd.DataFrame | None = None
+    opponent_history: np.ndarray | None = None
+    opponent_mask: np.ndarray | None = None
+    opponent_games: pd.DataFrame | None = None
 
 
 @dataclass(frozen=True)
@@ -319,8 +328,17 @@ def _source_frame(
     Returns the pool and the player-seasons excluded for duplicate game keys.
     """
     history_columns = list(schema.history_columns)
+    asserted_points = schema.fantasy_points_policy == "assert_equal"
     required = list(
-        dict.fromkeys([*KEYS, *schema.identity_columns, *history_columns, *schema.targets])
+        dict.fromkeys(
+            [
+                *KEYS,
+                *schema.identity_columns,
+                *history_columns,
+                *schema.targets,
+                *(["fantasy_points"] if asserted_points else []),
+            ]
+        )
     )
     missing = sorted(set(required) - set(source.columns))
     if missing:
@@ -336,6 +354,8 @@ def _source_frame(
     team_columns = [c for c in ("recent_team", "opponent_team") if c in schema.identity_columns]
     if frame[team_columns].isna().any().any():
         raise ValueError("source has missing team identities")
+    if schema.donor_identity == "team" and not frame["player_id"].eq(frame["recent_team"]).all():
+        raise ValueError(f"{position} donors are teams: player_id must equal recent_team")
     if not frame["player_id"].map(lambda v: isinstance(v, str) and bool(v.strip())).all():
         raise ValueError("source player_id must be a nonempty string")
     for column in ("season", "week"):
@@ -364,10 +384,90 @@ def _source_frame(
     for column in schema.validated_columns:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype("float64")
     validate_history_frame(frame, schema, stage="source")
-    frame["fantasy_points"] = predictions_to_fantasy_points(
-        position, {name: frame[name].to_numpy() for name in schema.targets}
+    scored = np.asarray(
+        predictions_to_fantasy_points(
+            position, {name: frame[name].to_numpy() for name in schema.targets}
+        ),
+        dtype="float64",
     )
+    if asserted_points:
+        # The source scored its own games (DST tiers, K's signed total); the
+        # shared scoring must agree exactly or the two definitions have drifted.
+        observed = pd.to_numeric(frame["fantasy_points"], errors="raise").to_numpy(dtype="float64")
+        if not np.allclose(observed, scored, rtol=0.0, atol=1e-6, equal_nan=False):
+            raise ValueError(
+                f"source fantasy_points disagree with the shared {position} scoring; "
+                "the source was scored by different rules"
+            )
+    frame["fantasy_points"] = scored
     return frame.sort_values(KEYS, kind="stable"), excluded
+
+
+def validate_opponent_per_game(
+    per_game: pd.DataFrame, schema: PositionHistorySchema
+) -> pd.DataFrame:
+    """Project and check the opponent per-game frame the opponent stream reads.
+
+    One row per opponent team and game with every declared stream column
+    observed; the production builder fills nothing here, so a missing value
+    is a broken export rather than a modeled absence.
+    """
+    columns = list(schema.opponent_history_columns)
+    required = [*OPPONENT_KEYS, *columns]
+    missing = sorted(set(required) - set(per_game.columns))
+    if missing:
+        raise ValueError(f"opponent per-game frame is missing columns: {missing}")
+    frame = per_game[required].copy()
+    if frame[OPPONENT_KEYS].isna().any().any():
+        raise ValueError("opponent per-game frame has missing team/season/week keys")
+    for column in ("season", "week"):
+        numeric = pd.to_numeric(frame[column], errors="raise")
+        if not np.isfinite(numeric).all() or not (numeric == np.floor(numeric)).all():
+            raise ValueError(f"opponent per-game {column} must contain finite integers")
+        frame[column] = numeric.astype("int64")
+    if frame.duplicated(OPPONENT_KEYS).any():
+        raise ValueError("opponent per-game frame has duplicate team/season/week keys")
+    for column in columns:
+        frame[column] = pd.to_numeric(frame[column], errors="raise").astype("float64")
+    if not np.isfinite(frame[columns].to_numpy()).all():
+        raise ValueError("opponent per-game stream columns must be observed and finite")
+    return frame.sort_values(OPPONENT_KEYS, kind="stable").reset_index(drop=True)
+
+
+def _opponent_stream(
+    forecast_rows: pd.DataFrame,
+    cases: pd.DataFrame,
+    per_game: pd.DataFrame,
+    schema: PositionHistorySchema,
+) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    """The opponent stream for every case, plus the per-game rows it consumed."""
+    columns = list(schema.opponent_history_columns)
+    length = schema.opponent_max_history_games
+    lookup = forecast_rows[OPPONENT_KEYS].reset_index(drop=True)
+    history, mask = build_opp_defense_history_arrays(lookup, per_game, columns, length)
+    parts = []
+    for case_index, (case_id, opponent, season, week) in enumerate(
+        zip(
+            cases["case_id"], lookup["opponent_team"], lookup["season"], lookup["week"], strict=True
+        )
+    ):
+        prior = per_game[
+            per_game["opponent_team"].eq(opponent)
+            & per_game["season"].eq(season)
+            & per_game["week"].lt(week)
+        ]
+        # Production keeps the most recent games and orders them newest first.
+        prior = prior.sort_values("week").tail(length).iloc[::-1].reset_index(drop=True)
+        if not np.array_equal(
+            history[case_index, : len(prior)], prior[columns].to_numpy(dtype=np.float32)
+        ) or int(mask[case_index].sum()) != len(prior):
+            raise RuntimeError("opponent stream export disagrees with the production builder")
+        prior.insert(0, "case_id", case_id)
+        prior.insert(1, "case_index", case_index)
+        prior.insert(2, "history_slot", np.arange(len(prior)))
+        parts.append(prior)
+    games = pd.concat(parts, ignore_index=True)
+    return history, mask, games
 
 
 def _context_rows(
@@ -438,7 +538,9 @@ def model_input_readiness(mode: str, cases: pd.DataFrame, *, transformed: bool =
     return readiness
 
 
-def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohort:
+def generate_cohort(
+    source: pd.DataFrame, recipe: HistoryRecipe, *, opponent_per_game: pd.DataFrame | None = None
+) -> HistoryCohort:
     """Bootstrap isolated history cases, preserving whole donor-game records.
 
     Each eligible forecast has at least N observed games earlier in the same
@@ -448,9 +550,22 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
     mode, both source blocks and all their per-game fields are sampled together
     from that case's eligible past; artificial joins are explicitly recorded.
     Declared transforms then rewrite the sampled games; the untransformed donor
-    window is kept beside them.
+    window is kept beside them. A position with an opponent stream needs the
+    opponent per-game frame; that stream is the forecast opponent's real prior
+    games and is never resampled or transformed.
     """
     schema = position_schema(recipe.position)
+    if schema.opponent_history_columns and opponent_per_game is None:
+        raise ValueError(
+            f"{recipe.position} cohorts need the opponent per-game frame (--opponent-per-game)"
+        )
+    if not schema.opponent_history_columns and opponent_per_game is not None:
+        raise ValueError(f"{recipe.position} histories have no opponent stream")
+    per_game = (
+        validate_opponent_per_game(opponent_per_game, schema)
+        if opponent_per_game is not None
+        else None
+    )
     consumed = consume_source(
         source, position=recipe.position, donor_seasons=recipe.donor_seasons, schema=schema
     )
@@ -553,6 +668,12 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         axis=1,
     )
     history, mask = arrays[probe_indices], masks[probe_indices]
+    opponent_history = opponent_mask = opponent_games = None
+    if per_game is not None:
+        opponent_history, opponent_mask, opponent_games = _opponent_stream(
+            forecast_rows, cases, per_game, schema
+        )
+        cases["opponent_prior_games"] = opponent_mask.sum(axis=1).astype(int)
     transformed = transform_report is not None
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -585,6 +706,8 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "context_sequence_coupled_columns": list(schema.sequence_coupled_context),
         "context_semantics": CONTEXT_SEMANTICS,
         "static_context_policy": STATIC_CONTEXT_POLICY,
+        "donor_identity": schema.donor_identity,
+        "fantasy_points_policy": schema.fantasy_points_policy,
         "scoring_format": "ppr",
         "scoring_scope": schema.scoring_scope,
         "external_signal_policy": EXTERNAL_SIGNAL_POLICY[
@@ -607,9 +730,31 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
             )
         ),
     }
+    if per_game is not None:
+        manifest.update(
+            {
+                "opponent_history_columns": list(schema.opponent_history_columns),
+                "opponent_history_shape": list(opponent_history.shape),
+                "opponent_history_order": "newest_first",
+                "opponent_stream_policy": OPPONENT_STREAM_POLICY,
+                "opponent_per_game_rows": int(len(per_game)),
+                "opponent_per_game_values_sha256": _frame_hash(per_game),
+            }
+        )
     if transformed:
         manifest.update(transform_report)
-    return HistoryCohort(games, cases, context, history, mask, manifest, donor_games)
+    return HistoryCohort(
+        games,
+        cases,
+        context,
+        history,
+        mask,
+        manifest,
+        donor_games,
+        opponent_history,
+        opponent_mask,
+        opponent_games,
+    )
 
 
 def publish_artifact_dir(
@@ -652,7 +797,12 @@ def write_cohort(cohort: HistoryCohort, output: Path) -> Path:
         cohort.context.to_parquet(directory / "context.parquet", index=False)
         if cohort.donor_games is not None:
             cohort.donor_games.to_parquet(directory / "donor_games.parquet", index=False)
-        np.savez_compressed(directory / "history.npz", history=cohort.history, mask=cohort.mask)
+        arrays = {"history": cohort.history, "mask": cohort.mask}
+        if cohort.opponent_history is not None:
+            cohort.opponent_games.to_parquet(directory / "opponent_games.parquet", index=False)
+            arrays["opponent_history"] = cohort.opponent_history
+            arrays["opponent_mask"] = cohort.opponent_mask
+        np.savez_compressed(directory / "history.npz", **arrays)
 
     return publish_artifact_dir(output, _write, cohort.manifest)
 
@@ -664,6 +814,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--recipe", type=Path, required=True, help="Versioned JSON recipe")
     parser.add_argument(
+        "--opponent-per-game",
+        type=Path,
+        default=None,
+        help="Opponent per-game parquet (required by positions with an opponent stream)",
+    )
+    parser.add_argument(
         "--output", type=Path, required=True, help="New artifact directory (never overwritten)"
     )
     args = parser.parse_args(argv)
@@ -671,8 +827,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.output.exists():
             raise FileExistsError(f"output already exists: {args.output}")
         recipe = HistoryRecipe.from_dict(json.loads(args.recipe.read_text()))
-        cohort = generate_cohort(pd.read_parquet(args.source), recipe)
+        per_game = (
+            pd.read_parquet(args.opponent_per_game) if args.opponent_per_game is not None else None
+        )
+        cohort = generate_cohort(pd.read_parquet(args.source), recipe, opponent_per_game=per_game)
         cohort.manifest["source_file_sha256"] = file_digest(args.source)
+        if args.opponent_per_game is not None:
+            cohort.manifest["opponent_per_game_file_sha256"] = file_digest(args.opponent_per_game)
         output = write_cohort(cohort, args.output)
     except (ValueError, TypeError, OSError) as exc:
         parser.exit(2, f"synthetic-history: {exc}\n")
@@ -687,6 +848,7 @@ def main(argv: list[str] | None = None) -> int:
                     cohort.manifest["donor_pool_exclusions"]["duplicate_game_keys"]
                 ),
                 "history_kind": cohort.manifest["history_kind"],
+                "opponent_stream": cohort.opponent_history is not None,
                 "model_input_readiness": {
                     family: entry["ready"]
                     for family, entry in cohort.manifest["model_input_readiness"].items()
