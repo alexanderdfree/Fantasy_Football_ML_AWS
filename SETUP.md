@@ -188,8 +188,9 @@ python -m src.tuning.tune_nn RB --n-jobs 2
 ```
 
 The LightGBM tuner versions its SQLite studies by seed list (for example,
-`tune_lgbm_seedavg_v1_s42-43-44_rb.db`), so single-seed smoke studies never mix with the default
-3-seed objective. Avoid explicitly setting `LGBM_N_JOBS=16` for `tune_lgbm`: the normal path leases
+`tune_lgbm_seedavg_bagging_v2_s42-43-44_rb.db`), so single-seed smoke studies never mix with the default
+3-seed objective or older trials whose row-sampling fraction was inactive.
+Avoid explicitly setting `LGBM_N_JOBS=16` for `tune_lgbm`: the normal path leases
 cores per Optuna trial, and `--no-core-pool` falls back to one LightGBM thread per parallel trial.
 Unset `LGBM_N_JOBS` (or use a separate shell) when running the full `pytest` suite — with `-n auto`
 xdist workers a high per-process thread count oversubscribes the runner.
