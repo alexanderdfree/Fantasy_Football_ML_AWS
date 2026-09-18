@@ -193,3 +193,42 @@ def test_execution_differences_cannot_be_attributed_to_candidate(change):
     )
     assert not result["passed"]
     assert any("execution settings" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize(
+    "missing", ["metrics", "null_metrics", "null_reference", "null_model", "null_trainers"]
+)
+def test_cli_writes_rejection_for_incomplete_evidence(tmp_path, monkeypatch, missing):
+    data = records()
+    row = data[-1]
+    if missing == "metrics":
+        del row["metrics"]
+    elif missing == "null_metrics":
+        row["metrics"] = None
+    elif missing == "null_reference":
+        row["metrics"]["all:ridge"] = None
+    elif missing == "null_model":
+        row["metrics"]["elite_top24:attn_nn"] = None
+    else:
+        row["trainers"] = None
+    source, affected, output = (tmp_path / name for name in ("records", "affected", "report"))
+    source.write_text(json.dumps(data))
+    affected.write_text(json.dumps({p: list(FAMILIES) for p in POSITIONS}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "repair_gate",
+            str(source),
+            "--candidate",
+            "candidate",
+            "--affected",
+            str(affected),
+            "--output",
+            str(output),
+        ],
+    )
+    assert main() == 1
+    report = json.loads(output.read_text())
+    assert report["passed"] is False
+    assert report["reasons"]

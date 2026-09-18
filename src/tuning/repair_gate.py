@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from statistics import mean, stdev
 
-from src.analysis.repair_evidence import complete_sample_counts, execution_signature
+from src.analysis.repair_evidence import complete_sample_counts, execution_signature, sample_count
 
 SEEDS = (42, 123, 7)
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
@@ -70,6 +70,9 @@ def promotion_gate(records, *, candidate, affected):
                         reasons.append(f"unmatched {key}: {position}/{origin}/{seed}")
                         valid = False
                 for record in (base, proposed):
+                    if not isinstance(record.get("metrics"), dict):
+                        reasons.append(f"missing metric evidence: {position}/{origin}/{seed}")
+                        valid = False
                     if (
                         not record.get("batch_job_id")
                         or not record.get("inference_parity_passed")
@@ -106,10 +109,10 @@ def promotion_gate(records, *, candidate, affected):
                         complete_sample_counts(
                             a["metrics"].get(f"{cohort}:{family}", {}),
                             b["metrics"].get(f"{cohort}:{family}", {}),
-                            a["metrics"].get("all:ridge", {}).get("n")
+                            sample_count(a["metrics"].get("all:ridge"))
                             if cohort == "all"
                             else a["cohorts"][cohort].get("n"),
-                            b["metrics"].get("all:ridge", {}).get("n")
+                            sample_count(b["metrics"].get("all:ridge"))
                             if cohort == "all"
                             else b["cohorts"][cohort].get("n"),
                         )

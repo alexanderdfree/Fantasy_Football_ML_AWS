@@ -1,9 +1,13 @@
 """Pure checks shared by the development reporter and confirmation gate."""
 
 
+def sample_count(block):
+    return block.get("n") if isinstance(block, dict) else None
+
+
 def complete_sample_counts(left, right, expected_left, expected_right):
     """Reject model-specific row filtering, including equal but incomplete samples."""
-    counts = (left.get("n"), right.get("n"), expected_left, expected_right)
+    counts = (sample_count(left), sample_count(right), expected_left, expected_right)
     return all(type(n) is int and n > 0 for n in counts) and len(set(counts)) == 1
 
 
@@ -24,7 +28,12 @@ def execution_signature(record):
     ):
         raise ValueError("incomplete or incompatible execution settings")
     trainers = []
-    for trainer in record.get("trainers", []):
+    recorded_trainers = record.get("trainers")
+    if not isinstance(recorded_trainers, list):
+        raise ValueError("missing neural trainer execution settings")
+    for trainer in recorded_trainers:
+        if not isinstance(trainer, dict):
+            raise ValueError("missing neural trainer execution settings")
         device = trainer.get("device")
         if (
             not isinstance(device, str)
