@@ -1,5 +1,10 @@
 # Model-default repair campaign
 
+The [completed development report](results.md) records 66 successful AWS Batch
+cells and no qualifying repair. Both model PRs remain held. The report includes
+paired results, immutable provenance, numerical checks and reproduction commands.
+Immutable S3 copies are listed in the [publication index](evidence/publication.json).
+
 The owner-approved protocol is preserved byte-for-byte in `protocol.json`.
 SHA-256: `caae4d8eea1ba16b8a4dcf6baf7fcec07db2b150950ae3f7ef0244b6018984e3`.
 It was recovered from task `01a092d4-70d0-7332-b17f-56381d150b44` on 2026-09-17.

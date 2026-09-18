@@ -63,6 +63,13 @@ checkpointing**; the launcher collects and aggregates.
   `ff-training:{--image-sha}` (idempotent: reuses the latest revision when the
   image already matches). Production job-definition names never point at
   branch images.
+- **Immutable image bytes**: `launch_ab --image-digest sha256:...` verifies
+  that the selected ECR source tag resolves to that digest before submission.
+  The isolated job definition uses `repository:<full-source-sha>@<digest>`;
+  the source tag remains available for data compatibility checks, while the
+  digest prevents a mutable ECR tag from changing a queued experiment's code.
+  The run manifest records both pins. Omitting the option retains the existing
+  source-tag workflow; promotion experiments should supply both pins.
 - **Workflow** [ab-batch.yml](../../.github/workflows/ab-batch.yml)
   (`workflow_dispatch`, mirrors retune-nn-batch.yml): inputs for
   spec/positions/seeds/only/image SHA/cuda_graph; drives `launch_ab` and
@@ -136,6 +143,10 @@ tests: [tests/tuning/test_ab_batch.py](../../tests/tuning/test_ab_batch.py),
 
 ## Changelog
 
+- **2026-09-17** — Added optional verified digest pins for A/B job definitions,
+  preserving the full source-SHA tag and recording both in the run manifest.
+  Validated with actual isolated Spot Batch repair smokes. Production definition
+  names and image-resolution defaults are unchanged. (PR pending.)
 - **2026-09-10** — Consolidated local eager jobs, A/B cells, and stacked groups onto `src/tuning/_execution.py`: one grid executor with a fresh spawned process per parallel unit and shared output isolation. `ablation_runner.py` retains the eager job/report compatibility interface, including per-target tables, timing-clean serial execution, and primed-cache access. Batch entrypoints retain their env/result contracts and reuse checkpoint/provenance helpers; no production training recipe or stacked default changes.
 - **2026-09-10** — The launcher accepts `--data-prefix` (default `data`) and records it in the run manifest. Data-source corrections can now benchmark isolated train/validation/test objects before publishing production splits; raw caches retain the existing production source. (PR pending.)
 

@@ -1,0 +1,431 @@
+{
+  "kind": "selector",
+  "origins": [
+    2022,
+    2023
+  ],
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "records": 12,
+  "source_shas": [
+    "7d0132c80e5621cccad6f74947e2141cff0c298d"
+  ],
+  "data_releases": [
+    "4d196674393af2bbdc09e4269117bfe84ef7d98cad3243b27b982c6270dfa6d7"
+  ],
+  "hardware": [
+    "NVIDIA A10G"
+  ],
+  "provenance_errors": [],
+  "numerical_findings": [
+    {
+      "cell": [
+        "WR",
+        2023,
+        7,
+        "baseline"
+      ],
+      "numerics": {
+        "active_numerical_defect": true,
+        "errors": {
+          "d_log_alpha": {
+            "max_scaled_error": 0.0001015083401746781,
+            "n_outside_tolerance": 1
+          },
+          "d_mu": {
+            "max_scaled_error": 5.852325976369276e-7,
+            "n_outside_tolerance": 0
+          },
+          "log_probability": {
+            "max_scaled_error": 0.000020769719569591077,
+            "n_outside_tolerance": 0
+          }
+        },
+        "n_positive": 1870,
+        "observed_ranges": {
+          "log_alpha": [
+            -5.434983730316162,
+            1.5454955101013184
+          ],
+          "mu": [
+            0.2324415147304535,
+            9.134099006652832
+          ]
+        },
+        "production_device": "cuda",
+        "reference_device": "cpu"
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "candidate": "rmse",
+      "position": "QB",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.011250690426111673,
+          "std": 0.020364911327091874,
+          "paired": [
+            0.026197404556517867,
+            0.01949917854168337,
+            -0.011944511819866221
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.008809844929917729,
+          "std": 0.018982580705498686,
+          "paired": [
+            0.005222375787113265,
+            -0.030408854744719882,
+            -0.0012430558321465668
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.02528105457597925,
+          "std": 0.0716190451149501,
+          "paired": [
+            0.07759819562753822,
+            -0.05634349820307616,
+            0.05458846630347569
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.0005945066159812976,
+          "std": 0.06522416352641186,
+          "paired": [
+            0.04215925088006944,
+            -0.07457968965734185,
+            0.0342039586252163
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "rmse",
+      "position": "QB",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.06684595022289634,
+          "std": 0.07267735963107795,
+          "paired": [
+            0.0046314928189641336,
+            -0.14066655661174288,
+            -0.06450278687591027
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.0693503874659062,
+          "std": 0.04420394142208535,
+          "paired": [
+            -0.029344197088860824,
+            -0.11680556792829933,
+            -0.06190139738055844
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.10578314947809127,
+          "std": 0.10934748237245435,
+          "paired": [
+            -0.012961797126803454,
+            -0.22632222312698946,
+            -0.0780654281804809
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.07702789212318735,
+          "std": 0.051578475361453234,
+          "paired": [
+            -0.046546120866229224,
+            -0.13658001037264977,
+            -0.047957545130683066
+          ]
+        }
+      },
+      "passes": true
+    },
+    {
+      "candidate": "rmse",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.08118970771641691,
+          "std": 0.047022975861678105,
+          "paired": [
+            0.05767057732953429,
+            0.05056651535125223,
+            0.1353320304684642
+          ]
+        },
+        "all:rmse": {
+          "mean": 0.002601710005086133,
+          "std": 0.015587468019119208,
+          "paired": [
+            -0.00788528078351991,
+            -0.0048231183806866085,
+            0.020513529179464918
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.041231494478760546,
+          "std": 0.019472702530832806,
+          "paired": [
+            -0.0298473457893893,
+            -0.03013109989186802,
+            -0.06371603775502432
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": 0.02857820527145923,
+          "std": 0.08094007362681176,
+          "paired": [
+            0.00904117244096625,
+            -0.04080518151118895,
+            0.11749862488460039
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "rmse",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": 0.03905012113184444,
+          "std": 0.035802338310947895,
+          "paired": [
+            0.008275601875673999,
+            0.07834353377427439,
+            0.03053122774558492
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.024346987185420055,
+          "std": 0.015742907032882565,
+          "paired": [
+            -0.01869918658206071,
+            -0.04213470662208341,
+            -0.012207068352116046
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.06119549740692983,
+          "std": 0.07892621223202115,
+          "paired": [
+            -0.004863150533086724,
+            -0.15140477681911513,
+            -0.027318564868587636
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.09145056528830094,
+          "std": 0.06520935483579329,
+          "paired": [
+            -0.08326409380656408,
+            -0.16036660736775232,
+            -0.030720994690586423
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "guarded",
+      "position": "QB",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.021447018442856642,
+          "std": 0.053038006374329504,
+          "paired": [
+            0.026197404556517867,
+            -0.07859394806522157,
+            -0.011944511819866221
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.027680877957267036,
+          "std": 0.05149245493776944,
+          "paired": [
+            0.005222375787113265,
+            -0.0870219538267678,
+            -0.0012430558321465668
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": 0.008746524058644253,
+          "std": 0.09999165314230306,
+          "paired": [
+            0.07759819562753822,
+            -0.10594708975508116,
+            0.05458846630347569
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.010722137657659836,
+          "std": 0.08479710923088564,
+          "paired": [
+            0.04215925088006944,
+            -0.10852962247826525,
+            0.0342039586252163
+          ]
+        }
+      },
+      "passes": false
+    },
+    {
+      "candidate": "guarded",
+      "position": "QB",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [],
+      "deltas": {
+        "all:mae": {
+          "mean": -0.10176515485659099,
+          "std": 0.12014945539956413,
+          "paired": [
+            0.023720289285275697,
+            -0.21575184354019683,
+            -0.11326391031485183
+          ]
+        },
+        "all:rmse": {
+          "mean": -0.06571125629192102,
+          "std": 0.1016692082951312,
+          "paired": [
+            0.030874505776491645,
+            -0.1717970507291282,
+            -0.056211223923126497
+          ]
+        },
+        "elite_top24:mae": {
+          "mean": -0.12864350162940674,
+          "std": 0.1485848457851466,
+          "paired": [
+            -0.007548982963776929,
+            -0.2944501764976044,
+            -0.08393134542683889
+          ]
+        },
+        "elite_top24:rmse": {
+          "mean": -0.028571584240923542,
+          "std": 0.09075021966714707,
+          "paired": [
+            0.025953558541790045,
+            -0.13333163283656724,
+            0.021663321572006566
+          ]
+        }
+      },
+      "passes": true
+    },
+    {
+      "candidate": "guarded",
+      "position": "WR",
+      "origin": 2022,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [
+        123,
+        7
+      ],
+      "deltas": {},
+      "passes": false
+    },
+    {
+      "candidate": "guarded",
+      "position": "WR",
+      "origin": 2023,
+      "family": "attn_nn",
+      "missing_qualifying_seeds": [
+        42,
+        123,
+        7
+      ],
+      "deltas": {},
+      "passes": false
+    }
+  ],
+  "development_qualified": [],
+  "merge_authorized": false,
+  "limitation": "Development evidence only; confirmation and current review/CI remain mandatory.",
+  "manifest_proofs": [
+    {
+      "file": "selector-budget-dev-2022-7d0132c8-061e34f2cf79a3e34245a1d7873068cd13176c87a4a4234908580f9b60997ea2-manifest.json",
+      "sha256": "061e34f2cf79a3e34245a1d7873068cd13176c87a4a4234908580f9b60997ea2",
+      "batch_job_id": "0b66888f-4ee3-43c1-9a79-dd840f96d60a"
+    },
+    {
+      "file": "selector-budget-dev-2022-7d0132c8-1bd2bec2bb83e5e21ad9fa75c7455588a70bf2da2f4bd3639b4ada74b1d43228-manifest.json",
+      "sha256": "1bd2bec2bb83e5e21ad9fa75c7455588a70bf2da2f4bd3639b4ada74b1d43228",
+      "batch_job_id": "0b66888f-4ee3-43c1-9a79-dd840f96d60a"
+    },
+    {
+      "file": "selector-budget-dev-2022-7d0132c8-7a08cbbb4b6cf8d05f8a101bd757df7b0d8a9d81cfc2e390cfd2a6652d3925bf-manifest.json",
+      "sha256": "7a08cbbb4b6cf8d05f8a101bd757df7b0d8a9d81cfc2e390cfd2a6652d3925bf",
+      "batch_job_id": "53c9fcc2-bd27-4197-a3c9-3950c411a242"
+    },
+    {
+      "file": "selector-budget-dev-2022-7d0132c8-9d9e249672bef72b76bf47c3cd47bf2732d367b675c9d4ed92793cc3aedcfe3a-manifest.json",
+      "sha256": "9d9e249672bef72b76bf47c3cd47bf2732d367b675c9d4ed92793cc3aedcfe3a",
+      "batch_job_id": "53c9fcc2-bd27-4197-a3c9-3950c411a242"
+    },
+    {
+      "file": "selector-budget-dev-2022-7d0132c8-c2fb1f3b1664e6e128c32332d812204acdb7664772f8faa34ff84b17f6f7d6f7-manifest.json",
+      "sha256": "c2fb1f3b1664e6e128c32332d812204acdb7664772f8faa34ff84b17f6f7d6f7",
+      "batch_job_id": "0b66888f-4ee3-43c1-9a79-dd840f96d60a"
+    },
+    {
+      "file": "selector-budget-dev-2022-7d0132c8-e31554c8668b89346d37ecf548e985a5e58d9644b5f4bedb9e970c1fffebfde6-manifest.json",
+      "sha256": "e31554c8668b89346d37ecf548e985a5e58d9644b5f4bedb9e970c1fffebfde6",
+      "batch_job_id": "53c9fcc2-bd27-4197-a3c9-3950c411a242"
+    },
+    {
+      "file": "selector-budget-dev-2023-7d0132c8-035a4f1fa2a76c7a69222f0cade5bae685c8e1e8666e785f2be8418e03370796-manifest.json",
+      "sha256": "035a4f1fa2a76c7a69222f0cade5bae685c8e1e8666e785f2be8418e03370796",
+      "batch_job_id": "f1d97567-9bd1-4e73-bfbc-58860d441158"
+    },
+    {
+      "file": "selector-budget-dev-2023-7d0132c8-0d68c97c3a3979d7fb306281962751517528f3c6d42ff00c10d0846b9064df3e-manifest.json",
+      "sha256": "0d68c97c3a3979d7fb306281962751517528f3c6d42ff00c10d0846b9064df3e",
+      "batch_job_id": "c83d76b9-861f-47ff-b9f0-0522d0bcab0f"
+    },
+    {
+      "file": "selector-budget-dev-2023-7d0132c8-5417c60d96649bdca29212356b419d4fcef67cdec5e231d7c22de623fec709a2-manifest.json",
+      "sha256": "5417c60d96649bdca29212356b419d4fcef67cdec5e231d7c22de623fec709a2",
+      "batch_job_id": "f1d97567-9bd1-4e73-bfbc-58860d441158"
+    },
+    {
+      "file": "selector-budget-dev-2023-7d0132c8-99a46d163bfcd7a3613d0af934fd87585e2ae07e484d5dc0c2b6d99864db0ea0-manifest.json",
+      "sha256": "99a46d163bfcd7a3613d0af934fd87585e2ae07e484d5dc0c2b6d99864db0ea0",
+      "batch_job_id": "c83d76b9-861f-47ff-b9f0-0522d0bcab0f"
+    },
+    {
+      "file": "selector-budget-dev-2023-7d0132c8-afcb9ff2441e248d38789e793ed630d108db4f80a281fd6bc78ce84d5a54eb0f-manifest.json",
+      "sha256": "afcb9ff2441e248d38789e793ed630d108db4f80a281fd6bc78ce84d5a54eb0f",
+      "batch_job_id": "c83d76b9-861f-47ff-b9f0-0522d0bcab0f"
+    },
+    {
+      "file": "selector-budget-dev-2023-7d0132c8-cc6ec3fb072da829f0cebd18fe646583407882c48c4d7078b9c6089e1fda4185-manifest.json",
+      "sha256": "cc6ec3fb072da829f0cebd18fe646583407882c48c4d7078b9c6089e1fda4185",
+      "batch_job_id": "f1d97567-9bd1-4e73-bfbc-58860d441158"
+    }
+  ]
+}

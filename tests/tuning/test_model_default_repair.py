@@ -259,15 +259,15 @@ def records():
                             seed=seed,
                             variant=variant,
                             metrics=metrics,
-                            source_sha="sha",
-                            data_release="release",
+                            source_sha="a" * 40,
+                            data_release="d" * 64,
                             gpu="L4",
                             prepared_hashes={"X": "hash"},
                             row_hash="rows",
                             truth_hash="truth",
                             batch_job_id="batch",
                             inference_parity_passed=True,
-                            frozen_candidate_sha256="freeze",
+                            frozen_candidate_sha256="f" * 64,
                             cohorts={
                                 c: dict(status="available", n=24, cohort_hash="cohort")
                                 for c in ("elite_top24", "weekly_reference_top24")
@@ -290,7 +290,18 @@ def test_gate_requires_both_metrics_every_model_and_year():
 
 
 @pytest.mark.parametrize(
-    "change", ["missing", "cohort", "hardware", "duplicate", "parity", "control"]
+    "change",
+    [
+        "missing",
+        "cohort",
+        "hardware",
+        "duplicate",
+        "parity",
+        "control",
+        "freeze",
+        "mixed_source",
+        "legacy_data",
+    ],
 )
 def test_missing_or_incompatible_evidence_fails_closed(change):
     data = deepcopy(records())
@@ -305,6 +316,14 @@ def test_missing_or_incompatible_evidence_fails_closed(change):
         data.append(data[-1])
     elif change == "parity":
         data[-1]["inference_parity_passed"] = False
+    elif change == "freeze":
+        data[-1]["frozen_candidate_sha256"] = "e" * 64
+    elif change == "mixed_source":
+        for row in data[-2:]:
+            row["source_sha"] = "b" * 40
+    elif change == "legacy_data":
+        for row in data:
+            row["data_release"] = "legacy"
     else:
         affected["WR"].remove("ridge")
     assert not promotion_gate(data, candidate="candidate", affected=affected)["passed"]

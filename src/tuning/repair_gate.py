@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 from statistics import mean, stdev
 
@@ -16,6 +17,19 @@ FAMILIES = ("ridge", "nn", "attn_nn", "lgbm")
 def promotion_gate(records, *, candidate, affected):
     """Each changed model must pass in both years; unchanged models are controls."""
     reasons, comparisons, index = [], [], {}
+    for field, length in (
+        ("source_sha", 40),
+        ("data_release", 64),
+        ("frozen_candidate_sha256", 64),
+    ):
+        values = [record.get(field) for record in records]
+        if not values or any(
+            not isinstance(value, str) or re.fullmatch(rf"[0-9a-f]{{{length}}}", value) is None
+            for value in values
+        ):
+            reasons.append(f"missing immutable {field}")
+        elif len(set(values)) != 1:
+            reasons.append(f"mixed {field} across the confirmation grid")
     for record in records:
         key = tuple(record.get(k) for k in ("position", "origin", "variant", "seed"))
         if key in index:
