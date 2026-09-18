@@ -22,11 +22,45 @@ from src.tuning.ab_ensemble_seeds import (
     capture_attention_construction,
     clip_per_member_,
     predict_stacked,
+    stack_models,
+    stacked_val_rmse,
     train_sequential,
     train_stacked,
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_stacked_validation_pools_rows_then_roots_each_member():
+    from src.rb.config import POSITION_CONFIG
+
+    class KnownPredictions(nn.Module):
+        def __init__(self, errors):
+            super().__init__()
+            self.errors = nn.Parameter(torch.tensor(errors))
+
+        def forward(self, x):
+            values = self.errors[x[:, 0].long()]
+            return {
+                t: values if t == "receptions" else torch.zeros_like(values)
+                for t in POSITION_CONFIG.targets
+            }
+
+    device = torch.device("cpu")
+    template, params, buffers = stack_models(
+        [KnownPredictions([0.0, 0.0, 6.0]), KnownPredictions([2.0, 2.0, 2.0])], device
+    )
+    loader = _GPUResidentBatcher(
+        (torch.arange(3.0).reshape(-1, 1),),
+        {t: torch.zeros(3) for t in POSITION_CONFIG.targets},
+        batch_size=2,
+        shuffle=False,
+        drop_last=False,
+    )
+    scores = stacked_val_rmse(template, params, buffers, "RB", loader, device)
+    assert scores == pytest.approx([np.sqrt(12), 2.0])
+    assert np.mean(scores) != pytest.approx(np.sqrt(8))
+
 
 _TARGETS = ["a", "b"]
 
@@ -92,7 +126,15 @@ def _captures_for(models, criterion, loader, lr=1e-2):
     out = []
     for m in models:
         opt = torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=1e-4)
-        trainer = types.SimpleNamespace(model=m, criterion=criterion, optimizer=opt)
+        # Mirror the selection attributes a captured MultiHeadTrainer carries:
+        # train_stacked's epoch_callback path requires PPR-RMSE selection.
+        trainer = types.SimpleNamespace(
+            model=m,
+            criterion=criterion,
+            optimizer=opt,
+            selection_metric="fantasy_rmse_ppr",
+            selection_position=None,
+        )
         out.append(
             {"trainer": trainer, "train_loader": loader, "val_loader": loader, "n_epochs": 2}
         )

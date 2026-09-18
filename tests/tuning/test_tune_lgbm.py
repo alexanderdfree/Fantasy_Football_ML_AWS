@@ -90,8 +90,8 @@ def test_parse_seeds_accepts_commas_and_rejects_bad_values():
 def test_seed_versioned_study_names_do_not_match_legacy_names():
     seeds = (42, 43, 44)
     assert tune_lgbm._seed_key(seeds) == "s42-43-44"
-    assert tune_lgbm._study_name("RB", seeds) == "lgbm_seedavg_v1_s42-43-44_rb"
-    assert tune_lgbm._study_db_path("RB", seeds) == "tune_lgbm_seedavg_v1_s42-43-44_rb.db"
+    assert tune_lgbm._study_name("RB", seeds) == "lgbm_ppr_rmse_v1_s42-43-44_rb"
+    assert tune_lgbm._study_db_path("RB", seeds) == "tune_lgbm_ppr_rmse_v1_s42-43-44_rb.db"
     assert tune_lgbm._study_name("RB", seeds) != "lgbm_rb"
     assert tune_lgbm._study_db_path("RB", seeds) != "tune_lgbm_rb.db"
 
@@ -137,10 +137,9 @@ def test_objective_scores_every_fold_seed_and_passes_leased_n_jobs(monkeypatch):
             return None
 
         def predict(self, X_val):
-            # Fold marker lives in X_val[0, 0], so expected MAEs are:
-            # fold 10: seeds 1,3 -> 11,13 mean 12
-            # fold 20: seeds 1,3 -> 21,23 mean 22
-            return {"points": np.array([float(X_val[0, 0]) + self.seed])}
+            # Two unequal errors distinguish RMSE from MAE and verify the
+            # root happens within each fold/seed before their scores average.
+            return {"points": np.array([0.0, float(X_val[0, 0]) + self.seed])}
 
     class FakeTrial:
         def __init__(self):
@@ -167,25 +166,29 @@ def test_objective_scores_every_fold_seed_and_passes_leased_n_jobs(monkeypatch):
     folds_data = [
         (
             np.array([[0.0]]),
-            np.array([[10.0]]),
+            np.array([[10.0], [10.0]]),
             {"points": np.array([0.0])},
-            {"points": np.array([0.0])},
+            {"points": np.array([0.0, 0.0])},
             ["feature"],
         ),
         (
             np.array([[0.0]]),
-            np.array([[20.0]]),
+            np.array([[20.0], [20.0]]),
             {"points": np.array([0.0])},
-            {"points": np.array([0.0])},
+            {"points": np.array([0.0, 0.0])},
             ["feature"],
         ),
     ]
     trial = FakeTrial()
     objective = tune_lgbm._make_objective(folds_data, ["points"], "huber", seeds=(1, 3))
 
-    assert objective(trial) == pytest.approx(17.0)
+    assert objective(trial) == pytest.approx(17.0 / np.sqrt(2))
     assert [(c["seed"], c["n_jobs"]) for c in calls] == [(1, 7), (3, 7), (1, 7), (3, 7)]
-    assert trial.reports == [(0, pytest.approx(12.0)), (1, pytest.approx(17.0))]
+    assert trial.reports == [
+        (0, pytest.approx(12.0 / np.sqrt(2))),
+        (1, pytest.approx(17.0 / np.sqrt(2))),
+    ]
+    assert all(c["params"]["selection_metric"] == "fantasy_rmse_ppr" for c in calls)
 
 
 def test_maybe_local_core_pool_disabled_preserves_thread_guard(monkeypatch):

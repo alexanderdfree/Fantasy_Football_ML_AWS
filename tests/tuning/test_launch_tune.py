@@ -19,6 +19,69 @@ from src.tuning import launch_tune
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("graph", ["true", "false"])
+def test_workflow_collects_the_same_namespaces_as_submitted_jobs(monkeypatch, tmp_path, graph):
+    """The aggregate step must download exactly the per-position namespaces the
+    submit job wrote (flat positions stack, K/DST stay eager) for either
+    ``cuda_graph`` input. A hard-coded namespace aggregated stale or missing
+    studies once stacking and full-graph capture became the submit defaults."""
+    import os
+    import shlex
+
+    import yaml
+
+    from src.tuning import aggregate_results
+
+    workflow_path = Path(__file__).resolve().parents[2] / ".github/workflows/retune-nn-batch.yml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    step = next(
+        s
+        for s in workflow["jobs"]["aggregate"]["steps"]
+        if s.get("name") == "Aggregate per-position results from S3"
+    )
+    script = step["run"].replace("\\\n", " ")
+    command = next(line for line in script.splitlines() if "src.tuning.aggregate_results" in line)
+    monkeypatch.setenv("POSITIONS", "RB K DST")
+    monkeypatch.setenv("CUDA_GRAPH", graph)
+    monkeypatch.setenv("S3_BUCKET", "test-bucket")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
+    argv = shlex.split(os.path.expandvars(command))
+    assert argv[:3] == ["python", "-m", "src.tuning.aggregate_results"]
+
+    collected = {}
+
+    def fake_download(bucket, positions, dest_dir, search_space_version):
+        assert bucket == "test-bucket"
+        for pos in positions:
+            collected[pos] = (
+                search_space_version[pos]
+                if isinstance(search_space_version, dict)
+                else search_space_version
+            )
+        return []
+
+    monkeypatch.setattr(aggregate_results, "_download_from_s3", fake_download)
+    monkeypatch.setattr(sys, "argv", ["aggregate_results", *argv[3:]])
+    monkeypatch.chdir(tmp_path)
+    aggregate_results.main()
+
+    assert set(collected) == {"RB", "K", "DST"}
+    for position in ("RB", "K", "DST"):
+        batch = MagicMock()
+        batch.submit_job.return_value = {"jobId": "test-job"}
+        launch_tune.submit_tune_job(
+            position,
+            batch_client=batch,
+            cuda_graph=graph == "true",
+            stacked_seeds=launch_tune.DEFAULT_STACKED_SEEDS,
+        )
+        env = {
+            e["name"]: e["value"]
+            for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
+        }
+        assert collected[position] == env["TUNE_NN_STORAGE_VERSION"]
+
+
 def test_submit_tune_job_builds_expected_command():
     """The container command must dispatch into --mode=tune with the right
     forwarded args. This is the contract that src/batch/train.py's --mode=tune
@@ -73,7 +136,7 @@ def test_submit_tune_job_builds_expected_command():
     # *_graphfull namespace so they never mix with model-only-graph studies.
     assert env["FF_CUDA_GRAPH_FULL"] == "1"
     assert env["FF_COMPILE"] == "0"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_mps_graphfull"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_fp_rmse_ppr_v1_mps_graphfull"
     assert kwargs["timeout"] == {"attemptDurationSeconds": 7200}
     # Retry strategy comes from launch.py — Spot interruptions retry, other
     # errors exit fast.
@@ -123,8 +186,8 @@ def test_submit_tune_job_stacked_default_per_position():
 
 def test_submit_tune_job_history_scope_sets_env_and_namespace():
     """--scope history rides FF_TUNE_SCOPE (fixed ENTRYPOINT can't take --scope)
-    and lands in the separate history_v3 root; with the default stacked width
-    that's history_v3_mps_ens24x30."""
+    and lands in the separate history_v3_fp_rmse_ppr_v1 root; with the default stacked width
+    that's history_v3_fp_rmse_ppr_v1_mps_ens24x30."""
     from src.tuning.ab_ensemble_seeds import DEFAULT_STACKED_SEEDS
 
     batch = MagicMock()
@@ -137,7 +200,7 @@ def test_submit_tune_job_history_scope_sets_env_and_namespace():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_TUNE_SCOPE"] == "history"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v3_mps_ens24x30"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v3_fp_rmse_ppr_v1_mps_ens24x30"
 
 
 def test_submit_tune_job_full_scope_omits_scope_env():
@@ -154,7 +217,7 @@ def test_submit_tune_job_full_scope_omits_scope_env():
 
 def test_submit_tune_job_history_root_applies_when_eager():
     """The history root applies regardless of stacking — eager lands in
-    history_v3_mps_graphfull (graphs on)."""
+    history_v3_fp_rmse_ppr_v1_mps_graphfull (graphs on)."""
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "j"}
     launch_tune.submit_tune_job(
@@ -165,7 +228,7 @@ def test_submit_tune_job_history_root_applies_when_eager():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_TUNE_SCOPE"] == "history"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v3_mps_graphfull"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "history_v3_fp_rmse_ppr_v1_mps_graphfull"
 
 
 def test_submit_tune_job_history_scope_rejects_non_flat_position():
@@ -309,7 +372,7 @@ def test_submit_tune_job_can_disable_cuda_graph_and_change_workers():
     assert env["FF_CUDA_GRAPH"] == "0"
     # full_graph composes only WITH cuda_graph: graph disabled -> plain
     # eager namespace even though --cuda-graph-full defaults true.
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_fp_rmse_ppr_v1"
     assert kwargs["timeout"] == {"attemptDurationSeconds": 900}
 
 
@@ -325,7 +388,7 @@ def test_submit_tune_job_can_disable_full_graph_only():
         for e in batch.submit_job.call_args.kwargs["containerOverrides"]["environment"]
     }
     assert env["FF_CUDA_GRAPH_FULL"] == "0"
-    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_mps_graph"
+    assert env["TUNE_NN_STORAGE_VERSION"] == "scheduler_v3_fp_rmse_ppr_v1_mps_graph"
 
 
 def test_submit_tune_job_stacked_env_and_namespace():
