@@ -6,7 +6,7 @@
   `tests/shared/test_poisson_heads.py` and `tests/tuning/test_ab_poisson_log_rate.py`;
   comparison spec `src/tuning/ab_poisson_log_rate.py`. Isolated as component 3
   of #1575 (`codex/fix-inheritance-reception` @ 2a97c93f, absorbing #1552) on
-  branch `claude/split-1575-poisson-log-rate` — a HELD draft PR: metric-bearing
+  branch `claude/split-1575-poisson-log-rate` — HELD draft PR #1604: metric-bearing
   for every position with Poisson heads, gated on the dual-metric +
   protected-cohort gate in `todo/model-default-repair/README.md`.
 - **What:** The September 10 architecture audit replayed the July 13 stable

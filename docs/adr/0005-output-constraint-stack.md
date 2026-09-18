@@ -22,7 +22,7 @@
 ## Changelog
 
 - **2026-09-18 — Proposed (held): log-rate outputs for ungated Poisson heads.**
-  Isolated from #1575 as a held draft PR; not accepted until it passes the
+  Isolated from #1575 as held draft PR #1604; not accepted until it passes the
   dual-metric + protected-cohort gate. New training would use log-rate outputs
   for ungated heads whose loss family is `poisson_nll`: the predicted raw count
   is `exp(log_rate)` and the loss consumes the log-rate directly with

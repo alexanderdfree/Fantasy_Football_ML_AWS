@@ -1,6 +1,6 @@
 # ADR Changelog
 
-- 2026-09-18 · Proposed (held): recover sparse Poisson head gradients with log-rate outputs/losses, training-mean initialization, and checkpointed legacy semantics, isolated from #1575 · (PR pending, draft) · → ADR-0005
+- 2026-09-18 · Proposed (held): recover sparse Poisson head gradients with log-rate outputs/losses, training-mean initialization, and checkpointed legacy semantics, isolated from #1575 · (PR #1604, held draft) · → ADR-0005
 
 - 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
 
