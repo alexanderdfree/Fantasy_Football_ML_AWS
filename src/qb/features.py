@@ -138,4 +138,21 @@ def _compute_features(df: pd.DataFrame) -> None:
 
 def fill_nans(train_df, val_df, test_df, qb_feature_cols):
     """Fill NaNs in QB-specific feature columns using training set statistics."""
-    return fill_nans_with_train_means(train_df, val_df, test_df, qb_feature_cols)
+    # prior_season_mean_qbr_total / prior_season_mean_pts_added are in
+    # INCLUDE_FEATURES["prior_season"] (so the model consumes them) but absent
+    # from _INCLUDE_FEATURES["specific"] — the column set the pipeline passes
+    # here as qb_feature_cols — so without this they skip the leak-safe
+    # train-mean fill and fall through to build_position_features' catch-all
+    # .fillna(0). ESPN Total QBR is a 0-100 RATE (train mean ~54, sd ~13): a
+    # raw 0 is z ≈ -4 post-scaler on ~24% of QB train rows, a third of which
+    # DID play the prior season and merely lack an ESPN QBR record. pts_added
+    # shares the identical NaN mask. Same class as RB #390 / WR #1368 /
+    # TE #1290 / DST #856. prior_season_games_played is deliberately NOT
+    # carved out — it is the rookie-placeholder sentinel (src/qb/config.py).
+    # (#1521)
+    prior_cols = [
+        c
+        for c in ("prior_season_mean_qbr_total", "prior_season_mean_pts_added")
+        if c in train_df.columns and c not in qb_feature_cols
+    ]
+    return fill_nans_with_train_means(train_df, val_df, test_df, [*qb_feature_cols, *prior_cols])

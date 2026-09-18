@@ -10,7 +10,13 @@ in this file.
 import pandas as pd
 import pytest
 
-from src.qb.features import _compute_features, add_specific_features, fill_nans
+from src.qb.config import POSITION_CONFIG
+from src.qb.features import (
+    _compute_features,
+    add_specific_features,
+    fill_nans,
+    get_feature_columns,
+)
 from tests.shared.parameterized_features import (
     PositionFeatureSpec,
     install_parameterized_features,
@@ -236,3 +242,109 @@ class TestComputeQBRates:
         assert vet_train["season_starts_to_date"].tolist() == [0.0, 1.0, 2.0, 3.0]
         vet_test = test[test["player_id"].eq("VET")].sort_values("week")
         assert vet_test["season_starts_to_date"].tolist() == [0.0, 1.0]
+
+
+@pytest.mark.unit
+class TestFillQBNansPriorSeason:
+    """#1521: prior_season_mean_qbr_total (ESPN Total QBR, a 0-100 rate) and
+    prior_season_mean_pts_added are whitelisted (INCLUDE_FEATURES
+    ["prior_season"]) but absent from specific_features — the column set the
+    pipeline passes to fill_nans — so they must be carved into the leak-safe
+    train-mean fill. Otherwise they fall through to build_position_features'
+    catch-all .fillna(0): QBR 0 vs a ~54 train mean (sd ~13) is z ≈ -4
+    post-scaler on ~24% of QB train rows, a third of which DID play the prior
+    season and merely lack an ESPN QBR record. Same class as RB #390 /
+    WR #1368 / TE #1290 / DST #856. prior_season_games_played is deliberately
+    NOT carved out — it is the rookie-placeholder sentinel (src/qb/config.py)."""
+
+    PRIOR_COLS = ("prior_season_mean_qbr_total", "prior_season_mean_pts_added")
+
+    @staticmethod
+    def _frames():
+        nan = float("nan")
+        train = pd.DataFrame(
+            {
+                "feat1": [1.0, 2.0, 3.0],
+                "prior_season_mean_qbr_total": [50.0, 60.0, nan],
+                "prior_season_mean_pts_added": [1.0, 3.0, nan],
+            }
+        )
+        val = pd.DataFrame(
+            {
+                "feat1": [nan],
+                "prior_season_mean_qbr_total": [nan],
+                "prior_season_mean_pts_added": [nan],
+            }
+        )
+        test = val.copy()
+        return train, val, test
+
+    def test_prior_season_rates_train_mean_filled_not_zero(self):
+        train, val, test = self._frames()
+
+        # qb_feature_cols deliberately excludes the prior-season columns — the
+        # pipeline passes only specific_features here.
+        train, val, test = fill_nans(train, val, test, ["feat1"])
+
+        # Means of the two non-NaN train rows — NOT the catch-all's 0.
+        expected = {"prior_season_mean_qbr_total": 55.0, "prior_season_mean_pts_added": 2.0}
+        for col, train_mean in expected.items():
+            assert pytest.approx(train[col].iloc[2]) == train_mean
+            assert pytest.approx(val[col].iloc[0]) == train_mean
+            assert pytest.approx(test[col].iloc[0]) == train_mean
+        # The explicitly-passed column is still filled exactly as before.
+        assert pytest.approx(val["feat1"].iloc[0]) == 2.0
+        assert pytest.approx(test["feat1"].iloc[0]) == 2.0
+        # The fill values recorded on train.attrs carry the carved-out
+        # columns too (and are the train means, not 0).
+        assert train.attrs["fitted_fill_values"] == pytest.approx({"feat1": 2.0, **expected})
+
+    def test_carve_out_wiring_matches_production_config(self):
+        """Pin the activation preconditions the carve-out silently depends on:
+        both columns are whitelisted (so the model consumes them) and absent
+        from specific_features (so they need the carve-out at all) — a rename
+        or whitelist change must fail HERE, not silently re-zero the
+        no-QBR-record rows. And prior_season_games_played must stay OUT of
+        the carve-out: it is the rookie sentinel whose catch-all 0 lets the
+        model read the other zeroed prior_season_* aggregates as a rookie."""
+        prior_season = POSITION_CONFIG.include_features["prior_season"]
+        feature_cols = get_feature_columns()
+        specific = set(POSITION_CONFIG.specific_features)
+        for col in self.PRIOR_COLS:
+            assert col in prior_season
+            assert col in feature_cols
+            assert col not in specific
+        assert "prior_season_games_played" in prior_season
+        assert "prior_season_games_played" not in specific
+
+        train, val, test = self._frames()
+        # A non-NaN train value: if games_played were (wrongly) carved out it
+        # would be train-mean-filled to 16.0 instead of staying NaN.
+        train["prior_season_games_played"] = [16.0, float("nan"), float("nan")]
+        val["prior_season_games_played"] = float("nan")
+        test["prior_season_games_played"] = float("nan")
+
+        train, val, test = fill_nans(train, val, test, ["feat1"])
+
+        assert train["prior_season_games_played"].isna().tolist() == [False, True, True]
+        assert val["prior_season_games_played"].isna().all()
+        assert test["prior_season_games_played"].isna().all()
+        assert "prior_season_games_played" not in train.attrs["fitted_fill_values"]
+
+    def test_carve_out_is_noop_when_columns_absent(self):
+        """Frames without the prior-season columns (the shared parameterized
+        fill_nans tests, synthetic fixtures) behave exactly as before — the
+        carve-out must not raise KeyError or touch the fill-value contract."""
+        nan = float("nan")
+        train = pd.DataFrame({"feat1": [1.0, 3.0, nan]})
+        val = pd.DataFrame({"feat1": [nan]})
+        test = pd.DataFrame({"feat1": [nan]})
+
+        train, val, test = fill_nans(train, val, test, ["feat1"])
+
+        assert pytest.approx(train["feat1"].iloc[2]) == 2.0
+        assert pytest.approx(val["feat1"].iloc[0]) == 2.0
+        assert pytest.approx(test["feat1"].iloc[0]) == 2.0
+        assert set(train.attrs["fitted_fill_values"]) == {"feat1"}
+        for df in (train, val, test):
+            assert not any(c in df.columns for c in self.PRIOR_COLS)
