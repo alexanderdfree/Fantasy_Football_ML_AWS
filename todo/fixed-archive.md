@@ -1,7 +1,5 @@
 # Fixed archive — index
 
-### [FIXED] Comparison coverage, FFToday cache identity and analysis reporting seeds (from #1565)
-[Read the incident record](fixed-archive/runtime-serving-analysis-audit-2026-09.md).
 ### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
 [Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
 ### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
@@ -12,6 +10,8 @@
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 
+### [FIXED] Comparison coverage, FFToday cache identity and analysis reporting seeds (from #1565)
+[Read the incident record](fixed-archive/runtime-serving-analysis-audit-2026-09.md).
 ### [FIXED] Architecture tab still described the pre-#870 Huber loss and the retired `val_mae_total` monitor
 [Read the incident record](fixed-archive/audit-1499-architecture-tab-training-loop-copy.md).
 
