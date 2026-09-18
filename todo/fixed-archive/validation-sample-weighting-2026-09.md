@@ -46,9 +46,14 @@ recorded in the #1565 cell
 loss 103.0 at every partition). Every production config uses
 `cosine_warm_restarts` or `onecycle`, so trained weights are expected to be
 unchanged; the corrected value changes tuning objectives, pruning and the
-recorded `val_loss` history. Held behind the dual-metric + protected-cohort
-gate (`todo/model-default-repair/README.md`) until the isolated campaign cell
-reports.
+recorded `val_loss` history. RB/K CPU eager seed-42 smoke against main
+`12da0f92` (`benchmark_history/2026-09-18T09-06-52_8630f74f.json`): all 76
+saved artifacts (NN/attention weights, scalers, Ridge and LightGBM models)
+and the benchmark results are bit-identical; only per-checkout provenance
+digests differ, and the epoch logs show the same `MAE wtd` and early-stop
+epochs with a changed `Val:` value. Held behind the dual-metric +
+protected-cohort gate (`todo/model-default-repair/README.md`) until the
+isolated campaign cell reports.
 
 **Lesson:** A per-batch mean is only an unbiased epoch mean when every batch has
 the same size; reduce validation metrics over observations, and when a CUDA
