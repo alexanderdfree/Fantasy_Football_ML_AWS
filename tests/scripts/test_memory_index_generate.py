@@ -148,12 +148,84 @@ def test_backfill_adds_frontmatter_to_bare_file(tmp_path: Path) -> None:
     assert warnings == []  # now has index_line
 
 
-def test_cap_enforcement_warns_when_over(tmp_path: Path) -> None:
+def test_over_cap_curated_lines_are_trimmed_not_dropped(tmp_path: Path) -> None:
+    # Too many curated lines to fit: the generator must still emit an UNDER-cap index (the loader
+    # would otherwise silently drop the alphabetical tail — project_*/user_* entries), shorten
+    # only the longest hooks, keep every link intact, and say loudly that pruning is the fix.
     for i in range(200):
         _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "y" * 150)
+    _write(tmp_path, "short.md", index_line="[S](short.md) — tiny")
     text, warnings = memory_index.generate_index(str(tmp_path))
-    assert len(text.encode("utf-8")) >= memory_index.CAP_BYTES
-    assert any("cap" in w.lower() for w in warnings)  # loud, not silent
+    lines = text.splitlines()
+    assert len(lines) == 201  # every file still indexed
+    assert len(text.encode("utf-8")) < memory_index.CAP_BYTES
+    assert "- [S](short.md) — tiny" in lines  # short line byte-identical
+    trimmed = [ln for ln in lines if ln.endswith("…")]
+    assert len(trimmed) == 200 and all(ln.startswith("- [M") and "](m" in ln for ln in trimmed)
+    assert all(memory_index._LINK_RE.search(ln) for ln in lines)  # no link ever cut
+    assert any("trimmed" in w and "prune" in w for w in warnings)  # loud, not silent
+    assert not any(">= cap" in w for w in warnings)  # it fit, so not the hopeless case
+
+
+def test_generate_is_idempotent_when_trimming(tmp_path: Path) -> None:
+    for i in range(200):
+        _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "y" * 150)
+    first, _ = memory_index.generate_index(str(tmp_path))
+    second, _ = memory_index.generate_index(str(tmp_path))
+    assert first == second
+
+
+def test_trim_never_cuts_inside_link_or_title_with_em_dash(tmp_path: Path) -> None:
+    # The hook separator is searched AFTER the link, so an em-dash inside the title is not a
+    # split point, and under a hard trim the whole "[title](slug.md) — " prefix survives.
+    title_line = "[Deploy green — not live](deploy.md) — " + "z" * 300
+    _write(tmp_path, "deploy.md", index_line=title_line)
+    text, warnings = memory_index.generate_index(str(tmp_path))
+    assert text == "- " + title_line + "\n"  # verbatim when it fits
+    assert warnings == []
+    for i in range(300):  # now force a trim
+        _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "y" * 150)
+    text, _ = memory_index.generate_index(str(tmp_path))
+    deploy = next(ln for ln in text.splitlines() if "(deploy.md)" in ln)
+    assert deploy.startswith("- [Deploy green — not live](deploy.md) — z")
+    assert deploy.endswith("…")
+
+
+def test_curated_line_without_hook_separator_is_never_trimmed(tmp_path: Path) -> None:
+    bare = "[Bare](bare.md) " + "w" * 400  # no " — " after the link -> all prefix
+    _write(tmp_path, "bare.md", index_line=bare)
+    for i in range(300):
+        _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "y" * 150)
+    text, _ = memory_index.generate_index(str(tmp_path))
+    assert "- " + bare in text.splitlines()
+
+
+def test_hopeless_over_cap_still_emits_everything_and_shouts(tmp_path: Path) -> None:
+    # So many entries that even link-only lines exceed the cap: nothing more can be trimmed,
+    # so emit the link-only index (loader will cut it) and raise the ">= cap" warning.
+    for i in range(700):
+        _write(
+            tmp_path, f"m{i:03d}.md", index_line=f"[Memory number {i}](m{i:03d}.md) — " + "y" * 60
+        )
+    text, warnings = memory_index.generate_index(str(tmp_path))
+    assert len(text.splitlines()) == 700
+    assert all(ln.endswith(" — …") for ln in text.splitlines())
+    assert any(">= cap" in w for w in warnings)
+
+
+def test_backfill_skips_generator_trimmed_lines(tmp_path: Path) -> None:
+    # A "…"-terminated index line is a generator artifact, not a curated hook; writing it back
+    # into index_line would permanently lose the full text. It must be reported, not applied.
+    _write(tmp_path, "keep.md", index_line="[Keep](keep.md) — the full curated hook text")
+    _write(tmp_path, "other.md", description="d", name="Other")
+    (tmp_path / "MEMORY.md").write_text(
+        "- [Keep](keep.md) — the full cur…\n- [Other](other.md) — fine\n", encoding="utf-8"
+    )
+    changed, missing = memory_index.backfill(str(tmp_path))
+    assert changed == ["other.md"]
+    assert missing == ["keep.md"]
+    text, _ = memory_index.generate_index(str(tmp_path))
+    assert "- [Keep](keep.md) — the full curated hook text" in text.splitlines()
 
 
 def test_reads_nested_metadata_index_line(tmp_path: Path) -> None:

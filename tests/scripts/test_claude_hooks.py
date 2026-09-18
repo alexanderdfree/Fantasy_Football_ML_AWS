@@ -486,6 +486,15 @@ def _setup_link_repo(tmp_path: Path) -> tuple[Path, Path]:
     return main, worktree
 
 
+def _add_parent_feature_cache(main: Path) -> Path:
+    """Give the main checkout a populated (gitignored) .cache/features, the
+    content-addressed feature cache src/shared/feature_cache.py fills."""
+    cache = main / ".cache" / "features" / "QB"
+    cache.mkdir(parents=True)
+    (cache / "deadbeef.pkl").write_text("CACHED")
+    return main / ".cache" / "features"
+
+
 class TestClaudeLinkWorktreeData:
     def test_links_both_data_dirs(self, tmp_path: Path):
         main, worktree = _setup_link_repo(tmp_path)
@@ -540,6 +549,39 @@ class TestClaudeLinkWorktreeData:
         assert result.returncode == 0
         assert (worktree / "data" / "raw").is_symlink()
         assert (worktree / "data" / "raw").resolve() == (main / "data" / "raw").resolve()
+
+    def test_links_parent_feature_cache(self, tmp_path: Path):
+        # The feature cache is content-addressed, so a fresh worktree shares the parent's
+        # instead of rebuilding its own (30 worktrees × 65-400 MB was the observed cost).
+        main, worktree = _setup_link_repo(tmp_path)
+        parent_cache = _add_parent_feature_cache(main)
+        assert not (worktree / ".cache").exists()
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0, result.stderr
+        link = worktree / ".cache" / "features"
+        assert link.is_symlink() and link.resolve() == parent_cache.resolve()
+        assert (link / "QB" / "deadbeef.pkl").read_text() == "CACHED"
+        assert "linked raw splits .cache/features from" in result.stdout
+
+    def test_leaves_existing_worktree_cache_alone(self, tmp_path: Path):
+        # A worktree that already built its own cache keeps it (real dir, never shadowed).
+        main, worktree = _setup_link_repo(tmp_path)
+        _add_parent_feature_cache(main)
+        own = worktree / ".cache" / "features"
+        own.mkdir(parents=True)
+        (own / "local.pkl").write_text("LOCAL")
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0
+        assert not own.is_symlink()
+        assert (own / "local.pkl").read_text() == "LOCAL"
+        assert "linked raw splits from" in result.stdout  # cache not in the linked list
+
+    def test_no_parent_cache_links_only_data(self, tmp_path: Path):
+        main, worktree = _setup_link_repo(tmp_path)
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0
+        assert not (worktree / ".cache").exists()  # nothing to link -> no empty .cache dir
+        assert "linked raw splits from" in result.stdout
 
 
 # ---------------------------------------------------------------------------

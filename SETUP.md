@@ -403,7 +403,7 @@ Start local Codex sessions through the fresh-worktree launcher:
 scripts/codex-fresh-worktree.sh
 ```
 
-It reuses the current directory only when it is already a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/<repo-basename>` (the basename is derived from the main checkout's — `Fantasy_Football_ML_AWS` here). Otherwise it fetches `origin/main`, creates a fresh `codex/session-<id>` worktree under `${CODEX_HOME:-~/.codex}/worktrees/<id>/<repo-basename>`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and starts Codex with `--cd` pointed at the fresh worktree. Useful launcher options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`.
+It reuses the current directory only when it is already a clean Codex-owned worktree under `${CODEX_HOME:-~/.codex}/worktrees/*/<repo-basename>` (the basename is derived from the main checkout's — `Fantasy_Football_ML_AWS` here). Otherwise it fetches `origin/main`, creates a fresh `codex/session-<id>` worktree under `${CODEX_HOME:-~/.codex}/worktrees/<id>/<repo-basename>`, best-effort links ignored `data/raw`, `data/splits` and the content-addressed `.cache/features` feature cache from the main checkout, and starts Codex with `--cd` pointed at the fresh worktree. Useful launcher options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`.
 
 Codex custom slash prompts are local-user files, not repo-scoped files. The repo keeps wrapper templates in [`.codex/prompts/`](.codex/prompts/); shared cross-agent workflow behavior lives under [agent-workflows/](agent-workflows/). Install or refresh the actual `~/.codex/prompts/*.md` copies with:
 
