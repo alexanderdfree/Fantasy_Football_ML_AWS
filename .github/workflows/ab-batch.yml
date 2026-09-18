@@ -118,8 +118,8 @@ jobs:
             echo "Invalid seeds: $SEEDS (expected space-separated non-negative integers)"; exit 1
           fi
           for v in $ONLY; do
-            if ! printf '%s' "$v" | grep -Eq '^[A-Za-z0-9_]+$'; then
-              echo "Invalid variant name: $v (expected [A-Za-z0-9_]+)"; exit 1
+            if ! printf '%s' "$v" | grep -Eq '^[A-Za-z0-9_+]+$'; then
+              echo "Invalid variant name: $v (expected [A-Za-z0-9_+]+)"; exit 1
             fi
           done
           # Default to the dispatched ref's head SHA — with checkout@v6 that
