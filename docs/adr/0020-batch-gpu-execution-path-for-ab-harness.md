@@ -147,7 +147,7 @@ tests: [tests/tuning/test_ab_batch.py](../../tests/tuning/test_ab_batch.py),
   from repair commit `15b61c88`, retaining the full source-SHA tag and recording
   both pins in the run manifest. The original implementation ran in isolated
   Spot Batch repair smokes; extraction is covered by mocked submission tests.
-  Production definition names and image-resolution defaults are unchanged.
+  Production definition names and image-resolution defaults are unchanged. (PR #1584.)
 - **2026-09-10** — Consolidated local eager jobs, A/B cells, and stacked groups onto `src/tuning/_execution.py`: one grid executor with a fresh spawned process per parallel unit and shared output isolation. `ablation_runner.py` retains the eager job/report compatibility interface, including per-target tables, timing-clean serial execution, and primed-cache access. Batch entrypoints retain their env/result contracts and reuse checkpoint/provenance helpers; no production training recipe or stacked default changes.
 - **2026-09-10** — The launcher accepts `--data-prefix` (default `data`) and records it in the run manifest. Data-source corrections can now benchmark isolated train/validation/test objects before publishing production splits; raw caches retain the existing production source. (PR pending.)
 
