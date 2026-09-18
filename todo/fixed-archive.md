@@ -1,7 +1,5 @@
 # Fixed archive — index
 
-### [FIXED] K and D/ST cross-validation folds imputed game context before slicing
-[Read the incident record](fixed-archive/kdst-fold-imputation-2026-09.md).
 ### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
 [Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
 ### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
@@ -23,6 +21,8 @@
 ### [FIXED] Upcoming refresh mixed legacy hydration with historical provider replay
 [Read the incident record](fixed-archive/upcoming-sealed-data-live-provider-boundaries.md).
 
+### [FIXED] K and D/ST cross-validation folds imputed game context before slicing
+[Read the incident record](fixed-archive/kdst-fold-imputation-2026-09.md).
 ### [FIXED] Consolidated data isolation, truth provenance and client boundaries
 [Read the incident record](fixed-archive/consolidated-contract-review-followup.md).
 
