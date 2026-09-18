@@ -17,6 +17,31 @@ from src.analysis import significance as sig
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_pipeline_and_bootstrap_use_the_requested_seed(monkeypatch, position):
+    from src.shared import registry
+
+    seen = []
+    frame = pd.DataFrame(
+        {
+            "player_id": ["a", "b"],
+            "week": [1, 2],
+            "fantasy_points": [10.0, 20.0],
+            "pred_ridge_total": [9.0, 18.0],
+            "pred_nn_total": [8.0, 19.0],
+        }
+    )
+
+    def run(seed=42):
+        seen.append(seed)
+        return {"test_df": frame}
+
+    monkeypatch.setattr(registry, "get_runner", lambda pos: run)
+    result = sig.run_for_position(position, seed=7, n_boot=10)
+    assert seen == [7]
+    assert result["seed"] == 7
+
+
 def _synth_test_df(
     seed: int = 0,
     ridge_sigma: float = 5.0,

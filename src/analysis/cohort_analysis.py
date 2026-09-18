@@ -1001,7 +1001,7 @@ def _drop_final_week(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_ablation(
-    positions: list[str], splits_dir: str | Path, top_k: int, eval_max_week: int
+    positions: list[str], splits_dir: str | Path, top_k: int, eval_max_week: int, seed: int = 42
 ) -> None:
     from src.shared.pipeline import _read_split
     from src.shared.registry import get_runner
@@ -1026,9 +1026,9 @@ def run_ablation(
     for pos in positions:
         runner = get_runner(pos)
         print(f"\n### {pos}: training KEEP (all weeks)...")
-        res_keep = runner(train, val, test, seed=42)
+        res_keep = runner(train, val, test, seed=seed)
         print(f"### {pos}: training CUT (no final week)...")
-        res_cut = runner(train_cut, val_cut, test, seed=42)
+        res_cut = runner(train_cut, val_cut, test, seed=seed)
 
         tk, tc = res_keep["test_df"], res_cut["test_df"]
         pred_cols = _prediction_columns(tk)
@@ -1856,7 +1856,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.ablation:
         if any(s.name != "late_week" for s in specs):
             parser.error("--ablation is only defined for the late_week cohort")
-        run_ablation(positions, args.splits_dir, args.top_k, args.eval_max_week)
+        run_ablation(positions, args.splits_dir, args.top_k, args.eval_max_week, seed=args.seed)
         return
 
     if args.with_model_error and not args.no_model:

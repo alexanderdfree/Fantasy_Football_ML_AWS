@@ -38,6 +38,48 @@ _POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 _MODEL_KEYS = {"ridge", "nn", "attn_nn", "lgbm"}
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("has_forecast", [False, True])
+@pytest.mark.parametrize("has_components", [False, True])
+def test_api_comparison_requires_actuals_and_a_forecast(
+    client, app_module, monkeypatch, has_forecast, has_components
+):
+    frame = pd.DataFrame(
+        {
+            "position": ["WR"] * 2,
+            "player_id": ["a", "b"],
+            "season": [2025] * 2,
+            "week": [1] * 2,
+            "fantasy_points": [10.0, 20.0],
+            "actual_receiving_yards": [50.0, 100.0],
+            "actual_receiving_tds": [0.0, 0.0],
+            "actual_receptions": [5.0, 10.0],
+            "actual_fumbles_lost": [0.0, 0.0],
+        }
+    )
+    if has_forecast:
+        frame["ridge_pred_ppr"] = [10.0, 20.0]
+    if not has_components:
+        frame = frame.drop(columns="actual_receptions")
+    monkeypatch.setitem(app_module._cache, "results", frame)
+    monkeypatch.setattr(core, "_ensure_metrics", lambda: None)
+    monkeypatch.setattr(comparison, "load_reference", lambda: pd.DataFrame())
+    response = client.get("/api/comparison")
+    assert response.status_code == 200
+    payload = response.get_json()
+    coverage = payload["coverage"]["all"]["WR"]
+    available = has_forecast and has_components
+    assert coverage["status"] == ("available" if available else "unavailable")
+    assert coverage["n"] == (2 if available else 0)
+    if available:
+        assert payload["subsets"]["all"]["WR"]["ridge"]["mae"] == 0.0
+    else:
+        assert all(value is None for value in payload["subsets"]["all"]["WR"].values())
+        assert coverage["reason"] == (
+            "predictions_missing" if has_components else "shared_actual_components_missing"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # _model_blocks_from_results — pure helper (no Flask boundary)
 # --------------------------------------------------------------------------- #
