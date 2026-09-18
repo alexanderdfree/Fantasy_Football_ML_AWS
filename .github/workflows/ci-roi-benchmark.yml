@@ -65,51 +65,10 @@ jobs:
       variant: ${{ matrix.variant }}
       sample: ${{ matrix.sample }}
       source_sha: ${{ github.sha }}
-  training-baseline-cold:
+  training-candidate-cold:
     needs: serving-warm
     strategy:
       fail-fast: false
-      max-parallel: 4
-      matrix:
-        variant: [baseline]
-        sample: [0]
-    uses: ./.github/workflows/_ci-roi-measure.yml
-    with:
-      image: training
-      variant: ${{ matrix.variant }}
-      sample: ${{ matrix.sample }}
-      source_sha: ${{ github.sha }}
-  training-baseline-warm:
-    needs: training-baseline-cold
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        variant: [baseline]
-        sample: [1, 2, 3]
-    uses: ./.github/workflows/_ci-roi-measure.yml
-    with:
-      image: training
-      variant: ${{ matrix.variant }}
-      sample: ${{ matrix.sample }}
-      source_sha: ${{ github.sha }}
-  release-baseline-cache:
-    needs: training-baseline-warm
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Remove only this experiment's temporary training cache
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          test "$GITHUB_REF" = refs/heads/codex/ci-roi-top3
-          gh cache delete "ci-roi-local-$GITHUB_RUN_ID-training" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF"
-  training-candidate-cold:
-    needs: release-baseline-cache
-    strategy:
-      fail-fast: false
-      max-parallel: 4
       matrix:
         variant: [candidate]
         sample: [0]
@@ -123,7 +82,7 @@ jobs:
     needs: training-candidate-cold
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 3
       matrix:
         variant: [candidate]
         sample: [1, 2, 3]
@@ -134,7 +93,7 @@ jobs:
       sample: ${{ matrix.sample }}
       source_sha: ${{ github.sha }}
   cleanup:
-    needs: [serving-warm, training-baseline-warm, training-candidate-warm]
+    needs: [serving-warm, training-candidate-warm]
     if: always()
     runs-on: ubuntu-latest
     permissions:
