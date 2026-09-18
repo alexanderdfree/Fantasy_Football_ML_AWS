@@ -7,6 +7,8 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 ---
 
 ## Open
+### [PLAN] Synthetic history follow-ups (ADR-0029) — replay shipped; transforms and positions next
+- **Tracker:** the "Follow-up sequence" in [docs/adr/0029-synthetic-player-history-diagnostics.md](docs/adr/0029-synthetic-player-history-diagnostics.md). Schema 2 (forecast context + `src/analysis/synthetic_replay.py`) landed; next PRs: usage/efficiency/role transforms + extreme fixtures + paired response reports, then RB/WR/TE, DST and K schemas. Each PR stays under `src/analysis/`, `tests/analysis/`, `docs/adr/` (no retrain or benchmark gate).
 ### [TESTED, REJECTED] Bounded-flag scaling for injury ordinal codes — encoding is NOT the lever (2026-09-08)
 - **Verdict:** measured flat on the Batch GPU fleet and **left default-OFF**. The input-space pathology below is real and reproducible, but fixing it does not change the model's questionable-cohort behaviour beyond seed noise. **Do not re-propose "stop z-scoring the injury flags" without a new mechanism** — this A/B already ran.
 - **Run:** `s3://ff-predictor-training/ab_runs/ab_flag_scaling-20260908T030047Z-92051b3/` — QB/RB/WR/TE × {baseline, range=1.0, range=4.0} × 3 seeds = 36 cells, 0 failed, image `92051b3`. Ridge-invariance sentinel Δ=0.000000 on **all 24** treatment cells, confirming the change is genuinely NN-only.
