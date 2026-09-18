@@ -64,9 +64,17 @@ corrected, a legacy state dict (no buffer) reloads legacy and re-saves as
 version 0, versions 99/0.5 are rejected; a warm start keeps the requested mode
 in both directions; all six factory/serving configurations agree (RB/WR/TE
 correct only `receptions`, QB/DST none, K nested); stacked forward and
-gradients work. A single-seed CPU RB/K containment benchmark against
-`origin/main` (K bit-identical, RB base NN/Ridge/LightGBM identical, only the
-RB attention artifact and `attn_nn_*` metrics move) is recorded in the PR.
+gradients work. Containment benchmark (RB/K, CPU eager, seed 42, no thread
+caps, `benchmark_history/2026-09-18T08-58-33_4c0994f1.json` vs the
+`origin/main` 12da0f92 baseline, 76 artifact files): K fitted state and every
+metric row identical (49/49 attention + 30/30 base-NN tensors, scalers, Ridge,
+LightGBM); RB Ridge/LightGBM/base NN (38/38 tensors) identical; the RB
+attention checkpoint's 79 shared tensors are bit-identical with only the three
+new `_ztnb_mean_version` buffers (`receptions`=1, TD heads=0), so the training
+trajectory did not move and the delta is purely the corrected reported
+expectation: attention MAE 3.806 → 3.844, RMSE 5.818 → 5.775, `receptions`
+MAE 0.913 → 0.942 (single seed, CPU, not evidence; direction matches the
+3-seed CPU RB result above).
 
 **Lesson:** A distribution's latent rate is not necessarily its reported mean;
 verify output expectations against probability mass and preserve semantics in
