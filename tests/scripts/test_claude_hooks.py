@@ -576,6 +576,50 @@ class TestClaudeLinkWorktreeData:
         assert (own / "local.pkl").read_text() == "LOCAL"
         assert "linked raw splits from" in result.stdout  # cache not in the linked list
 
+    def test_replaces_dangling_feature_cache_symlink(self, tmp_path: Path):
+        main, worktree = _setup_link_repo(tmp_path)
+        parent_cache = _add_parent_feature_cache(main)
+        (worktree / ".cache").mkdir()
+        dangling = worktree / ".cache" / "features"
+        dangling.symlink_to(tmp_path / "gone")
+        assert dangling.is_symlink() and not dangling.exists()
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0
+        assert dangling.is_symlink() and dangling.resolve() == parent_cache.resolve()
+
+    def test_replaces_dangling_cache_parent_symlink(self, tmp_path: Path):
+        # `.cache` itself dangling (its former target was removed): the parent link must be
+        # replaced so the feature cache still gets linked — silently, every session.
+        main, worktree = _setup_link_repo(tmp_path)
+        parent_cache = _add_parent_feature_cache(main)
+        (worktree / ".cache").symlink_to(tmp_path / "removed-sibling" / ".cache")
+        assert not (worktree / ".cache").exists()
+        result = _run_link_worktree_data(worktree)
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        link = worktree / ".cache" / "features"
+        assert link.is_symlink() and link.resolve() == parent_cache.resolve()
+        assert "linked raw splits .cache/features from" in result.stdout
+
+    def test_plain_file_cache_is_skipped_quietly(self, tmp_path: Path):
+        # A stray plain file at `.cache` cannot hold the link: skip it, stay silent, still
+        # link the data dirs, and never abort a `set -e` caller.
+        main, worktree = _setup_link_repo(tmp_path)
+        _add_parent_feature_cache(main)
+        (worktree / ".cache").write_text("stray")
+        script = f'set -euo pipefail; . "{LIB}"; claude_link_worktree_data "$1"; echo rc=$?'
+        result = subprocess.run(
+            [_bash(), "-c", script, "claude-hook-test", str(worktree)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        assert "rc=0" in result.stdout and "linked raw splits from" in result.stdout
+        assert (worktree / ".cache").read_text() == "stray"
+        assert (worktree / "data" / "raw").is_symlink()
+
     def test_no_parent_cache_links_only_data(self, tmp_path: Path):
         main, worktree = _setup_link_repo(tmp_path)
         result = _run_link_worktree_data(worktree)

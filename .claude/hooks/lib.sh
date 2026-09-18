@@ -33,7 +33,7 @@ claude_command_invokes_gh_pr_merge() { agent_hooks_command_invokes_gh_pr_merge "
 # nothing prebuilt, or when the worktree already has its own real dir (a
 # locally-built splits, an existing cache). $1 = worktree root (defaults to CWD).
 claude_link_worktree_data() {
-  local wt parent src dst rel linked=""
+  local wt parent src dst dir rel linked=""
   wt="$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null || true)"
   [ -n "$wt" ] || return 0
   parent="$(cd "$wt" 2>/dev/null && claude_main_worktree)"
@@ -44,7 +44,9 @@ claude_link_worktree_data() {
     [ -e "$src" ] || continue        # parent has nothing to link
     [ -e "$dst" ] && continue        # already present (real dir OR resolving symlink)
     [ -L "$dst" ] && rm -f "$dst"     # dangling symlink from a prior parent state
-    mkdir -p "$(dirname "$dst")"
+    dir="$(dirname "$dst")"
+    if [ -L "$dir" ] && [ ! -e "$dir" ]; then rm -f "$dir"; fi  # dangling parent (.cache) link
+    mkdir -p "$dir" 2>/dev/null || continue  # e.g. a plain-file .cache: skip quietly
     ln -s "$src" "$dst" 2>/dev/null && linked="$linked ${rel#data/}" || true
   done
   [ -n "$linked" ] && echo "worktree data: linked$linked from $parent"

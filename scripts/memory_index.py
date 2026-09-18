@@ -28,7 +28,9 @@ import sys
 
 # ~24.4 KiB: above this the auto-loader truncates MEMORY.md. The index is slug-sorted, so an
 # over-cap file loses its alphabetical TAIL (the project_*/user_* entries), not its newest
-# lines -- which is why generate_index never emits more than CAP_BYTES (see its docstring).
+# lines -- which is why generate_index shortens hooks to stay under CAP_BYTES (see its
+# docstring). Only a hookless curated line (no " — " after its link) cannot be shortened; if
+# such lines alone exceed the cap the generator emits them and warns instead.
 CAP_BYTES = 24985
 # Headroom kept under the hard cap. The byte accounting in generate_index is exact (UTF-8 +
 # newline per line), so this only absorbs loader-side slack, not estimation error.
@@ -188,11 +190,12 @@ def generate_index(memdir):
                 else:
                     hi = mid - 1
         lines = _render(parts, lo)
-        n_curated = sum(1 for i, part in enumerate(parts) if not part[2] and lines[i] != full[i])
-        if n_curated:
+        trimmed = [i for i in range(len(parts)) if lines[i] != full[i]]
+        n_curated = sum(1 for i in trimmed if not parts[i][2])
+        if trimmed:
             warnings.append(
-                f"{n_curated} curated index_line(s) trimmed to {lo} B/line to fit the "
-                f"{CAP_BYTES} B cap -- prune/consolidate topic files"
+                f"{len(trimmed)} index line(s) trimmed to {lo} B/line to fit the {CAP_BYTES} B "
+                f"cap ({n_curated} curated) -- prune/consolidate topic files"
             )
     out = "\n".join(lines) + ("\n" if lines else "")
 
@@ -236,8 +239,10 @@ def backfill(memdir):
 
     Source of truth is the existing curated index. Returns (changed, missing) basenames;
     ``missing`` = files with no USABLE index line -> left untouched + reported: orphans (no line
-    at all) and lines the generator shortened (``…``-terminated) — writing a trimmed line back
-    would permanently lose the curated hook text.
+    at all) and lines the generator shortened — writing a trimmed line back would permanently
+    lose the curated hook text. A line is "shortened" when it ends in ``…`` AND differs from
+    what the file itself renders in full; a verbatim match (a hook that genuinely ends in an
+    ellipsis) is usable, and writing it back is idempotent.
     """
     with open(os.path.join(memdir, INDEX), encoding="utf-8") as fh:
         index_text = fh.read()
@@ -247,7 +252,7 @@ def backfill(memdir):
         if not line.startswith("- "):
             continue
         m = _LINK_RE.search(line)
-        if m and not line.endswith("…"):
+        if m:
             slug_to_line[m.group(1)] = line[2:]  # text after "- "
     changed, missing = [], []
     for f in sorted(os.listdir(memdir)):
@@ -259,6 +264,11 @@ def backfill(memdir):
         if f not in slug_to_line:
             missing.append(f)
             continue
+        if slug_to_line[f].endswith("…"):
+            prefix, hook, _fb, _warn = _line_parts(path)
+            if slug_to_line[f] != (prefix + hook)[2:]:  # a shortened rendering, not the full line
+                missing.append(f)
+                continue
         block = ["index_line: |-", f"  {slug_to_line[f]}"]
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
@@ -298,6 +308,11 @@ def main(argv):
         return 1
     if cmd == "generate":
         text, warnings = generate_index(memdir)
+        # The cap accounting counts one byte per newline; stop text-mode stdout from
+        # translating "\n" to "\r\n" on native Windows (same guard as agent-hooks-lib.sh).
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(newline="\n")
         sys.stdout.write(text)
         for w in warnings:
             sys.stderr.write(f"[memory-index] WARN: {w}\n")
