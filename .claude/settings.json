@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"",
             "timeout": 600
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/memory-sync-stop.sh",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-sync-stop.sh\"",
             "statusMessage": "Syncing agent memories to S3"
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-format.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff-format.sh\""
           }
         ]
       },
@@ -60,11 +60,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-pr-create.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/post-pr-create.sh\""
           },
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/post-pr-merge.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/post-pr-merge.sh\""
           }
         ]
       }
@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/guard-worktree-path.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-worktree-path.sh\""
           }
         ]
       },
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-pr.sh"
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-pr.sh\""
           }
         ]
       }

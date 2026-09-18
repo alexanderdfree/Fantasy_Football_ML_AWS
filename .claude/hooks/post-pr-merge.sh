@@ -35,10 +35,19 @@ fi
 
 # Run from a path inside the repo so `git worktree list` resolves the parent.
 cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
+
+# Claude's successful Bash result normally carries stdout/stderr, without an
+# exit-code field. Reject explicit failures, then verify the remote PR itself.
+printf '%s' "$input" | "$jq_bin" -e '
+  (.tool_response // {}) as $r |
+  if ($r | type) == "object" then
+    (($r.exit_code // $r.exitCode // 0) == 0 and $r.interrupted != true and $r.is_error != true)
+  else true end' >/dev/null || exit 0
+merged_commit="$(agent_hooks_merged_pr_commit "$PWD" "$jq_bin")" || exit 0
 # (1) fast-forward the parent's main; (2) promote the worktree's locally-built
 # data/splits to the parent if this merge changed splits-affecting code.
 main_status=$(claude_refresh_parent_main || true)
-splits_status=$(claude_promote_worktree_splits || true)
+splits_status=$(claude_promote_worktree_splits "$merged_commit" || true)
 status=$(printf '%s\n%s\n' "$main_status" "$splits_status" | sed '/^[[:space:]]*$/d')
 [ -n "$status" ] || exit 0
 

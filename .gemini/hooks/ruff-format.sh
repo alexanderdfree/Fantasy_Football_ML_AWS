@@ -11,6 +11,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 jq_bin="$(gemini_find_jq || true)"
 input="$(cat)"
 root="$(gemini_project_root "$input" "$jq_bin")"
+root="$(gemini_abs_path "$root" .)" || exit 0
 
 # Resolve ruff from a venv, then PATH. Probe the local .venv AND the MAIN
 # worktree's .venv (worktrees don't symlink .venv), each in the Unix bin/ and the
@@ -37,7 +38,7 @@ while IFS= read -r path; do
     *.py) ;;
     *) continue ;;
   esac
-  abs="$(gemini_abs_path "$root" "$path")"
+  abs="$(gemini_abs_path "$root" "$path")" || continue
   case "$abs" in
     "$root"/*) ;;
     *) continue ;;
