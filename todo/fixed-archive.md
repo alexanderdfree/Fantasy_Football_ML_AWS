@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] QB `prior_season_mean_qbr_total` / `pts_added` skipped the leak-safe train-mean fill and zero-filled
+[Read the incident record](fixed-archive/audit-1499-qb-prior-qbr-train-mean-fill.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 
