@@ -12,8 +12,9 @@ if [ -x "$repo_root/scripts/agent-memory-sync.sh" ]; then
   (cd "$repo_root" && bash scripts/agent-memory-sync.sh claude generate) || true
 fi
 
-# Auto-link the parent checkout's gitignored data/{raw,splits} into this worktree
-# so the pre-PR `pytest -m unit` works without a slow first pull. No-op in the main
+# Auto-link the parent checkout's gitignored data/{raw,splits} (so the pre-PR
+# `pytest -m unit` works without a slow first pull) and its content-addressed
+# .cache/features (shared feature cache) into this worktree. No-op in the main
 # checkout / remote single-clone sessions. Runs BEFORE the remote early-exit below
 # so local worktree sessions (the case that needs it) are covered.
 if [ -f "$repo_root/.claude/hooks/lib.sh" ]; then
