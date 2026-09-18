@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from statistics import mean, stdev
 
+from src.analysis.repair_evidence import complete_sample_counts, execution_signature
+
 SEEDS = (42, 123, 7)
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 FAMILIES = ("ridge", "nn", "attn_nn", "lgbm")
@@ -50,6 +52,12 @@ def promotion_gate(records, *, candidate, affected):
                     reasons.append(f"missing pair: {position}/{origin}/{seed}")
                     continue
                 valid = True
+                try:
+                    if execution_signature(base) != execution_signature(proposed):
+                        raise ValueError("unmatched execution settings")
+                except ValueError as error:
+                    reasons.append(f"{error}: {position}/{origin}/{seed}")
+                    valid = False
                 for key in (
                     "source_sha",
                     "data_release",
@@ -94,6 +102,23 @@ def promotion_gate(records, *, candidate, affected):
             for family in FAMILIES:
                 changed = family in affected.get(position, ())
                 for cohort in ("all", "elite_top24", "weekly_reference_top24"):
+                    if not all(
+                        complete_sample_counts(
+                            a["metrics"].get(f"{cohort}:{family}", {}),
+                            b["metrics"].get(f"{cohort}:{family}", {}),
+                            a["metrics"].get("all:ridge", {}).get("n")
+                            if cohort == "all"
+                            else a["cohorts"][cohort].get("n"),
+                            b["metrics"].get("all:ridge", {}).get("n")
+                            if cohort == "all"
+                            else b["cohorts"][cohort].get("n"),
+                        )
+                        for a, b in pairs
+                    ):
+                        reasons.append(
+                            f"incomplete model samples: {position}/{origin}/{family}/{cohort}"
+                        )
+                        continue
                     for metric in ("mae", "rmse"):
                         try:
                             values = [

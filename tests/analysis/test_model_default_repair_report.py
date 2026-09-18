@@ -37,12 +37,23 @@ def records():
                         "source_sha": "a" * 40,
                         "data_release": "d" * 64,
                         "gpu": "L4",
+                        "tf32_matmul": True,
+                        "execution": {
+                            "seed": seed,
+                            "regime": "eager",
+                            "device": "cuda:0",
+                            "overrides": {"FF_AMP_DTYPE": "fp32"},
+                            "run_id": variant,
+                        },
                         "prepared_hashes": {"X": "hash"},
                         "row_hash": "rows",
                         "truth_hash": "truth",
                         "batch_job_id": "batch",
                         "inference_parity_passed": True,
-                        "trainers": [],
+                        "trainers": [
+                            {"family": family, "device": "cuda:0", "amp": False, "graph": True}
+                            for family in ("nn", "attn_nn")
+                        ],
                         "metrics": metrics,
                         "cohorts": {
                             "elite_top24": {
@@ -98,6 +109,33 @@ def test_duplicate_manifest_is_rejected():
     data = records()
     with pytest.raises(ValueError, match="Duplicate immutable"):
         summarize(data + [data[0]], "numerical")
+
+
+@pytest.mark.parametrize("cohort", ["all", "elite_top24"])
+@pytest.mark.parametrize("family", ["ridge", "nn", "attn_nn"])
+def test_report_rejects_model_specific_row_filtering(cohort, family):
+    data = records()
+    data[-1]["metrics"][f"{cohort}:{family}"]["n"] = 1
+    result = summarize(data, "numerical")
+    assert not result["development_qualified"]
+    assert any("samples" in reason for reason in result["provenance_errors"])
+
+
+@pytest.mark.parametrize("change", ["dropout", "tf32", "graph", "missing"])
+def test_report_rejects_incompatible_execution(change):
+    data = records()
+    row = data[-1]
+    if change == "dropout":
+        row["execution"]["overrides"]["FF_FORCE_DROPOUT_ZERO"] = "1"
+    elif change == "tf32":
+        row["tf32_matmul"] = False
+    elif change == "graph":
+        row["trainers"][0]["graph"] = False
+    else:
+        del row["execution"]
+    result = summarize(data, "numerical")
+    assert not result["development_qualified"]
+    assert any("execution settings" in reason for reason in result["provenance_errors"])
 
 
 def test_cli_verifies_content_addresses_and_retains_manifest_proofs(tmp_path, monkeypatch):

@@ -21,6 +21,7 @@ def records():
                 f"{cohort}:{family}": {
                     "mae": 2.0 - (variant == "candidate") * 0.1,
                     "rmse": 3.0 - (variant == "candidate") * 0.1,
+                    "n": 24,
                 }
                 for cohort in ("all", "elite_top24", "weekly_reference_top24")
                 for family in FAMILIES
@@ -28,6 +29,18 @@ def records():
             "source_sha": "a" * 40,
             "data_release": "d" * 64,
             "gpu": "L4",
+            "tf32_matmul": True,
+            "execution": {
+                "seed": seed,
+                "regime": "eager",
+                "device": "cuda:0",
+                "overrides": {"FF_AMP_DTYPE": "fp32"},
+                "run_id": variant,
+            },
+            "trainers": [
+                {"family": family, "device": "cuda:0", "amp": False, "graph": True}
+                for family in ("nn", "attn_nn")
+            ],
             "prepared_hashes": {"X": "hash"},
             "row_hash": "rows",
             "truth_hash": "truth",
@@ -143,3 +156,40 @@ def test_cli_writes_failure_report_and_returns_nonzero(tmp_path, monkeypatch):
     )
     assert main() == 1
     assert not json.loads(output.read_text())["passed"]
+
+
+@pytest.mark.parametrize("cohort", ["all", "elite_top24", "weekly_reference_top24"])
+@pytest.mark.parametrize("both", [False, True])
+def test_filtered_model_rows_cannot_pass_even_if_counts_match(cohort, both):
+    data = records()
+    affected = {p: list(FAMILIES) for p in POSITIONS}
+    for row in data:
+        if both or row["variant"] == "candidate":
+            row["metrics"][f"{cohort}:attn_nn"]["n"] = 1
+    result = promotion_gate(data, candidate="candidate", affected=affected)
+    assert not result["passed"]
+    assert any("incomplete model samples" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize("change", ["dropout", "dtype", "tf32", "graph", "seed", "missing"])
+def test_execution_differences_cannot_be_attributed_to_candidate(change):
+    data = records()
+    row = data[-1]
+    if change in ("dropout", "dtype"):
+        key, value = (
+            ("FF_FORCE_DROPOUT_ZERO", "1") if change == "dropout" else ("FF_AMP_DTYPE", "bf16")
+        )
+        row["execution"]["overrides"][key] = value
+    elif change == "tf32":
+        row["tf32_matmul"] = False
+    elif change == "graph":
+        row["trainers"][0]["graph"] = False
+    elif change == "seed":
+        row["execution"]["seed"] = 99
+    else:
+        del row["execution"]
+    result = promotion_gate(
+        data, candidate="candidate", affected={p: list(FAMILIES) for p in POSITIONS}
+    )
+    assert not result["passed"]
+    assert any("execution settings" in reason for reason in result["reasons"])

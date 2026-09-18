@@ -97,6 +97,17 @@ families. A passing result is evidence only, never merge authorization.
 Development results cannot satisfy this gate. Tests use synthetic metrics and
 manifest files only; they never import experimental trainers or fit models.
 
+Extraction review hardened both tools to reject model-specific row filtering
+and incompatible paired execution. Each model's sample count must equal the
+declared protected-cohort count; overall counts must match the baseline Ridge
+sample count across models and arms. Recorded eager/device/seed overrides,
+actual neural AMP/graph settings, and TF32 settings must be complete and paired.
+Run/job IDs may differ. Archived JSON reports remain byte-identical historical
+outputs; the extracted tools enforce these additional checks on fresh inputs.
+All 66 content-addressed campaign manifests were downloaded and hash-verified
+for this review. The stricter reporter reproduced identical parsed JSON for
+all three archived reports, with no provenance errors or qualifying repairs.
+
 The earlier CPU-era #1575 evidence remains available at its
 [immutable source report](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/blob/2a97c93fe493692e765969bb6d3b2eda1b16ac2a/todo/inheritance-reception-fix-validation.md).
 Those historical results are not AWS confirmation or evidence of accepted

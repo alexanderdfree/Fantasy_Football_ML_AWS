@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from statistics import mean, stdev
 
+from src.analysis.repair_evidence import complete_sample_counts, execution_signature
 from src.prediction.bundle import canonical_json
 
 SEEDS = (42, 123, 7)
@@ -42,6 +43,10 @@ def summarize(records, kind):
         index[key] = row
         if not row.get("inference_parity_passed") or not row.get("batch_job_id"):
             errors.append(f"Missing parity/Batch evidence: {key}")
+        try:
+            execution_signature(row)
+        except ValueError as error:
+            errors.append(f"{error}: {key}")
         for trainer in row["trainers"]:
             numerical = trainer.get("count_numerics", {})
             if numerical.get("active_numerical_defect"):
@@ -82,6 +87,11 @@ def summarize(records, kind):
                                 continue
                             left, right = policies["legacy"], policies[candidate]
                         else:
+                            try:
+                                if execution_signature(base) != execution_signature(proposed):
+                                    raise ValueError("unmatched execution settings")
+                            except ValueError as error:
+                                errors.append(f"{error}: {origin}/{seed}/{candidate}")
                             for field in ("gpu", "prepared_hashes", "row_hash", "truth_hash"):
                                 if base[field] != proposed[field]:
                                     errors.append(f"Unmatched {field}: {origin}/{seed}/{candidate}")
@@ -89,6 +99,19 @@ def summarize(records, kind):
                                 for cohort in ("all", "elite_top24"):
                                     for metric in ("mae", "rmse"):
                                         key = f"{cohort}:{control}"
+                                        if not complete_sample_counts(
+                                            base["metrics"][key],
+                                            proposed["metrics"][key],
+                                            base["metrics"]["all:ridge"].get("n")
+                                            if cohort == "all"
+                                            else base["cohorts"][cohort].get("n"),
+                                            proposed["metrics"]["all:ridge"].get("n")
+                                            if cohort == "all"
+                                            else proposed["cohorts"][cohort].get("n"),
+                                        ):
+                                            errors.append(
+                                                f"Incomplete control samples: {origin}/{seed}/{key}"
+                                            )
                                         if (
                                             abs(
                                                 base["metrics"][key][metric]
@@ -113,8 +136,24 @@ def summarize(records, kind):
                             errors.append(
                                 f"Unmatched important-player cohort: {position}/{origin}/{seed}"
                             )
-                        if left["n"] != right["n"]:
-                            errors.append(f"Unmatched overall rows: {position}/{origin}/{seed}")
+                        if not complete_sample_counts(
+                            left,
+                            right,
+                            base["metrics"]["all:ridge"].get("n"),
+                            proposed["metrics"]["all:ridge"].get("n"),
+                        ):
+                            errors.append(
+                                f"Incomplete overall samples: {position}/{origin}/{seed}/{family}"
+                            )
+                        if not complete_sample_counts(
+                            a["models"][family],
+                            b["models"][family],
+                            a.get("n"),
+                            b.get("n"),
+                        ):
+                            errors.append(
+                                f"Incomplete elite samples: {position}/{origin}/{seed}/{family}"
+                            )
                         pairs.append((left, right))
                     row = {
                         "candidate": candidate,
