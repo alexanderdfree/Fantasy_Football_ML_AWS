@@ -195,7 +195,7 @@ def compute_expert_reliability(
 
     positions_out: dict[str, dict] = {}
     for pos in POSITIONS:
-        actuals = _position_actuals(pos, offense_actuals, dst_actuals, seasons)
+        actuals = _position_actuals(pos, offense_actuals, dst_actuals, seasons, scoring_format)
 
         nfl_block = None
         if pos in _NFLCOM_POSITIONS:

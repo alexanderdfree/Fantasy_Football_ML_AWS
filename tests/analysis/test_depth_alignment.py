@@ -24,6 +24,39 @@ _SEASON = 2099
 _N_TEAMS = 40  # > _MIN_TRANSITIONS so classify() returns a verdict, not INSUFFICIENT_DATA
 
 
+@pytest.mark.unit
+def test_missing_chart_week_preserves_adjacent_actual_starters():
+    starters = []
+    charts = []
+    for team in range(40):
+        for week in range(1, 19):
+            starters.append(
+                {
+                    "team": str(team),
+                    "season": 2024,
+                    "week": week,
+                    "starter_id": "B" if week == 2 else "A",
+                }
+            )
+            if week != 2:
+                charts.append(
+                    {
+                        "team": str(team),
+                        "season": 2024,
+                        "week": week,
+                        "chart_qb_id": "B" if week == 3 else "A",
+                    }
+                )
+    rates = ada.alignment_rates(pd.DataFrame(starters), pd.DataFrame(charts))
+    assert rates["n_matched"] == 680
+    assert rates["n_transitions"] == 40
+    assert rates["transition_prev"] == 1.0
+    assert rates["transition_current"] == 0.0
+    passed, verdict = ada.gate_check_alignment(rates)
+    assert passed is False
+    assert verdict.startswith("SHIFTED_BACK_1")
+
+
 def _synthetic_stale_by_one() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build (weekly, depth) where each team changes QB at week 3 and the depth chart
     is stale by exactly one week: chart[W] rank-1 == the true week-(W-1) starter."""
