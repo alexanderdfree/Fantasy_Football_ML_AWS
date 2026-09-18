@@ -23,6 +23,22 @@ by another recipe. It is not a proposal to merge a changed production default.
 The experiment keeps #1479 on hold and #1534 default-off. Existing PRs #1575
 and #1568 remain unmerged until their final exact revisions pass all gates.
 
+## Development findings
+
+The 36-cell WR weight screen completed with matching source/data/input/row
+identities and saved-inference parity. None of the four weight candidates
+improves both neural models' MAE and RMSE in both development years while
+preserving prior-season top-24 errors.
+
+The broader observed-range checks exposed seven cells with count-likelihood
+gradient discrepancies above the predeclared `1e-4` scaled-error tolerance;
+the largest was approximately `2.09e-4`. These small discrepancies do not by
+themselves explain the forecast regression. The next bounded candidate uses
+FP64 inside the same zero-truncated NB probability calculation, returning an
+FP32 loss and retaining FP32 model parameters and optimizer state. It keeps
+the original weights and corrected inference math. It must pass actual CUDA
+numerical and forecast gates; no production default is changed by this spec.
+
 ## Reference preflight, 2026-09-17
 
 The current reference builder produced 6,662 matched 2024 pregame rows.

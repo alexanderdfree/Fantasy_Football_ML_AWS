@@ -74,6 +74,40 @@ def test_count_reference_normalizes_and_gradients_match_finite_differences():
     assert torch.autograd.gradcheck(lambda m, a: stable_ztnb_reference(y, m, a), (mu, alpha))
 
 
+def test_stable_count_candidate_matches_independent_values_and_gradients():
+    import torch
+
+    from src.analysis.repair_count_diagnostics import stable_ztnb_reference
+    from src.tuning.count_likelihood_repair import stable_ztnb2_log_prob
+
+    values = []
+    for dtype, function in (
+        (torch.float32, stable_ztnb2_log_prob),
+        (torch.float64, stable_ztnb_reference),
+    ):
+        y = torch.tensor([1, 2, 20], dtype=dtype)
+        mu = torch.tensor([0.13, 0.4, 7.0], dtype=dtype, requires_grad=True)
+        alpha = torch.tensor([-6.2, -5.1, 0.5], dtype=dtype, requires_grad=True)
+        result = function(y, mu, alpha)
+        values.append(
+            [v.detach().double() for v in (result, *torch.autograd.grad(result.sum(), (mu, alpha)))]
+        )
+    for actual, expected in zip(*values, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=2e-6, atol=2e-6)
+
+
+def test_numerical_candidate_restores_original_worker_likelihood(monkeypatch):
+    from src.shared import training
+    from src.tuning.count_likelihood_repair import select_numerical_candidate, stable_ztnb2_log_prob
+
+    original = training.ztnb2_log_prob
+    monkeypatch.setattr(training, "ztnb2_log_prob", original)
+    select_numerical_candidate(True)
+    assert training.ztnb2_log_prob is stable_ztnb2_log_prob
+    select_numerical_candidate(False)
+    assert training.ztnb2_log_prob is original
+
+
 def test_aws_only_training_guard(monkeypatch):
     monkeypatch.delenv("AWS_BATCH_JOB_ID", raising=False)
     with pytest.raises(RuntimeError, match="AWS Batch"):

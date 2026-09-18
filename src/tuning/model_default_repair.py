@@ -298,6 +298,7 @@ def install_observer():
 
 def configure(config, *, arm, mode):
     from src.shared.aggregate_targets import infer_position
+    from src.tuning.count_likelihood_repair import select_numerical_candidate
 
     if not os.environ.get("AWS_BATCH_JOB_ID"):
         raise RuntimeError("All repair training must run on AWS Batch")
@@ -312,6 +313,12 @@ def configure(config, *, arm, mode):
         raise ValueError(
             "Development spec cannot inspect confirmation seasons; freeze a qualifying candidate first"
         )
+    if (
+        arm == "stable_numeric"
+        and os.environ.get("FF_REPAIR_NUMERICAL_SCREEN") != "observed_discrepancy_verified"
+    ):
+        raise ValueError("Numerical repair requires an observed development-range discrepancy")
+    select_numerical_candidate(arm == "stable_numeric")
     position = infer_position(config["targets"])
     STATE.clear()
     STATE.update(
