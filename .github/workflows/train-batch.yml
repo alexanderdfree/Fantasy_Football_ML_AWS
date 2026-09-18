@@ -227,6 +227,9 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
+          # Full clone on purpose (no blob filter): the pinned-release step reads blobs of
+          # other commits (`git show <sha>:<path>`) and the history append rebases; a
+          # partial clone would make a multi-hour run depend on lazy fetches mid-run.
           # Admin PAT so the later benchmark-history push bypasses main's
           # required status checks (enforce_admins=false on classic protection).
           token: ${{ secrets.PROTECTED_PUSH_TOKEN }}

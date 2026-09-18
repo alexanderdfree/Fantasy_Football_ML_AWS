@@ -83,6 +83,8 @@ jobs:
           ref: ${{ github.ref_name }}
           # Full history: the Resolve step expands an abbreviated image_sha with git rev-parse.
           fetch-depth: 0
+          # Full clone on purpose (no blob filter): the pinned-release step reads blobs of
+          # other commits (`git show <sha>:<path>`); keep the run independent of lazy fetches.
 
       - name: Set up Python
         uses: actions/setup-python@v7

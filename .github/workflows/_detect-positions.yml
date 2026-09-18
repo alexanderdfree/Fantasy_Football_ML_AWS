@@ -33,6 +33,8 @@ jobs:
           # robust across multi-commit pushes and non-linear merge shapes.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+          # Partial clone: commits + trees only (history walks/diffs work); the ~200 MB of dead blobs are never downloaded.
+          filter: blob:none
           # The detect job only reads the diff and shells out to a pure-stdlib
           # python helper — never pushes commits, opens PRs, or otherwise calls
           # the GitHub API. Drop the auth token from the checked-out repo so
@@ -130,7 +132,9 @@ jobs:
             exit 0
           fi
 
-          files=$(git diff --name-only HEAD^ HEAD)
+          # --no-renames: no blob content needed under the partial clone; a rename
+          # lists both paths, which can only widen the scope.
+          files=$(git diff --name-only --no-renames HEAD^ HEAD)
           echo "Changed files:"
           printf '  %s\n' $files
 
