@@ -117,6 +117,7 @@ class ExactModel:
     """Predicts the observed targets exactly, for every trainer contract."""
 
     truth: dict = {}
+    selection_info = None  # #1603 stores Ridge/LightGBM selection provenance on the model
 
     def __init__(self, *args, **kwargs):
         pass
