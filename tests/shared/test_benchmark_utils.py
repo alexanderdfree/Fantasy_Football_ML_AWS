@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from copy import deepcopy
 
 import pytest
 
@@ -295,6 +296,29 @@ def test_summarize_minimal_ridge_plus_nn():
     assert s["nn_wins_mae"] is True
     assert "yards" in s["nn_per_target"]
     assert s["nn_top12"] == 0.48
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_selection_metadata_does_not_change_metrics_or_input(position):
+    result = _result_with_rmse()
+    legacy = summarize_pipeline_result(position, result)
+    result["history"] = {"checkpoint_selection": {"metric": "weighted_mae", "epoch": 7}}
+    result["ridge_selection"] = {"metric": "per_target_cv", "alphas": {"yards": 2.0}}
+    original = deepcopy(result)
+    summary = summarize_pipeline_result(position, result)
+    assert summary.pop("nn_selection") == result["history"]["checkpoint_selection"]
+    assert summary.pop("ridge_selection") == result["ridge_selection"]
+    assert summary == legacy
+    assert result == original
+
+
+@pytest.mark.unit
+def test_serialized_selection_takes_precedence_over_history_even_when_empty():
+    result = _basic_result()
+    result["nn_selection"] = {}
+    result["history"] = {"checkpoint_selection": {"epoch": 8}}
+    assert summarize_pipeline_result("WR", result)["nn_selection"] == {}
 
 
 @pytest.mark.unit

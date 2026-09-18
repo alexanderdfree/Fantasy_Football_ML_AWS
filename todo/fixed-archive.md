@@ -12,6 +12,9 @@
 ### [FIXED] Consolidated offline comparison and provider-cache boundaries
 [Read the incident record](fixed-archive/consolidated-evaluation-review-followup.md).
 
+### [FIXED] Reporting discarded optional model-selection provenance
+[Read the incident record](fixed-archive/selection-reporting-provenance.md).
+
 ### [FIXED] Scheduled maintenance used the superseded cache and rollout protocols
 [Read the incident record](fixed-archive/maintenance-contract-consolidation-2026-09.md).
 

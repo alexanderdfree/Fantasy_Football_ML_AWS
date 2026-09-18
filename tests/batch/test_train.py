@@ -1043,6 +1043,57 @@ class TestMergedSplitMetrics:
         assert merged["phase_seconds"]["split.nn.run_pipeline"] == 100.0
         assert merged["phase_seconds"]["split.cpu.elapsed_sec"] == 90.0
 
+    def test_selection_provenance_survives_extraction_merge_and_history(self):
+        from src.batch.train import _extract_metrics, _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        selection = {"metric": "weighted_mae", "epoch": 7, "score": 4.25}
+        nn = self._nn_branch_metrics()
+        nn.update(
+            _extract_metrics(
+                "WR",
+                {
+                    "nn_metrics": nn["nn_metrics"],
+                    "attn_nn_metrics": nn["attn_nn_metrics"],
+                    "history": {"checkpoint_selection": selection},
+                    "attn_history": {"checkpoint_selection": selection},
+                },
+            )
+        )
+        cpu = self._cpu_branch_metrics()
+        ridge = {"metric": "per_target_cv", "alphas": {"x": 2.0}}
+        lgbm = {"metric": "per_target_validation", "iterations": {"x": 12}}
+        cpu.update(
+            _extract_metrics("WR", {**cpu, "ridge_selection": ridge, "lgbm_selection": lgbm})
+        )
+        merged = _merged_split_metrics("WR", "run-1", nn, cpu, {}, time.monotonic())
+        summary = summarize_pipeline_result("WR", merged)
+        assert summary["nn_selection"] == selection
+        assert summary["attn_nn_selection"] == selection
+        assert summary["ridge_selection"] == ridge
+        assert summary["lgbm_selection"] == lgbm
+
+    def test_legacy_results_do_not_acquire_selection_metadata(self):
+        from src.batch.train import _extract_metrics, _merged_split_metrics
+        from src.shared.benchmark_utils import summarize_pipeline_result
+
+        nn, cpu = self._nn_branch_metrics(), self._cpu_branch_metrics()
+        for original in (nn, cpu):
+            extracted = _extract_metrics("WR", original)
+            assert not any(k.endswith("_selection") for k in extracted)
+        merged = _merged_split_metrics("WR", "run-1", nn, cpu, {}, time.monotonic())
+        summary = summarize_pipeline_result("WR", merged)
+        assert not any(k.endswith("_selection") for k in summary)
+
+    def test_conflicting_selection_metadata_is_rejected(self):
+        from src.batch.train import _merged_split_metrics
+
+        nn, cpu = self._nn_branch_metrics(), self._cpu_branch_metrics()
+        nn["nn_selection"] = {"epoch": 7}
+        cpu["nn_selection"] = {"epoch": 8}
+        with pytest.raises(RuntimeError, match="Duplicate metric key.*nn_selection"):
+            _merged_split_metrics("WR", "run-1", nn, cpu, {}, time.monotonic())
+
     def test_merged_split_result_summarizes_to_nonzero_top12(self):
         """The full lost chain, end to end: branch metrics → merge → summary
         row. Every ``{model}_top12`` must be the branch's real nonzero hit

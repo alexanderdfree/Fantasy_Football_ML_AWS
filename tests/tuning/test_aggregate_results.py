@@ -99,6 +99,21 @@ def test_format_markdown_summary_includes_each_position():
     # Compact param fingerprint format: "d_model / n_heads / lr".
     assert "32 / 2 / 0.001" in s
     assert "24 / 4 / 0.0005" in s
+    assert "combined_loss" in s
+
+
+def test_format_summary_labels_reported_objective_without_selecting_a_trial():
+    entry = {
+        "objective_metric": "fantasy_rmse_ppr",
+        "best_validation_rmse": 6.25,
+        "best_val_loss": 99.0,
+        "best_trial": 12,
+    }
+    before = dict(entry)
+    text = aggregate_results._format_markdown_summary({"WR": entry})
+    assert "fantasy_rmse_ppr | 6.2500 | 12" in text
+    assert "99.0000" not in text
+    assert entry == before
 
 
 def test_format_markdown_summary_handles_empty_input():
