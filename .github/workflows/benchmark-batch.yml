@@ -83,6 +83,10 @@ jobs:
           ref: ${{ github.ref_name }}
           # Full history: the Resolve step expands an abbreviated image_sha with git rev-parse.
           fetch-depth: 0
+          # Partial clone: every commit + tree (git log/diff/rev-parse/rebase all work)
+          # but blobs only on demand, so the ~200 MB of since-removed data/media
+          # blobs in history are never downloaded.
+          filter: blob:none
 
       - name: Set up Python
         uses: actions/setup-python@v7

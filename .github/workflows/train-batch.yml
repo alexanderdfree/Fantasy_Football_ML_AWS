@@ -227,6 +227,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
+          # Partial clone: every commit + tree (git log/diff/rev-parse/rebase all work)
+          # but blobs only on demand, so the ~200 MB of since-removed data/media
+          # blobs in history are never downloaded.
+          filter: blob:none
           # Admin PAT so the later benchmark-history push bypasses main's
           # required status checks (enforce_admins=false on classic protection).
           token: ${{ secrets.PROTECTED_PUSH_TOKEN }}
