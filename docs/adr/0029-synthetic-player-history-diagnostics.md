@@ -1,6 +1,6 @@
 # ADR-0029: Synthetic player-history diagnostics
 
-**Status:** Accepted (schema 3: QB forecast context, full-model replay and declared transforms; other positions tracked below)
+**Status:** Accepted (schema 3: forecast context, full-model replay and declared transforms for QB, RB, WR and TE; DST and K tracked below)
 
 ## Context
 
@@ -17,15 +17,19 @@ recipes and artifacts separate from training splits, evaluation cohorts and
 `benchmark_history/`. Synthetic responses have no observed future outcome and
 must not be reported as forecast accuracy or used as synthetic training labels.
 
-Schema version 3 supports QB and exports, per case, the attention history and
-the forecast game's static context:
+Schema version 3 supports the flat skill positions (QB, RB, WR, TE) through a
+per-position registry and exports, per case, the attention history and the
+forecast game's static context:
 
 - A versioned JSON recipe specifies the seed, case count, history length, allowed
   donor seasons and optional bounds on the donor window's historical points.
   Donors are restricted to `TRAIN_SEASONS`; validation/test seasons are excluded.
   Per-position column groups, validity relations, transform declarations and
-  provenance paths live in `src/analysis/synthetic_history_schema.py`, derived
-  from `POSITION_CONFIG`.
+  provenance paths live in `src/analysis/synthetic_history_schema.py`. The
+  history, target, feature and sequence-length lists are bound to each
+  `POSITION_CONFIG` at import and pinned by tests, so a whitelist change is
+  visible as a registry change; a recipe names one registered position and
+  the source must carry that position's rows and columns.
 - `replay` samples real windows with replacement, retaining their game order.
 - `block_bootstrap` samples contiguous blocks with replacement from each selected
   window. All production history fields move together, including QBR, modeled
@@ -41,16 +45,26 @@ the forecast game's static context:
   eligible windows, not over players; long seasons contribute more windows.
   Overlapping/repeated windows are dependent, so the case count is not an
   independent statistical sample size.
-- PPG means the existing QB projected scoring components, excluding receiving
-  and two-point conversions. Bounds select the **original donor window**; a
-  bootstrap realization or a transform can have a different mean, and the
-  donor, sampled and generated means are all recorded.
+- PPG means the position's existing projected scoring components (QB excludes
+  receiving; RB excludes passing; WR/TE exclude rushing and passing; all
+  exclude two-point conversions), recorded as `scoring_scope`. Bounds select
+  the **original donor window**; a bootstrap realization or a transform can
+  have a different mean, and the donor, sampled and generated means are all
+  recorded. Shipped recipes use per-position bands (QB 15-30, RB 8-20,
+  WR 8-20, TE 5-15 projected points per game).
 - Input columns must include the current `POSITION_CONFIG.attn_history_stats`
   and every whitelisted production feature column. Missing columns fail; missing
   external history values survive in parquet and are counted in the manifest,
   while feature columns must be finite (a raw or stale frame is rejected). The
   production history builder applies its usual NaN-to-zero behavior to tensors.
-  Missing raw outcomes cannot define a cohort.
+  Missing raw outcomes cannot define a cohort. A player-season whose
+  player/season/week keys repeat (production frames carry such rows: the
+  2017 TE train frame joins two snap-count lines onto one game through an
+  identity-bridge collision) has an ambiguous game sequence, so it contributes
+  no donor window; the manifest lists it under `donor_pool_exclusions`, the
+  exporter reports it in `sources.json`, and the rows are never merged or
+  dropped from the source. A source whose every player-season is ambiguous
+  fails loudly.
 - Generated histories include only raw history signals and provenance; cached
   rolling, prior-season and static features never enter a resampled history.
   The production `build_game_history_arrays` builds unscaled tensors and masks
@@ -58,9 +72,12 @@ the forecast game's static context:
   calendar weeks.
 - The real forecast game's unscaled production feature row is exported as
   `context.parquet` and held fixed. Its windowed columns and the sequence-coupled
-  columns the schema names (`week`, `days_rest`, `season_starts_to_date`,
-  `is_returning_from_absence`, `rookie_early`) describe the real prior games,
-  not the synthetic history; the manifest records both the list and this policy.
+  columns each position's schema declares (QB: `week`, `days_rest`,
+  `season_starts_to_date`, `is_returning_from_absence`, `rookie_early`; RB:
+  `week`, `days_rest`, `rest_advantage`, `career_carries`; WR/TE: `week`,
+  `days_rest`, `is_returning_from_absence`) describe the real prior games, not
+  the synthetic history; the manifest records both the list and this policy,
+  and the declaration fails at import if a whitelist drops one.
 - The consumed-values hash covers the history projection, the recomputed history
   points and every feature column of the selected donor rows, labelled by dtype
   kind so string spellings do not change it; a scoring or whitelist change does
@@ -78,20 +95,32 @@ transforms and policy).
 
 - The schema partitions the history columns into transformable production and
   usage stats, opaque externally modeled signals (`*_exp`, `qbr_total`,
-  `pts_added`), team totals with declared accounting (`rushing_yards` and
-  `carries` move `team_rushing_yards` / `team_rush_attempts` one for one;
-  each touchdown adds six `team_points_scored`; PAT and two-point plays are not
-  modeled) and held game context (implied totals, home, rest, opponent points).
-  Naming a column outside the transformable group fails at recipe validation.
+  `pts_added`, and for RB/WR/TE the position-group shares, HHIs and
+  opportunity index, whose denominators are team position-group totals that
+  the history does not carry), team totals with declared accounting (a stat
+  moves its team total one for one where the history carries that total:
+  carries and targets everywhere, rushing yards for QB/RB, receiving yards for
+  RB/WR/TE, RB receptions into `team_completions`; WR/TE receptions and
+  rushing yards have no team counterpart and move nothing; each touchdown adds
+  six `team_points_scored`; RB `fumbles_lost` moves `team_turnovers`; PAT and
+  two-point plays are not modeled) and held game
+  context (implied totals, home, rest, opponent points). Naming a column
+  outside the transformable group fails at recipe validation.
 - Two ops: `scale` multiplies named stats by a factor over all steps or an
   inclusive chronological step range (a role change is a scaled early range);
   `set_history_ppg` solves one factor per case so the window's mean projected
   points hit a target (usage stats may ride along; an unreachable target fails
   with the numbers). Per-position `transform_support` declines an op with a
   stated reason before sampling.
-- Relations (`completions <= attempts`, `passing_tds <= completions`,
+- Relations (QB: `completions <= attempts`, `passing_tds <= completions`,
   `rushing_tds <= carries`, `carries <= team_rush_attempts`, interceptions
-  within incompletions, six points per touchdown within team points) are judged
+  within incompletions; RB: receptions within targets, touchdowns within
+  receptions/carries, first downs within their opportunities, the red-zone
+  ladder `inside5 <= inside10 <= redzone_carries <= carries`, red-zone targets
+  within targets, and carries/targets/receptions within the team's attempts
+  and completions; WR/TE: receptions within targets, touchdowns within
+  receptions/carries, red-zone targets within targets, targets/carries within
+  team attempts; all: six points per touchdown within team points) are judged
   on the exact rewritten values, with team accounting applied, before counts are
   rounded: an extreme production factor that is not matched by usage fails
   loudly and is never capped. Counts then round half to even, dependents are
@@ -112,7 +141,11 @@ rescaled to 100 projected points per game, usage scaling with production,
 opaque signals marked missing), `qb_usage_step_up.json` (steps one to four at
 30% usage and production, a backup-to-starter step) and `qb_efficiency_up.json`
 (yards up 25% at unchanged usage, opaque signals kept). Each is a response
-probe, not a plausible player, and each pairs with `qb_replay.json`.
+probe, not a plausible player, and each pairs with `qb_replay.json`. RB, WR
+and TE ship the exact-window `{pos}_replay.json` and the three-game
+`{pos}_block_bootstrap.json` recipes in their bands; their transform
+declarations accept the same two ops, and position-specific fixtures are an
+operator recipe away rather than a code change.
 
 The manifest's `model_input_readiness` block states, per saved-model family,
 whether the artifact can feed it coherently, and the replay re-derives it from
@@ -152,43 +185,48 @@ response report: nothing in it is accuracy, error or bias, and it says so.
 ## Operator workflow
 
 Use the project's configured Python environment. Start from a pinned data release
-and its enriched, **unscaled** production QB frame, after target computation and
-schedule/team-box-score merges. A bare raw weekly cache or stale split is not a
-valid source. For example, the current shared preparation function can export
-the training frame without training a model:
+and the position's enriched, **unscaled** production frame, after target
+computation and schedule/team-box-score merges. A bare raw weekly cache or stale
+split is not a valid source. `src/analysis/synthetic_history_sources.py` runs
+the shared production preparation once on the split parquets, without
+training, and publishes the train frame with its hashes (`sources.json`:
+rows, seasons, a row-order-independent value digest, the production
+`prepared_data_id` (splits, configuration and side inputs), split-file
+digests, the hashes of the shared and position modules that build the frame,
+the duplicate-game-key report and runtime versions) into a new directory; it
+refuses a prepared frame whose feature columns disagree with the registry:
 
-```python
-from pathlib import Path
-import pandas as pd
-from src.qb.run_pipeline import CONFIG
-from src.shared.pipeline import _prepare_position_data
-
-train = pd.read_parquet("data/splits/train.parquet")
-val = pd.read_parquet("data/splits/val.parquet")
-prepared = _prepare_position_data("QB", CONFIG, train, val)
-Path("analysis_output/synthetic_sources").mkdir(parents=True, exist_ok=True)
-prepared[6].to_parquet("analysis_output/synthetic_sources/qb.parquet", index=False)
+```bash
+FF_FEATURE_CACHE_DISABLE=1 python -m src.analysis.synthetic_history_sources \
+  --position RB --splits-dir data/splits --output analysis_output/synthetic_sources/rb
 ```
 
 Preparation uses the normal local raw dependencies; hydrate and verify the same
 release first (ADR-0026). Generation itself only reads the supplied parquet and
 recipe; it does not fetch data, train, invoke serving, or write production paths.
+The exporter covers the skill positions; DST and K have distinct loading paths
+and are tracked below.
 
 ```bash
 python -m src.analysis.synthetic_history \
-  --source analysis_output/synthetic_sources/qb.parquet \
+  --source analysis_output/synthetic_sources/qb/qb.parquet \
   --recipe src/analysis/synthetic_history_recipes/qb_replay.json \
   --output analysis_output/synthetic/qb-replay-001
 
 python -m src.analysis.synthetic_history \
-  --source analysis_output/synthetic_sources/qb.parquet \
+  --source analysis_output/synthetic_sources/qb/qb.parquet \
   --recipe src/analysis/synthetic_history_recipes/qb_block_bootstrap.json \
   --output analysis_output/synthetic/qb-bootstrap-001
 
 python -m src.analysis.synthetic_history \
-  --source analysis_output/synthetic_sources/qb.parquet \
+  --source analysis_output/synthetic_sources/qb/qb.parquet \
   --recipe src/analysis/synthetic_history_recipes/qb_sustained_100pt.json \
   --output analysis_output/synthetic/qb-100pt-001
+
+python -m src.analysis.synthetic_history \
+  --source analysis_output/synthetic_sources/rb/rb.parquet \
+  --recipe src/analysis/synthetic_history_recipes/rb_replay.json \
+  --output analysis_output/synthetic/rb-replay-001
 ```
 
 Each new output directory contains:
@@ -202,8 +240,9 @@ Each new output directory contains:
 | `history.npz` | Unscaled `history` and Boolean `mask`; load with `allow_pickle=False` |
 | `manifest.json` | Recipe, sampling identity, consumed-value/source-file hashes and their scope, implementation hashes, runtime versions, signal order, coverage, history kind, transform report, per-family readiness and artifact hashes |
 
-Replay a cohort against the served QB checkpoint (`--sync` pulls it from S3 via
-`FF_MODEL_S3_BUCKET`; `--model-dir` overrides the resolved directory). The
+Replay a cohort against the position's served checkpoint (`--sync` pulls it
+from S3 via `FF_MODEL_S3_BUCKET`; `--model-dir` overrides the resolved
+directory; the checkpoint's position must match the cohort's). The
 default family is the attention NN; `all` expands to every bundled family but
 skips LightGBM on macOS (libomp), where it must be named explicitly and run on
 Linux/Batch instead:
@@ -213,12 +252,12 @@ python -m src.analysis.synthetic_replay \
   --cohort analysis_output/synthetic/qb-replay-001 \
   --output analysis_output/synthetic_replays/qb-replay-001 \
   --families attn_nn ridge nn --sync \
-  --source analysis_output/synthetic_sources/qb.parquet
+  --source analysis_output/synthetic_sources/qb/qb.parquet
 
 python -m src.analysis.synthetic_replay \
   --cohort analysis_output/synthetic/qb-100pt-001 \
   --output analysis_output/synthetic_replays/qb-100pt-001 \
-  --source analysis_output/synthetic_sources/qb.parquet
+  --source analysis_output/synthetic_sources/qb/qb.parquet
 
 python -m src.analysis.synthetic_response \
   --baseline analysis_output/synthetic_replays/qb-replay-001 \
@@ -267,10 +306,15 @@ shared validator are the extension points):
    recipes, plus paired cohort response reports. The donor sampler still fails
    clearly when no qualifying window exists; it never relaxes a recipe or
    invents a correct future score.
-4. Position-specific schemas and checks for RB/WR/TE (flat), then DST (team
-   identities, opponent-offense stream) and K (nested per-kick history),
-   including their distinct loading and scoring paths and their transform
-   declarations.
+4. **Delivered:** position-specific schemas, checks and transform declarations
+   for RB/WR/TE (flat), shipped replay and block-bootstrap recipes, and the
+   skill-position source exporter.
+5. DST (team identities, no `season_type`, the opponent-offense stream as a
+   second, never-resampled history, tier scoring that keeps `fantasy_points`
+   as measured and declines `set_history_ppg`).
+6. K (nested per-kick history reconciled exactly against the weekly counts,
+   `kicks.parquet`, four-dimensional tensors with an inner mask, seasons from
+   2015, signed kicking total that declines `set_history_ppg`).
 
 ## Changelog
 
@@ -285,3 +329,9 @@ shared validator are the extension points):
   accounting, exact-then-rounded relation checks and a required opaque-signal
   policy; the 100-point, usage-step and efficiency QB presets; paired
   model-response reports.
+- 2026-09-18: RB, WR and TE join the position registry with their own counts,
+  relations, bounds, opaque position-group shares and team accounting; the
+  generator, replay and transforms read every list from the registry; the
+  skill-position source exporter publishes prepared frames with hashes; six
+  recipes ship in per-position PPG bands; player-seasons with duplicate game
+  keys are excluded from the donor pool and recorded instead of rejected.

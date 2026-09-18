@@ -1,6 +1,5 @@
 """Boundary, provenance, and production-history replay checks; no model training."""
 
-import dataclasses
 import json
 
 import numpy as np
@@ -15,14 +14,11 @@ from src.analysis.synthetic_history import (
     validate_history_frame,
     write_cohort,
 )
-from src.analysis.synthetic_history_schema import (
-    POSITION_HISTORY_SCHEMAS,
-    PositionHistorySchema,
-    position_schema,
-)
+from src.analysis.synthetic_history_schema import position_schema
 from src.features.engineer import build_game_history_arrays
 from src.qb.config import POSITION_CONFIG
 from src.qb.features import get_feature_columns
+from tests.analysis.conftest import SHORT_WEEKS
 
 pytestmark = pytest.mark.unit
 
@@ -211,13 +207,32 @@ def test_invalid_donor_data_fails_before_generation(source, change, error):
         generate_cohort(source, recipe())
 
 
-def test_missing_column_and_duplicate_keys_fail(source):
+def test_missing_columns_fail(source):
     with pytest.raises(ValueError, match="missing production history columns"):
         generate_cohort(source.drop(columns="qbr_total"), recipe())
     with pytest.raises(ValueError, match="missing production feature columns"):
         generate_cohort(source.drop(columns="rolling_mean_passing_yards_L3"), recipe())
-    with pytest.raises(ValueError, match="duplicate"):
-        generate_cohort(pd.concat([source, source.iloc[:1]]), recipe())
+
+
+def test_duplicate_game_keys_exclude_the_player_season_and_are_recorded(source):
+    twelve = HistoryRecipe(name="test", cases=12, history_games=3, block_games=2)
+    clean = generate_cohort(source, twelve)
+    assert clean.manifest["donor_pool_exclusions"]["duplicate_game_keys"] == []
+    # p1's 2022 week 1 appears twice: that player-season's sequence is ambiguous.
+    duplicated = pd.concat([source, source.iloc[:1]], ignore_index=True)
+    cohort = generate_cohort(duplicated, twelve)
+    exclusions = cohort.manifest["donor_pool_exclusions"]
+    assert exclusions["duplicate_game_keys"] == [
+        {"player_id": "p1", "season": 2022, "weeks": [1], "rows": 2}
+    ]
+    assert "never merged" in exclusions["policy"]
+    assert cohort.manifest["source_rows"] == clean.manifest["source_rows"] - len(SHORT_WEEKS)
+    donors = set(zip(cohort.cases.donor_player_id, cohort.cases.donor_season, strict=True))
+    assert ("p1", 2022) not in donors and donors
+    assert not (cohort.games.donor_player_id.eq("p1") & cohort.games.donor_season.eq(2022)).any()
+    # The exported source is never repaired: every player-season ambiguous fails loud.
+    with pytest.raises(ValueError, match="every QB player-season .* duplicate"):
+        generate_cohort(pd.concat([source, source], ignore_index=True), recipe())
 
 
 def test_validate_history_frame_is_reusable_on_generated_games(source):
@@ -232,23 +247,10 @@ def test_validate_history_frame_is_reusable_on_generated_games(source):
         validate_history_frame(cohort.games.drop(columns="sacks"), schema, stage="generated")
 
 
-def test_schema_registry_matches_configuration_and_rejects_foreign_columns():
-    schema = POSITION_HISTORY_SCHEMAS["QB"]
-    assert schema.history_columns == tuple(POSITION_CONFIG.attn_history_stats)
-    assert schema.targets == tuple(POSITION_CONFIG.targets)
-    assert schema.feature_columns == tuple(get_feature_columns())
-    assert set(schema.count_columns) <= set(schema.validated_columns)
-    with pytest.raises(ValueError, match="outside its history and targets"):
-        dataclasses.replace(schema, relations=(("carries", "not_a_column"),))
-    with pytest.raises(ValueError, match="sequence-coupled context"):
-        dataclasses.replace(schema, sequence_coupled_context=("qbr_total",))
-    assert isinstance(schema, PositionHistorySchema)
-
-
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"position": "RB"},
+        {"position": "K"},
         {"schema_version": 1},
         {"cases": 0},
         {"cases": True},

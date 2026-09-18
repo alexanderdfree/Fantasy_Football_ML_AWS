@@ -78,6 +78,10 @@ EXTERNAL_SIGNAL_POLICY = {
         "missing-value zero"
     ),
 }
+DUPLICATE_KEY_POLICY = (
+    "a player-season whose player/season/week keys repeat has an ambiguous game "
+    "sequence and contributes no donor window; its rows are listed, never merged"
+)
 SOURCE_VALUES_SCOPE = (
     "history projection, recomputed history points and every production feature column of "
     "the selected donor rows; a scoring or whitelist change alters it without a data change"
@@ -196,6 +200,7 @@ class ConsumedSource:
     context_rows: pd.DataFrame
     source: pd.DataFrame
     values_sha256: str
+    excluded_player_seasons: tuple[dict, ...] = ()
 
 
 def _json_hash(value) -> str:
@@ -283,14 +288,36 @@ def validate_history_frame(
             raise ValueError(f"{stage} {column} must be within [{low}, {high}]")
 
 
+def duplicate_game_keys(frame: pd.DataFrame) -> list[dict]:
+    """Player-seasons whose game keys repeat, so their game sequence is ambiguous.
+
+    Production frames can carry such rows (an identity-bridge collision joins two
+    snap-count lines onto one game). They are reported here and excluded from a
+    donor pool; the rows themselves are never merged or dropped from a source.
+    """
+    duplicated = frame.loc[frame.duplicated(KEYS, keep=False), KEYS]
+    return [
+        {
+            "player_id": str(player),
+            "season": int(season),
+            "weeks": sorted(int(w) for w in group["week"].unique()),
+            "rows": int(len(group)),
+        }
+        for (player, season), group in duplicated.groupby(["player_id", "season"], sort=True)
+    ]
+
+
 def _source_frame(
     source: pd.DataFrame,
     *,
     position: str,
     donor_seasons: Iterable[int],
     schema: PositionHistorySchema,
-) -> pd.DataFrame:
-    """Project the donor pool onto raw game signals; index labels survive."""
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Project the donor pool onto raw game signals; index labels survive.
+
+    Returns the pool and the player-seasons excluded for duplicate game keys.
+    """
     history_columns = list(schema.history_columns)
     required = list(
         dict.fromkeys([*KEYS, *schema.identity_columns, *history_columns, *schema.targets])
@@ -321,15 +348,26 @@ def _source_frame(
     frame = frame[frame["season"].isin(list(donor_seasons))]
     if frame.empty:
         raise ValueError(f"no {position} records in the requested training seasons")
-    if frame.duplicated(KEYS).any():
-        raise ValueError("source has duplicate player/season/week keys")
+    excluded = duplicate_game_keys(frame)
+    if excluded:
+        ambiguous = (
+            frame.duplicated(KEYS, keep=False)
+            .groupby([frame["player_id"], frame["season"]])
+            .transform("any")
+        )
+        frame = frame[~ambiguous]
+        if frame.empty:
+            raise ValueError(
+                f"every {position} player-season in the requested seasons has duplicate "
+                "player/season/week keys"
+            )
     for column in schema.validated_columns:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype("float64")
     validate_history_frame(frame, schema, stage="source")
     frame["fantasy_points"] = predictions_to_fantasy_points(
         position, {name: frame[name].to_numpy() for name in schema.targets}
     )
-    return frame.sort_values(KEYS, kind="stable")
+    return frame.sort_values(KEYS, kind="stable"), excluded
 
 
 def _context_rows(
@@ -361,9 +399,13 @@ def consume_source(
 ) -> ConsumedSource:
     """Read a source the way generation does; the replay's control does the same."""
     source = source.reset_index(drop=True)
-    frame = _source_frame(source, position=position, donor_seasons=donor_seasons, schema=schema)
+    frame, excluded = _source_frame(
+        source, position=position, donor_seasons=donor_seasons, schema=schema
+    )
     context_rows = _context_rows(source, frame.index, schema)
-    return ConsumedSource(frame, context_rows, source, consumed_values_hash(frame, context_rows))
+    return ConsumedSource(
+        frame, context_rows, source, consumed_values_hash(frame, context_rows), tuple(excluded)
+    )
 
 
 def model_input_readiness(mode: str, cases: pd.DataFrame, *, transformed: bool = False) -> dict:
@@ -520,6 +562,11 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "source_values_sha256": source_hash,
         "source_values_scope": SOURCE_VALUES_SCOPE,
         "source_rows": len(frame),
+        "donor_pool_exclusions": {
+            "duplicate_game_keys": list(consumed.excluded_player_seasons),
+            "policy": DUPLICATE_KEY_POLICY,
+            "scope": "the recipe's position, regular-season and donor-season pool",
+        },
         "eligible_windows": len(candidates),
         "unique_donor_windows": int(
             cases.drop_duplicates(["donor_player_id", "donor_season", "forecast_week"]).shape[0]
@@ -636,6 +683,9 @@ def main(argv: list[str] | None = None) -> int:
                 "cases": len(cohort.cases),
                 "eligible_windows": cohort.manifest["eligible_windows"],
                 "exact_window_cases": cohort.manifest["exact_window_cases"],
+                "excluded_player_seasons": len(
+                    cohort.manifest["donor_pool_exclusions"]["duplicate_game_keys"]
+                ),
                 "history_kind": cohort.manifest["history_kind"],
                 "model_input_readiness": {
                     family: entry["ready"]
