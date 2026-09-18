@@ -1115,8 +1115,9 @@ class MultiHeadTrainer:
                 "Fantasy-point selection requires a complete known position target set"
             )
         self.best_epoch = None
-        # Optional ``fn(epoch: int, avg_val_loss: float) -> None`` invoked once
-        # per epoch right after ``avg_val_loss`` is computed. Used by
+        # Optional ``fn(epoch: int, selection_score: float) -> None`` invoked
+        # once per epoch right after the epoch's ``selection_metric`` score is
+        # computed (the quantity checkpoint selection uses). Used by
         # ``src/tuning/tune_nn.py`` to feed Optuna's pruner the trial's val
         # trajectory; if the callback raises (e.g. ``optuna.TrialPruned``) the
         # exception propagates and stops training. Default ``None`` keeps the
@@ -1731,12 +1732,6 @@ class MultiHeadTrainer:
             avg_val_loss = (epoch_val_loss / n_val_samples).item() if n_val_samples > 0 else 0.0
             history["val_loss"].append(avg_val_loss)
 
-            if self.epoch_callback is not None:
-                # Raises (e.g. optuna.TrialPruned) propagate up to whoever
-                # called trainer.train() — that is the intended control flow
-                # for tuner-driven pruning. Do NOT swallow.
-                self.epoch_callback(epoch, avg_val_loss)
-
             # Per-target val losses — single host sync per target per epoch
             # (was per-batch via ``.item()`` inside ``MultiTargetLoss.forward``).
             for t in self.target_names:
@@ -1802,6 +1797,14 @@ class MultiHeadTrainer:
             if not np.isfinite(selection_score):
                 selection_score = float("inf")
             history["val_selection_metric"].append(selection_score)
+            if self.epoch_callback is not None:
+                # Raises (e.g. optuna.TrialPruned) propagate up to whoever
+                # called trainer.train() — that is the intended control flow
+                # for tuner-driven pruning. Do NOT swallow. The callback
+                # receives the checkpoint-selection score (``selection_metric``)
+                # so a tuner prunes on the quantity it selects on; the plateau
+                # scheduler below still steps on ``avg_val_loss``.
+                self.epoch_callback(epoch, selection_score)
 
             # Per-epoch wall-clock is a host-side measurement; the
             # ``.item()`` on the loss accumulators and the ``.cpu().numpy()``

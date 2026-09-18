@@ -116,13 +116,15 @@ def test_actual_trainer_history_callback_and_plateau_use_sample_mean(kind, batch
     # Per-observation squared errors are 1, 1, 1, 100 for head a.
     expected = sum(weight * 25.75 * (i + 1) ** 2 for i, weight in enumerate(weights.values()))
     assert history["val_loss"] == pytest.approx([expected])
-    assert callbacks == [(0, pytest.approx(expected))]
     assert trainer.scheduler.best == pytest.approx(expected)
     for i, target in enumerate(weights):
         assert history[f"val_loss_{target}"] == pytest.approx([25.75 * (i + 1) ** 2])
         assert history[f"val_mae_{target}"] == pytest.approx([3.25 * (i + 1)])
     weighted_mae = sum(weight * 3.25 * (i + 1) for i, weight in enumerate(weights.values()))
     assert trainer.best_val_metric == pytest.approx(weighted_mae / sum(weights.values()))
+    # The pruning callback receives the checkpoint-selection score (the default
+    # loss-weighted validation MAE, also a per-observation mean), not the loss.
+    assert callbacks == [(0, pytest.approx(weighted_mae / sum(weights.values())))]
 
 
 @pytest.mark.parametrize("batch_size", [2, 3, 4])
@@ -167,8 +169,10 @@ def test_empty_validation_preserves_ordinary_and_stacked_contracts():
     val = _loader([], 3)
     history = trainer.train(_loader([0, 0], 2), val, 1)
     assert history["val_loss"] == history["val_loss_a"] == [0.0]
-    assert callbacks == [(0, 0.0)]
     assert np.isinf(history["val_mae_a"][0])
+    # The selection score (weighted validation MAE) is infinite without rows,
+    # and that is what the pruning callback now receives.
+    assert callbacks == [(0, float("inf"))]
     template, params, buffers = stack_models([_ProbeModel()], torch.device("cpu"))
     with pytest.raises(RuntimeError, match="empty val loader"):
         stacked_val_rmse(template, params, buffers, "RB", val, torch.device("cpu"))
