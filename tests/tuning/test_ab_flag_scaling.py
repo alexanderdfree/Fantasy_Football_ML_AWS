@@ -72,13 +72,19 @@ def test_missing_or_unparseable_status_never_looks_like_a_complete_cohort():
     assert metrics["healthy coverage"]["n"] == 1
 
 
-def test_flag_policy_preserves_the_independent_inheritance_magnitude_transform():
+@pytest.mark.parametrize("flag_range", [1.0, 4.0])
+def test_flag_policy_preserves_standard_scaling_of_other_features(flag_range):
     values = np.array([[0, 0], [0.1, 1], [0.5, 2], [1, 3]], dtype=np.float32)
-    _, [scaled] = _scale_xs(
+    baseline_scaler, [baseline] = _scale_xs(values)
+    scaler, [scaled] = _scale_xs(
         values,
-        cfg={"nn_bounded_flag_range": 1.0},
-        feature_cols=["game_status", "inherited_opportunity"],
-        magnitude_features=("inherited_opportunity",),
+        cfg={"nn_bounded_flag_range": flag_range},
+        feature_cols=["game_status", "ordinary_feature"],
     )
-    np.testing.assert_allclose(scaled[:, 0], [-1.0, -0.8, 0.0, 1.0], atol=1e-6)
-    np.testing.assert_allclose(scaled[:, 1], [0.0, 4 / 3, 2.0, 2.4], atol=1e-6)
+    np.testing.assert_allclose(
+        scaled[:, 0], np.array([-1.0, -0.8, 0.0, 1.0]) * flag_range, atol=1e-6
+    )
+    np.testing.assert_array_equal(scaled[:, 1], baseline[:, 1])
+    assert scaler.mean_[1] == baseline_scaler.mean_[1]
+    assert scaler.scale_[1] == baseline_scaler.scale_[1]
+    assert scaler.var_[1] == baseline_scaler.var_[1]

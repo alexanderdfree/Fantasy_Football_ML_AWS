@@ -40,6 +40,15 @@ def test_build_pipeline_config_includes_all_required_keys(position: str) -> None
 
 @pytest.mark.unit
 @pytest.mark.parametrize("position", POSITIONS)
+def test_production_flag_scaling_remains_disabled(position: str) -> None:
+    pc_mod = importlib.import_module(f"src.{position.lower()}.config")
+    pc = pc_mod.POSITION_CONFIG
+    assert pc.nn_bounded_flag_range is None
+    assert build_pipeline_config(position, pc)["nn_bounded_flag_range"] is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("position", POSITIONS)
 def test_build_pipeline_config_plumbs_attn_arch_flags_for_all_positions(position: str) -> None:
     """#1396: the training cfg must carry ``attn_project_kv`` /
     ``attn_gated_fusion`` for EVERY position, matching the served kwargs that

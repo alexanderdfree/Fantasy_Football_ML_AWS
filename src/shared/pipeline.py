@@ -253,25 +253,28 @@ def _scale_xs(
     would report as a genuine "no effect" A/B result. Neither is recoverable at
     this depth and both are invisible in a fleet run's aggregate table.
     """
-    if feature_cols is not None and len(feature_cols) != X_arrays[0].shape[1]:
-        raise ValueError("NN scaler feature names must match the exact input columns")
     scaler = StandardScaler()
-    scaler.fit(X_arrays[0])
     flag_range = (cfg or {}).get("nn_bounded_flag_range")
-    if flag_range is not None:
-        if feature_cols is None:
-            raise ValueError(
-                "nn_bounded_flag_range is set but no column list reached _scale_xs; "
-                "the override cannot be positioned without one."
-            )
-        touched = apply_bounded_flag_scaling(scaler, feature_cols, target_range=flag_range)
-        if not touched:
-            raise ValueError(
-                f"nn_bounded_flag_range={flag_range} is set but none of "
-                f"{sorted(BOUNDED_FLAG_DOMAINS)} is among the {len(feature_cols)} scaled "
-                "columns — the knob would be a silent no-op."
-            )
-        print(f"  Bounded-flag scaling (range={flag_range}) applied to: {touched}")
+    if flag_range is None:
+        # Preserve main's fit_transform path exactly while the experiment is off.
+        scaled = [scale_and_clip(scaler, X_arrays[0], fit=True)]
+        scaled.extend(scale_and_clip(scaler, X) for X in X_arrays[1:])
+        return scaler, scaled
+
+    if feature_cols is None:
+        raise ValueError(
+            "nn_bounded_flag_range is set but no column list reached _scale_xs; "
+            "the override cannot be positioned without one."
+        )
+    scaler.fit(X_arrays[0])
+    touched = apply_bounded_flag_scaling(scaler, feature_cols, target_range=flag_range)
+    if not touched:
+        raise ValueError(
+            f"nn_bounded_flag_range={flag_range} is set but none of "
+            f"{sorted(BOUNDED_FLAG_DOMAINS)} is among the {len(feature_cols)} scaled "
+            "columns — the knob would be a silent no-op."
+        )
+    print(f"  Bounded-flag scaling (range={flag_range}) applied to: {touched}")
     scaled = [scale_and_clip(scaler, X) for X in X_arrays]
     return scaler, scaled
 
@@ -807,7 +810,7 @@ def _train_nn(
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
 
     ``feature_cols`` names the columns of ``X_*`` in order; it is only consumed
-    by the ``nn_bounded_flag_scaling`` scaler override.
+    by the ``nn_bounded_flag_range`` scaler override.
     """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
@@ -1049,7 +1052,7 @@ def _train_nested_attention_nn(
 
     ``feature_cols`` names the columns of ``X_*`` in order (the caller's
     ``attn_feature_cols``); it is only consumed by the
-    ``nn_bounded_flag_scaling`` scaler override.
+    ``nn_bounded_flag_range`` scaler override.
     """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)

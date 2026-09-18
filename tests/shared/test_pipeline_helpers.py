@@ -316,7 +316,7 @@ def test_build_expanding_cv_folds_contiguous_splits():
 
 
 # --------------------------------------------------------------------------
-# _scale_xs — bounded-flag scaling wiring (nn_bounded_flag_scaling)
+# _scale_xs — bounded-flag scaling wiring (nn_bounded_flag_range)
 # --------------------------------------------------------------------------
 
 
@@ -330,16 +330,17 @@ def _flag_arrays(seed: int = 0):
 
 
 @pytest.mark.unit
-def test_scale_xs_off_matches_legacy_fit_transform():
-    """Regression guard: the knob-off path must stay byte-identical to the
-    pre-change ``scale_and_clip(..., fit=True)`` implementation, so production
-    (nn_bounded_flag_scaling=False) is provably untouched."""
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("include_columns", [False, True])
+def test_scale_xs_off_matches_legacy_fit_transform(dtype, include_columns):
+    """The disabled policy preserves main's fitted scaler and transformed inputs."""
     from sklearn.preprocessing import StandardScaler
 
     from src.shared.feature_build import scale_and_clip
     from src.shared.pipeline import _scale_xs
 
     X_train, X_test, cols = _flag_arrays()
+    X_train, X_test = X_train.astype(dtype), X_test.astype(dtype)
     legacy_scaler = StandardScaler()
     legacy = [
         scale_and_clip(legacy_scaler, X_train, fit=True),
@@ -347,11 +348,53 @@ def test_scale_xs_off_matches_legacy_fit_transform():
     ]
 
     for cfg in (None, {}, {"nn_bounded_flag_range": None}):
-        scaler, scaled = _scale_xs(X_train, X_test, cfg=cfg, feature_cols=cols)
+        scaler, scaled = _scale_xs(
+            X_train, X_test, cfg=cfg, feature_cols=cols if include_columns else None
+        )
         np.testing.assert_array_equal(scaled[0], legacy[0])
         np.testing.assert_array_equal(scaled[1], legacy[1])
         np.testing.assert_array_equal(scaler.mean_, legacy_scaler.mean_)
         np.testing.assert_array_equal(scaler.scale_, legacy_scaler.scale_)
+        np.testing.assert_array_equal(scaler.var_, legacy_scaler.var_)
+        np.testing.assert_array_equal(scaler.n_samples_seen_, legacy_scaler.n_samples_seen_)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("flag_range", [None, 1.0, 4.0])
+def test_scale_xs_column_order_and_saved_inference_match(tmp_path, flag_range):
+    """Reload the fitted scaler using the same transform that Predictor consumes."""
+    import joblib
+
+    from src.shared.feature_build import scale_and_clip
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, cols = _flag_arrays()
+    X_train, X_test = X_train.astype(np.float32), X_test.astype(np.float32)
+    cfg = {"nn_bounded_flag_range": flag_range}
+    _, expected = _scale_xs(X_train, X_test, cfg=cfg, feature_cols=cols)
+    order = [1, 2, 0]
+    scaler, reordered = _scale_xs(
+        X_train[:, order],
+        X_test[:, order],
+        cfg=cfg,
+        feature_cols=[cols[i] for i in order],
+    )
+    for actual, original in zip(reordered, expected, strict=True):
+        np.testing.assert_array_equal(actual, original[:, order])
+
+    path = tmp_path / "nn_scaler.joblib"
+    joblib.dump(scaler, path)
+    restored = joblib.load(path)
+    np.testing.assert_array_equal(scale_and_clip(restored, X_test[:, order]), reordered[1])
+
+
+@pytest.mark.unit
+def test_scale_xs_enabled_rejects_misaligned_columns():
+    from src.shared.pipeline import _scale_xs
+
+    X_train, X_test, cols = _flag_arrays()
+    with pytest.raises(ValueError, match="column order would be misaligned"):
+        _scale_xs(X_train, X_test, cfg={"nn_bounded_flag_range": 1.0}, feature_cols=cols[:-1])
 
 
 @pytest.mark.unit
