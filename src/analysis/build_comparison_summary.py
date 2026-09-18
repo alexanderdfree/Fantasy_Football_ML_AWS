@@ -165,6 +165,8 @@ def _expert_subsets(
     a = _normalize_keys(actuals[[*_KEYS, "actual_pts"]])
     e = _normalize_keys(projection[[*_KEYS, pred_col]])
     joined = a.merge(e, on=_KEYS, how="inner")
+    # Placeholder rows project as NaN (unavailable), never as graded zeros.
+    joined = joined[np.isfinite(pd.to_numeric(joined[pred_col], errors="coerce"))]
     if joined.empty:
         return empty
     blocks = {"all": _round_metrics(joined["actual_pts"].to_numpy(), joined[pred_col].to_numpy())}

@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-18 · Score all-zero provider rows as missing forecasts (reference recipe v4, cache schema 12), add the symmetric weekly consensus cohort as the Comparison headline, and align Timeline groups with the tab's displayed sources · (PR #1595) · → ADR-0024
+
 - 2026-09-23 · Enforce DST synthetic-export cache compatibility before loading and preserve observed zero opponent counts · (PR #1599) · → ADR-0029
 
 - 2026-09-18 · DST `build_data` drops unplayed (NaN-score) REG fixtures by default; the live upcoming-week special-teams builder opts back in via `include_unplayed=True` (#1520) · (PR pending) · → ADR-0018

@@ -73,6 +73,24 @@ def test_consensus_cohort_is_selected_by_all_displayed_sources_on_common_rows():
     assert all(value["n"] == 24 and value["mae"] == 7 for value in cells.values())
 
 
+def test_consensus_cohort_is_selected_before_outcome_availability():
+    data = records()
+    data.loc[29, "actual_receptions"] = np.nan  # the top consensus pick has no recorded outcome
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["weekly_consensus_top24"]["WR"]
+    assert cell["selection_n"] == 24
+    assert cell["n"] == cell["cohort_n"] == 23  # dropped, never replaced by rank 25
+    assert all(value["n"] == 23 for value in subsets["weekly_consensus_top24"]["WR"].values())
+
+
+def test_wholly_unavailable_source_is_named_not_silently_dropped():
+    data = records()
+    data["espn_comparison_pred_ppr"] = np.nan
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    assert "espn" not in coverage["all"]["WR"]["sources"]
+    assert coverage["all"]["WR"]["unavailable_sources"] == ["espn"]
+
+
 def test_weekly_list_is_reference_selected_before_coverage_filter():
     data = records()
     ref = data[["player_id", "position", "season", "week"]].copy()

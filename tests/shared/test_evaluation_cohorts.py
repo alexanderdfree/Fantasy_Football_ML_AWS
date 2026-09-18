@@ -91,6 +91,11 @@ def test_consensus_selection_weights_every_displayed_source_equally():
     assert "p29" not in partial.loc[mask, "player_id"].tolist()
     empty, meta = consensus_selection(base, {}, 24)
     assert not empty.any() and meta["status"] == "unavailable"
+    absent, meta = consensus_selection(base, {**columns, "missing": "pred_missing_total"}, 24)
+    assert meta["selection_sources"] == list(columns)  # absent columns are skipped, not KeyError
+    assert base.loc[absent, "player_id"].tolist() == base.loc[baseline, "player_id"].tolist()
+    nothing, meta = consensus_selection(base.assign(pred_ridge_total=np.nan), columns, 24)
+    assert not nothing.any() and meta["reason"] == "no_common_forecast_rows"
 
 
 def test_missing_actuals_do_not_promote_reference_rank_25():

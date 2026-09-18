@@ -111,6 +111,23 @@ def test_shared_frames_keep_zero_predictions_and_exclude_nan_and_inf():
     assert list(a.player_id) == list(b.player_id) == ["p00"]
 
 
+def test_offline_expert_summary_ignores_unavailable_placeholder_forecasts():
+    from src.analysis.build_comparison_summary import _expert_subsets
+
+    keys = {"season": 2025, "week": 1}
+    actuals = pd.DataFrame({"player_id": ["a", "b"], "actual_pts": [10.0, 20.0], **keys})
+    projection = pd.DataFrame(
+        {"player_id": ["a", "b"], "expert_pred_total": [12.0, np.nan], **keys}
+    )
+    blocks = _expert_subsets(actuals, projection, "expert_pred_total", {"top12": {"a", "b"}})
+    assert blocks["all"]["mae"] == 2.0 and blocks["top12"]["mae"] == 2.0
+    unavailable = projection.assign(expert_pred_total=np.nan)
+    assert _expert_subsets(actuals, unavailable, "expert_pred_total", {"top12": {"a"}}) == {
+        "all": None,
+        "top12": None,
+    }
+
+
 def test_disjoint_sources_make_all_metrics_unavailable():
     frame = _rows(3).assign(pred_total=[0.0, np.nan, np.nan])
     other = frame.assign(pred_total=[np.nan, 1.0, 2.0])

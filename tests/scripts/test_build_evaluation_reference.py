@@ -150,6 +150,13 @@ def test_partial_refresh_cannot_erase_archived_weeks(tmp_path, monkeypatch):
     assert path.read_bytes() == before
 
 
+def test_incomplete_provider_fetch_cannot_thin_the_reference(monkeypatch):
+    partial = rows()
+    partial.attrs["nflcom_fetch_complete_v1"] = False
+    fake_sources(monkeypatch, partial, rows())
+    assert builder.build_reference([2025]).empty
+
+
 def test_loaders_receive_only_supported_seasons(monkeypatch):
     calls = {}
     skipped = frozenset({"QB", "RB", "TE", "K", "DST"})

@@ -50,8 +50,11 @@ Human overview: [README.md](README.md); read only when needed.
   using the same projected scoring components in forecasts and actuals; missing
   components are unavailable, never a full-fantasy fallback. Use
   `src/shared/comparison_scoring.py` and the [cohort rules](agent-guides/validation.md#evaluation-cohorts).
-  `weekly_reference_top24` uses the archived pregame reference; `elite_top24`
-  retains prior-season importance. Actual weekly leaders are for ranking;
+  `weekly_consensus_top24` (equal-weight mean of every displayed source) heads
+  the Comparison tab; `weekly_reference_top24` uses the archived pregame
+  reference as a secondary view; `elite_top24` retains prior-season importance.
+  All-zero provider rows are missing forecasts, never 0.0. Actual weekly
+  leaders are for ranking;
   seasonal leaders are retrospective. Never use a model's own top-N pool for
   cross-source MAE, restore static expert summaries as live accuracy, or silently
   omit unavailable cohort data from Batch/local results.

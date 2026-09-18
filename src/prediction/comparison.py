@@ -146,15 +146,24 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
             quartiles[pos] = None
             rankings[pos] = {}
             continue
-        df = df[df[actual].notna()]
         common_all, available_columns = _shared_rows(df, scoring)
-        masks = {}
-        masks["weekly_consensus_top24"], consensus_meta = consensus_selection(
-            df, available_columns, 24
-        )
+        # Consensus membership is fixed before outcome availability is applied: a
+        # selected player-week without recorded actuals is dropped, never replaced.
+        consensus_mask, consensus_meta = consensus_selection(df, available_columns, 24)
+        unavailable_sources = [
+            prefix
+            for prefix in _ROW_PRED_PREFIXES
+            if prefix not in available_columns and _pred_col(prefix, scoring) in df
+        ]
+        df = df[df[actual].notna()]
+        masks = {"weekly_consensus_top24": consensus_mask.reindex(df.index, fill_value=False)}
         masks["weekly_reference_top24"], ref_meta = reference_selection(pos, df, reference, 24)
         masks["all"] = pd.Series(True, index=df.index)
         masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
+        selection_meta = {
+            "weekly_consensus_top24": consensus_meta,
+            "weekly_reference_top24": ref_meta,
+        }
         quartiles[pos] = _quartile_bias_from_results(common_all, scoring, pos)
         rankings[pos] = weekly_ranking_metrics(common_all, available_columns)
         for name, mask in masks.items():
@@ -175,19 +184,18 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                 "n": int(len(common)),
                 "cohort_n": int(len(cohort)),
                 "sources": list(columns),
+                "unavailable_sources": unavailable_sources,
                 "source_n": {
                     prefix: int(cohort[col].notna().sum()) for prefix, col in columns.items()
                 },
+                **{k: v for k, v in selection_meta.get(name, {}).items() if k != "status"},
             }
             if not columns:
                 # Actuals without any finite forecast source are unavailable
                 # coverage, not an available cohort with every metric blank.
                 coverage[name][pos]["reason"] = "predictions_missing"
-            if name == "weekly_consensus_top24":
-                coverage[name][pos].update(
-                    {k: v for k, v in consensus_meta.items() if k != "status"}
-                )
-                coverage[name][pos]["status"] = "available" if len(common) else "unavailable"
+            if name == "weekly_consensus_top24" and not len(common):
+                coverage[name][pos].setdefault("reason", "no_common_forecast_rows")
             if name == "weekly_reference_top24":
                 coverage[name][pos].update({k: v for k, v in ref_meta.items() if k != "status"})
                 coverage[name][pos]["reference_status"] = ref_meta["status"]

@@ -40,6 +40,11 @@ def build_reference(
         minimum = NFLCOM_OFFENSE_MIN_SEASON if source.name == "nflcom" else 2018
         supported = [season for season in seasons if season >= minimum]
         raw[source.name] = source.load(supported) if supported else None
+        # A partial provider fetch must not thin the slate into a smaller but
+        # "available" reference; the position stays unavailable instead.
+        frame_attrs = getattr(raw[source.name], "attrs", {}) or {}
+        if any(v is False for k, v in frame_attrs.items() if k.endswith("fetch_complete_v1")):
+            raw[source.name] = None
     parts = []
     for pos in ("QB", "RB", "WR", "TE", "K", "DST"):
         names = ("espn",) if pos == "K" else ("sleeper",) if pos == "DST" else ("nflcom", "sleeper")

@@ -271,6 +271,10 @@ def _compute_season_block(
         nflcom_pred["nflcom_pred_total"] = project_expert_comparison(
             nflcom_season, pos, scoring_format, source="nflcom"
         )["expert_pred_total"].to_numpy()
+        # All-zero roster placeholders project as NaN and are not graded forecasts.
+        nflcom_pred = nflcom_pred[
+            np.isfinite(pd.to_numeric(nflcom_pred["nflcom_pred_total"], errors="coerce"))
+        ]
     if nflcom_pred.empty:
         return {
             "season": season,

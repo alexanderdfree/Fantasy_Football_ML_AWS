@@ -58,7 +58,7 @@ from src.config import TEST_SEASONS
 from src.shared.comparison_scoring import (
     ACTUAL_BASIS,
     comparison_model_totals,
-    score_actual_components,
+    score_forecast_components,
     scoring_components,
 )
 from src.shared.evaluation import compute_metrics
@@ -243,7 +243,7 @@ def local_expert_source(spec: LocalExpertSpec) -> ExpertSource:
                     "native points-allowed scoring cannot be used."
                 )
                 return unavailable
-            pred = score_actual_components(df, pos)
+            pred = score_forecast_components(df, pos)
             valid_pred = np.isfinite(pred)
         else:
             pred = pd.to_numeric(df[pred_col], errors="coerce")

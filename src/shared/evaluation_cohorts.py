@@ -142,20 +142,24 @@ def consensus_selection(frame: pd.DataFrame, columns: dict[str, str], n: int):
     actual outcomes never enter the ranking.
     """
     empty = pd.Series(False, index=frame.index)
-    if not columns or not set(KEYS).issubset(frame):
-        return empty, {"status": "unavailable", "reason": "no_displayed_sources"}
-    values = frame[list(columns.values())].apply(pd.to_numeric, errors="coerce")
+    present = {name: col for name, col in columns.items() if col in frame}
+    meta = {
+        "selection_basis": "equal_weight_mean_of_displayed_sources",
+        "selection_sources": list(present),
+        "selection_n": 0,
+    }
+    if not present or not set(KEYS).issubset(frame):
+        return empty, {"status": "unavailable", "reason": "no_displayed_sources", **meta}
+    values = frame[list(present.values())].apply(pd.to_numeric, errors="coerce")
     values = values.replace([np.inf, -np.inf], np.nan)
-    pool = frame[KEYS].assign(consensus=values.mean(axis=1).where(values.notna().all(axis=1)))
+    pool = frame[KEYS].assign(consensus=values.mean(axis=1, skipna=False))
     top = ranked_rows(pool, "consensus", ["season", "week"], n)
     selected = pd.MultiIndex.from_frame(top[KEYS])
     keys = pd.MultiIndex.from_frame(frame[KEYS].assign(player_id=frame["player_id"].astype(str)))
-    return pd.Series(keys.isin(selected), index=frame.index), {
-        "status": "available" if len(top) else "unavailable",
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_sources": list(columns),
-        "selection_n": int(len(top)),
-    }
+    meta["selection_n"] = int(len(top))
+    if not len(top):
+        return empty, {"status": "unavailable", "reason": "no_common_forecast_rows", **meta}
+    return pd.Series(keys.isin(selected), index=frame.index), {"status": "available", **meta}
 
 
 def metric_block(frame: pd.DataFrame, columns: dict[str, str]) -> dict:
