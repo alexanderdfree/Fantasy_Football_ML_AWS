@@ -2,7 +2,7 @@ name: Client contracts
 
 on:
   pull_request:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "claude/**"]
     paths:
       - "src/contracts/**"
       - "src/serving/**"
