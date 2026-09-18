@@ -1,0 +1,113 @@
+name: CI ROI build comparison
+# Temporary draft experiment; staged to stay within the existing cache budget.
+on:
+  push:
+    branches: [codex/ci-roi-top3]
+    paths:
+      - .github/workflows/ci-roi-benchmark.yml
+      - .github/workflows/_ci-roi-measure.yml
+      - src/analysis/ci_image_cache_benchmark.py
+      - src/batch/Dockerfile.train
+      - .github/workflows/batch-image.yml
+      - .github/workflows/deploy.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  cache-write:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare tiny cache probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-roi-probe"
+          printf 'cache write probe\n' > "$RUNNER_TEMP/ci-roi-probe/value"
+      - uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/ci-roi-probe
+          key: ci-roi-probe-${{ github.run_id }}
+      - name: Verify cache was actually stored
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            count=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ci-roi-probe-$GITHUB_RUN_ID" --jq .total_count)
+            if [ "$count" -gt 0 ]; then exit 0; fi
+            sleep 2
+          done
+          echo '::error::Cache writes unavailable; refusing to benchmark an uncached build as warm.'
+          exit 1
+
+  serving-cold:
+    needs: cache-write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [baseline, candidate]
+        sample: [0]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: serving
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  serving-warm:
+    needs: serving-cold
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [baseline, candidate]
+        sample: [1, 2, 3]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: serving
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  training-candidate-cold:
+    needs: serving-warm
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [candidate]
+        sample: [0]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: training
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  training-candidate-warm:
+    needs: training-candidate-cold
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        variant: [candidate]
+        sample: [1, 2, 3]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: training
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  cleanup:
+    needs: [serving-warm, training-candidate-warm]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Remove experiment branch caches after collecting results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/codex/ci-roi-top3
+          # Cache blobs have content-derived keys; restrict deletion by our
+          # dedicated branch ref, never by a broad repository-wide key prefix.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?ref=$GITHUB_REF&per_page=100" \
+            --jq '.actions_caches[].id' > /tmp/ci-roi-cache-ids
+          while IFS= read -r cache_id; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$cache_id"
+          done < /tmp/ci-roi-cache-ids
