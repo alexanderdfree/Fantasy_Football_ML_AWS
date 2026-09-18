@@ -1,5 +1,6 @@
 """Boundary, provenance, and production-history replay checks; no model training."""
 
+import dataclasses
 import json
 
 import numpy as np
@@ -8,54 +9,30 @@ import pytest
 
 from src.analysis.synthetic_history import (
     HistoryRecipe,
+    consume_source,
     generate_cohort,
     main,
+    validate_history_frame,
     write_cohort,
+)
+from src.analysis.synthetic_history_schema import (
+    POSITION_HISTORY_SCHEMAS,
+    PositionHistorySchema,
+    position_schema,
 )
 from src.features.engineer import build_game_history_arrays
 from src.qb.config import POSITION_CONFIG
+from src.qb.features import get_feature_columns
 
 pytestmark = pytest.mark.unit
 
+STRING_COLUMNS = ["player_id", "position", "season_type", "recent_team", "opponent_team"]
+
 
 @pytest.fixture
-def source():
-    rows = []
-    for player in ("p1", "p2"):
-        for season in (2022, 2023, 2025):
-            for week in (1, 2, 4, 5, 6, 7):
-                row = dict.fromkeys(POSITION_CONFIG.attn_history_stats, 0.0)
-                row.update(
-                    player_id=player,
-                    season=season,
-                    week=week,
-                    position="QB",
-                    season_type="REG",
-                    recent_team="KC",
-                    opponent_team="BUF",
-                    attempts=30,
-                    completions=20,
-                    passing_yards=180 + week * 10 + (20 if player == "p2" else 0),
-                    passing_tds=2,
-                    interceptions=1,
-                    carries=4,
-                    rushing_yards=20,
-                    rushing_tds=0,
-                    fumbles_lost=0,
-                    snap_pct_raw=0.9,
-                    # Deliberately distinctive correlated opaque fields.
-                    qbr_total=week * 10,
-                    pts_added=week,
-                    pass_yards_gained_exp=150 + week,
-                    team_rush_attempts=25,
-                    team_rushing_yards=100,
-                    team_points_scored=24,
-                    opp_team_points_scored=21,
-                    # Must never be copied into generated histories.
-                    rolling_mean_passing_yards_L3=9999,
-                )
-                rows.append(row)
-    return pd.DataFrame(rows)
+def source(qb_source):
+    """The shared prepared-QB fixture under the name these tests were written with."""
+    return qb_source
 
 
 def recipe(**kwargs):
@@ -68,6 +45,7 @@ def test_reproducible_under_input_reordering_and_does_not_mutate_source(source):
     second = generate_cohort(source.sample(frac=1, random_state=9), recipe(mode="block_bootstrap"))
     pd.testing.assert_frame_equal(first.games, second.games)
     pd.testing.assert_frame_equal(first.cases, second.cases)
+    pd.testing.assert_frame_equal(first.context, second.context)
     np.testing.assert_array_equal(first.history, second.history)
     assert first.manifest == second.manifest
     pd.testing.assert_frame_equal(source, before)
@@ -87,7 +65,44 @@ def test_whole_game_signals_survive_together_and_forecast_is_excluded(source, mo
             assert row[column] == donor[column]
         assert row["donor_week"] < cases.loc[row["case_id"], "forecast_week"]
         assert row["donor_season"] < 2024
-    assert cohort.manifest["full_model_input_ready"] is False
+    readiness = cohort.manifest["model_input_readiness"]
+    assert readiness["attn_nn"]["ready"] is True
+    for family in ("ridge", "nn", "lgbm"):
+        assert readiness[family]["ready"] is False
+        assert ("resampled" in readiness[family]["reason"]) is (mode == "block_bootstrap")
+        assert ("truncate" in readiness[family]["reason"]) is (mode == "replay")
+
+
+def test_exact_window_is_a_recipe_guarantee_and_unlocks_flat_families(source):
+    exact = generate_cohort(source, recipe(window="exact"))
+    assert exact.cases["exact_window"].all()
+    assert (exact.cases["real_prior_games"] == 3).all()
+    assert exact.manifest["exact_window_cases"] == 4
+    assert all(entry["ready"] for entry in exact.manifest["model_input_readiness"].values())
+    # Six games per season: only the forecast at the fourth game replays exactly.
+    assert exact.manifest["eligible_windows"] == 4
+    loose = generate_cohort(source, recipe())
+    assert loose.manifest["eligible_windows"] == 12
+    truncated = loose.cases[~loose.cases["exact_window"]]
+    assert (truncated["real_prior_games"] > 3).all()
+    reason = loose.manifest["model_input_readiness"]["ridge"]["reason"]
+    assert reason.startswith(f"{len(truncated)} of {len(loose.cases)} cases truncate")
+
+
+def test_context_is_the_forecast_row_only(source):
+    cohort = generate_cohort(source, recipe(mode="block_bootstrap"))
+    assert list(cohort.context["case_id"]) == list(cohort.cases["case_id"])
+    assert list(cohort.context["case_index"]) == list(range(len(cohort.cases)))
+    assert cohort.manifest["context_columns"] == get_feature_columns()
+    assert not set(cohort.manifest["context_columns"]) & set(POSITION_CONFIG.targets)
+    assert set(cohort.manifest["context_sequence_coupled_columns"]) <= set(get_feature_columns())
+    original = source.set_index(["player_id", "season", "week"], drop=False)
+    for row in cohort.context.to_dict("records"):
+        forecast = original.loc[(row["donor_player_id"], row["donor_season"], row["forecast_week"])]
+        assert row["week"] == row["forecast_week"]
+        assert row["rolling_mean_passing_yards_L3"] == 9999
+        for column in get_feature_columns():
+            assert row[column] == float(forecast[column])
 
 
 def test_replay_matches_production_arrays_for_original_forecast_rows(source):
@@ -142,6 +157,27 @@ def test_history_filter_uses_shared_scoring_and_never_final_forecast_outcomes(so
     assert row.fantasy_points == pytest.approx(row.passing_yards * 0.04 + 8 - 2 + 2)
 
 
+def test_recipe_hash_is_invariant_to_bound_spelling(source):
+    integer = generate_cohort(source, recipe(min_history_ppg=15, max_history_ppg=30))
+    floating = generate_cohort(source, recipe(min_history_ppg=15.0, max_history_ppg=30.0))
+    assert integer.manifest["recipe_sha256"] == floating.manifest["recipe_sha256"]
+    assert list(integer.cases["case_id"]) == list(floating.cases["case_id"])
+    assert integer.manifest["recipe"]["min_history_ppg"] == 15.0
+
+
+def test_consumed_values_hash_ignores_string_dtype_spelling(source, tmp_path):
+    schema = position_schema("QB")
+    seasons = tuple(range(2013, 2024))
+    as_object = source.astype({column: object for column in STRING_COLUMNS})
+    source.to_parquet(tmp_path / "source.parquet", index=False)
+    round_tripped = pd.read_parquet(tmp_path / "source.parquet")
+    hashes = {
+        consume_source(frame, position="QB", donor_seasons=seasons, schema=schema).values_sha256
+        for frame in (source, as_object, round_tripped)
+    }
+    assert len(hashes) == 1
+
+
 def test_unsupported_archetype_is_reported_instead_of_relaxing_recipe(source):
     with pytest.raises(ValueError, match="no eligible donor histories"):
         generate_cohort(source, recipe(min_history_ppg=100))
@@ -158,11 +194,13 @@ def test_unsupported_archetype_is_reported_instead_of_relaxing_recipe(source):
         ({"passing_yards": np.inf}, "infinity"),
         ({"passing_yards": 1e100}, "float32 range"),
         ({"fumbles_lost": np.nan}, "must be observed"),
-        ({"snap_pct_raw": 90}, "fraction"),
-        ({"qbr_total": 101}, "qbr_total"),
-        ({"team_rush_attempts": 3}, "team rushing attempts"),
+        ({"snap_pct_raw": 90}, "snap_pct_raw must be within"),
+        ({"qbr_total": 101}, "qbr_total must be within"),
+        ({"team_rush_attempts": 3}, "carries <= team_rush_attempts"),
         ({"week": 1.5}, "finite integers"),
         ({"player_id": ""}, "nonempty string"),
+        ({"prior_season_mean_passing_yards": np.nan}, "feature columns must be finite"),
+        ({"depth_chart_rank": "starter"}, "feature columns must be numeric"),
     ],
 )
 def test_invalid_donor_data_fails_before_generation(source, change, error):
@@ -176,21 +214,49 @@ def test_invalid_donor_data_fails_before_generation(source, change, error):
 def test_missing_column_and_duplicate_keys_fail(source):
     with pytest.raises(ValueError, match="missing production history columns"):
         generate_cohort(source.drop(columns="qbr_total"), recipe())
+    with pytest.raises(ValueError, match="missing production feature columns"):
+        generate_cohort(source.drop(columns="rolling_mean_passing_yards_L3"), recipe())
     with pytest.raises(ValueError, match="duplicate"):
         generate_cohort(pd.concat([source, source.iloc[:1]]), recipe())
+
+
+def test_validate_history_frame_is_reusable_on_generated_games(source):
+    cohort = generate_cohort(source, recipe())
+    schema = position_schema("QB")
+    validate_history_frame(cohort.games, schema, stage="generated")
+    broken = cohort.games.copy()
+    broken.loc[0, "completions"] = broken.loc[0, "attempts"] + 1
+    with pytest.raises(ValueError, match="generated violates completions <= attempts"):
+        validate_history_frame(broken, schema, stage="generated")
+    with pytest.raises(ValueError, match="generated is missing schema columns"):
+        validate_history_frame(cohort.games.drop(columns="sacks"), schema, stage="generated")
+
+
+def test_schema_registry_matches_configuration_and_rejects_foreign_columns():
+    schema = POSITION_HISTORY_SCHEMAS["QB"]
+    assert schema.history_columns == tuple(POSITION_CONFIG.attn_history_stats)
+    assert schema.targets == tuple(POSITION_CONFIG.targets)
+    assert schema.feature_columns == tuple(get_feature_columns())
+    assert set(schema.count_columns) <= set(schema.validated_columns)
+    with pytest.raises(ValueError, match="outside its history and targets"):
+        dataclasses.replace(schema, relations=(("carries", "not_a_column"),))
+    with pytest.raises(ValueError, match="sequence-coupled context"):
+        dataclasses.replace(schema, sequence_coupled_context=("qbr_total",))
+    assert isinstance(schema, PositionHistorySchema)
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
         {"position": "RB"},
-        {"schema_version": 2},
+        {"schema_version": 1},
         {"cases": 0},
         {"cases": True},
         {"seed": -1},
         {"history_games": 18},
         {"block_games": 9, "mode": "block_bootstrap"},
         {"mode": "scale"},
+        {"window": "sometimes"},
         {"donor_seasons": [2025]},
         {"donor_seasons": 2022},
         {"donor_seasons": [2022, 2022]},
@@ -212,16 +278,31 @@ def test_artifacts_round_trip_hashes_no_overwrite_and_cli(tmp_path, source, caps
     config.write_text(json.dumps({"name": "cli", "cases": 3, "history_games": 3}))
     output = tmp_path / "run"
     assert main(["--source", str(src), "--recipe", str(config), "--output", str(output)]) == 0
-    assert json.loads(capsys.readouterr().out)["cases"] == 3
+    stdout = json.loads(capsys.readouterr().out)
+    assert stdout["cases"] == 3
+    cases = pd.read_parquet(output / "cases.parquet")
+    assert stdout["exact_window_cases"] == int(cases["exact_window"].sum())
+    assert stdout["model_input_readiness"]["attn_nn"] is True
+    assert stdout["model_input_readiness"]["ridge"] is bool(cases["exact_window"].all())
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["source_file_sha256"] == hashlib.sha256(src.read_bytes()).hexdigest()
+    assert set(manifest["files"]) == {
+        "games.parquet",
+        "cases.parquet",
+        "context.parquet",
+        "history.npz",
+    }
     for name, digest in manifest["files"].items():
         assert hashlib.sha256((output / name).read_bytes()).hexdigest() == digest
     with np.load(output / "history.npz", allow_pickle=False) as arrays:
         assert arrays["history"].shape[0] == 3
     assert len(pd.read_parquet(output / "games.parquet")) == 9
+    assert len(pd.read_parquet(output / "context.parquet")) == 3
     with pytest.raises(FileExistsError):
         write_cohort(generate_cohort(source, recipe()), output)
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--source", str(src), "--recipe", str(config), "--output", str(output)])
+    assert exit_info.value.code == 2
     assert not list(tmp_path.glob(".run-*"))
 
 

@@ -130,7 +130,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D26 | [Coherent training-data releases and isolated live overlays](adr/0026-coherent-training-data-releases.md) | Accepted |
 | D27 | [Versioned prediction, execution and serving contracts](adr/0027-versioned-prediction-and-execution-contracts.md) | Accepted |
 | D28 | [Scheduled data maintenance and inference](adr/0028-scheduled-data-maintenance.md) | Accepted; opt-in |
-| D29 | [Synthetic player-history diagnostics](adr/0029-synthetic-player-history-diagnostics.md) | Proposed |
+| D29 | [Synthetic player-history diagnostics](adr/0029-synthetic-player-history-diagnostics.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 
