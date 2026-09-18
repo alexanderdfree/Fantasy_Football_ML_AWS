@@ -1,5 +1,11 @@
 # Fixed archive — index
 
+### [FIXED] Nested (K) served-kwargs builder dropped `nn_head_hidden_overrides` the training factory consumes
+[Read the incident record](fixed-archive/audit-1499-nested-served-kwargs-head-overrides.md).
+
+### [FIXED] DST `build_data` fabricated team-week rows for unplayed fixtures
+[Read the incident record](fixed-archive/audit-1499-dst-unplayed-fixtures.md).
+
 ### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
 [Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
 ### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
