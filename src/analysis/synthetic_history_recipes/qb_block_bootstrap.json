@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "qb-eight-game-block-bootstrap",
+  "position": "QB",
+  "seed": 42,
+  "cases": 20,
+  "history_games": 8,
+  "mode": "block_bootstrap",
+  "block_games": 3,
+  "min_history_ppg": 15.0,
+  "max_history_ppg": 30.0
+}
