@@ -83,6 +83,17 @@ def test_consensus_cohort_is_selected_before_outcome_availability():
     assert all(value["n"] == 23 for value in subsets["weekly_consensus_top24"]["WR"].values())
 
 
+def test_source_with_forecasts_only_on_ungraded_rows_cannot_blank_the_position():
+    data = records()
+    data.loc[:4, "actual_receptions"] = np.nan  # ungraded rows
+    data["espn_comparison_pred_ppr"] = np.nan
+    data.loc[:4, "espn_comparison_pred_ppr"] = 1.0  # ESPN forecasts only where nothing is graded
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["all"]["WR"]
+    assert cell["status"] == "available" and cell["n"] == 25
+    assert "espn" not in cell["sources"] and cell["unavailable_sources"] == ["espn"]
+
+
 def test_wholly_unavailable_source_is_named_not_silently_dropped():
     data = records()
     data["espn_comparison_pred_ppr"] = np.nan
