@@ -45,6 +45,8 @@ The serving layer turns this into a user-facing capability: as of PR #153 (`a533
 
 ## Changelog
 
+- **2026-09-18** — Add opt-in model-selection machinery (ported from PR #1568) with production defaults unchanged for all six positions: `ridge_selection_metric="raw_mae"` (independent per-target CV MAE), `nn_selection_metric="weighted_mae"` (the loss-weighted validation MAE early-stopping rule) and `lgbm_selection_metric="per_target"` (per-head early stopping). The `fantasy_rmse_ppr` selectors — validation PPR fantasy-point RMSE through the canonical aggregator for NN checkpoints, a bounded joint alpha search for Ridge and a joint tree-prefix search for LightGBM — plus the per-epoch `val_rmse_*`/`val_fantasy_*` history keys and the `checkpoint_selection`/`selection_info` provenance are exercised only by tests and the `src/tuning/ab_checkpoint_metric.py` / `src/tuning/ab_classical_selection.py` A/B specs. Plateau scheduling and the pruning callback keep consuming `avg_val_loss`. An RB production run (CPU eager, seed 42) is bit-identical to `origin/main`. Any production flip requires the dual-metric (MAE and RMSE) + protected-cohort gate on matched multi-seed runs; the 36-cell L4/A10G evidence at `s3://ff-predictor-training/ab_runs/rmse-readiness-20260911/full-rmse-e836b79/` did not clear it (attention-NN QB/WR worse on both metrics and both protected cohorts in 3/3 seeds). (PR pending)
+
 - **2026-09-10** — Reconcile D/ST defensive/special-teams touchdowns and punt
   blocks from complete regular-season PBP; distinguish offensive own-fumble
   touchdowns and tries, require completed-game coverage, and retain the
