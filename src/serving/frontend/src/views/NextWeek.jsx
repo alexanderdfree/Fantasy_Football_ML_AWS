@@ -9,6 +9,7 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { fmt } from "../lib/format.js";
 import { upcomingWeekStore, projectionFreshnessNotice, projectionCoverageNotice } from "../lib/upcomingWeek.js";
+import { meetsMinimumProjection } from "../lib/predictionFilters.js";
 import { PillGroup, PosBadge, PlayerCell, SortableTh } from "../components/common.jsx";
 import { AutoFitFilterBar, AGE_BUCKETS, ageBucketFor } from "../components/FilterBar.jsx";
 import { TeamLabel, MatchupLabel } from "../components/TeamLabel.jsx";
@@ -134,11 +135,7 @@ export function NextWeekView({ scoring, search, onPlayer }) {
             if (age !== "ALL" && !bucket.test(p.age)) return false;
             if (rookieOnly && p.is_rookie !== true) return false;
             if (q && !(p.name || "").toLowerCase().includes(q)) return false;
-            if (!isNaN(minVal)) {
-                const preds = [p.nn_pred, p.attn_nn_pred, p.lgbm_pred, p.nflcom_pred, p.rotowire_pred, p.espn_pred]
-                    .filter((v) => v != null);
-                if (!preds.length || Math.max(...preds) < minVal) return false;
-            }
+            if (!meetsMinimumProjection(p, minVal)) return false;
             return true;
         });
         return filtered.slice().sort((a, b) => {

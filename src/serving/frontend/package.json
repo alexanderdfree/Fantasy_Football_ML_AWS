@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:unit": "node --test tests/*.test.js"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

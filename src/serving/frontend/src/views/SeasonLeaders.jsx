@@ -63,7 +63,7 @@ function loadVisibleColumnKeys() {
         const parsed = raw ? JSON.parse(raw) : null;
         if (Array.isArray(parsed)) {
             const valid = parsed.filter((k) => COLUMN_KEYS.has(k));
-            if (valid.length) return new Set(valid);
+            if (parsed.length === 0 || valid.length) return new Set(valid);
         }
     } catch (_e) { /* storage may be disabled or stale JSON may be present */ }
     return new Set(TOGGLEABLE_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key));
