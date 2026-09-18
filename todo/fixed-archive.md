@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] WR inheritance magnitude collapsed to a binary flag under z-score clipping
+[Read the incident record](fixed-archive/wr-magnitude-scaling-2026-09.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 

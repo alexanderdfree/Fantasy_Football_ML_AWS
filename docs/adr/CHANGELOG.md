@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-18 · Propose a training-fitted magnitude-preserving NN scaler for WR inherited opportunity, isolated from #1575 and held behind the dual-metric gate · (PR pending) · → ADR-0005
+
 - 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
 
 - 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR #1592) · → ADR-0029
