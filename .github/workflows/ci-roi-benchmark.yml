@@ -2,18 +2,45 @@ name: CI ROI build comparison
 
 # Temporary draft-only experiment. Remove after retaining measurement evidence.
 on:
-  pull_request:
-    types: [opened, synchronize, edited]
+  push:
+    branches: [codex/ci-roi-top3]
+    paths:
+      - .github/workflows/ci-roi-benchmark.yml
+      - src/analysis/ci_image_cache_benchmark.py
+      - src/batch/Dockerfile.train
+      - .github/workflows/batch-image.yml
+      - .github/workflows/deploy.yml
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  cache-write:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare tiny cache probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-roi-probe"
+          printf 'cache write probe\n' > "$RUNNER_TEMP/ci-roi-probe/value"
+      - uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/ci-roi-probe
+          key: ci-roi-probe-${{ github.run_id }}
+      - name: Verify cache was actually stored
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            count=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ci-roi-probe-$GITHUB_RUN_ID" --jq .total_count)
+            if [ "$count" -gt 0 ]; then exit 0; fi
+            sleep 2
+          done
+          echo '::error::Cache writes unavailable; refusing to benchmark an uncached build as warm.'
+          exit 1
+
   cold:
-    if: >-
-      ${{ github.head_ref == 'codex/ci-roi-top3' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          contains(github.event.pull_request.body, '<!-- measure-ci-roi -->') }}
+    needs: cache-write
     name: ${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
@@ -49,12 +76,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           path: harness
           persist-credentials: false
       - uses: actions/checkout@v7
         with:
-          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.event.pull_request.head.sha }}
+          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.sha }}
           path: source
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
@@ -127,10 +154,6 @@ jobs:
           retention-days: 14
   warm:
     needs: cold
-    if: >-
-      ${{ github.head_ref == 'codex/ci-roi-top3' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          contains(github.event.pull_request.body, '<!-- measure-ci-roi -->') }}
     name: ${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
@@ -214,12 +237,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           path: harness
           persist-credentials: false
       - uses: actions/checkout@v7
         with:
-          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.event.pull_request.head.sha }}
+          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.sha }}
           path: source
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
