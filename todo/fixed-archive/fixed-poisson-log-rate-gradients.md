@@ -28,11 +28,7 @@
   positions' training/serving checkpoint round trips, and stacked execution.
   The first full CPU RB seed-42 comparison changed attention FP MAE
   4.028 → 4.025 and base-NN FP MAE 4.114 → 4.119, with identical Ridge output
-  metrics. The WR 3-seed L4 component A/B (`ab_runs/wr-components-20260911`,
-  `poisson_only` arm) read attention ΔMAE −0.020 ± 0.066 and ΔRMSE +0.005 ±
-  0.029, base-NN ΔMAE +0.006 ± 0.029 and ΔRMSE −0.016 ± 0.016 — neutral inside
-  the seed band, not an improvement on both metrics — so the default stays
-  held behind the gate; the isolated PR carries only a CPU seed-42 RB smoke.
+  metrics. Production GPU and multi-seed validation is pending before merge.
 - **Lesson:** A head can pass shape, finite-output and non-negativity tests while
   being unable to learn positive events. Test corrective gradients and track
   sparse-head bias/zero fraction alongside full fantasy error. Sparse-event
