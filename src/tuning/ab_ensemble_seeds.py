@@ -381,11 +381,11 @@ def _optimizer_hyperparams(trainer) -> dict:
 
 
 def stacked_val_losses(template, params, buffers, criterion, val_loader, device) -> list[float]:
-    """Per-member combined val loss (mean over val batches), eval mode.
+    """Per-member combined val loss (mean over observations), eval mode.
 
     Mirrors the trainer's val pass semantics (``model.eval()`` + no_grad +
-    the combined criterion averaged over batches) so a stacked tune trial
-    reports the same quantity per member that an eager trial reports.
+    the combined criterion weighted by each batch's sample count) so a stacked
+    tune trial reports the same quantity per member that an eager trial reports.
     """
 
     def member_loss_eval(p, b, feats, y):
@@ -395,17 +395,19 @@ def stacked_val_losses(template, params, buffers, criterion, val_loader, device)
     veval = torch.vmap(member_loss_eval, in_dims=(0, 0, None, None))
     template.eval()
     totals = None
-    n_batches = 0
+    n_samples = 0
     with torch.no_grad():
         for batch in val_loader:
             feats, y = _batch_to_device(batch, device)
             losses = veval(params, buffers, feats, y)
-            totals = losses if totals is None else totals + losses
-            n_batches += 1
+            n_batch_samples = feats[0].shape[0]
+            weighted_losses = losses * n_batch_samples
+            totals = weighted_losses if totals is None else totals + weighted_losses
+            n_samples += n_batch_samples
     template.train()
-    if totals is None or n_batches == 0:
+    if totals is None or n_samples == 0:
         raise RuntimeError("stacked val pass saw no batches — empty val loader?")
-    return [float(v) for v in (totals / n_batches).cpu()]
+    return [float(v) for v in (totals / n_samples).cpu()]
 
 
 def _check_training_loader(train_loader):

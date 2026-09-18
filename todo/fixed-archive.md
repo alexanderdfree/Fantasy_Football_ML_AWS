@@ -54,6 +54,8 @@
 ### [TESTED, REJECTED] B2 team PROE / pace season-to-date features (expert-edge Phase 2 RB-ordering lever)
 [Read the incident record](fixed-archive/proe-pace-rejection-2026-07.md).
 
+### [FIXED] Validation loss averaged batch means, over-weighting a short final batch
+[Read the incident record](fixed-archive/validation-sample-weighting-2026-09.md).
 ### [TESTED, REJECTED] Week-1 empty-history calibration arms (career games-gap, implied-total×no-history, RB returning re-add) — no arm clears the gates; QB attention destabilizes; the measurement reframes the cohort to QB/K-only
 [Read the incident record](fixed-archive/week1-games-gap-rejection-2026-07.md).
 
