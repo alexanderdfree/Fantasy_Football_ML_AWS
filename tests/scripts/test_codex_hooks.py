@@ -684,6 +684,8 @@ class TestCodexHooks:
         codex_home = tmp_path / "codex-home"
         (main / "data/raw").mkdir(parents=True)
         (main / "data/splits").mkdir(parents=True)
+        (main / ".cache/features/QB").mkdir(parents=True)
+        (main / ".cache/features/QB/deadbeef.pkl").write_text("CACHED")
 
         result = _run_fresh_worktree(["--print-path"], main, codex_home)
 
@@ -696,6 +698,9 @@ class TestCodexHooks:
         assert (target / "data/raw").resolve() == main / "data/raw"
         assert (target / "data/splits").is_symlink()
         assert (target / "data/splits").resolve() == main / "data/splits"
+        assert (target / ".cache/features").is_symlink()  # shared content-addressed cache
+        assert (target / ".cache/features").resolve() == main / ".cache/features"
+        assert (target / ".cache/features/QB/deadbeef.pkl").read_text() == "CACHED"
         assert not (target / ".venv").exists()
 
     def test_fresh_worktree_creates_when_codex_worktree_is_dirty(

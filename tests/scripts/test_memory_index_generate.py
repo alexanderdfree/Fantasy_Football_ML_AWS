@@ -213,6 +213,102 @@ def test_hopeless_over_cap_still_emits_everything_and_shouts(tmp_path: Path) -> 
     assert any(">= cap" in w for w in warnings)
 
 
+def test_mixed_curated_and_fallback_over_cap_trims_both_and_warns(tmp_path: Path) -> None:
+    # Fallback lines share the same uniform cap (never a bare "…" while room remains) and a
+    # trim that lands on fallback lines is still reported — the old near-cap warning used to
+    # cover that mid-migration state; silence there would hide a shortened index.
+    for i in range(150):
+        _write(tmp_path, f"c{i:03d}.md", index_line=f"[C{i}](c{i:03d}.md) — " + "y" * 150)
+    for i in range(150):
+        _write(tmp_path, f"f{i:03d}.md", description="x" * 150, name=f"F{i}")
+    text, warnings = memory_index.generate_index(str(tmp_path))
+    lines = text.splitlines()
+    assert len(lines) == 300
+    assert len(text.encode("utf-8")) < memory_index.CAP_BYTES
+    assert not any(ln.endswith(" — …") for ln in lines)  # no bare-ellipsis hooks
+    assert all(memory_index._LINK_RE.search(ln) for ln in lines)
+    assert any("300 index line(s) trimmed" in w and "(150 curated)" in w for w in warnings)
+
+
+def test_fallback_only_over_cap_still_warns_about_trimming(tmp_path: Path) -> None:
+    for i in range(200):
+        _write(tmp_path, f"m{i:03d}.md", description="y" * 400, name=f"M{i}")
+    _, warnings = memory_index.generate_index(str(tmp_path))
+    assert any("trimmed" in w and "(0 curated)" in w for w in warnings)
+
+
+def test_prefix_outlier_among_normal_lines_keeps_link_and_fits(tmp_path: Path) -> None:
+    # One line whose link prefix alone exceeds the computed cap: its hook collapses to "…",
+    # the link survives, every other line is trimmed normally, and the total still fits.
+    long_title = "T" * 400
+    _write(tmp_path, "outlier.md", index_line=f"[{long_title}](outlier.md) — hook text")
+    for i in range(300):
+        _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "y" * 150)
+    text, _ = memory_index.generate_index(str(tmp_path))
+    outlier = next(ln for ln in text.splitlines() if "(outlier.md)" in ln)
+    assert outlier == f"- [{long_title}](outlier.md) — …"
+    assert len(text.encode("utf-8")) < memory_index.CAP_BYTES
+
+
+def test_size_inside_margin_band_is_trimmed_below_target(tmp_path: Path) -> None:
+    # A full index between the trim target and the hard cap must be trimmed to <= target,
+    # not left in the margin band the loader is given no guarantee about.
+    target = memory_index.CAP_BYTES - memory_index.CAP_MARGIN_BYTES
+    hook = "y" * 200
+    per_line = len(f"- [M000](m000.md) — {hook}\n".encode())
+    n = (target // per_line) + 1  # just over target, well under the cap
+    for i in range(n):
+        _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i:03d}](m{i:03d}.md) — {hook}")
+    full = n * per_line
+    assert target < full < memory_index.CAP_BYTES, (target, full)
+    text, warnings = memory_index.generate_index(str(tmp_path))
+    assert len(text.encode("utf-8")) <= target
+    assert "…" in text and any("trimmed" in w for w in warnings)
+
+
+def test_multibyte_hooks_never_split_a_character_at_the_cut(tmp_path: Path) -> None:
+    for i in range(200):
+        _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "日本語—é" * 40)
+    text, _ = memory_index.generate_index(str(tmp_path))
+    raw = text.encode("utf-8")
+    assert len(raw) < memory_index.CAP_BYTES
+    raw.decode("utf-8")  # strict: a split multibyte char would raise
+    assert all(ln.endswith("…") for ln in text.splitlines())
+
+
+def test_main_writes_bare_newlines_even_when_stdout_translates(tmp_path: Path) -> None:
+    # The cap accounting counts one byte per newline; on native Windows text-mode stdout would
+    # write "\r\n" and silently inflate the file past what was measured.
+    import io
+    import sys
+
+    _write(tmp_path, "a.md", index_line="[A](a.md) — hook")
+    buf = io.BytesIO()
+    fake = io.TextIOWrapper(buf, encoding="utf-8", newline="\r\n", write_through=True)
+    real = sys.stdout
+    sys.stdout = fake
+    try:
+        assert memory_index.main(["memory_index.py", "generate", str(tmp_path)]) == 0
+    finally:
+        sys.stdout = real
+    fake.flush()
+    assert buf.getvalue() == b"- [A](a.md) \xe2\x80\x94 hook\n"
+
+
+def test_backfill_accepts_a_genuine_ellipsis_ending_line(tmp_path: Path) -> None:
+    # A hook that really ends in "…" (never trimmed) matches the file's own full rendering,
+    # so it is usable — both for a curated file (idempotent) and a description-only file.
+    _write(tmp_path, "keep.md", index_line="[Keep](keep.md) — trails off…")
+    _write(tmp_path, "desc.md", description="also trails off…", name="Desc")
+    text, _ = memory_index.generate_index(str(tmp_path))
+    (tmp_path / "MEMORY.md").write_text(text, encoding="utf-8")
+    changed, missing = memory_index.backfill(str(tmp_path))
+    assert sorted(changed) == ["desc.md", "keep.md"]
+    assert missing == []
+    again, _ = memory_index.generate_index(str(tmp_path))
+    assert again == text
+
+
 def test_backfill_skips_generator_trimmed_lines(tmp_path: Path) -> None:
     # A "…"-terminated index line is a generator artifact, not a curated hook; writing it back
     # into index_line would permanently lose the full text. It must be reported, not applied.

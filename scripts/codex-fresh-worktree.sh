@@ -127,7 +127,7 @@ else
     source_dir="$main_worktree/$rel_dir"
     dest_dir="$target/$rel_dir"
     if [ -e "$source_dir" ] && [ ! -e "$dest_dir" ]; then
-      mkdir -p "$(dirname "$dest_dir")"
+      mkdir -p "$(dirname "$dest_dir")" 2>/dev/null || continue  # best-effort, like ln below
       ln -s "$source_dir" "$dest_dir" || true
     fi
   done
