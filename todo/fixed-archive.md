@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Hurdle count likelihoods lost probability mass and gradient direction at low positive rates
+[Read the incident record](fixed-archive/count-likelihood-precision-2026-09.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 
