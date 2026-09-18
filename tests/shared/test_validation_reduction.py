@@ -8,6 +8,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
+from src.shared.aggregate_targets import POSITION_TARGET_MAP, predictions_to_fantasy_points
 from src.shared.training import (
     MultiHeadTrainer,
     MultiTargetDataset,
@@ -15,9 +16,13 @@ from src.shared.training import (
     _GPUResidentBatcher,
     _GraphedValPass,
 )
-from src.tuning.ab_ensemble_seeds import stack_models, stacked_val_losses, train_stacked
+from src.tuning.ab_ensemble_seeds import stack_models, stacked_val_rmse, train_stacked
 
 pytestmark = pytest.mark.unit
+
+# The stacked report scores PPR fantasy points, so its probes emit a real
+# position's target set; the trainer probes below keep synthetic heads.
+_RB_TARGETS = tuple(POSITION_TARGET_MAP["RB"])
 
 
 class _ProbeModel(nn.Module):
@@ -37,6 +42,46 @@ def _loader(values, batch_size, targets=("a",), kind="resident"):
         dataset = MultiTargetDataset(x.numpy(), {name: value.numpy() for name, value in y.items()})
         return DataLoader(dataset, batch_size=batch_size, shuffle=False)
     return _GPUResidentBatcher((x,), y, batch_size, shuffle=False, drop_last=False)
+
+
+def _ppr_points_per_unit(targets):
+    """PPR points one unit of probe input scores when target ``i`` predicts ``i + 1``."""
+    unit = {name: np.array([float(i + 1)]) for i, name in enumerate(targets)}
+    return abs(float(predictions_to_fantasy_points("RB", unit)[0]))
+
+
+def _stacked_cfg():
+    return {
+        "scheduler_type": "cosine_warm_restarts",
+        "cosine_t0": 10,
+        "cosine_t_mult": 1,
+        "cosine_eta_min": 0.0,
+    }
+
+
+def _stacked_captures(selection_metric="fantasy_rmse_ppr"):
+    criterion = MultiTargetLoss(
+        target_names=list(_RB_TARGETS),
+        loss_weights=dict.fromkeys(_RB_TARGETS, 1.0),
+        head_losses=dict.fromkeys(_RB_TARGETS, "mse"),
+    )
+    captures = []
+    for gain in (1.0, 2.0):
+        model = _ProbeModel(_RB_TARGETS, gain=gain)
+        captures.append(
+            {
+                "trainer": SimpleNamespace(
+                    model=model,
+                    criterion=criterion,
+                    optimizer=torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.0),
+                    selection_metric=selection_metric,
+                    selection_position="RB",
+                ),
+                "train_loader": _loader([0, 0, 0, 0], 2, _RB_TARGETS),
+                "val_loader": _loader([1, 1, 1, 10], 3, _RB_TARGETS),
+            }
+        )
+    return captures
 
 
 def _trainer(weights, callback=None):
@@ -71,13 +116,15 @@ def test_actual_trainer_history_callback_and_plateau_use_sample_mean(kind, batch
     # Per-observation squared errors are 1, 1, 1, 100 for head a.
     expected = sum(weight * 25.75 * (i + 1) ** 2 for i, weight in enumerate(weights.values()))
     assert history["val_loss"] == pytest.approx([expected])
-    assert callbacks == [(0, pytest.approx(expected))]
     assert trainer.scheduler.best == pytest.approx(expected)
     for i, target in enumerate(weights):
         assert history[f"val_loss_{target}"] == pytest.approx([25.75 * (i + 1) ** 2])
         assert history[f"val_mae_{target}"] == pytest.approx([3.25 * (i + 1)])
     weighted_mae = sum(weight * 3.25 * (i + 1) for i, weight in enumerate(weights.values()))
     assert trainer.best_val_metric == pytest.approx(weighted_mae / sum(weights.values()))
+    # The pruning callback receives the checkpoint-selection score (the default
+    # loss-weighted validation MAE, also a per-observation mean), not the loss.
+    assert callbacks == [(0, pytest.approx(weighted_mae / sum(weights.values())))]
 
 
 @pytest.mark.parametrize("batch_size", [2, 3, 4])
@@ -102,15 +149,16 @@ def test_graph_prefix_and_eager_tail_use_sample_counts_on_cpu(batch_size):
 
 
 @pytest.mark.parametrize("batch_size", [2, 3, 4, 8])
-def test_stacked_validation_uses_sample_mean_for_each_member(batch_size):
-    models = [_ProbeModel(gain=1.0), _ProbeModel(gain=2.0)]
+def test_stacked_validation_pools_rows_for_each_member(batch_size):
+    """Each member's PPR RMSE pools every validation row before the root, so the
+    stacked report does not depend on how the loader partitions the rows."""
+    models = [_ProbeModel(_RB_TARGETS, gain=1.0), _ProbeModel(_RB_TARGETS, gain=2.0)]
     template, params, buffers = stack_models(models, torch.device("cpu"))
-    criterion = MultiTargetLoss(
-        target_names=["a"], loss_weights={"a": 1.0}, head_losses={"a": "mse"}
-    )
-    val = _loader([1, 1, 1, 10], batch_size)
-    actual = stacked_val_losses(template, params, buffers, criterion, val, torch.device("cpu"))
-    assert actual == pytest.approx([25.75, 103.0])
+    val = _loader([1, 1, 1, 10], batch_size, _RB_TARGETS)
+    actual = stacked_val_rmse(template, params, buffers, "RB", val, torch.device("cpu"))
+    # Per-observation fantasy-point errors are gain * unit * [1, 1, 1, 10].
+    unit = _ppr_points_per_unit(_RB_TARGETS)
+    assert actual == pytest.approx([np.sqrt(25.75) * unit, 2 * np.sqrt(25.75) * unit])
     assert template.training
     assert all(parameter.grad is None for parameter in params.values())
 
@@ -121,46 +169,41 @@ def test_empty_validation_preserves_ordinary_and_stacked_contracts():
     val = _loader([], 3)
     history = trainer.train(_loader([0, 0], 2), val, 1)
     assert history["val_loss"] == history["val_loss_a"] == [0.0]
-    assert callbacks == [(0, 0.0)]
     assert np.isinf(history["val_mae_a"][0])
+    # The selection score (weighted validation MAE) is infinite without rows,
+    # and that is what the pruning callback now receives.
+    assert callbacks == [(0, float("inf"))]
     template, params, buffers = stack_models([_ProbeModel()], torch.device("cpu"))
     with pytest.raises(RuntimeError, match="empty val loader"):
-        stacked_val_losses(template, params, buffers, trainer.criterion, val, torch.device("cpu"))
+        stacked_val_rmse(template, params, buffers, "RB", val, torch.device("cpu"))
     assert template.training
 
 
-def test_stacked_epoch_callback_reports_mean_of_member_sample_losses():
-    criterion = MultiTargetLoss(
-        target_names=["a"], loss_weights={"a": 1.0}, head_losses={"a": "mse"}
-    )
-    captures = []
-    for gain in (1.0, 2.0):
-        model = _ProbeModel(gain=gain)
-        captures.append(
-            {
-                "trainer": SimpleNamespace(
-                    model=model,
-                    criterion=criterion,
-                    optimizer=torch.optim.AdamW(model.parameters(), lr=0.01, weight_decay=0.0),
-                ),
-                "train_loader": _loader([0, 0, 0, 0], 2),
-                "val_loader": _loader([1, 1, 1, 10], 3),
-            }
-        )
+def test_stacked_epoch_callback_reports_mean_of_member_rmses():
     callbacks = []
     train_stacked(
-        captures,
-        {
-            "scheduler_type": "cosine_warm_restarts",
-            "cosine_t0": 10,
-            "cosine_t_mult": 1,
-            "cosine_eta_min": 0.0,
-        },
+        _stacked_captures(),
+        _stacked_cfg(),
         torch.device("cpu"),
         1,
         epoch_callback=lambda epoch, value: callbacks.append((epoch, value)),
     )
-    assert callbacks == [(0, pytest.approx((25.75 + 103.0) / 2))]
+    # Each member's RMSE pools all four rows (a batch of 3 plus a batch of 1);
+    # the per-epoch report is the mean of the member RMSEs, not a pooled RMSE.
+    unit = _ppr_points_per_unit(_RB_TARGETS)
+    assert callbacks == [(0, pytest.approx((1.0 + 2.0) * np.sqrt(25.75) * unit / 2))]
+
+
+def test_stacked_epoch_callback_requires_fantasy_rmse_selection():
+    """The stacked report is PPR RMSE, so the captured trainers must select on it."""
+    with pytest.raises(ValueError, match="nn_selection_metric"):
+        train_stacked(
+            _stacked_captures(selection_metric="weighted_mae"),
+            _stacked_cfg(),
+            torch.device("cpu"),
+            1,
+            epoch_callback=lambda epoch, value: None,
+        )
 
 
 def test_validation_partition_does_not_change_training_gradients_or_checkpoint():

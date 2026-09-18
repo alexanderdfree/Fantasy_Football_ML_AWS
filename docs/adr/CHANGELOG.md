@@ -8,6 +8,8 @@
 
 - 2026-09-18 · Training-pipeline baseline, ranking, backtest and cohort reports now use the same certified shared-component truth as serving/analysis, with season-aware weekly slates · (PR pending, extracted from #1565) · → ADR-0024
 
+- 2026-09-18 · Optimize NN (eager/stacked/history) and LightGBM tuning on validation PPR fantasy-point RMSE in new study namespaces (`scheduler_v3_fp_rmse_ppr_v1*`, `history_v3_fp_rmse_ppr_v1*`, `lgbm_ppr_rmse_v1*`; the `scheduler_v2*`/`scheduler_v3*`, `history_v2*`/`history_v3*` and `lgbm_seedavg_v1*` studies are orphaned, not migrated) and aggregate the namespaces the retune workflow submits; production selectors unchanged · (PR pending) · → ADR-0015
+
 - 2026-09-18 · Replay QB synthetic cohorts against saved checkpoints with exported forecast context, per-family readiness and recorded responses · (PR #1590) · → ADR-0029
 
 - 2026-09-17 · Extract verified ECR digest pins for isolated A/B images while retaining source-SHA compatibility · (PR #1584) · → ADR-0020

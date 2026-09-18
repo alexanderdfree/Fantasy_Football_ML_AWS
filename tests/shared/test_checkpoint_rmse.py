@@ -175,9 +175,10 @@ def test_fantasy_selector_restores_ppr_winner_but_keeps_loss_driven_hooks(patien
     assert selection["score"] == 2.0
     assert selection["validation_metrics"]["val_fantasy_rmse_standard"] == 0.0
     assert selection["validation_metrics"]["val_fantasy_rmse_half_ppr"] == 1.0
-    # The pruning callback and the plateau scheduler keep consuming the mixed
-    # validation loss exactly as before; only checkpoint selection changed.
-    assert reports == list(enumerate(history["val_loss"]))
+    # The pruning callback receives the selection score (a tuner prunes on
+    # the quantity it selects on); the plateau scheduler keeps consuming the
+    # mixed validation loss exactly as before.
+    assert reports == list(enumerate(history["val_selection_metric"]))
     assert trainer.scheduler.seen == history["val_loss"]
     assert history["val_loss"] != history["val_selection_metric"]
 
