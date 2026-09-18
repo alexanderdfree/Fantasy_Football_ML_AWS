@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Gated hurdle head reported the untruncated NB mean as the reception expectation
+[Read the incident record](fixed-archive/ztnb-reception-expectation-2026-09.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 

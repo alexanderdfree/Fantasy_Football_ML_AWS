@@ -237,6 +237,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -244,6 +245,7 @@
         "gated",
         "gated_targets",
         "head_hidden",
+        "head_losses",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -259,7 +261,8 @@
       ],
       "head_hidden": 32,
       "head_hidden_overrides": {},
-      "dropout": 0.2
+      "dropout": 0.2,
+      "correct_ztnb_mean": true
     },
     "loss_heads": {
       "head_losses": {
@@ -550,6 +553,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -558,6 +562,7 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -576,7 +581,8 @@
       "head_hidden_overrides": {
         "receptions": 64
       },
-      "dropout": 0.15
+      "dropout": 0.15,
+      "correct_ztnb_mean": true
     },
     "loss_heads": {
       "head_losses": {
@@ -870,6 +876,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -878,6 +885,7 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -895,7 +903,8 @@
       "head_hidden_overrides": {
         "receptions": 64
       },
-      "dropout": 0.2
+      "dropout": 0.2,
+      "correct_ztnb_mean": true
     },
     "loss_heads": {
       "head_losses": {
@@ -1168,6 +1177,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -1176,6 +1186,7 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -1194,7 +1205,8 @@
       "head_hidden_overrides": {
         "receptions": 32
       },
-      "dropout": 0.3
+      "dropout": 0.3,
+      "correct_ztnb_mean": true
     },
     "loss_heads": {
       "head_losses": {
@@ -1368,7 +1380,8 @@
       ],
       "head_hidden": 16,
       "head_hidden_overrides": {},
-      "dropout": 0.25
+      "dropout": 0.25,
+      "correct_ztnb_mean": true
     },
     "loss_heads": {
       "head_losses": {
@@ -1566,6 +1579,7 @@
         "attn_dropout",
         "backbone_layers",
         "condition_queries_on_static",
+        "correct_ztnb_mean",
         "d_model",
         "dropout",
         "encoder_hidden_dim",
@@ -1574,6 +1588,7 @@
         "gated_targets",
         "head_hidden",
         "head_hidden_overrides",
+        "head_losses",
         "max_seq_len",
         "n_attn_heads",
         "no_history_embedding",
@@ -1597,7 +1612,8 @@
         "special_teams_tds": 16,
         "yards_allowed": 48
       },
-      "dropout": 0.3
+      "dropout": 0.3,
+      "correct_ztnb_mean": true
     },
     "loss_heads": {
       "head_losses": {

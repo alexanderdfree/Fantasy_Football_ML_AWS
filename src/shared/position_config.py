@@ -175,6 +175,8 @@ class PositionConfig:
     huber_deltas: dict[str, float] = field(default_factory=dict)
     poisson_targets: list[str] = field(default_factory=list)
     gated_targets: list[str] = field(default_factory=list)
+    # Persisted in each newly trained gated head; legacy checkpoints remain legacy.
+    nn_correct_ztnb_mean: bool = True
 
     # === LR scheduler (cosine_warm_restarts | onecycle) ===
     scheduler_type: str = "cosine_warm_restarts"
