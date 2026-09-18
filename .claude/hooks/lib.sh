@@ -93,7 +93,9 @@ claude_refresh_parent_main() {
 # Copies only the parquets that differ. Emits a status line to STDOUT only when
 # it actually copies; benign skips go to STDERR (kept out of the injected note).
 claude_promote_worktree_splits() {
+  local merged_commit="${1:-}"
   local parent wt wt_splits parent_splits f py changed positions copied=0
+  [ -n "$merged_commit" ] || return 0
   parent="$(claude_main_worktree)"
   wt="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   { [ -n "$parent" ] && [ -d "$parent" ]; } || {
@@ -110,6 +112,10 @@ claude_promote_worktree_splits() {
   }
   wt_splits="$wt/data/splits"
   parent_splits="$parent/data/splits"
+  if agent_hooks_data_is_sealed "$wt" "$parent"; then
+    echo "splits promote: sealed data snapshot detected; refresh raw and splits together using a coherent release download or rebuild" >&2
+    return 0
+  fi
   if [ -L "$wt_splits" ] || [ ! -d "$wt_splits" ]; then
     echo "splits promote: worktree has no local data/splits (shares the parent's)" >&2
     return 0
@@ -125,8 +131,15 @@ claude_promote_worktree_splits() {
     echo "splits promote: python3 not found; cannot check scope_positions" >&2
     return 0
   }
-  git -C "$wt" fetch origin main --quiet 2>/dev/null || true
-  changed="$(git -C "$wt" diff --name-only origin/main~1 origin/main 2>/dev/null || true)"
+  if ! git -C "$wt" fetch origin main --quiet 2>/dev/null; then
+    echo "splits promote: could not refresh main; skipping worktree splits" >&2
+    return 0
+  fi
+  if [ "$(git -C "$wt" rev-parse origin/main 2>/dev/null)" != "$merged_commit" ]; then
+    echo "splits promote: main is not at this PR's verified merge; skipping worktree splits" >&2
+    return 0
+  fi
+  changed="$(git -C "$wt" diff --name-only "$merged_commit^1" "$merged_commit" 2>/dev/null || true)"
   [ -n "$changed" ] || {
     echo "splits promote: could not resolve the merged commit's changed files" >&2
     return 0

@@ -23,7 +23,7 @@
           {
             "name": "guard-worktree-path",
             "type": "command",
-            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/guard-worktree-path.sh",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/guard-worktree-path.sh\"",
             "timeout": 5000
           }
         ]
@@ -34,7 +34,7 @@
           {
             "name": "pre-pr-gate",
             "type": "command",
-            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/pre-pr.sh",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/pre-pr.sh\"",
             "timeout": 600000
           }
         ]
@@ -47,7 +47,7 @@
           {
             "name": "ruff-format",
             "type": "command",
-            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/ruff-format.sh",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/ruff-format.sh\"",
             "timeout": 30000
           }
         ]
@@ -59,7 +59,7 @@
           {
             "name": "memory-pull",
             "type": "command",
-            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/session-start.sh",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/session-start.sh\"",
             "timeout": 120000
           }
         ]
@@ -71,7 +71,7 @@
           {
             "name": "memory-push",
             "type": "command",
-            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/session-end.sh",
+            "command": "\"$GEMINI_PROJECT_DIR/.gemini/hooks/session-end.sh\"",
             "timeout": 120000
           }
         ]

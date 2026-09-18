@@ -7,6 +7,8 @@ Tracking known issues and uncertainties in the project. Resolved issues are spli
 ---
 
 ## Open
+### [PLAN] #1565 held model fixes — per-fix isolation design (recorded, not launched)
+- **Design doc:** [todo/audit-model-fix-isolation-2026-09.md](todo/audit-model-fix-isolation-2026-09.md) — one diagnostic image with module switches, one `ab_harness` fan-out (`baseline_rep` + `fix1`…`fix5` + `stack`) and a no-fit identity gate for the model/data-preparation fixes held out of `codex/audit-runtime-correctness` (#1565). Building the branch, spec and gate, and launching cells, each need an explicit owner go.
 ### [PLAN] Synthetic history follow-ups (ADR-0029) — QB/RB/WR/TE shipped; DST and K next
 - **Tracker:** the "Follow-up sequence" in [docs/adr/0029-synthetic-player-history-diagnostics.md](docs/adr/0029-synthetic-player-history-diagnostics.md). Schema 2/3 (forecast context + `src/analysis/synthetic_replay.py`), the transform layer (`src/analysis/synthetic_transforms.py`, preset fixtures, `src/analysis/synthetic_response.py`) and the RB/WR/TE registry entries + `src/analysis/synthetic_history_sources.py` landed; next PRs: DST (opponent-offense stream, team identities), then K (nested per-kick history). Each PR stays under `src/analysis/`, `tests/analysis/`, `docs/adr/` (no retrain or benchmark gate).
 ### [OPEN] TE train frame carries duplicated game rows from a player-id bridge collision (2017, `00-0032430`)

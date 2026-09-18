@@ -88,30 +88,35 @@ esac
 # Parent checkout root = everything before /.claude/worktrees/.
 parent_root="${CLAUDE_PROJECT_DIR%%/.claude/worktrees/*}"
 
-# Extract the target path. jq is already a hook dependency in this repo.
-file_path="$(jq -r '.tool_input.file_path // empty' 2>/dev/null || true)"
-[ -n "$file_path" ] || exit 0
-
-# Inside the worktree → correct target, allow. (Checked first because the
-# worktree path is itself under parent_root.)
-case "$file_path" in
-  "$CLAUDE_PROJECT_DIR"/*) exit 0 ;;
-esac
-
-# Under the parent root but NOT the worktree → a parent-checkout write. Block.
-case "$file_path" in
-  "$parent_root"/*)
-    echo "BLOCKED: '$file_path' targets the PARENT checkout ($parent_root), not this worktree." >&2
-    echo "This session runs in the worktree: $CLAUDE_PROJECT_DIR" >&2
-    echo "Re-prefix the path to the worktree, e.g.:" >&2
-    echo "  ${file_path/#$parent_root/$CLAUDE_PROJECT_DIR}" >&2
-    echo "(Absolute paths from sub-agents/plan files are PARENT paths — re-prefix before Edit/Write.)" >&2
-    exit 2
-    ;;
-esac
-
-# Anywhere else (/tmp, ~/.claude/.../memory, relative paths) → allow.
-exit 0
+# This installed hook must also work outside this repository. Resolve paths
+# with the same stdlib operations as the project's shared hook helper.
+guard_python=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1 \
+    && "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+    guard_python="$candidate"
+    break
+  fi
+done
+[ -n "$guard_python" ] || { echo "guard: Python 3 is required to resolve edit paths" >&2; exit 2; }
+"$guard_python" -c '
+import json, os, sys
+try:
+    data = json.load(sys.stdin).get("tool_input") or {}
+    path = data.get("file_path") or data.get("notebook_path")
+except (ValueError, TypeError, AttributeError):
+    sys.exit(0)
+if not path:
+    sys.exit(0)
+resolve = lambda value: os.path.normcase(os.path.realpath(value))
+root, parent = map(resolve, sys.argv[1:3])
+target = resolve(os.path.join(root, path))
+if target.startswith(root + os.sep):
+    sys.exit(0)
+if target.startswith(parent + os.sep):
+    print(f"BLOCKED: {target} targets the PARENT checkout ({parent}), not {root}", file=sys.stderr)
+    sys.exit(2)
+' "$CLAUDE_PROJECT_DIR" "$parent_root"
 GUARD_EOF
 chmod +x "$GUARD"
 echo "[bootstrap] wrote hook  -> $GUARD"
@@ -216,7 +221,7 @@ if command -v jq >/dev/null 2>&1; then
   fi
 else
   echo "[bootstrap] WARN: jq not found. Writing settings without a merge," >&2
-  echo "[bootstrap]       and the guard hook itself NEEDS jq at runtime." >&2
+  echo "[bootstrap]       The guard resolves paths with Python 3 at runtime." >&2
   echo "[bootstrap]       Install it:  sudo apt-get install -y jq" >&2
   [ -f "$SETTINGS" ] && backup_existing
   printf '%s\n' "$DESIRED" > "$SETTINGS"

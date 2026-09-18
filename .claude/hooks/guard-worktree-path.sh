@@ -17,6 +17,9 @@
 # ~/.claude/.../memory, …) are allowed so legitimate out-of-tree writes still work.
 set -u
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/lib.sh"
+
 # Resolve jq: prefer PATH, fall back to common absolute install locations so the
 # hook works whether or not jq lives at /usr/bin (WSL/dev boxes differ from CI).
 jq_bin=""
@@ -59,6 +62,13 @@ else
   fp=""
 fi
 [ -n "$fp" ] || exit 0
+
+fp="$(agent_hooks_abs_path "$proj" "$fp")" || {
+  echo "guard-worktree-path: Python 3 is required to validate resolved edit paths" >&2
+  exit 2
+}
+proj="$(agent_hooks_abs_path "$proj" .)" || exit 2
+parent="$(agent_hooks_abs_path "$parent" .)" || exit 2
 
 case "$fp" in
   "$proj"/*) exit 0 ;;        # inside this worktree — allow

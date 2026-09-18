@@ -12,15 +12,7 @@ _codex_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_codex_lib_dir/../../scripts/agent-hooks-lib.sh"
 
 codex_find_python() {
-  local candidate
-  for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 \
-      && "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
+  agent_hooks_find_python "$@"
 }
 codex_python_bin="$(codex_find_python || true)"
 
@@ -32,10 +24,7 @@ codex_main_worktree() { agent_hooks_main_worktree "$@"; }
 # are valid for Add File. The caller supplies the event cwd for relative paths.
 codex_abs_path() {
   [ -n "$codex_python_bin" ] || return 1
-  "$codex_python_bin" -c 'import os, sys
-sys.stdout.reconfigure(newline="\n")
-path = os.path.normcase(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])))
-print(path.replace(os.sep, "/"))' "$1" "$2"
+  agent_hooks_abs_path "$1" "$2" "$codex_python_bin"
 }
 codex_hook_command() {
   if [ -n "$2" ]; then
@@ -102,21 +91,13 @@ except (ValueError, TypeError, AttributeError):
 }
 
 codex_current_pr() {
-  local root="$1" jq_bin="$2" branch head metadata
-  branch="$(git -C "$root" symbolic-ref --quiet --short HEAD)" || return 1
-  head="$(git -C "$root" rev-parse HEAD)" || return 1
-  metadata="$(cd "$root" && gh pr view "$branch" --json state,baseRefName,headRefOid,mergeCommit 2>/dev/null)" || return 1
-  printf '%s' "$metadata" | "$jq_bin" -e --arg head "$head" 'select(.headRefOid == $head)'
+  agent_hooks_current_pr "$@"
 }
 
 # A successful `gh pr merge --auto` can merely queue a merge. Verify that this
 # worktree's exact HEAD actually merged into main before doing parent upkeep.
 codex_merged_pr_commit() {
-  local metadata jq_bin="$2"
-  metadata="$(codex_current_pr "$1" "$jq_bin")" || return 1
-  printf '%s' "$metadata" | "$jq_bin" -er '
-    select(.state == "MERGED" and .baseRefName == "main")
-    | .mergeCommit.oid | strings | select(test("^[0-9a-f]{40}$"))'
+  agent_hooks_merged_pr_commit "$@"
 }
 
 # Best-effort fast-forward of the main/parent checkout's `main` branch to
@@ -177,6 +158,10 @@ codex_promote_worktree_splits() {
   }
   wt_splits="$wt/data/splits"
   parent_splits="$parent/data/splits"
+  if agent_hooks_data_is_sealed "$wt" "$parent"; then
+    echo "splits promote: sealed data snapshot detected; refresh raw and splits together using a coherent release download or rebuild" >&2
+    return 0
+  fi
   if [ -L "$wt_splits" ] || [ ! -d "$wt_splits" ]; then
     echo "splits promote: worktree has no local data/splits (shares the parent's)" >&2
     return 0

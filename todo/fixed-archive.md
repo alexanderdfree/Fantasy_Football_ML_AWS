@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Provider hook paths, workflow inputs and infrastructure ownership diverged
+[Read the incident record](fixed-archive/runtime-tooling-audit-2026-09.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 

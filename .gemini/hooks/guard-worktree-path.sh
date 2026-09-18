@@ -25,12 +25,14 @@ root="$(gemini_project_root "$input" "$jq_bin")"
 main_worktree="$(gemini_main_worktree "$root")"
 
 [ -n "$main_worktree" ] || exit 0
+root="$(gemini_abs_path "$root" .)" || exit 2
+main_worktree="$(gemini_abs_path "$main_worktree" .)" || exit 2
 [ "$root" != "$main_worktree" ] || exit 0
 
 blocked=0
 while IFS= read -r path; do
   [ -n "$path" ] || continue
-  abs="$(gemini_abs_path "$root" "$path")"
+  abs="$(gemini_abs_path "$root" "$path")" || exit 2
   case "$abs" in
     "$root"/*) ;;
     "$main_worktree"/*)
