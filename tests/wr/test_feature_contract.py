@@ -52,9 +52,10 @@ _SPECIFIC_CONTRACT = [
     # EPA can be negative; wider allowed range
     ("receiving_epa_per_target_L3", -10.0, 10.0, 0.0),
     # Red-zone / opportunity boom features (rolling_agg shift=1, NOT safe_divide-wrapped),
-    # so season-opener rows carry a leading-edge NaN that fill_nans backfills downstream —
-    # same profile as RB's opportunity_index_L3 (_COMPUTED_L3_FEATURES). The NaN ceiling
-    # (0.25) bounds the 1/n_weeks opener fraction in the 5-week fixture.
+    # so season-opener rows — and, for the two team-relative shares, the first game of a new
+    # team stint (#1499) — carry a leading-edge NaN that fill_nans backfills downstream; same
+    # profile as RB's opportunity_index_L3 (_COMPUTED_L3_FEATURES). The NaN ceiling (0.25)
+    # bounds the 1/n_weeks opener fraction in the single-team 5-week fixture.
     ("redzone_targets_L3", 0.0, 50.0, 0.25),
     ("redzone_target_share_L3", 0.0, 1.0, 0.25),
     ("opportunity_index_L3", 0.0, 1.0, 0.25),
