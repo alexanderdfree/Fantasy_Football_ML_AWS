@@ -215,12 +215,14 @@ def apply_transforms(
                 cells_rounded += int((values != exact[column]).sum())
                 rounded[column] = values
         trial.loc[targeted, stats] = rounded
+        # Re-derive the team totals from the rounded deltas; two stats may feed one column.
+        touched = {schema.team_accounting[c][0] for c in stats if c in schema.team_accounting}
+        for team_column in touched:
+            trial.loc[targeted, team_column] = frame.loc[targeted, team_column]
         for column in stats:
             if column in schema.team_accounting:
                 team_column, coefficient = schema.team_accounting[column]
-                trial.loc[targeted, team_column] = frame.loc[
-                    targeted, team_column
-                ] + coefficient * (rounded[column] - before[column])
+                trial.loc[targeted, team_column] += coefficient * (rounded[column] - before[column])
         cells_capped = 0
         for smaller, larger in schema.relations:
             if smaller in stats:

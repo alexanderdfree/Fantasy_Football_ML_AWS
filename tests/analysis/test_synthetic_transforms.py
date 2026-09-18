@@ -104,6 +104,22 @@ def test_team_accounting_propagates_and_points_are_recomputed(qb_source):
     ]
 
 
+def test_two_stats_feeding_one_team_column_accumulate(qb_source):
+    source = qb_source.copy()
+    source["rushing_tds"] = 1
+    source["team_points_scored"] = 30
+    cohort = generate_cohort(
+        source, recipe([scale(["passing_tds", "rushing_tds"], 2.0)], "keep_donor")
+    )
+    games = cohort.games
+    assert (games["passing_tds"] == 4).all() and (games["rushing_tds"] == 2).all()
+    assert (games["team_points_scored"] == 30 + 6 * 2 + 6 * 1).all()
+    assert cohort.manifest["transforms"][0]["team_accounting"] == [
+        "team_points_scored += 6 * delta passing_tds",
+        "team_points_scored += 6 * delta rushing_tds",
+    ]
+
+
 def test_counts_round_half_to_even_and_rounding_artifacts_are_capped(qb_source):
     source = qb_source.copy()
     source[["attempts", "completions", "interceptions"]] = [15, 13, 2]
