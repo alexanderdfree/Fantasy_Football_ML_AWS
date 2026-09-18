@@ -33,7 +33,10 @@ from src.features.engineer import (
     get_attn_static_columns,
 )
 from src.shared import feature_cache
+from src.shared.aggregate_targets import predictions_to_fantasy_points
 from src.shared.backtest import run_weekly_simulation
+from src.shared.comparison_scoring import comparison_model_totals, scoring_components
+from src.shared.comparison_truth import ACTUAL_BASIS, ACTUAL_METADATA, SOURCE_AVAILABLE
 from src.shared.core_pool import lease_cores
 from src.shared.evaluation import (
     build_gate_info,
@@ -42,7 +45,7 @@ from src.shared.evaluation import (
     compute_target_metrics,
     print_comparison_table,
 )
-from src.shared.evaluation_cohorts import build_cohorts
+from src.shared.evaluation_cohorts import build_cohorts, regular_season_rows
 from src.shared.feature_build import (
     BOUNDED_FLAG_DOMAINS,
     apply_bounded_flag_scaling,
@@ -1629,6 +1632,113 @@ def _train_elasticnet(
     return model, test_preds, metrics
 
 
+def _reporting_frame(frame, cfg, y_true_dict, *, position):
+    """Copy an evaluation frame with truth on the reporting basis (ADR-0024).
+
+    Canonical target builders certify ``actual_projected_total`` from the raw
+    observation before their training fills (``src.shared.comparison_truth``);
+    serving, analysis and the cohort reports already score that column, and
+    the pipeline reuses it whenever the configured heads cover the shared
+    components under the same canonical scoring. Custom or reduced
+    configurations define their truth through their own ``y`` dict instead:
+    the configured target aggregation of the observed targets. Either way
+    ``fantasy_points`` stays untouched for history and full-fantasy consumers,
+    and an absent or nonfinite target is unavailable, never a fallback to that
+    broader total.
+    """
+    result = frame.copy()
+    targets = list(cfg["targets"])
+    agg = cfg.get("aggregate_fn")
+    scoring_format = None
+    if getattr(agg, "func", None) is predictions_to_fantasy_points:
+        scoring_format = agg.keywords.get("scoring_format", "ppr")
+    components = set(scoring_components(position))
+    metadata = result.attrs.get(ACTUAL_METADATA) or {}
+    certified = (
+        "actual_projected_total" in result
+        and metadata.get("basis") == ACTUAL_BASIS
+        and set(metadata.get("targets") or ()) == components
+        and metadata.get("scoring_format") == scoring_format
+    )
+    if certified and components <= set(targets):
+        observed = pd.to_numeric(result["actual_projected_total"], errors="coerce")
+        result["actual_projected_total"] = observed.where(np.isfinite(observed))
+        return result
+    total = np.full(len(frame), np.nan)
+    if agg is not None and targets and all(target in y_true_dict for target in targets):
+        values = {target: np.asarray(y_true_dict[target], dtype=float) for target in targets}
+        if any(value.shape != (len(frame),) for value in values.values()):
+            raise ValueError("Reporting targets must contain one value per evaluation row")
+        valid = np.logical_and.reduce([np.isfinite(value) for value in values.values()])
+        if SOURCE_AVAILABLE in result:
+            # Preprocessing certified the raw observation before any fill.
+            valid &= result[SOURCE_AVAILABLE].eq(True).to_numpy()
+        # DST tiers digitize PA/YA; feed safe values only during arithmetic and
+        # mask unavailable observations back out afterwards.
+        total = np.asarray(
+            agg({target: np.where(valid, value, 0.0) for target, value in values.items()}),
+            dtype=float,
+        )
+        if total.shape != (len(frame),):
+            raise ValueError("Reporting aggregation must return one total per evaluation row")
+        total = np.where(valid & np.isfinite(total), total, np.nan)
+    result["actual_projected_total"] = total
+    result.attrs[ACTUAL_METADATA] = {
+        "basis": ACTUAL_BASIS,
+        "targets": targets,
+        "scoring_format": scoring_format,
+    }
+    return result
+
+
+def _reporting_scored(report_frame, position):
+    """Rows with available truth, with model totals on that truth's component basis.
+
+    The certified DST truth omits the non-shared points-allowed tier
+    (ADR-0024), so its ``pred_*_total`` columns are rescored from their raw
+    heads; every other basis already shares the configured heads with its
+    truth and ``comparison_model_totals`` leaves those totals unchanged.
+    """
+    metadata = report_frame.attrs.get(ACTUAL_METADATA) or {}
+    scored = report_frame.dropna(subset=["actual_projected_total"])
+    if set(metadata.get("targets") or ()) == set(scoring_components(position)):
+        scored = comparison_model_totals(scored, position)
+    return scored
+
+
+def _reporting_ranking(report_frame, position, pred_col):
+    """Top-K hit rate and Spearman on the reporting basis; unavailable truth never scores."""
+    return compute_ranking_metrics(
+        _reporting_scored(report_frame, position),
+        pred_col=pred_col,
+        true_col="actual_projected_total",
+    )
+
+
+def _reporting_baseline(report_frame):
+    """Season-average predictions and errors on the same projected components."""
+    truth = report_frame["actual_projected_total"].to_numpy(dtype=float)
+    preds = SeasonAverageBaseline().predict(report_frame.assign(fantasy_points=truth))
+    valid = np.isfinite(truth) & np.isfinite(preds)
+    metrics = (
+        compute_metrics(truth[valid], preds[valid])
+        if valid.any()
+        else dict.fromkeys(("mae", "rmse", "r2"), float("nan"))
+    )
+    return preds, {"total": metrics}
+
+
+def _reporting_cohorts(position, report_frame, *, prior_frames):
+    """Keep pre-fill availability visible in every mergeable cohort record."""
+    regular = regular_season_rows(report_frame)
+    available = regular["actual_projected_total"].notna()
+    cohorts = build_cohorts(position, regular[available], prior_frames=prior_frames)
+    for cohort in cohorts.values():
+        cohort["evaluation_rows_total"] = int(len(regular))
+        cohort["actual_rows_unavailable"] = int((~available).sum())
+    return cohorts
+
+
 @training_entrypoint
 def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=42, *, context=None):
     """Run the full position model pipeline.
@@ -1744,10 +1854,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
 
     # --- Baseline ---
     print(f"\n=== {pos} Baseline ===")
-    baseline = SeasonAverageBaseline()
-    baseline_preds = baseline.predict(pos_test)
-    fp_truth = pos_test["fantasy_points"].to_numpy()
-    baseline_metrics = {"total": compute_metrics(fp_truth, baseline_preds)}
+    report_test = _reporting_frame(pos_test, cfg, y_test_dict, position=pos)
+    baseline_preds, baseline_metrics = _reporting_baseline(report_test)
     print(f"  Season Avg Baseline MAE: {baseline_metrics['total']['mae']:.3f}")
 
     # --- Trained-model branches (CPU and GPU run concurrently) ---
@@ -2080,7 +2188,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         # test configs) skips ranking and ``summarize_pipeline_result`` then
         # surfaces top12 as null, not 0.
         agg_fn = cfg.get("aggregate_fn")
-        ranked_test = pos_test.copy()
+        ranked_test = report_test.copy()
         if agg_fn is not None:
             for ranking_key, pred_col, preds, label in (
                 ("ridge_ranking", "pred_ridge_total", ridge_test_preds, "Ridge"),
@@ -2096,10 +2204,10 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
                 if pos == "DST":
                     for target in targets:
                         ranked_test[f"{pred_col[:-5]}{target}"] = preds[target]
-                ranking = compute_ranking_metrics(ranked_test, pred_col=pred_col)
+                ranking = _reporting_ranking(ranked_test, pos, pred_col)
                 result[ranking_key] = ranking
                 print(f"{label} Top-12 Hit Rate: {ranking['season_avg_hit_rate']:.3f}")
-        result["cohorts"] = build_cohorts(pos, ranked_test, prior_frames=(pos_train, pos_val))
+        result["cohorts"] = _reporting_cohorts(pos, ranked_test, prior_frames=(pos_train, pos_val))
         result["test_df"] = ranked_test
         result["per_target_preds"] = {
             family: predictions
@@ -2158,7 +2266,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
             )
         return agg(preds)
 
-    pos_test = pos_test.copy()
+    pos_test = report_test.copy()
     pos_test["pred_ridge_total"] = _total(ridge_test_preds)
     pos_test["pred_nn_total"] = _total(nn_test_preds)
     pos_test["pred_baseline"] = baseline_preds
@@ -2172,8 +2280,8 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         "Neural Net": "pred_nn_total",
     }
 
-    ridge_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ridge_total")
-    nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_nn_total")
+    ridge_ranking = _reporting_ranking(pos_test, pos, "pred_ridge_total")
+    nn_ranking = _reporting_ranking(pos_test, pos, "pred_nn_total")
     print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
 
@@ -2183,7 +2291,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         for t in targets:
             pos_test[f"pred_enet_{t}"] = enet_test_preds[t]
         backtest_pred_columns["ElasticNet"] = "pred_enet_total"
-        enet_ranking = compute_ranking_metrics(pos_test, pred_col="pred_enet_total")
+        enet_ranking = _reporting_ranking(pos_test, pos, "pred_enet_total")
         print(f"ElasticNet Top-12 Hit Rate: {enet_ranking['season_avg_hit_rate']:.3f}")
 
     attn_nn_ranking = None
@@ -2192,7 +2300,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         for t in targets:
             pos_test[f"pred_attn_nn_{t}"] = attn_nn_test_preds[t]
         backtest_pred_columns["Attention NN"] = "pred_attn_nn_total"
-        attn_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_attn_nn_total")
+        attn_nn_ranking = _reporting_ranking(pos_test, pos, "pred_attn_nn_total")
         print(f"Attention NN Top-12 Hit Rate: {attn_nn_ranking['season_avg_hit_rate']:.3f}")
 
     lgbm_ranking = None
@@ -2201,7 +2309,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         for t in targets:
             pos_test[f"pred_lgbm_{t}"] = lgbm_test_preds[t]
         backtest_pred_columns["LightGBM"] = "pred_lgbm_total"
-        lgbm_ranking = compute_ranking_metrics(pos_test, pred_col="pred_lgbm_total")
+        lgbm_ranking = _reporting_ranking(pos_test, pos, "pred_lgbm_total")
         print(f"LightGBM Top-12 Hit Rate: {lgbm_ranking['season_avg_hit_rate']:.3f}")
 
     tabpfn_ranking = None
@@ -2210,13 +2318,17 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
         for t in targets:
             pos_test[f"pred_tabpfn_{t}"] = tabpfn_test_preds[t]
         backtest_pred_columns["TabPFN"] = "pred_tabpfn_total"
-        tabpfn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_tabpfn_total")
+        tabpfn_ranking = _reporting_ranking(pos_test, pos, "pred_tabpfn_total")
         print(f"TabPFN Top-12 Hit Rate: {tabpfn_ranking['season_avg_hit_rate']:.3f}")
 
     # --- Weekly backtest ---
     print("\n=== Weekly Backtest ===")
     with timed("backtest", store=phase_seconds):
-        sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
+        sim_results = run_weekly_simulation(
+            _reporting_scored(pos_test, pos),
+            pred_columns=backtest_pred_columns,
+            true_col="actual_projected_total",
+        )
         for model_name, summary in sim_results["season_summary"].items():
             print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
@@ -2300,7 +2412,7 @@ def run_pipeline(position, cfg, train_df=None, val_df=None, test_df=None, seed=4
     if tabpfn_metrics is not None:
         result["tabpfn_metrics"] = tabpfn_metrics
         result["tabpfn_ranking"] = tabpfn_ranking
-    result["cohorts"] = build_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
+    result["cohorts"] = _reporting_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
     return training_result(
         result,
         cfg,
@@ -2526,10 +2638,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
     ) = prepared
 
     # Baseline
-    baseline = SeasonAverageBaseline()
-    baseline_preds = baseline.predict(pos_test)
-    fp_truth = pos_test["fantasy_points"].to_numpy()
-    baseline_metrics = {"total": compute_metrics(fp_truth, baseline_preds)}
+    report_test = _reporting_frame(pos_test, cfg, y_test_dict, position=pos)
+    baseline_preds, baseline_metrics = _reporting_baseline(report_test)
 
     # Ridge with per-target CV alphas tuned on full training data
     best_cv_alphas = best_alphas
@@ -2685,7 +2795,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
             )
         return agg(preds)
 
-    pos_test = pos_test.copy()
+    pos_test = report_test.copy()
     pos_test["pred_ridge_total"] = _total(ridge_test_preds)
     pos_test["pred_nn_total"] = _total(nn_test_preds)
     pos_test["pred_baseline"] = baseline_preds
@@ -2701,8 +2811,8 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         "Neural Net": "pred_nn_total",
     }
 
-    ridge_ranking = compute_ranking_metrics(pos_test, pred_col="pred_ridge_total")
-    nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_nn_total")
+    ridge_ranking = _reporting_ranking(pos_test, pos, "pred_ridge_total")
+    nn_ranking = _reporting_ranking(pos_test, pos, "pred_nn_total")
     print(f"\nRidge Top-12 Hit Rate:    {ridge_ranking['season_avg_hit_rate']:.3f}")
     print(f"NN Top-12 Hit Rate:       {nn_ranking['season_avg_hit_rate']:.3f}")
 
@@ -2715,7 +2825,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         for t in targets:
             pos_test[f"pred_enet_{t}"] = enet_test_preds[t]
         backtest_pred_columns["ElasticNet"] = "pred_enet_total"
-        enet_ranking = compute_ranking_metrics(pos_test, pred_col="pred_enet_total")
+        enet_ranking = _reporting_ranking(pos_test, pos, "pred_enet_total")
         print(f"ElasticNet Top-12 Hit Rate: {enet_ranking['season_avg_hit_rate']:.3f}")
 
     attn_nn_ranking = None
@@ -2724,7 +2834,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         for t in targets:
             pos_test[f"pred_attn_nn_{t}"] = attn_test_preds[t]
         backtest_pred_columns["Attention NN"] = "pred_attn_nn_total"
-        attn_nn_ranking = compute_ranking_metrics(pos_test, pred_col="pred_attn_nn_total")
+        attn_nn_ranking = _reporting_ranking(pos_test, pos, "pred_attn_nn_total")
         print(f"Attention NN Top-12 Hit Rate: {attn_nn_ranking['season_avg_hit_rate']:.3f}")
 
     lgbm_ranking = None
@@ -2733,12 +2843,16 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
         for t in targets:
             pos_test[f"pred_lgbm_{t}"] = lgbm_test_preds[t]
         backtest_pred_columns["LightGBM"] = "pred_lgbm_total"
-        lgbm_ranking = compute_ranking_metrics(pos_test, pred_col="pred_lgbm_total")
+        lgbm_ranking = _reporting_ranking(pos_test, pos, "pred_lgbm_total")
         print(f"LightGBM Top-12 Hit Rate: {lgbm_ranking['season_avg_hit_rate']:.3f}")
 
     # Weekly backtest
     print("\n=== Weekly Backtest ===")
-    sim_results = run_weekly_simulation(pos_test, pred_columns=backtest_pred_columns)
+    sim_results = run_weekly_simulation(
+        _reporting_scored(pos_test, pos),
+        pred_columns=backtest_pred_columns,
+        true_col="actual_projected_total",
+    )
     for model_name, summary in sim_results["season_summary"].items():
         print(f"  {model_name}: MAE={summary['mae']:.3f}, R2={summary['r2']:.3f}")
 
@@ -2803,7 +2917,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
     if attn_nn_metrics is not None:
         result["attn_nn_metrics"] = attn_nn_metrics
         result["attn_nn_ranking"] = attn_nn_ranking
-    result["cohorts"] = build_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
+    result["cohorts"] = _reporting_cohorts(pos, pos_test, prior_frames=(pos_train, pos_val))
     return training_result(
         result,
         cfg,

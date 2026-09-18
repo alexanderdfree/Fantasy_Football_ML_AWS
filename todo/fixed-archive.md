@@ -1,5 +1,7 @@
 # Fixed archive — index
 
+### [FIXED] Pipeline reports scored full fantasy points and merged seasons' weekly slates
+[Read the incident record](fixed-archive/pipeline-reporting-truth-2026-09.md).
 ### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
 [Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
 ### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation

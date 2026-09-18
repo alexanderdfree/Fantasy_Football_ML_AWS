@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-18 · Training-pipeline baseline, ranking, backtest and cohort reports now use the same certified shared-component truth as serving/analysis, with season-aware weekly slates · (PR pending, extracted from #1565) · → ADR-0024
+
 - 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
 
 - 2026-09-18 · Add PPR-RMSE selection machinery (`ridge_selection_metric`/`nn_selection_metric`/`lgbm_selection_metric`) with defaults unchanged (`raw_mae`/`weighted_mae`/`per_target`); any flip needs the dual-metric + protected-cohort gate · (PR pending) · → ADR-0002
