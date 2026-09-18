@@ -41,6 +41,7 @@ Age/rookie metadata uses the fetched current-season weekly roster and actual gam
 
 ## Changelog
 
+- **2026-09-18** — The shared `src/dst/data.py::build_data` now drops REG fixtures with NaN `home_score`/`away_score` by default (`include_unplayed=False`), so training/backtest frames can no longer fabricate team-week rows from the published fixture list (points_allowed=21 / yards_allowed=350 / zero counts). The live `build_defense_frame` opts back in with `include_unplayed=True` because it NaNs the target week's scores by design and needs that fixture context. (#1520; audit-1499 Tier B, PR #1602.)
 - **2026-09-10** — Mitigate refresh downtime with hourly off-peak scheduling, eligibility-aware concurrency, bounded transfer retries, validated atomic downloads, previous-version cold-start recovery and one-minute conditional S3 / visible-browser polling. Preserve stale warnings and the off-container build/data compatibility boundary. (PR #1572.)
 - **2026-09-10** — ADR-0028 adds an opt-in AWS Scheduler/Step Functions/Fargate execution path for the same offline builder. The web service remains a downloader; activation follows isolated-prefix rehearsals and draining the legacy GitHub writer.
 
