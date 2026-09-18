@@ -6,14 +6,14 @@
  *
  * Filter bar v2 (design system): auto-fit one-row bar with Position (incl.
  * FLEX = RB/WR/TE), Week, Team, Age, Class (Rookies), and Min Proj. Pts,
- * plus pinned Columns / Filters menus and a live filtered-slice stat readout.
+ * plus pinned Columns / Filters menus.
  * Age/Class only appear when the loaded rows carry `age` (stale snapshot
  * artifacts predating the roster-meta fields degrade to the classic bar). */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJSON } from "../api.js";
 import { fmt, errDelta } from "../lib/format.js";
 import { PillGroup, PosBadge, PlayerCell, DeltaCell, Pagination } from "../components/common.jsx";
-import { AutoFitFilterBar, FilterSliceStats, AGE_BUCKETS, ageBucketFor } from "../components/FilterBar.jsx";
+import { AutoFitFilterBar, AGE_BUCKETS, ageBucketFor } from "../components/FilterBar.jsx";
 import { TeamLabel } from "../components/TeamLabel.jsx";
 import { DropdownMenu } from "../ds/controls/DropdownMenu.jsx";
 
@@ -24,15 +24,6 @@ const POSITION_OPTIONS = ["ALL", "QB", "RB", "WR", "TE", "FLEX", "K", "DST"].map
     value: v, label: v === "ALL" ? "All" : v,
 }));
 const FLEX_POSITIONS = new Set(["RB", "WR", "TE"]);
-
-const STAT_SOURCES = [
-    { key: "ridge_pred", label: "Ridge" },
-    { key: "nn_pred", label: "NN" },
-    { key: "attn_nn_pred", label: "Attn NN" },
-    { key: "lgbm_pred", label: "LGBM" },
-    { key: "nflcom_pred", label: "NFL.com" },
-    { key: "rotowire_pred", label: "RotoWire" },
-];
 
 /* Column registry — mirrors the vanilla TABLE_COLUMNS (keys, classes, sort
  * fields, default visibility, and the localStorage contract). */
@@ -460,7 +451,6 @@ export function SeasonLeadersView({ scoring, search, bootstrap, onPlayer }) {
                 renderControl={renderControl}
                 renderMenus={renderMenus}
                 onResetFilter={resetFilter}
-                stats={<FilterSliceStats rows={filtered} sources={STAT_SOURCES} />}
             />
 
             <div className="results-info">

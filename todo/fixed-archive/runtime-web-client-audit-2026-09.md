@@ -52,6 +52,12 @@ verbatim: #1566 introduced the per-row `<source>_comparison_pred` fields and
 branch's `<source>_pred` against a literal `shared_projected_components_v1`
 check would have reported every row unavailable on main.
 
+**Follow-up (2026-09-18, PR #1616):** the Season Leaders filtered-slice readout
+(`FilterSliceStats`, `.filters-stats-row`) was removed at the owner's request,
+together with `sliceAccuracy` and its `viewState.test.js` cases. The readout
+sentences above describe the pre-#1616 UI; the server-side per-row
+`comparison_*` fields and the Lesson still stand.
+
 **Validation**: `node --test tests/*.test.js` (`npm run test:unit`, the command
 `tests.yml` runs) covers out-of-order and cancelled requests, the Ridge
 threshold, sparse versus complete comparison samples, display-forecast
