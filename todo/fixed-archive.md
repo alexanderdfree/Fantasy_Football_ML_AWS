@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Gated hurdle head reported the untruncated NB mean as the reception expectation
+[Read the incident record](fixed-archive/ztnb-reception-expectation-2026-09.md).
+
 ### [FIXED] Hurdle count likelihoods lost probability mass and gradient direction at low positive rates
 [Read the incident record](fixed-archive/count-likelihood-precision-2026-09.md).
 
