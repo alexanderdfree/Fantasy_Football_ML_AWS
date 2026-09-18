@@ -16,6 +16,17 @@ name: Benchmark on Batch (isolated)
 # stashes the Batch job-definition revision at
 # s3://${S3_BUCKET}/job-def-revisions/<sha>.txt. Then dispatch this workflow with
 # image_sha = that commit SHA (defaults to the dispatch ref's HEAD SHA).
+#
+# Identity contract (src/batch/launch.py, ADR-0027 / docs/training-build-plans.md):
+# launch.py refuses anonymous submissions — every launch needs FF_BUILD_PLAN_ID
+# (train-batch.yml's immutable build-plan route, which reserves PRODUCTION
+# publication intents) or an explicit FF_LEGACY_RUN_ID + the full 40-char
+# FF_TRAIN_GIT_SHA (the identified-standalone route). This workflow takes the
+# standalone route (see the FF_LEGACY_RUN_ID env below), and launch.py then also
+# pins one sealed data release whose data-producer recipe matches the image's
+# commit — a branch that touched a src.data.release.DATA_PRODUCER_PATHS file has
+# no published release until refresh-splits.yml runs for it (see the
+# data_release input).
 
 on:
   workflow_dispatch:
@@ -32,6 +43,9 @@ on:
       note:
         description: "Note recorded in the benchmark_history artifact"
         default: "isolated MSE-switch benchmark"
+      data_release:
+        description: "Sealed data release to train on: blank = the published release matching the image's data-producer recipe (fails fast if none); a 64-hex release id (still checked against the image); or 'legacy' = the unversioned, unverified data/ objects (explicit opt-in only)"
+        default: ""
 
 permissions:
   contents: read
@@ -39,6 +53,14 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
   S3_BUCKET: ff-predictor-training
+  # The identified-standalone run id launch.py::require_training_identity
+  # demands instead of a build plan. submit_job forwards it into every
+  # container, where the job reserves its publication intent under it and
+  # claims its immutable output receipt at
+  # <prefix>/releases/v3/run-outputs/<sha>/<POS>/<sha256(run_id)>.json; the
+  # collect step reads those receipts back by the same id, so it lives here
+  # (workflow-wide, visible to both steps) and is unique per workflow attempt.
+  FF_LEGACY_RUN_ID: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
   benchmark:
@@ -93,9 +115,57 @@ jobs:
             echo "Invalid image_sha: $SHA (expected a 7-40 char hex git SHA)" >&2
             exit 1
           fi
+          # launch.py's identity contract and the Batch image resolver
+          # (src/scripts/resolve_training_image.py) both demand the FULL
+          # lowercase 40-char SHA; expand an abbreviated input against the
+          # fetch-depth-0 checkout (an unknown commit fails here, loudly).
+          SHA=$(git rev-parse --verify --end-of-options "${SHA}^{commit}")
+          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Could not expand image_sha to a full commit SHA: $SHA" >&2
+            exit 1
+          fi
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "prefix=experiments/benchmark/${SHA}/models" >> "$GITHUB_OUTPUT"
           echo "Experiment artifacts -> s3://${S3_BUCKET}/experiments/benchmark/${SHA}/models (NOT prod models/)"
+
+      - name: Pin the sealed data release for this image
+        # launch.py::pin_data_release refuses to train an image on a release
+        # whose data-producer recipe (src.data.release.DATA_PRODUCER_PATHS at
+        # the image's commit) differs from the release's, and the collect step
+        # must see the same release to verify the per-position receipts — so
+        # resolve it once here, before the job-def clone below, for both steps.
+        # Blank input: the same resolver train-batch.yml's build_plan step waits
+        # on (--pin-training writes FF_DATA_RELEASE / FF_DATASET_ID /
+        # FF_DATA_FORMAT to GITHUB_ENV). A branch image whose recipe has no
+        # published release can only get one from refresh-splits.yml, so fail
+        # fast instead of waiting an hour like the production path does.
+        env:
+          HEAD_SHA: ${{ steps.ctx.outputs.sha }}
+          DATA_RELEASE: ${{ github.event.inputs.data_release }}
+        run: |
+          set -euo pipefail
+          case "$DATA_RELEASE" in
+            "")
+              python -m src.scripts.wait_data_release --bucket "$S3_BUCKET" \
+                --revision "$HEAD_SHA" --timeout-seconds 30 --pin-training || {
+                echo "::error::No sealed data release matches this image's data-producer recipe. Dispatch refresh-splits.yml on the branch to publish one, or re-dispatch with data_release=legacy (explicit, unverified inputs)." >&2
+                exit 1
+              }
+              ;;
+            legacy)
+              echo "WARNING: explicit legacy data selected; the unversioned data/ raw + split objects are unverified and not comparable to release-pinned rows"
+              echo "FF_DATA_RELEASE=legacy" >> "$GITHUB_ENV"
+              ;;
+            *)
+              # An explicit release id is still validated against the image's
+              # recipe by pin_data_release at submit time.
+              if ! printf '%s' "$DATA_RELEASE" | grep -Eq '^[0-9a-f]{64}$'; then
+                echo "Invalid data_release: $DATA_RELEASE (expected blank, 'legacy', or a 64-char hex release id)" >&2
+                exit 1
+              fi
+              echo "FF_DATA_RELEASE=${DATA_RELEASE}" >> "$GITHUB_ENV"
+              ;;
+          esac
 
       - name: Resolve Batch job-definition revision for this image
         # batch-image.yml stashes the job-def revision under the image's commit
@@ -137,6 +207,11 @@ jobs:
           POSITIONS: ${{ github.event.inputs.positions }}
           SEED: ${{ github.event.inputs.seed }}
           # ff-training-job for a main image, ff-ab-job for a cloned branch image.
+          # launch.py binds this exact revision, checks its image tag equals
+          # FF_TRAIN_GIT_SHA, and registers the source lineage under the
+          # experiment prefix (a branch lineage is allowed there, never under
+          # prod ``models/``). FF_LEGACY_RUN_ID (job env) + FF_DATA_RELEASE
+          # (GITHUB_ENV, pinned above) complete the identity contract.
           FF_JOB_DEFINITION: ${{ steps.revision.outputs.job_def }}
           FF_JOB_DEFINITION_REVISION: ${{ steps.revision.outputs.revision }}
           FF_TRAIN_GIT_SHA: ${{ steps.ctx.outputs.sha }}
@@ -146,8 +221,9 @@ jobs:
           FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
         run: |
           # --skip-upload: CI has no local data/splits (the Batch jobs pull the
-          # S3 splits). --append-history false: the download step below writes
-          # the single history row.
+          # pinned S3 release). --append-history false: no training_runs/
+          # descriptor or History row is created; the download step below
+          # collects the run through its immutable output receipts instead.
           python -m src.batch.launch \
             --positions $POSITIONS \
             --seed "$SEED" \
@@ -160,6 +236,13 @@ jobs:
           NOTE: ${{ github.event.inputs.note }}
           HEAD_SHA: ${{ steps.ctx.outputs.sha }}
           FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
+          # With FF_LEGACY_RUN_ID (job env) + FF_TRAIN_GIT_SHA set, benchmark.py
+          # resolves each position through the immutable receipt this run's
+          # job claimed (src/artifacts/receipts.py::download_run_artifact)
+          # rather than the mutable <prefix>/<POS>/manifest.json, so a stale
+          # artifact from an earlier experiment at this SHA can never be
+          # collected; FF_DATA_RELEASE (GITHUB_ENV) must match the receipts.
+          FF_TRAIN_GIT_SHA: ${{ steps.ctx.outputs.sha }}
           # No FF_MODEL_S3_BUCKET -> benchmark.py does NOT mirror to the website
           # History tab; the artifact below is the only output.
         run: |
