@@ -15,8 +15,11 @@ Two public entry points (parallel to ``nflcom_loader``):
 
     load_sleeper_projections(seasons, ...) -> pd.DataFrame
         One row per (sleeper_player_id, position, season, week). Raw stats mapped
-        to our internal target names. Cached to
-        ``data/raw/sleeper_projections_v1_{min}_{max}_{weeks}.parquet``.
+        to our internal target names. Cached by ``src.data.expert_sources`` as
+        ``data/raw/sleeper_projections_v2_s{seasons}_{weeks}_{positions}.parquet``
+        — every requested season is enumerated in the key, so a sampled season
+        list can never satisfy a later full-range request (the #1477 collision
+        class that the old ``v1_{min}_{max}`` key had).
 
     load_sleeper_with_gsis_id(seasons, ...) -> pd.DataFrame
         Same frame, joined to ``player_id`` (gsis_id) via the nflverse
