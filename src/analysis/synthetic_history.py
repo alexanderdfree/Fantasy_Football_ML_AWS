@@ -350,8 +350,10 @@ def _source_frame(
         raise ValueError(f"no {position} records in the requested training seasons")
     excluded = duplicate_game_keys(frame)
     if excluded:
-        ambiguous = pd.MultiIndex.from_frame(frame[["player_id", "season"]]).isin(
-            [(e["player_id"], e["season"]) for e in excluded]
+        ambiguous = (
+            frame.duplicated(KEYS, keep=False)
+            .groupby([frame["player_id"], frame["season"]])
+            .transform("any")
         )
         frame = frame[~ambiguous]
         if frame.empty:
@@ -563,6 +565,7 @@ def generate_cohort(source: pd.DataFrame, recipe: HistoryRecipe) -> HistoryCohor
         "donor_pool_exclusions": {
             "duplicate_game_keys": list(consumed.excluded_player_seasons),
             "policy": DUPLICATE_KEY_POLICY,
+            "scope": "the recipe's position, regular-season and donor-season pool",
         },
         "eligible_windows": len(candidates),
         "unique_donor_windows": int(
@@ -680,6 +683,9 @@ def main(argv: list[str] | None = None) -> int:
                 "cases": len(cohort.cases),
                 "eligible_windows": cohort.manifest["eligible_windows"],
                 "exact_window_cases": cohort.manifest["exact_window_cases"],
+                "excluded_player_seasons": len(
+                    cohort.manifest["donor_pool_exclusions"]["duplicate_game_keys"]
+                ),
                 "history_kind": cohort.manifest["history_kind"],
                 "model_input_readiness": {
                     family: entry["ready"]

@@ -1,6 +1,5 @@
 """Boundary, provenance, and production-history replay checks; no model training."""
 
-import dataclasses
 import json
 
 import numpy as np
@@ -15,11 +14,7 @@ from src.analysis.synthetic_history import (
     validate_history_frame,
     write_cohort,
 )
-from src.analysis.synthetic_history_schema import (
-    POSITION_HISTORY_SCHEMAS,
-    PositionHistorySchema,
-    position_schema,
-)
+from src.analysis.synthetic_history_schema import position_schema
 from src.features.engineer import build_game_history_arrays
 from src.qb.config import POSITION_CONFIG
 from src.qb.features import get_feature_columns
@@ -250,19 +245,6 @@ def test_validate_history_frame_is_reusable_on_generated_games(source):
         validate_history_frame(broken, schema, stage="generated")
     with pytest.raises(ValueError, match="generated is missing schema columns"):
         validate_history_frame(cohort.games.drop(columns="sacks"), schema, stage="generated")
-
-
-def test_schema_registry_matches_configuration_and_rejects_foreign_columns():
-    schema = POSITION_HISTORY_SCHEMAS["QB"]
-    assert schema.history_columns == tuple(POSITION_CONFIG.attn_history_stats)
-    assert schema.targets == tuple(POSITION_CONFIG.targets)
-    assert schema.feature_columns == tuple(get_feature_columns())
-    assert set(schema.count_columns) <= set(schema.validated_columns)
-    with pytest.raises(ValueError, match="outside its history and targets"):
-        dataclasses.replace(schema, relations=(("carries", "not_a_column"),))
-    with pytest.raises(ValueError, match="sequence-coupled context"):
-        dataclasses.replace(schema, sequence_coupled_context=("qbr_total",))
-    assert isinstance(schema, PositionHistorySchema)
 
 
 @pytest.mark.parametrize(

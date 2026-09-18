@@ -72,9 +72,12 @@ forecast game's static context:
   calendar weeks.
 - The real forecast game's unscaled production feature row is exported as
   `context.parquet` and held fixed. Its windowed columns and the sequence-coupled
-  columns the schema names (`week`, `days_rest`, `season_starts_to_date`,
-  `is_returning_from_absence`, `rookie_early`) describe the real prior games,
-  not the synthetic history; the manifest records both the list and this policy.
+  columns each position's schema declares (QB: `week`, `days_rest`,
+  `season_starts_to_date`, `is_returning_from_absence`, `rookie_early`; RB:
+  `week`, `days_rest`, `rest_advantage`, `career_carries`; WR/TE: `week`,
+  `days_rest`, `is_returning_from_absence`) describe the real prior games, not
+  the synthetic history; the manifest records both the list and this policy,
+  and the declaration fails at import if a whitelist drops one.
 - The consumed-values hash covers the history projection, the recomputed history
   points and every feature column of the selected donor rows, labelled by dtype
   kind so string spellings do not change it; a scoring or whitelist change does
@@ -94,10 +97,13 @@ transforms and policy).
   usage stats, opaque externally modeled signals (`*_exp`, `qbr_total`,
   `pts_added`, and for RB/WR/TE the position-group shares, HHIs and
   opportunity index, whose denominators are team position-group totals that
-  the history does not carry), team totals with declared accounting (yards,
-  carries, targets and receptions move their team total one for one; each
-  touchdown adds six `team_points_scored`; RB `fumbles_lost` moves
-  `team_turnovers`; PAT and two-point plays are not modeled) and held game
+  the history does not carry), team totals with declared accounting (a stat
+  moves its team total one for one where the history carries that total:
+  carries and targets everywhere, rushing yards for QB/RB, receiving yards for
+  RB/WR/TE, RB receptions into `team_completions`; WR/TE receptions and
+  rushing yards have no team counterpart and move nothing; each touchdown adds
+  six `team_points_scored`; RB `fumbles_lost` moves `team_turnovers`; PAT and
+  two-point plays are not modeled) and held game
   context (implied totals, home, rest, opponent points). Naming a column
   outside the transformable group fails at recipe validation.
 - Two ops: `scale` multiplies named stats by a factor over all steps or an
@@ -184,8 +190,11 @@ computation and schedule/team-box-score merges. A bare raw weekly cache or stale
 split is not a valid source. `src/analysis/synthetic_history_sources.py` runs
 the shared production preparation once on the split parquets, without
 training, and publishes the train frame with its hashes (`sources.json`:
-rows, seasons, consumed-value and split-file digests, loader code hashes,
-runtime versions) into a new directory:
+rows, seasons, a row-order-independent value digest, the production
+`prepared_data_id` (splits, configuration and side inputs), split-file
+digests, the hashes of the shared and position modules that build the frame,
+the duplicate-game-key report and runtime versions) into a new directory; it
+refuses a prepared frame whose feature columns disagree with the registry:
 
 ```bash
 FF_FEATURE_CACHE_DISABLE=1 python -m src.analysis.synthetic_history_sources \

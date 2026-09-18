@@ -1,19 +1,12 @@
-"""Shared synthetic-history fixtures: prepared-frame shaped, no real data."""
+"""Shared synthetic-history fixtures: prepared-frame shaped, no real data.
 
-from importlib import import_module
+Fake checkpoints live in ``tests.analysis.fake_bundles`` so this conftest
+stays free of torch for the tests that never load a model.
+"""
 
-import joblib
-import numpy as np
 import pandas as pd
 import pytest
-import torch
-from sklearn.preprocessing import StandardScaler
 
-from src.prediction.bundle import write_bundle
-from src.prediction.predictor import legacy_schema
-from src.shared.artifact_integrity import wrap_state_dict, write_scaler_meta
-from src.shared.models import RidgeMultiTarget
-from src.shared.neural_net import MultiHeadNet, MultiHeadNetWithHistory
 from src.shared.registry import get_inference_spec
 
 SHORT_WEEKS = (1, 2, 4, 5, 6, 7)
@@ -116,8 +109,7 @@ POISON = {
 
 
 def poison_column(position: str) -> str:
-    features = import_module(f"src.{position.lower()}.features").get_feature_columns()
-    assert POISON[position] in features
+    assert POISON[position] in get_inference_spec(position)["get_feature_columns_fn"]()
     return POISON[position]
 
 
@@ -130,8 +122,10 @@ def position_rows(position: str, weeks=SHORT_WEEKS) -> pd.DataFrame:
     column is a poison value that must reach the static context but never a
     generated history.
     """
-    config = import_module(f"src.{position.lower()}.config").POSITION_CONFIG
-    features = import_module(f"src.{position.lower()}.features").get_feature_columns()
+    spec = get_inference_spec(position)
+    features = list(spec["get_feature_columns_fn"]())
+    history = list(spec["attn_history_stats"])
+    poison = poison_column(position)
     yards_column, base, step = YARDS[position]
     opaque_column, opaque_step = OPAQUE[position]
     rows = []
@@ -139,7 +133,7 @@ def position_rows(position: str, weeks=SHORT_WEEKS) -> pd.DataFrame:
         for season in (2022, 2023, 2025):
             for week in weeks:
                 row = dict.fromkeys(features, 0.0)
-                row.update(dict.fromkeys(config.attn_history_stats, 0.0))
+                row.update(dict.fromkeys(history, 0.0))
                 row.update(BASE[position])
                 row.update(
                     player_id=player,
@@ -154,84 +148,9 @@ def position_rows(position: str, weeks=SHORT_WEEKS) -> pd.DataFrame:
                 )
                 row[yards_column] = base + week * step + (20 if player == "p2" else 0)
                 row[opaque_column] = week * opaque_step
-                row[poison_column(position)] = 9999
-                if position == "QB":
-                    row["pts_added"] = week
-                    row["pass_yards_gained_exp"] = 150 + week
-                    row["prior_season_mean_passing_yards"] = 250.0 + (
-                        10.0 if player == "p2" else 0.0
-                    )
+                row[poison] = 9999
                 rows.append(row)
     return pd.DataFrame(rows)
-
-
-def fake_artifacts(
-    directory,
-    position,
-    families=("attn_nn",),
-    *,
-    seed=33,
-    extra_static=(),
-    data_ids=None,
-    opp_stats=(),
-):
-    """Fake checkpoints whose input schemas are the position's real production whitelists."""
-    directory.mkdir(parents=True, exist_ok=True)
-    cfg = get_inference_spec(position)
-    cfg["opp_attn_history_stats"] = list(opp_stats)
-    features = list(cfg["get_feature_columns_fn"]())
-    targets = list(cfg["targets"])
-    rng = np.random.default_rng(seed)
-    torch.manual_seed(seed)
-    for family in families:
-        data_id = (data_ids or {}).get(family, "fake")
-        if family == "ridge":
-            model = RidgeMultiTarget(targets, alpha=1.0)
-            X = rng.normal(size=(24, len(features))).astype(np.float32)
-            model.fit(X, {t: rng.normal(size=24).astype(np.float32) for t in targets})
-            model.save(str(directory))
-            write_bundle(
-                directory,
-                position,
-                family,
-                cfg,
-                features,
-                model,
-                preprocessing={"clip": [-4.0, 4.0]},
-                data_id=data_id,
-            )
-            continue
-        columns = list(legacy_schema(cfg, family).features) + list(extra_static)
-        if family == "attn_nn":
-            model = MultiHeadNetWithHistory(
-                len(columns),
-                len(cfg["attn_history_stats"]),
-                targets,
-                opp_game_dim=len(opp_stats) or None,
-                **cfg["attn_nn_kwargs_static"],
-            )
-        else:
-            model = MultiHeadNet(len(columns), targets, **cfg["nn_kwargs"])
-        scaler = StandardScaler().fit(rng.normal(size=(8, len(columns))).astype(np.float32))
-        stem = "attention_nn" if family == "attn_nn" else "nn"
-        weight_stem = "attention_nn" if family == "attn_nn" else "multihead_nn"
-        joblib.dump(scaler, directory / f"{stem}_scaler.pkl")
-        write_scaler_meta(directory / f"{stem}_scaler_meta.json", columns, targets)
-        torch.save(
-            wrap_state_dict(model.state_dict(), columns, targets),
-            directory / f"{position.lower()}_{weight_stem}.pt",
-        )
-        write_bundle(
-            directory,
-            position,
-            family,
-            cfg,
-            columns,
-            model,
-            preprocessing={"clip": [-4.0, 4.0]},
-            data_id=data_id,
-        )
-    return cfg
 
 
 @pytest.fixture
@@ -243,8 +162,3 @@ def qb_source():
 def qb_source_long():
     """Twelve games per season, long enough for the shipped eight-game recipes."""
     return position_rows("QB", LONG_WEEKS)
-
-
-@pytest.fixture
-def source_for():
-    return position_rows

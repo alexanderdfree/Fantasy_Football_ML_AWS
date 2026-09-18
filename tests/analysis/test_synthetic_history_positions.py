@@ -12,7 +12,8 @@ from src.analysis.synthetic_history import HistoryRecipe, generate_cohort, write
 from src.analysis.synthetic_history_schema import position_schema
 from src.analysis.synthetic_replay import load_cohort, replay_cohort
 from src.features.engineer import build_game_history_arrays
-from tests.analysis.conftest import LONG_WEEKS, fake_artifacts, poison_column, position_rows
+from tests.analysis.conftest import LONG_WEEKS, poison_column, position_rows
+from tests.analysis.fake_bundles import fake_artifacts
 
 pytestmark = pytest.mark.unit
 
@@ -138,7 +139,7 @@ def test_transforms_use_the_position_declarations(position):
         source, recipe(position, transforms=transforms, opaque_signal_policy="mark_missing")
     )
     games = cohort.games
-    base = position_rows(position)[stat].iloc[0]
+    base = source[stat].iloc[0]
     assert (games[stat] == 2 * base).all()
     assert (games[team_column] == source[team_column].iloc[0] + coefficient * base).all()
     for column in schema.opaque_columns:
@@ -158,11 +159,11 @@ def test_shipped_recipes_generate_within_their_bands(position, mode):
     path = RECIPES / f"{position.lower()}_{mode}.json"
     loaded = HistoryRecipe.from_dict(json.loads(path.read_text()))
     assert loaded.position == position and loaded.mode == mode
-    schema = position_schema(position)
-    assert (loaded.min_history_ppg, loaded.max_history_ppg) == schema.default_ppg_band
+    assert 0 < loaded.min_history_ppg < loaded.max_history_ppg
     cohort = generate_cohort(position_rows(position, LONG_WEEKS), loaded)
     assert cohort.manifest["eligible_windows"] > 0
-    assert cohort.cases["donor_history_ppg"].between(*schema.default_ppg_band).all()
+    band = (loaded.min_history_ppg, loaded.max_history_ppg)
+    assert cohort.cases["donor_history_ppg"].between(*band).all()
 
 
 @pytest.mark.parametrize("position", POSITIONS)

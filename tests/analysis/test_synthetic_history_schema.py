@@ -7,12 +7,27 @@ import pytest
 
 from src.analysis.synthetic_history_schema import (
     POSITION_HISTORY_SCHEMAS,
-    SEQUENCE_COUPLED_CANDIDATES,
+    TE_SCHEMA,
+    WR_SCHEMA,
     position_schema,
 )
-from src.features.engineer import flatten_include_features
 
 pytestmark = pytest.mark.unit
+
+# Static columns whose value describes the real prior sequence; pinned per
+# position so a whitelist change is a visible registry change.
+SEQUENCE_COUPLED = {
+    "QB": (
+        "week",
+        "days_rest",
+        "season_starts_to_date",
+        "is_returning_from_absence",
+        "rookie_early",
+    ),
+    "RB": ("week", "days_rest", "rest_advantage", "career_carries"),
+    "WR": ("week", "days_rest", "is_returning_from_absence"),
+    "TE": ("week", "days_rest", "is_returning_from_absence"),
+}
 
 
 @pytest.mark.parametrize("position", sorted(POSITION_HISTORY_SCHEMAS))
@@ -23,21 +38,19 @@ def test_registry_matches_the_production_configuration(position):
     assert schema.history_columns == tuple(config.attn_history_stats)
     assert schema.targets == tuple(config.targets)
     assert schema.feature_columns == tuple(features)
-    assert schema.feature_columns == tuple(flatten_include_features(config.include_features))
     assert schema.max_history_games == config.attn_max_seq_len
-    assert schema.sequence_coupled_context == tuple(
-        c for c in SEQUENCE_COUPLED_CANDIDATES if c in features
-    )
+    assert schema.sequence_coupled_context == SEQUENCE_COUPLED[position]
+    assert set(schema.sequence_coupled_context) <= set(features)
     known = set(schema.validated_columns)
+    assert set(schema.targets) <= set(schema.must_observe) <= known
     assert set(schema.transformable_columns) | set(schema.opaque_columns) <= known
-    assert set(schema.must_observe) <= known and set(schema.count_columns) <= known
+    assert set(schema.count_columns) <= known
     assert schema.team_accounting_columns <= set(schema.history_columns)
     assert not set(schema.transformable_columns) & set(schema.opaque_columns)
     assert schema.transform_support == {"scale": None, "set_history_ppg": None}
-    assert schema.default_ppg_band[0] < schema.default_ppg_band[1]
 
 
-def test_registry_rejects_foreign_or_overlapping_declarations():
+def test_registry_rejects_foreign_overlapping_or_unobserved_declarations():
     schema = position_schema("RB")
     with pytest.raises(ValueError, match="outside its history and targets"):
         dataclasses.replace(schema, relations=(("carries", "not_a_column"),))
@@ -45,6 +58,14 @@ def test_registry_rejects_foreign_or_overlapping_declarations():
         dataclasses.replace(schema, sequence_coupled_context=("carries",))
     with pytest.raises(ValueError, match="column groups overlap"):
         dataclasses.replace(schema, opaque_columns=(*schema.opaque_columns, "carries"))
+    with pytest.raises(ValueError, match="must observe every target"):
+        dataclasses.replace(schema, must_observe=("carries",))
+
+
+def test_shared_receiver_declarations_are_not_aliased():
+    assert WR_SCHEMA.team_accounting == TE_SCHEMA.team_accounting
+    assert WR_SCHEMA.team_accounting is not TE_SCHEMA.team_accounting
+    assert WR_SCHEMA.transform_support is not TE_SCHEMA.transform_support
 
 
 def test_position_group_shares_are_opaque_not_transformable():

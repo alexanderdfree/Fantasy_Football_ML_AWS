@@ -1,20 +1,20 @@
 """Per-position contracts for synthetic player-history generation and replay.
 
-Every column group is derived from the position's ``POSITION_CONFIG`` at import
-time, so a whitelist change is a configuration change rather than a drifting
-copy. The skill positions (QB, RB, WR, TE) share one flat history structure
-and one loading path; DST and K are later slices.
+Every column list is read from the production inference registry (which
+projects each ``POSITION_CONFIG``) at import time, so a whitelist change is a
+configuration change rather than a drifting copy. The skill positions (QB,
+RB, WR, TE) share one flat history structure and one loading path; DST and K
+are later slices.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from importlib import import_module
 
 import pandas as pd
 
-from src.features.engineer import flatten_include_features
+from src.shared.registry import get_inference_spec
 
 BoundFn = Callable[[pd.DataFrame], pd.Series]
 
@@ -27,13 +27,6 @@ SKILL_HELD_CONTEXT = (
     "opp_team_points_scored",
 )
 SKILL_TRANSFORM_SUPPORT = {"scale": None, "set_history_ppg": None}
-SEQUENCE_COUPLED_CANDIDATES = (
-    "week",
-    "days_rest",
-    "season_starts_to_date",
-    "is_returning_from_absence",
-    "rookie_early",
-)
 
 
 @dataclass(frozen=True)
@@ -41,11 +34,12 @@ class PositionHistorySchema:
     """Columns, validity relations, transform declarations and provenance paths.
 
     ``sequence_coupled_context`` names the static feature columns whose value
-    describes the real prior sequence (calendar position, rest, games to date);
-    they are held at the forecast game's real value and disclosed as such.
-    ``derived_checks`` are validity rules that are not a plain ``a <= b`` pair;
-    ``derived_caps`` bound a count that integer rounding may push over such a
-    rule. ``check_columns`` lists what those callables read.
+    describes the real prior sequence (calendar position, rest, games or
+    carries to date); they are held at the forecast game's real value and
+    disclosed as such. ``must_observe`` always covers every target, so history
+    points are never computed from a missing outcome. ``derived_checks`` are
+    validity rules that are not a plain ``a <= b`` pair; ``derived_caps`` bound
+    a count that integer rounding may push over such a rule.
 
     Transform declarations partition the history columns: ``transformable``
     production/usage stats an op may rewrite, ``opaque`` externally modeled
@@ -68,7 +62,6 @@ class PositionHistorySchema:
     bounded_columns: tuple[tuple[str, float, float], ...]
     derived_checks: tuple[tuple[str, BoundFn], ...]
     derived_caps: tuple[tuple[str, BoundFn], ...]
-    check_columns: tuple[str, ...]
     sequence_coupled_context: tuple[str, ...]
     scoring_scope: str
     code_paths: tuple[str, ...]
@@ -77,7 +70,6 @@ class PositionHistorySchema:
     team_accounting: dict[str, tuple[str, float]] = field(default_factory=dict)
     held_context_columns: tuple[str, ...] = ()
     transform_support: dict[str, str | None] = field(default_factory=dict)
-    default_ppg_band: tuple[float, float] = (0.0, 0.0)
 
     def __post_init__(self):
         known = set(self.history_columns) | set(self.targets)
@@ -87,7 +79,6 @@ class PositionHistorySchema:
             | {column for relation in self.relations for column in relation}
             | {column for column, _, _ in self.bounded_columns}
             | {column for column, _ in self.derived_caps}
-            | set(self.check_columns)
             | set(self.transformable_columns)
             | set(self.opaque_columns)
             | set(self.team_accounting)
@@ -99,6 +90,8 @@ class PositionHistorySchema:
                 f"{self.position} schema references columns outside its history and "
                 f"targets: {sorted(referenced - known)}"
             )
+        if not set(self.targets) <= set(self.must_observe):
+            raise ValueError(f"{self.position} schema must observe every target")
         if not set(self.sequence_coupled_context) <= set(self.feature_columns):
             raise ValueError(f"{self.position} sequence-coupled context must be feature columns")
         groups = (
@@ -126,20 +119,25 @@ def _touchdowns_within_team_points(*td_columns: str) -> tuple[str, BoundFn]:
     return "touchdowns exceed team points (six per touchdown)", violated
 
 
-def _skill_schema(position: str, **declarations) -> PositionHistorySchema:
-    """Bind the production whitelists of a skill position to its declarations."""
-    config = import_module(f"src.{position.lower()}.config").POSITION_CONFIG
-    feature_columns = tuple(flatten_include_features(config.include_features))
+def _skill_schema(
+    position: str, *, observed_usage: tuple[str, ...], **declarations
+) -> PositionHistorySchema:
+    """Bind a skill position's production lists to its declarations.
+
+    ``must_observe`` is every target plus the named usage counts, so a target
+    added to the position is observed without a schema edit.
+    """
+    spec = get_inference_spec(position)
+    targets = tuple(spec["targets"])
     return PositionHistorySchema(
         position=position,
         identity_columns=SKILL_IDENTITY_COLUMNS,
-        history_columns=tuple(config.attn_history_stats),
-        targets=tuple(config.targets),
-        feature_columns=feature_columns,
-        max_history_games=int(config.attn_max_seq_len),
-        sequence_coupled_context=tuple(
-            c for c in SEQUENCE_COUPLED_CANDIDATES if c in feature_columns
-        ),
+        history_columns=tuple(spec["attn_history_stats"]),
+        targets=targets,
+        feature_columns=tuple(spec["get_feature_columns_fn"]()),
+        max_history_games=int(spec["attn_max_seq_len"]),
+        must_observe=(*targets, *observed_usage),
+        team_accounting=dict(declarations.pop("team_accounting", {})),
         code_paths=(
             "features/engineer.py",
             f"{position.lower()}/config.py",
@@ -168,17 +166,7 @@ QB_SCHEMA = _skill_schema(
         "fumbles_lost",
         "sacks",
     ),
-    must_observe=(
-        "passing_yards",
-        "rushing_yards",
-        "passing_tds",
-        "rushing_tds",
-        "interceptions",
-        "fumbles_lost",
-        "attempts",
-        "completions",
-        "carries",
-    ),
+    observed_usage=("attempts", "completions", "carries"),
     relations=(
         ("completions", "attempts"),
         ("passing_tds", "completions"),
@@ -194,13 +182,12 @@ QB_SCHEMA = _skill_schema(
         _touchdowns_within_team_points("passing_tds", "rushing_tds"),
     ),
     derived_caps=(("interceptions", lambda frame: frame["attempts"] - frame["completions"]),),
-    check_columns=(
-        "interceptions",
-        "attempts",
-        "completions",
-        "passing_tds",
-        "rushing_tds",
-        "team_points_scored",
+    sequence_coupled_context=(
+        "week",
+        "days_rest",
+        "season_starts_to_date",
+        "is_returning_from_absence",
+        "rookie_early",
     ),
     scoring_scope="QB projected components only; excludes receiving and two-point conversions",
     transformable_columns=(
@@ -232,7 +219,6 @@ QB_SCHEMA = _skill_schema(
         "passing_tds": ("team_points_scored", 6.0),
         "rushing_tds": ("team_points_scored", 6.0),
     },
-    default_ppg_band=(15.0, 30.0),
 )
 
 RB_SCHEMA = _skill_schema(
@@ -251,16 +237,7 @@ RB_SCHEMA = _skill_schema(
         "inside10_carries",
         "inside5_carries",
     ),
-    must_observe=(
-        "rushing_tds",
-        "receiving_tds",
-        "rushing_yards",
-        "receiving_yards",
-        "receptions",
-        "fumbles_lost",
-        "carries",
-        "targets",
-    ),
+    observed_usage=("carries", "targets"),
     relations=(
         ("receptions", "targets"),
         ("receiving_tds", "receptions"),
@@ -285,7 +262,7 @@ RB_SCHEMA = _skill_schema(
     ),
     derived_checks=(_touchdowns_within_team_points("rushing_tds", "receiving_tds"),),
     derived_caps=(),
-    check_columns=("rushing_tds", "receiving_tds", "team_points_scored"),
+    sequence_coupled_context=("week", "days_rest", "rest_advantage", "career_carries"),
     scoring_scope="RB projected components only; excludes passing and two-point conversions",
     transformable_columns=(
         "rushing_yards",
@@ -326,7 +303,6 @@ RB_SCHEMA = _skill_schema(
         "receiving_tds": ("team_points_scored", 6.0),
         "fumbles_lost": ("team_turnovers", 1.0),
     },
-    default_ppg_band=(8.0, 20.0),
 )
 
 _RECEIVER_DECLARATIONS = dict(
@@ -339,14 +315,7 @@ _RECEIVER_DECLARATIONS = dict(
         "fumbles_lost",
         "redzone_targets",
     ),
-    must_observe=(
-        "receiving_tds",
-        "receiving_yards",
-        "receptions",
-        "fumbles_lost",
-        "targets",
-        "carries",
-    ),
+    observed_usage=("targets", "carries"),
     relations=(
         ("receptions", "targets"),
         ("receiving_tds", "receptions"),
@@ -364,7 +333,7 @@ _RECEIVER_DECLARATIONS = dict(
     ),
     derived_checks=(_touchdowns_within_team_points("receiving_tds", "rushing_tds"),),
     derived_caps=(),
-    check_columns=("receiving_tds", "rushing_tds", "team_points_scored"),
+    sequence_coupled_context=("week", "days_rest", "is_returning_from_absence"),
     transformable_columns=(
         "receiving_yards",
         "rushing_yards",
@@ -399,14 +368,12 @@ _RECEIVER_DECLARATIONS = dict(
 WR_SCHEMA = _skill_schema(
     "WR",
     scoring_scope="WR projected components only; excludes rushing, passing and two-point conversions",
-    default_ppg_band=(8.0, 20.0),
     **_RECEIVER_DECLARATIONS,
 )
 
 TE_SCHEMA = _skill_schema(
     "TE",
     scoring_scope="TE projected components only; excludes rushing, passing and two-point conversions",
-    default_ppg_band=(5.0, 15.0),
     **_RECEIVER_DECLARATIONS,
 )
 

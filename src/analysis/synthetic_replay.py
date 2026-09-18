@@ -512,6 +512,9 @@ def main(argv: list[str] | None = None) -> int:
                 "position": position,
                 "cases": len(predictions),
                 "history_kind": manifest["history_kind"],
+                "excluded_player_seasons": len(
+                    cohort.manifest.get("donor_pool_exclusions", {}).get("duplicate_game_keys", [])
+                ),
                 "families": sorted(manifest["families"]),
                 "families_excluded": manifest["families_excluded"],
                 "identity_control": manifest["identity_control"]["status"],
