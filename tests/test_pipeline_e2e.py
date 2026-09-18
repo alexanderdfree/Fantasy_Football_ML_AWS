@@ -231,8 +231,8 @@ def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
     cfg = build_tiny_config("QB")
     cfg["_artifact_branch"] = branch
     if branch == "cpu":
-        # Exercise both CPU model families through the actual short-circuit
-        # result and saved artifacts; legacy selection emits no provenance.
+        # Exercise both CPU model families and their PPR selection provenance
+        # through the actual short-circuit result and saved artifacts.
         cfg["train_base_nn"] = False
         cfg["train_attention_nn"] = False
         cfg["train_ridge"] = True
@@ -262,23 +262,26 @@ def test_pipeline_split_branch_carries_rankings(tmp_path_factory, branch):
 
         history = result["history"]
         selection = history["checkpoint_selection"]
-        assert selection["metric"] == "weighted_mae"
-        assert selection["scoring_format"] is None
+        assert selection["metric"] == "fantasy_rmse_ppr"
+        assert selection["scoring_format"] == "ppr"
         assert selection["epoch"] >= 1
         assert np.isfinite(selection["score"])
-        assert selection["score"] == history["val_mae_weighted"][selection["epoch"] - 1]
+        assert selection["score"] == history["val_fantasy_rmse_ppr"][selection["epoch"] - 1]
         assert _extract_metrics("QB", result)["nn_selection"] == selection
     else:
         from src.batch.train import _extract_metrics
 
-        # Legacy Ridge/LightGBM selection records no provenance, so neither the
-        # split result nor its Batch extraction carries any.
-        assert result["ridge_selection"] is None
-        assert result["lgbm_selection"] is None
-        assert result.models["lgbm"].selected_iterations == {}
+        # Production Ridge/LightGBM selection records its PPR provenance; the
+        # split result and its Batch extraction both carry it.
+        assert result["ridge_selection"]["metric"] == "mean_cv_fantasy_rmse_ppr"
+        assert result["lgbm_selection"]["metric"] == "fantasy_rmse_ppr"
+        iterations = result.models["lgbm"].selected_iterations
+        assert set(iterations) == set(cfg["targets"])
+        assert all(1 <= n <= 4 for n in iterations.values())
         extracted = _extract_metrics("QB", result)
-        assert "ridge_selection" not in extracted
-        assert "lgbm_selection" not in extracted
+        assert extracted["ridge_selection"] == result["ridge_selection"]
+        assert extracted["lgbm_selection"] == result["lgbm_selection"]
+        assert extracted["lgbm_selection"]["iterations"] == iterations
 
     present, absent = (
         ("ridge_ranking", "nn_ranking") if branch == "cpu" else ("nn_ranking", "ridge_ranking")

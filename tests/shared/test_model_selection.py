@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 def test_ridge_scores_joint_ppr_instead_of_independent_head_rmse(monkeypatch):
     # Copy before mutating: the registry recipe is shared across tests.
     cfg = dict(get_config("K"))
-    cfg["ridge_selection_metric"] = "fantasy_rmse_ppr"  # opt-in; production stays raw_mae
+    cfg["ridge_selection_metric"] = "fantasy_rmse_ppr"  # explicit; also the production default
     targets = cfg["targets"]
 
     def candidate(X, y, folds, target, alpha, config, pca):
@@ -203,12 +203,12 @@ def test_ridge_selection_metadata_roundtrip(tmp_path):
 
 
 @pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
-def test_all_positions_keep_legacy_selection_defaults(position):
-    """The PPR selectors are opt-in machinery; no production default changes."""
+def test_all_positions_select_on_ppr_rmse_by_default(position):
+    """Every production family selects on validation PPR RMSE (ADR-0002/ADR-0003)."""
     cfg = get_config(position)
-    assert cfg["ridge_selection_metric"] == "raw_mae"
-    assert cfg["nn_selection_metric"] == "weighted_mae"
-    assert cfg["lgbm_selection_metric"] == "per_target"
+    assert cfg["ridge_selection_metric"] == "fantasy_rmse_ppr"
+    assert cfg["nn_selection_metric"] == "fantasy_rmse_ppr"
+    assert cfg["lgbm_selection_metric"] == "fantasy_rmse_ppr"
 
 
 def test_legacy_ridge_metric_uses_the_independent_search_and_records_nothing(monkeypatch):

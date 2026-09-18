@@ -393,7 +393,7 @@ def _run_nn_training(
         scheduler_per_batch=scheduler_per_batch,
         log_every=_resolve_nn_log_every(cfg),
         epoch_callback=cfg_epoch_cb,
-        selection_metric=cfg.get("nn_selection_metric", "weighted_mae"),
+        selection_metric=cfg.get("nn_selection_metric", "fantasy_rmse_ppr"),
         use_amp=cfg.get("nn_use_amp", False),
     )
     return trainer.train(train_loader, val_loader, n_epochs=cfg["nn_epochs"])
@@ -457,8 +457,9 @@ def _tune_ridge_alphas_cv(
 ):
     """Per-target Ridge alpha tuning with expanding-window CV.
 
-    Default (``cfg`` absent or ``ridge_selection_metric="raw_mae"``, every
-    production position): the independent per-target search below.
+    Legacy (``cfg`` absent or ``ridge_selection_metric="raw_mae"``; kept for
+    explicit comparisons, ``src/tuning/ab_classical_selection.py``): the
+    independent per-target search below.
     Pass 1: coarse grid search across CV folds.
     Pass 2: fine refinement around the best coarse alpha.
 
@@ -474,12 +475,16 @@ def _tune_ridge_alphas_cv(
     ``src.shared.model_selection.tune_ridge_ppr``: a bounded coordinate search
     over cached coarse/refined candidates scored by joint out-of-fold PPR RMSE
     (special heads included), recording its provenance in ``selection_info``.
-    Opt-in only (``src/tuning/ab_classical_selection.py``).
+    Every production position selects this way (ADR-0003); it is also the
+    fallback when ``cfg`` carries no selector.
 
     Returns dict mapping each target name to its optimal alpha.
     """
     folds = _build_expanding_cv_folds(split_values, n_cv_folds)
-    if cfg is not None and cfg.get("ridge_selection_metric", "raw_mae") == "fantasy_rmse_ppr":
+    if (
+        cfg is not None
+        and cfg.get("ridge_selection_metric", "fantasy_rmse_ppr") == "fantasy_rmse_ppr"
+    ):
         from src.shared.model_selection import tune_ridge_ppr
 
         return tune_ridge_ppr(
@@ -494,7 +499,7 @@ def _tune_ridge_alphas_cv(
             n_jobs=n_jobs,
             selection_info=selection_info,
         )
-    if cfg is not None and cfg.get("ridge_selection_metric", "raw_mae") != "raw_mae":
+    if cfg is not None and cfg.get("ridge_selection_metric", "fantasy_rmse_ppr") != "raw_mae":
         raise ValueError("Unknown Ridge selection metric")
     best_alphas = {}
 
@@ -1514,7 +1519,7 @@ def _build_lgbm(targets, cfg, seed, n_jobs):
         min_child_samples=cfg.get("lgbm_min_child_samples", 20),
         min_split_gain=cfg.get("lgbm_min_split_gain", 0.0),
         objective=cfg.get("lgbm_objective", "huber"),
-        selection_metric=cfg.get("lgbm_selection_metric", "per_target"),
+        selection_metric=cfg.get("lgbm_selection_metric", "fantasy_rmse_ppr"),
         seed=seed,
         n_jobs=n_jobs,
         # Carry the per-head clamp set so the saved model persists it (predict()
