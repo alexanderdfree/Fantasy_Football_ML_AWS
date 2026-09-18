@@ -21,12 +21,18 @@ def fake_artifacts(
     seed=33,
     extra_static=(),
     data_ids=None,
-    opp_stats=(),
+    opp_stats=None,
 ):
-    """Fake checkpoints whose input schemas are the position's real production whitelists."""
+    """Fake checkpoints whose input schemas are the position's real production whitelists.
+
+    ``opp_stats`` overrides the opponent stream; by default the position's own
+    declaration applies (empty for the skill positions, seven stats for DST).
+    """
     directory.mkdir(parents=True, exist_ok=True)
     cfg = get_inference_spec(position)
-    cfg["opp_attn_history_stats"] = list(opp_stats)
+    if opp_stats is not None:
+        cfg["opp_attn_history_stats"] = list(opp_stats)
+    opp_stats = list(cfg.get("opp_attn_history_stats") or [])
     features = list(cfg["get_feature_columns_fn"]())
     targets = list(cfg["targets"])
     rng = np.random.default_rng(seed)

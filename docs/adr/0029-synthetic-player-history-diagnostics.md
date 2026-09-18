@@ -247,9 +247,19 @@ python -m src.analysis.synthetic_replay \
 
 The replay's identity control rebuilds the opponent stream from the weekly
 slice through the production builder and requires it to match for every
-case in every mode (`opponent_stream` check); the builder reads the
-schedules cache for the opponent's points, so run the replay with the same
-`FF_CACHE_DIR` the export used, or the control fails loudly. A checkpoint
+case in every mode (`opponent_stream` check, attention family only; flat
+families never read the frame); the builder reads the schedules cache for
+the opponent's points, so run the replay with the same `FF_CACHE_DIR` the
+export used, or the control fails loudly, and the replay manifest pins the
+schedules-cache digest it rebuilt from. Generation refuses an empty per-game
+frame, a stream column that is zero everywhere (the builder's fallback for a
+missing source) and a forecast opponent-season absent from the frame, so a
+broken export cannot become silent zero padding; an opponent with no game
+before the forecast week is legitimate and recorded per case. Because DST
+points are tiered, no per-unit scoring weights exist and the transform report
+records none. The exporter refuses to run when a raw cache is missing (the
+team-stats loader would otherwise fetch it) and drops the network-fetched
+team-logo column so the export digest does not depend on connectivity. A checkpoint
 without an opponent stream cannot replay a DST cohort and vice versa. No
 DST relation holds by construction (fumble recoveries are not bounded by
 forced fumbles in the data) and no team total lives on the DST frame, so the

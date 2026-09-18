@@ -37,13 +37,16 @@ from src.analysis.synthetic_history import (
     model_input_readiness,
     publish_artifact_dir,
     runtime_versions,
+    validate_opponent_weekly,
 )
 from src.analysis.synthetic_history_schema import POSITION_HISTORY_SCHEMAS, position_schema
+from src.config import CACHE_DIR, SEASONS
 from src.prediction.bundle import MODEL_FAMILIES, bundled_families, digest, file_digest
 from src.prediction.frames import SCORING_FORMATS
 from src.prediction.predictor import PredictionInputs, Predictor
 from src.shared.artifact_integrity import compute_feature_cols_hash
 from src.shared.registry import INFERENCE_REGISTRY
+from src.training.context import raw_data_dir
 
 REPLAY_SCHEMA_VERSION = 1
 RESPONSE_SEMANTICS = (
@@ -236,12 +239,19 @@ def _loaded_files(root: Path, predictor: Predictor) -> list[Path]:
     return sorted(paths)
 
 
+def schedules_cache_digest() -> str | None:
+    """Digest of the schedules cache the opponent-offense builder reads, if present."""
+    path = Path(raw_data_dir(CACHE_DIR)) / f"schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    return file_digest(path) if path.is_file() else None
+
+
 def family_identity(predictor: Predictor, model_dir: str) -> dict:
     schema = predictor.schema
     identity = {
         "feature_cols_hash": compute_feature_cols_hash(list(schema.features)),
         "features": list(schema.features),
         "history": list(schema.history),
+        "opponent_history": list(schema.opponent_history),
         "targets": list(schema.targets),
     }
     if predictor.bundle is not None:
@@ -315,11 +325,12 @@ def identity_control(
     """
     recipe = cohort.recipe
     schema = position_schema(recipe["position"])
-    streamed = bool(schema.opponent_history_columns)
+    # Only the attention family consumes the stream; flat families ignore the frame.
+    streamed = bool(schema.opponent_history_columns) and "attn_nn" in predictors
     if streamed and opponent_weekly is None:
         raise ValueError(
-            f"identity control for {recipe['position']} needs the opponent weekly frame "
-            "(--opponent-weekly)"
+            f"identity control for {recipe['position']} attn_nn needs the opponent weekly "
+            "frame (--opponent-weekly)"
         )
     consumed = consume_source(
         source, position=recipe["position"], donor_seasons=recipe["donor_seasons"], schema=schema
@@ -448,6 +459,8 @@ def replay_cohort(
         raise ValueError(f"no requested family is replayable for this cohort: {excluded}")
     assert_coherent_families(identities)
     if source is not None:
+        if opponent_weekly is not None:
+            opponent_weekly = validate_opponent_weekly(opponent_weekly)
         control = identity_control(
             cohort,
             predictors,
@@ -457,7 +470,13 @@ def replay_cohort(
             source_file_sha256=source_file_sha256,
             opponent_weekly=opponent_weekly,
         )
-        control["opponent_weekly_file_sha256"] = opponent_weekly_file_sha256
+        streamed = bool(position_schema(position).opponent_history_columns)
+        control["opponent_weekly_file_sha256"] = (
+            opponent_weekly_file_sha256 if streamed and opponent_weekly is not None else None
+        )
+        # The production builder also reads the schedules cache for the
+        # opponent's points; pin what this control rebuilt from.
+        control["schedules_cache_sha256"] = schedules_cache_digest() if streamed else None
     else:
         control = {"status": "skipped", "reason": "no --source", "source_file_sha256": None}
     frame = cohort.cases.copy()
@@ -481,6 +500,7 @@ def replay_cohort(
         "history_kind": cohort.manifest["history_kind"],
         "fixture": bool(cohort.manifest.get("fixture", False)),
         "opponent_stream": "opponent_history" in cohort.arrays,
+        "opponent_per_game_values_sha256": cohort.manifest.get("opponent_per_game_values_sha256"),
         "position": position,
         "model_dir": str(model_dir),
         "sync": sync,

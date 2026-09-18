@@ -40,6 +40,24 @@ from src.shared.aggregate_targets import predictions_to_fantasy_points
 SCHEMA_VERSION = 3
 KEYS = ["player_id", "season", "week"]
 OPPONENT_KEYS = ["opponent_team", "season", "week"]
+# The columns the production opponent-offense aggregation reads from the
+# all-position weekly frame, plus the identity the regular-season filter needs.
+OPPONENT_WEEKLY_COLUMNS = (
+    "player_id",
+    "position",
+    "recent_team",
+    "season",
+    "week",
+    "season_type",
+    "passing_yards",
+    "passing_tds",
+    "rushing_yards",
+    "rushing_tds",
+    "interceptions",
+    "sack_fumbles_lost",
+    "rushing_fumbles_lost",
+    "receiving_fumbles_lost",
+)
 OPPONENT_STREAM_POLICY = (
     "the forecast game's real opponent's real prior regular-season games, newest first, "
     "built with the production opponent-history builder from the supplied per-game "
@@ -327,19 +345,8 @@ def _source_frame(
 
     Returns the pool and the player-seasons excluded for duplicate game keys.
     """
-    history_columns = list(schema.history_columns)
     asserted_points = schema.fantasy_points_policy == "assert_equal"
-    required = list(
-        dict.fromkeys(
-            [
-                *KEYS,
-                *schema.identity_columns,
-                *history_columns,
-                *schema.targets,
-                *(["fantasy_points"] if asserted_points else []),
-            ]
-        )
-    )
+    required = list(dict.fromkeys([*KEYS, *schema.source_columns]))
     missing = sorted(set(required) - set(source.columns))
     if missing:
         raise ValueError(f"source is missing production history columns: {missing}")
@@ -354,17 +361,11 @@ def _source_frame(
     team_columns = [c for c in ("recent_team", "opponent_team") if c in schema.identity_columns]
     if frame[team_columns].isna().any().any():
         raise ValueError("source has missing team identities")
-    if schema.donor_identity == "team" and not frame["player_id"].eq(frame["recent_team"]).all():
-        raise ValueError(f"{position} donors are teams: player_id must equal recent_team")
     if not frame["player_id"].map(lambda v: isinstance(v, str) and bool(v.strip())).all():
         raise ValueError("source player_id must be a nonempty string")
-    for column in ("season", "week"):
-        numeric = pd.to_numeric(frame[column], errors="raise")
-        if not np.isfinite(numeric).all() or not (numeric == np.floor(numeric)).all():
-            raise ValueError(f"source {column} must contain finite integers")
-        frame[column] = numeric.astype("int64")
-    if not frame["week"].between(1, 18).all():
-        raise ValueError("regular-season week must be between 1 and 18")
+    if schema.donor_identity == "team" and not frame["player_id"].eq(frame["recent_team"]).all():
+        raise ValueError(f"{position} donors are teams: player_id must equal recent_team")
+    _integer_game_keys(frame, "source")
     frame = frame[frame["season"].isin(list(donor_seasons))]
     if frame.empty:
         raise ValueError(f"no {position} records in the requested training seasons")
@@ -403,6 +404,30 @@ def _source_frame(
     return frame.sort_values(KEYS, kind="stable"), excluded
 
 
+def validate_opponent_weekly(weekly: pd.DataFrame) -> pd.DataFrame:
+    """The regular-season weekly player slice the opponent stream is aggregated from.
+
+    The production aggregation returns an empty frame with only a warning when a
+    column is missing, which would surface downstream as a builder disagreement
+    rather than as the broken input it is.
+    """
+    missing = sorted(set(OPPONENT_WEEKLY_COLUMNS) - set(weekly.columns))
+    if missing:
+        raise ValueError(f"opponent weekly frame lacks columns: {missing}")
+    return weekly[weekly["season_type"].eq("REG")].reset_index(drop=True)
+
+
+def _integer_game_keys(frame: pd.DataFrame, stage: str) -> None:
+    """Coerce season and week to integers in place; weeks are regular-season weeks."""
+    for column in ("season", "week"):
+        numeric = pd.to_numeric(frame[column], errors="raise")
+        if not np.isfinite(numeric).all() or not (numeric == np.floor(numeric)).all():
+            raise ValueError(f"{stage} {column} must contain finite integers")
+        frame[column] = numeric.astype("int64")
+    if not frame["week"].between(1, 18).all():
+        raise ValueError(f"{stage} regular-season week must be between 1 and 18")
+
+
 def validate_opponent_per_game(
     per_game: pd.DataFrame, schema: PositionHistorySchema
 ) -> pd.DataFrame:
@@ -420,17 +445,22 @@ def validate_opponent_per_game(
     frame = per_game[required].copy()
     if frame[OPPONENT_KEYS].isna().any().any():
         raise ValueError("opponent per-game frame has missing team/season/week keys")
-    for column in ("season", "week"):
-        numeric = pd.to_numeric(frame[column], errors="raise")
-        if not np.isfinite(numeric).all() or not (numeric == np.floor(numeric)).all():
-            raise ValueError(f"opponent per-game {column} must contain finite integers")
-        frame[column] = numeric.astype("int64")
+    _integer_game_keys(frame, "opponent per-game")
     if frame.duplicated(OPPONENT_KEYS).any():
         raise ValueError("opponent per-game frame has duplicate team/season/week keys")
     for column in columns:
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype("float64")
     if not np.isfinite(frame[columns].to_numpy()).all():
         raise ValueError("opponent per-game stream columns must be observed and finite")
+    if frame.empty:
+        raise ValueError("opponent per-game frame is empty")
+    zeroed = [column for column in columns if not frame[column].any()]
+    if zeroed:
+        raise ValueError(
+            f"opponent per-game columns {zeroed} are zero everywhere; the production "
+            "builder zero-fills a missing source (for example the schedules cache), so "
+            "rebuild the frame with every input present"
+        )
     return frame.sort_values(OPPONENT_KEYS, kind="stable").reset_index(drop=True)
 
 
@@ -440,33 +470,52 @@ def _opponent_stream(
     per_game: pd.DataFrame,
     schema: PositionHistorySchema,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """The opponent stream for every case, plus the per-game rows it consumed."""
+    """The opponent stream for every case, plus the per-game rows it consumed.
+
+    The tensors come from the production builder. The export is one grouped
+    gather over the key-sorted per-game frame (the most recent games before the
+    forecast week, newest first), checked once against the tensors so the file
+    and the arrays can never disagree.
+    """
     columns = list(schema.opponent_history_columns)
     length = schema.opponent_max_history_games
     lookup = forecast_rows[OPPONENT_KEYS].reset_index(drop=True)
-    history, mask = build_opp_defense_history_arrays(lookup, per_game, columns, length)
-    parts = []
-    for case_index, (case_id, opponent, season, week) in enumerate(
-        zip(
-            cases["case_id"], lookup["opponent_team"], lookup["season"], lookup["week"], strict=True
+    groups = per_game.groupby(["opponent_team", "season"], sort=False).indices
+    uncovered = sorted(
+        {
+            (str(team), int(season))
+            for team, season in zip(lookup["opponent_team"], lookup["season"], strict=True)
+            if (team, season) not in groups
+        }
+    )
+    if uncovered:
+        raise ValueError(
+            f"opponent per-game frame has no games for forecast opponents {uncovered}; "
+            "a missing opponent-season would become silent zero padding"
         )
+    history, mask = build_opp_defense_history_arrays(lookup, per_game, columns, length)
+    weeks = per_game["week"].to_numpy()
+    taken, case_indices, slots = [], [], []
+    for case_index, (team, season, week) in enumerate(
+        zip(lookup["opponent_team"], lookup["season"], lookup["week"], strict=True)
     ):
-        prior = per_game[
-            per_game["opponent_team"].eq(opponent)
-            & per_game["season"].eq(season)
-            & per_game["week"].lt(week)
-        ]
-        # Production keeps the most recent games and orders them newest first.
-        prior = prior.sort_values("week").tail(length).iloc[::-1].reset_index(drop=True)
-        if not np.array_equal(
-            history[case_index, : len(prior)], prior[columns].to_numpy(dtype=np.float32)
-        ) or int(mask[case_index].sum()) != len(prior):
-            raise RuntimeError("opponent stream export disagrees with the production builder")
-        prior.insert(0, "case_id", case_id)
-        prior.insert(1, "case_index", case_index)
-        prior.insert(2, "history_slot", np.arange(len(prior)))
-        parts.append(prior)
-    games = pd.concat(parts, ignore_index=True)
+        rows = groups[(team, season)]
+        prior = rows[weeks[rows] < week][-length:][::-1]
+        taken.append(prior)
+        case_indices.append(np.full(len(prior), case_index))
+        slots.append(np.arange(len(prior)))
+    taken = np.concatenate(taken) if taken else np.array([], dtype=int)
+    case_indices = np.concatenate(case_indices) if case_indices else np.array([], dtype=int)
+    slots = np.concatenate(slots) if slots else np.array([], dtype=int)
+    games = per_game.iloc[taken].reset_index(drop=True)
+    games.insert(0, "case_id", cases["case_id"].to_numpy()[case_indices])
+    games.insert(1, "case_index", case_indices)
+    games.insert(2, "history_slot", slots)
+    lengths = np.bincount(case_indices, minlength=len(lookup))
+    if not np.array_equal(mask.sum(axis=1), lengths) or not np.array_equal(
+        history[case_indices, slots], games[columns].to_numpy(dtype=np.float32)
+    ):
+        raise RuntimeError("opponent stream export disagrees with the production builder")
     return history, mask, games
 
 
@@ -751,9 +800,9 @@ def generate_cohort(
         mask,
         manifest,
         donor_games,
-        opponent_history,
-        opponent_mask,
-        opponent_games,
+        opponent_history=opponent_history,
+        opponent_mask=opponent_mask,
+        opponent_games=opponent_games,
     )
 
 
@@ -835,7 +884,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.opponent_per_game is not None:
             cohort.manifest["opponent_per_game_file_sha256"] = file_digest(args.opponent_per_game)
         output = write_cohort(cohort, args.output)
-    except (ValueError, TypeError, OSError) as exc:
+    except (ValueError, TypeError, OSError, RuntimeError) as exc:
         parser.exit(2, f"synthetic-history: {exc}\n")
     print(
         json.dumps(

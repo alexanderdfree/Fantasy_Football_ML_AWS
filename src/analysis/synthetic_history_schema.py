@@ -133,6 +133,12 @@ class PositionHistorySchema:
         return tuple(dict.fromkeys([*self.history_columns, *self.targets]))
 
     @property
+    def source_columns(self) -> tuple[str, ...]:
+        """Every column a source must carry beside the game keys."""
+        points = ["fantasy_points"] if self.fantasy_points_policy == "assert_equal" else []
+        return tuple(dict.fromkeys([*self.identity_columns, *self.validated_columns, *points]))
+
+    @property
     def team_accounting_columns(self) -> set[str]:
         return {column for column, _ in self.team_accounting.values()}
 
