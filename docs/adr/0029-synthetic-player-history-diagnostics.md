@@ -253,12 +253,15 @@ the opponent's points, so run the replay with the same `FF_CACHE_DIR` the
 export used, or the control fails loudly, and the replay manifest pins the
 schedules-cache digest it rebuilt from. Generation refuses an empty per-game
 frame, a stream column that is zero everywhere (the builder's fallback for a
-missing source) and a forecast opponent-season absent from the frame, so a
+missing source), a game recorded with zero points but touchdowns (the builder's
+fill for a week absent from the schedules cache) and a forecast opponent-season
+absent from the frame, so a
 broken export cannot become silent zero padding; an opponent with no game
 before the forecast week is legitimate and recorded per case. Because DST
 points are tiered, no per-unit scoring weights exist and the transform report
 records none. The exporter refuses to run when a raw cache is missing (the
-team-stats loader would otherwise fetch it) and drops the network-fetched
+team-stats loader would otherwise fetch it), refuses an export during which a
+loader rewrote a cache (a stale-schema refresh) and drops the network-fetched
 team-logo column so the export digest does not depend on connectivity. A checkpoint
 without an opponent stream cannot replay a DST cohort and vice versa. No
 DST relation holds by construction (fumble recoveries are not bounded by
@@ -293,9 +296,10 @@ Each new output directory contains:
 |---|---|
 | `games.parquet` | Case/step/block IDs, original donor player/season/week, teams, raw history signals (rewritten when transformed, with a `transformed` flag), historical projected-component points |
 | `donor_games.parquet` | Transformed cohorts only: the untransformed sampled window |
-| `cases.parquet` | Case index, forecast key, real prior games and exact-window flag, donor/sampled/generated history averages, unique donor-game counts |
+| `cases.parquet` | Case index, forecast key, real prior games and exact-window flag, donor/sampled/generated history averages, unique donor-game counts; positions with an opponent stream add the opponent's prior-game count |
 | `context.parquet` | Per case, the forecast game's teams and every unscaled production feature column |
-| `history.npz` | Unscaled `history` and Boolean `mask`; load with `allow_pickle=False` |
+| `history.npz` | Unscaled `history` and Boolean `mask`; positions with an opponent stream add `opponent_history` and `opponent_mask`; load with `allow_pickle=False` |
+| `opponent_games.parquet` | Positions with an opponent stream: the per-game rows each case's stream consumed, newest first (`history_slot`) |
 | `manifest.json` | Recipe, sampling identity, consumed-value/source-file hashes and their scope, implementation hashes, runtime versions, signal order, coverage, history kind, transform report, per-family readiness and artifact hashes |
 
 Replay a cohort against the position's served checkpoint (`--sync` pulls it

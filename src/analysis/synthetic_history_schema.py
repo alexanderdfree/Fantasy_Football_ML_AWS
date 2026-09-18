@@ -44,6 +44,8 @@ class PositionHistorySchema:
     validity rules that are not a plain ``a <= b`` pair; ``derived_caps`` bound
     a count that integer rounding may push over such a rule.
 
+    ``opponent_checks`` are validity rules on the opponent per-game frame (the
+    production builder fills a missing score with zero, which they catch).
     ``opponent_history_columns`` names a second attention stream (the
     forecast game's real opponent's prior games, ``opponent_max_history_games``
     long) that generation builds from a supplied per-game frame and never
@@ -83,6 +85,7 @@ class PositionHistorySchema:
     transform_support: dict[str, str | None] = field(default_factory=dict)
     opponent_history_columns: tuple[str, ...] = ()
     opponent_max_history_games: int = 0
+    opponent_checks: tuple[tuple[str, BoundFn], ...] = ()
     donor_identity: str = "player"
     fantasy_points_policy: str = "recompute"
 
@@ -459,6 +462,15 @@ def _dst_schema() -> PositionHistorySchema:
         },
         opponent_history_columns=tuple(spec["opp_attn_history_stats"]),
         opponent_max_history_games=int(spec["opp_attn_max_seq_len"]),
+        opponent_checks=(
+            (
+                "opponent scored touchdowns in a game recorded with zero points",
+                lambda frame: (
+                    frame["off_pts_scored"].eq(0)
+                    & (frame["off_pass_tds"] + frame["off_rush_tds"]).gt(0)
+                ),
+            ),
+        ),
         donor_identity="team",
         fantasy_points_policy="assert_equal",
     )

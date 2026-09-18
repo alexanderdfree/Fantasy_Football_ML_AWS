@@ -458,6 +458,15 @@ def replay_cohort(
     if not predictors:
         raise ValueError(f"no requested family is replayable for this cohort: {excluded}")
     assert_coherent_families(identities)
+    schema = position_schema(position)
+    if opponent_weekly is not None and not schema.opponent_history_columns:
+        raise ValueError(
+            f"{position} histories have no opponent stream; do not pass --opponent-weekly"
+        )
+    # Only the attention family reads the stream; flat families never touch the frame.
+    streamed = bool(schema.opponent_history_columns) and "attn_nn" in predictors
+    if not streamed:
+        opponent_weekly = None
     if source is not None:
         if opponent_weekly is not None:
             opponent_weekly = validate_opponent_weekly(opponent_weekly)
@@ -470,9 +479,8 @@ def replay_cohort(
             source_file_sha256=source_file_sha256,
             opponent_weekly=opponent_weekly,
         )
-        streamed = bool(position_schema(position).opponent_history_columns)
         control["opponent_weekly_file_sha256"] = (
-            opponent_weekly_file_sha256 if streamed and opponent_weekly is not None else None
+            opponent_weekly_file_sha256 if opponent_weekly is not None else None
         )
         # The production builder also reads the schedules cache for the
         # opponent's points; pin what this control rebuilt from.

@@ -195,6 +195,10 @@ def test_source_without_a_points_column_is_rejected():
         (lambda f: f.assign(week=[1.5] + list(f["week"][1:])), "finite integers"),
         (lambda f: f.iloc[:0], "frame is empty"),
         (lambda f: f.assign(off_pts_scored=0.0), "zero everywhere"),
+        (
+            lambda f: f.assign(off_pts_scored=[0.0] + list(f["off_pts_scored"][1:])),
+            "touchdowns in a game recorded with zero points",
+        ),
     ],
 )
 def test_invalid_opponent_frames_fail(mutate, error):
@@ -309,6 +313,7 @@ def test_replay_streams_the_opponent_and_the_control_rebuilds_it(tmp_path, dst_s
     _, ridge_only = replay_cohort(loaded, str(models), ["ridge"], source=source)
     assert ridge_only["identity_control"]["status"] == "passed"
     assert ridge_only["identity_control"]["opponent_weekly_file_sha256"] is None
+    assert ridge_only["identity_control"]["schedules_cache_sha256"] is None
     with pytest.raises(ValueError, match="weekly frame lacks columns: \\['sack_fumbles_lost'\\]"):
         replay_cohort(
             loaded,
@@ -338,6 +343,14 @@ def test_replay_refuses_mismatched_streams(tmp_path, qb_source):
         replay_cohort(load_cohort(dst_cohort), str(qb_models), ["attn_nn"])
     with pytest.raises(ValueError, match="position"):
         replay_cohort(load_cohort(qb_cohort), str(dst_models), ["attn_nn"])
+    with pytest.raises(ValueError, match="no opponent stream; do not pass"):
+        replay_cohort(
+            load_cohort(qb_cohort),
+            str(qb_models),
+            ["attn_nn"],
+            source=qb_source,
+            opponent_weekly=opponent_weekly_rows(),
+        )
     # A DST cohort written without its stream is refused at load time.
     naked = dataclasses.replace(
         generate_cohort(dst_rows(), recipe(), opponent_per_game=opponent_per_game_rows()),
@@ -462,3 +475,12 @@ def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_sched
     assert manifest["prepared_data_id"] == "dst-id"
     with pytest.raises(ValueError, match="not a skill position"):
         sources.export_skill_source("DST")
+    # A loader that rewrites a cache mid-export (a stale-schema refresh) is refused.
+
+    def rewriting_build(**kwargs):
+        weekly.iloc[:1].to_parquet(weekly_path)
+        return source
+
+    monkeypatch.setattr("src.dst.data.build_data", rewriting_build)
+    with pytest.raises(ValueError, match="changed during the export"):
+        sources.write_sources("DST", tmp_path / "dst-rewritten")
