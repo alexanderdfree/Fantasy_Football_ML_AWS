@@ -221,6 +221,29 @@ def test_flat_attn_kwargs_static_threads_non_negative_targets():
 
 
 # --------------------------------------------------------------------------
+# _nested_attn_kwargs_static — K's nested-history builder. #1503: it forwarded
+# every other nn_/attn_ field the training factory consumes but dropped
+# ``nn_head_hidden_overrides``, so a K per-head override would have trained
+# one head shape and served another.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_nested_attn_kwargs_static_populates_head_hidden_overrides_when_set():
+    overrides = {"a": 8, "b": 16}
+    kwargs = _nested_attn_kwargs_static(_make_pc(nn_head_hidden_overrides=overrides))
+    assert kwargs["head_hidden_overrides"] == overrides
+    # Forwarded as a copy (like the flat builder), never the config's own dict.
+    assert kwargs["head_hidden_overrides"] is not overrides
+
+
+@pytest.mark.unit
+def test_nested_attn_kwargs_static_omits_head_hidden_overrides_when_empty():
+    """No override configured (K today) -> key absent; served kwargs unchanged."""
+    assert "head_hidden_overrides" not in _nested_attn_kwargs_static(_make_pc())
+
+
+# --------------------------------------------------------------------------
 # Factory <-> registry-builder parity (audit #362 F9/F10).
 #
 # ``get_inference_spec`` rebuilds each served attention NN from
@@ -240,12 +263,35 @@ def test_flat_attn_kwargs_static_threads_non_negative_targets():
 # diverges from serving (which reads the registry builder output) — the served
 # state_dict would no longer match. The assertion: every PositionConfig field
 # that maps to a constructor parameter MUST appear in the builder's output
-# keys. Both spellings are checked — the direct name overlap the task names
-# (``set(fields) & set(ctor_params)``) AND the ``attn_``-prefixed convention
-# (PositionConfig ``attn_d_model`` -> constructor ``d_model``), so the guard
-# covers the attention kwargs rather than only the two names that happen to be
-# spelled identically.
+# keys. Three spellings are checked — the direct name overlap the task names
+# (``set(fields) & set(ctor_params)``), the ``attn_``-prefixed convention
+# (PositionConfig ``attn_d_model`` -> constructor ``d_model``), AND the ``nn_``
+# prefix the shared-NN knobs use (``nn_head_hidden_overrides`` ->
+# ``head_hidden_overrides`` — the K/nested drop #1503 caught, invisible to the
+# guard until this prefix was mapped) — so the guard covers the attention + NN
+# kwargs rather than only the names that happen to be spelled identically.
+#
+# Fixture caveat: ``head_hidden_overrides`` is emitted CONDITIONALLY by both
+# builders (only when ``nn_head_hidden_overrides`` is non-empty), so the parity
+# guards build their fixture with the optional knobs POPULATED
+# (``_POPULATED_OPTIONAL_KNOBS``). On an empty fixture the key is legitimately
+# absent and the guard would false-positive on a builder that forwards it.
 # --------------------------------------------------------------------------
+
+# PositionConfig prefixes a constructor parameter drops: ``attn_`` for the
+# attention knobs (``attn_d_model`` -> ``d_model``) and ``nn_`` for the shared
+# NN knobs (``nn_head_hidden_overrides`` -> ``head_hidden_overrides``). Identity
+# matches win first, so ``attn_dropout`` (a real ctor param) is NOT read as
+# ``dropout``.
+_CONFIG_FIELD_PREFIXES = ("attn_", "nn_")
+
+# Optional knobs the parity fixtures populate so the conditionally-emitted
+# builder key (``head_hidden_overrides``) — and the configured arm of the flat
+# builder's ``gated_targets`` — are actually exercised. See the caveat above.
+_POPULATED_OPTIONAL_KNOBS = dict(
+    nn_head_hidden_overrides={"a": 8},
+    gated_targets=["a"],
+)
 
 
 def _ctor_param_names(ctor) -> set[str]:
@@ -257,10 +303,10 @@ def _config_fields_mapped_to_ctor(ctor) -> set[str]:
     """PositionConfig fields that map to a parameter of ``ctor``.
 
     A field maps either by identical name (``gated_targets`` ->
-    ``gated_targets``) or by stripping the ``attn_`` prefix the config uses for
-    attention knobs (``attn_d_model`` -> ``d_model``). Returns the
-    *PositionConfig field names* so the failure message names the field a
-    contributor would have just added.
+    ``gated_targets``) or by stripping one of ``_CONFIG_FIELD_PREFIXES``
+    (``attn_d_model`` -> ``d_model``, ``nn_head_hidden_overrides`` ->
+    ``head_hidden_overrides``). Returns the *PositionConfig field names* so the
+    failure message names the field a contributor would have just added.
 
     Constructor params ending in ``_dim`` (``kick_dim``/``opp_dim``/
     ``history_dim``/``static_dim``/``input_dim``) are excluded: those are the
@@ -272,18 +318,18 @@ def _config_fields_mapped_to_ctor(ctor) -> set[str]:
     """
     params = {p for p in _ctor_param_names(ctor) if not p.endswith("_dim")}
     fields = set(PositionConfig.__dataclass_fields__)
-    mapped = set()
-    for fld in fields:
-        if fld in params or fld.startswith("attn_") and fld[len("attn_") :] in params:
-            mapped.add(fld)
-    return mapped
+    return {fld for fld in fields if _ctor_param_for_field(fld, params) is not None}
 
 
-def _ctor_param_for_field(fld: str, ctor_params: set[str]) -> str:
-    """Constructor parameter name a PositionConfig field forwards to."""
+def _ctor_param_for_field(fld: str, ctor_params: set[str]) -> str | None:
+    """Constructor parameter name a PositionConfig field forwards to, or
+    ``None`` when the field maps to no parameter of the constructor."""
     if fld in ctor_params:
         return fld
-    return fld[len("attn_") :]
+    for prefix in _CONFIG_FIELD_PREFIXES:
+        if fld.startswith(prefix) and fld[len(prefix) :] in ctor_params:
+            return fld[len(prefix) :]
+    return None
 
 
 @pytest.mark.unit
@@ -297,13 +343,24 @@ def test_flat_factory_params_overlap_is_non_empty():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("ctor", [MultiHeadNetWithHistory, MultiHeadNetWithNestedHistory])
+def test_nn_prefixed_override_field_is_visible_to_the_parity_guard(ctor):
+    """Pin the ``nn_`` prefix mapping itself: ``nn_head_hidden_overrides`` must
+    be recognised as feeding ``head_hidden_overrides`` on BOTH constructors,
+    else the parity guards go blind to exactly the drop #1503 found."""
+    assert "nn_head_hidden_overrides" in _config_fields_mapped_to_ctor(ctor)
+    param = _ctor_param_for_field("nn_head_hidden_overrides", _ctor_param_names(ctor))
+    assert param == "head_hidden_overrides"
+
+
+@pytest.mark.unit
 def test_flat_attn_kwargs_static_forwards_every_mapped_config_field():
     """Every PositionConfig field that maps to a ``MultiHeadNetWithHistory``
     constructor parameter must be forwarded by ``_flat_attn_kwargs_static``.
 
     Passes today; FAILS if someone adds a PositionConfig field the flat
     registry builder forgets to forward."""
-    builder_keys = set(_flat_attn_kwargs_static(_make_pc()))
+    builder_keys = set(_flat_attn_kwargs_static(_make_pc(**_POPULATED_OPTIONAL_KNOBS)))
     ctor_params = _ctor_param_names(MultiHeadNetWithHistory)
     forwarded = {_ctor_param_for_field(f, ctor_params) for f in builder_keys & ctor_params}
     # Account for the ``attn_``-prefix mapping on both sides: a field
@@ -324,8 +381,11 @@ def test_flat_attn_kwargs_static_forwards_every_mapped_config_field():
 @pytest.mark.unit
 def test_nested_attn_kwargs_static_forwards_every_mapped_config_field():
     """Same parity guard for K's nested-history builder /
-    ``MultiHeadNetWithNestedHistory`` constructor."""
-    builder_keys = set(_nested_attn_kwargs_static(_make_pc()))
+    ``MultiHeadNetWithNestedHistory`` constructor.
+
+    Red on the pre-#1503 builder (``nn_head_hidden_overrides`` ->
+    ``head_hidden_overrides`` was dropped), green now."""
+    builder_keys = set(_nested_attn_kwargs_static(_make_pc(**_POPULATED_OPTIONAL_KNOBS)))
     ctor_params = _ctor_param_names(MultiHeadNetWithNestedHistory)
 
     missing = []
