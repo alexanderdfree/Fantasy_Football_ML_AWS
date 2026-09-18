@@ -37,7 +37,8 @@ Four cohort definitions remain separate:
 
 | Name | Selection | Purpose |
 |---|---|---|
-| `weekly_reference_top24` | Top 24 per position/week by a fixed archived expert reference | Primary expected-starter accuracy and bias |
+| `weekly_consensus_top24` | Top 24 per position/week by the equal-weight mean of every displayed source (models and experts) on the common slate | Comparison tab headline for expected-starter accuracy; symmetric selection (benchmark cohort reports keep `weekly_reference_top24` and `elite_top24`) |
+| `weekly_reference_top24` | Top 24 per position/week by a fixed archived expert reference | Secondary view; its selection conditions the graded experts' own errors |
 | `elite_top24` | Top 24 distinct players by prior-season mean shared-component points | Historical continuity; pre-season importance |
 | `seasonal_actual_top24` | Top 24 by current-season regular-season shared-component actual total | Retrospective season-leader accuracy |
 | `weekly_actual_top24` | Actual weekly top 24 versus each source's predicted selection | Hit rate, points captured, and lineup regret |
@@ -51,7 +52,7 @@ calibration target: selection on realized outcomes creates that pattern.
 ## Timeline records
 
 The Timeline applies the same component truth to its `all` regular-season cohort.
-It separates offense (QB/RB/WR/TE, NFL.com and RotoWire), K (ESPN), and DST
+It separates offense (QB/RB/WR/TE, NFL.com, RotoWire and ESPN), K (ESPN), and DST
 (RotoWire and ESPN). All four models and the group's required experts share one
 finite player-week intersection. The source set is fixed, including when a whole
 source or week is missing; an unavailable source never relaxes the comparison.
@@ -90,7 +91,9 @@ same NFL.com eligibility rule as the other metric boundaries.
 position, pregame reference score/rank, source recipe, and generation metadata.
 The versioned recipe is the mean of archived NFL.com and RotoWire forecasts for
 QB/RB/WR/TE, ESPN for K, and RotoWire for DST. The current recipe is
-`shared_components_v3`; old recipe rows are preserved in the versioned parquet.
+`shared_components_v4`, which treats a provider row whose shared components
+are all zero as a missing forecast; old recipe rows are preserved in the
+versioned parquet.
 NFL.com K is excluded from matched comparisons because its native bucket total
 cannot represent our made-yardage and miss targets. ESPN supplies those targets. Both required offense sources
 must exist for a candidate; it never becomes a mean of whichever happens to be
@@ -180,6 +183,13 @@ Historical static tables remain dated research snapshots and are not comparable
 to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
+
+- 2026-09-18 — Treat all-zero provider rows as missing forecasts for every
+  expert on every surface (reference recipe `shared_components_v4`, cache
+  schema 12); add the symmetric `weekly_consensus_top24` headline cohort and
+  demote the expert-selected reference to a secondary view; align the Timeline
+  offense group with the Comparison tab's displayed sources, ESPN included
+  (PR pending).
 
 - 2026-09-18: Score training-pipeline baseline, ranking, backtest and cohort
   reports on the certified shared-component truth (`actual_projected_total`)

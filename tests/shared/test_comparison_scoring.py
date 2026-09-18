@@ -33,6 +33,22 @@ def test_shared_stat_totals_across_offense_and_formats(pos, fmt, rec):
     )
 
 
+def test_all_zero_provider_rows_are_unavailable_but_projected_zero_totals_are_kept():
+    from src.shared.comparison_scoring import projected_forecast_rows, score_forecast_components
+
+    raw = pd.DataFrame({name: [0.0, 0.0, 0.0] for name in scoring_components("WR")})
+    raw.loc[1, ["receiving_yards", "fumbles_lost"]] = [20.0, 1.0]  # nets to exactly 0.0
+    raw.loc[2, "fumbles_lost"] = 1.0  # a genuine negative forecast
+    assert projected_forecast_rows(raw, "WR").tolist() == [False, True, True]
+    scored = score_forecast_components(raw, "WR")
+    assert pd.isna(scored.iloc[0])
+    assert scored.iloc[1] == 0.0 and scored.iloc[2] == -2.0
+    assert score_actual_components(raw, "WR").iloc[0] == 0.0  # actuals keep zeros
+    assert score_forecast_components(raw.drop(columns="receptions"), "WR").isna().all()
+    served = raw.add_prefix("pred_")
+    assert projected_forecast_rows(served, "WR", prefix="pred_").tolist() == [False, True, True]
+
+
 @pytest.mark.parametrize("pos", ["K", "DST"])
 def test_missing_native_component_cannot_become_a_zero_or_tier_bonus(pos):
     raw = pd.DataFrame({name: [0.0, 0.0] for name in scoring_components(pos)})

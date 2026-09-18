@@ -47,7 +47,17 @@ def build_comparison_snapshot(results, *, reference=None) -> dict:
         "excluded_components": EXCLUDED_COMPONENTS,
         "sample_basis": "shared_player_weeks",
         "cohort_definitions": {
-            "weekly_reference_top24": "Top 24 per week by shared-component NFL.com/RotoWire mean; ESPN for K, RotoWire for DST",
+            "weekly_consensus_top24": (
+                "Top 24 per week by the equal-weight mean of every displayed source's "
+                "shared-component forecast (models and experts) on the common player-weeks; "
+                "each source contributes equally to selection"
+            ),
+            "weekly_reference_top24": (
+                "Top 24 per week by the archived shared-component NFL.com/RotoWire mean "
+                "(ESPN for K, RotoWire for DST). Selected by graded expert forecasts, so those "
+                "sources' errors are conditioned on their own selection; compare sources on the "
+                "consensus cohort"
+            ),
             "top30": "Top 30 per season by regular-season actual shared-component points",
             "top12": "Top 12 per season by regular-season actual shared-component points",
         },

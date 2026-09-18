@@ -334,7 +334,13 @@ def test_comparison_scores_cached_sources_on_shared_component_actuals(
         body = c.get("/api/comparison").get_json()
 
     assert body["model_source"] == "live"
-    assert set(body["subsets"]) == {"all", "top12", "top30", "weekly_reference_top24"}
+    assert set(body["subsets"]) == {
+        "all",
+        "top12",
+        "top30",
+        "weekly_reference_top24",
+        "weekly_consensus_top24",
+    }
 
     qb = body["subsets"]["all"]["QB"]
     # Each architecture is its own block now (no single "Our Model" / best_arch).

@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Expert placeholders graded as zeros, expert-selected headline cohort, and split surface populations
+[Read the incident record](fixed-archive/expert-comparison-placeholders-consensus-2026-09.md).
+
 ### [FIXED] CI test scope missed unknown paths mixed with recognized changes
 [Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
 

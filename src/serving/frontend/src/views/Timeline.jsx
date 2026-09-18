@@ -190,6 +190,7 @@ export function TimelineView({ scoring, theme }) {
                         <summary>Scoring and coverage</summary>
                         <p>Common rows / eligible rows: {summary.n} / {summary.cohort_n}. Matching observed stats: {summary.actual_n}.</p>
                         <p>Forecast coverage with matching actuals: {sources.map((source) => `${labels[source] || source} ${summary.source_n[source]}`).join(" · ")}.</p>
+                        <p>Required sources: {sources.map((source) => labels[source] || source).join(", ")} — the same displayed sources as the Comparison tab, so both surfaces grade one common player-week set.</p>
                         {Object.entries(payload.scoring_components).map(([position, components]) => (
                             <p key={position}>{position}: {components.map((name) => name.replaceAll("_", " ")).join(", ")}.</p>
                         ))}

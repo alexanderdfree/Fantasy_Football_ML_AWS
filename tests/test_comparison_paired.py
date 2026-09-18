@@ -60,6 +60,19 @@ def test_zero_projection_is_retained_and_infinite_prediction_is_excluded():
     assert subsets["all"]["WR"]["nflcom"]["n"] == 29
 
 
+def test_consensus_cohort_is_selected_by_all_displayed_sources_on_common_rows():
+    data = records()
+    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan  # top forecast lacks one source
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["weekly_consensus_top24"]["WR"]
+    assert cell["status"] == "available"
+    assert cell["n"] == cell["cohort_n"] == cell["selection_n"] == 24
+    assert cell["selection_basis"] == "equal_weight_mean_of_displayed_sources"
+    assert cell["selection_sources"] == list(coverage["all"]["WR"]["sources"])
+    cells = subsets["weekly_consensus_top24"]["WR"]
+    assert all(value["n"] == 24 and value["mae"] == 7 for value in cells.values())
+
+
 def test_weekly_list_is_reference_selected_before_coverage_filter():
     data = records()
     ref = data[["player_id", "position", "season", "week"]].copy()

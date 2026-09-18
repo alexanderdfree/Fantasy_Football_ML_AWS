@@ -101,7 +101,7 @@ function ComparisonRows({ posMap, metric, coverage }) {
 }
 
 /* One of the three accuracy tables (all / top-30 / top-12). */
-function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage, definition }) {
+function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage, definition, loaded = false }) {
     return (
         <div className="comparison-table-block">
             <div className="section-header">{header}</div>
@@ -114,6 +114,8 @@ function ComparisonSubsetBlock({ header, bodyId, posMap, metric, error, coverage
                             <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-error">Failed to load: {error}</td></tr>
                         ) : posMap ? (
                             <ComparisonRows posMap={posMap} metric={metric} coverage={coverage} />
+                        ) : loaded ? (
+                            <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="comparison-empty">Not supplied by this response.</td></tr>
                         ) : (
                             <tr><td colSpan={COMPARISON_SOURCES.length + 1} className="arch-loading">Loading comparison…</td></tr>
                         )}
@@ -212,7 +214,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
 
             {data && <div className="comparison-notes" id="comparison-contract">
                 <p>{data.sample_basis === "shared_player_weeks"
-                    ? "Every displayed source is scored on the same regular-season player-weeks. Missing forecasts are excluded; zero forecasts are retained."
+                    ? "Every displayed source is scored on the same regular-season player-weeks. Missing forecasts are excluded. A projected zero is retained, but a provider row with every shared component at zero is an unprojected placeholder and counts as missing."
                     : `Sample basis: ${data.sample_basis || "not supplied by this response"}.`}</p>
                 <p>{["shared_projected_components_v1", "shared_projected_components_v2"].includes(data.actual_basis)
                     ? "Predictions and actuals use only the shared projected components below. Stats outside those sets are excluded from actuals too."
@@ -220,6 +222,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                 {Object.entries(data.scoring_components || {}).map(([position, components]) => (
                     <p key={position}><strong>{position}.</strong> {components.map((name) => name.replaceAll("_", " ")).join(", ")}</p>
                 ))}
+                {data.coverage?.all && <p><strong>Graded sources.</strong> {COMPARISON_POSITIONS.map((pos) => `${pos}: ${((data.coverage.all[pos] || {}).sources || []).map((s) => SOURCE_LABELS[s] || s).join(", ") || "unavailable"}`).join(" · ")}. The Timeline tab grades the same source groups.</p>}
                 {Object.entries(data.excluded_sources || {}).flatMap(([position, sources]) =>
                     Object.entries(sources).map(([source, reason]) => <p key={`${position}-${source}`}>{position} · {SOURCE_LABELS[source] || source}: {reason}</p>))}
                 {Object.entries(data.excluded_components || {}).flatMap(([position, components]) =>
@@ -241,7 +244,18 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
             </div>
 
             <ComparisonSubsetBlock
-                header="Expected starters · weekly top 24"
+                header="Expected starters · weekly top 24 · consensus of all sources"
+                bodyId="comparison-weekly-consensus"
+                posMap={data?.subsets?.weekly_consensus_top24}
+                coverage={data?.coverage?.weekly_consensus_top24}
+                definition={data?.cohort_definitions?.weekly_consensus_top24}
+                metric={metric}
+                error={error}
+                loaded={!!data}
+            />
+
+            <ComparisonSubsetBlock
+                header="Expert-reference top 24 · secondary view"
                 bodyId="comparison-weekly-top24"
                 posMap={data ? (subsets.weekly_reference_top24 || {}) : null}
                 coverage={data?.coverage?.weekly_reference_top24}
@@ -343,7 +357,8 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                             <li><strong>NFL.com.</strong> {nflNote}</li>
                             <li><strong>RotoWire.</strong> {rwNote}</li>
                             <li><strong>ESPN.</strong> {espnNote}</li>
-                            {data.cohort_definitions?.weekly_reference_top24 && <li><strong>Expected starters.</strong> {data.cohort_definitions.weekly_reference_top24}. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>}
+                            {data.cohort_definitions?.weekly_consensus_top24 && <li><strong>Expected starters.</strong> {data.cohort_definitions.weekly_consensus_top24}. No single source defines the population, so no source's errors are conditioned on its own picks more than another's.</li>}
+                            {data.cohort_definitions?.weekly_reference_top24 && <li><strong>Expert reference.</strong> {data.cohort_definitions.weekly_reference_top24}. Selection happens before filtering for recorded outcomes or model coverage. Missing reference weeks are reported explicitly.</li>}
                             {(data.cohort_definitions?.top30 || data.cohort_definitions?.top12) && <li><strong>Season leaders.</strong> {data.cohort_definitions.top30 || data.cohort_definitions.top12}. These are retrospective diagnostics, not pregame starter lists.</li>}
                             <li><strong>Weekly leader capture.</strong> The fraction of actual weekly top-24 scorers selected by each source's own forecasts. Only weeks with at least 24 comparable players count; hover for the number of weeks.</li>
                             <li>
