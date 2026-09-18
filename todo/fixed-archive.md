@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] WR/TE `opportunity_index_L3` and `redzone_target_share_L3` rolled across team stints
+[Read the incident record](fixed-archive/audit-1499-wr-te-stint-aware-boom-rollings.md).
+
 ### [FIXED] A/B job revisions retained mutable image tags
 [Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
 
