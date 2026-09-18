@@ -90,6 +90,8 @@ def _flat_attn_kwargs_static(pc: PositionConfig) -> dict:
         gated=pc.attn_gated,
         gate_hidden=pc.attn_gate_hidden,
         gated_targets=list(pc.gated_targets) if pc.gated_targets else None,
+        head_losses=dict(pc.head_losses),
+        correct_ztnb_mean=pc.nn_correct_ztnb_mean,
         # Architecture knob (adds an nn.Parameter when on) — must be in the
         # served kwargs so app.py / smoke_test rebuild the matching state_dict.
         no_history_embedding=pc.attn_no_history_embedding,

@@ -231,20 +231,34 @@ def _build_backbone(
     return nn.Sequential(*blocks)
 
 
+def ztnb2_conditional_mean(mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.Tensor:
+    """E[Y | Y > 0] for NB-2 with untruncated mean mu and dispersion alpha.
+
+    log1p/expm1 avoid cancellation for small means. Do probability arithmetic
+    in at least FP32 even when the surrounding NN forward uses autocast.
+    """
+    if mu.dtype in (torch.float16, torch.bfloat16):
+        mu, log_alpha = mu.float(), log_alpha.float()
+    alpha = log_alpha.exp().clamp(min=1e-6)
+    log_p_zero = -torch.log1p(alpha * mu) / alpha
+    return mu / (-torch.expm1(log_p_zero))
+
+
 class GatedHead(nn.Module):
     """Two-stage hurdle head for zero-inflated count prediction.
 
     Stage 1 (gate): P(Y > 0) via sigmoid over ``gate_logit``.
-    Stage 2 (value): the rate ``mu = E[Y | Y > 0]`` via Softplus on one trunk
+    Stage 2 (value): a positive NB-2 rate ``mu`` via Softplus on one trunk
     output, plus a per-sample ``log_alpha`` on the other. ``log_alpha`` is the
     NegBin-2 dispersion (``var = mu + exp(log_alpha) * mu^2``); it's unused by
     Poisson-hurdle losses but exposed on every GatedHead so the loss layer can
     choose its family without widening the module API.
 
     Forward returns ``(expected, gate_logit, mu, log_alpha)``:
-        expected    = sigmoid(gate_logit) * mu   — E[Y] for reporting/metrics
+        expected    = gate * conditional NB mean when correct_ztnb_mean=True;
+                      gate * mu for other loss families / legacy checkpoints
         gate_logit  = pre-sigmoid logit          — BCE target
-        mu          = E[Y | Y > 0], softplus + 1e-6 floor so log(mu) is finite
+        mu          = untruncated NB mean, softplus + 1e-6 floor
         log_alpha   = per-sample NegBin-2 log-dispersion, real-valued
 
     Value and dispersion share a single trunk so the extra capacity for
@@ -252,8 +266,20 @@ class GatedHead(nn.Module):
     is stored in the prediction dict; Poisson-family losses ignore log_alpha.
     """
 
-    def __init__(self, in_dim: int, gate_hidden: int = 16, value_hidden: int = 48):
+    def __init__(
+        self,
+        in_dim: int,
+        gate_hidden: int = 16,
+        value_hidden: int = 48,
+        *,
+        correct_ztnb_mean: bool = False,
+    ):
         super().__init__()
+        self.correct_ztnb_mean = correct_ztnb_mean
+        # A tensor keeps state_dict cloning, weights_only loading, and stacked
+        # training compatible. Forward branches on the load-time Python flag,
+        # never a device .item() that would break CUDA capture / vmap.
+        self.register_buffer("_ztnb_mean_version", torch.tensor(int(correct_ztnb_mean)))
         self.gate = nn.Sequential(
             nn.Linear(in_dim, gate_hidden),
             nn.ReLU(),
@@ -269,6 +295,20 @@ class GatedHead(nn.Module):
         )
         self.value_log_alpha = nn.Linear(value_hidden, 1)
 
+    def _load_from_state_dict(
+        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+    ):
+        key = prefix + "_ztnb_mean_version"
+        version = state_dict[key].item() if key in state_dict else 0
+        if version not in (0, 1):
+            raise RuntimeError(f"Unsupported gated-head expectation version: {version}")
+        self.correct_ztnb_mean = bool(version)
+        if key not in state_dict:
+            state_dict[key] = self._ztnb_mean_version.new_tensor(0)
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
+
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -276,8 +316,31 @@ class GatedHead(nn.Module):
         trunk = self.value_trunk(x)
         mu = self.value_mu(trunk).squeeze(-1) + 1e-6
         log_alpha = self.value_log_alpha(trunk).squeeze(-1)
-        expected = torch.sigmoid(gate_logit) * mu
+        if self.correct_ztnb_mean:
+            conditional_mean = ztnb2_conditional_mean(mu, log_alpha)
+            expected = torch.sigmoid(gate_logit.to(conditional_mean.dtype)) * conditional_mean
+        else:
+            expected = torch.sigmoid(gate_logit) * mu
         return expected, gate_logit, mu, log_alpha
+
+
+def load_warm_start_state(model: nn.Module, state_dict: dict) -> None:
+    """Reuse weights for a new fit while retaining its requested output recipe.
+
+    Inference and early-stop restoration honor checkpoint semantics. A warm
+    start is a new training run, so an old checkpoint must not silently disable
+    the new fit's configured expectation correction.
+    """
+    modes = {
+        name: head.correct_ztnb_mean
+        for name, head in model.named_modules()
+        if isinstance(head, GatedHead)
+    }
+    model.load_state_dict(state_dict)
+    for name, head in model.named_modules():
+        if name in modes:
+            head.correct_ztnb_mean = modes[name]
+            head._ztnb_mean_version.fill_(int(modes[name]))
 
 
 class MultiHeadNet(nn.Module):
@@ -608,6 +671,8 @@ class MultiHeadNetWithHistory(nn.Module):
         opp_game_dim: int | None = None,
         no_history_embedding: bool = False,
         backbone_norm: str | None = None,
+        head_losses: dict[str, str] | None = None,
+        correct_ztnb_mean: bool = True,
     ):
         super().__init__()
         self.target_names = target_names
@@ -762,6 +827,9 @@ class MultiHeadNetWithHistory(nn.Module):
                     in_dim=head_in_dim,
                     gate_hidden=gate_hidden,
                     value_hidden=h,
+                    correct_ztnb_mean=(
+                        correct_ztnb_mean and (head_losses or {}).get(name) == "hurdle_negbin"
+                    ),
                 )
             else:
                 self.heads[name] = nn.Sequential(
@@ -1283,6 +1351,8 @@ def build_multihead_net_with_history(
         condition_queries_on_static=cfg.get("attn_condition_queries_on_static", False),
         opp_game_dim=opp_game_dim,
         no_history_embedding=cfg.get("attn_no_history_embedding", False),
+        head_losses=cfg.get("head_losses"),
+        correct_ztnb_mean=cfg.get("nn_correct_ztnb_mean", True),
     )
 
 
