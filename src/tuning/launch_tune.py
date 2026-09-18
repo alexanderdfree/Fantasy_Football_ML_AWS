@@ -60,14 +60,13 @@ from src.batch.launch import (  # noqa: E402
     resolve_launch_binding,
     wait_for_jobs,
 )
-from src.tuning.ab_ensemble_seeds import (  # noqa: E402
+from src.tuning.tune_nn_storage import (  # noqa: E402
+    DEFAULT_CUDA_GRAPH,
+    DEFAULT_CUDA_GRAPH_FULL,
+    DEFAULT_PARALLEL_BACKEND,
     DEFAULT_STACKED_SEEDS,
     ENSEMBLE_POSITIONS,
-)
-from src.tuning.tune_nn_storage import (  # noqa: E402
-    SCOPE_ROOTS,
-    SEARCH_SPACE_VERSION,
-    resolve_search_space_version,
+    resolve_batch_storage_versions,
     s3_prefix,
 )
 
@@ -99,19 +98,11 @@ DEFAULT_N_TRIALS = 30
 # On the g6.xlarge job shape (4 vCPU / 15000 MiB) it resolves to 4 — the
 # validated ceiling (8 OOMs mid-run, 32 OOMs at startup, 2026-06-10).
 DEFAULT_N_JOBS = "auto"
-DEFAULT_PARALLEL_BACKEND = "auto"
-DEFAULT_CUDA_GRAPH = True
 # Full-step capture (gather+fwd+loss in one graph, FF_CUDA_GRAPH_FULL) is
 # default-ON for TUNE jobs only: tuning compares trials within one regime, so
 # the wider capture is pure throughput; production training keeps the
 # model-only capture until a per-position A/B clears the wider scope.
-DEFAULT_CUDA_GRAPH_FULL = True
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 7200
-
-
-def _batch_storage_backend(parallel_backend: str) -> str:
-    """The remote Batch GPU pool resolves auto to MPS there."""
-    return "mps" if parallel_backend == "auto" else parallel_backend
 
 
 def _tune_job_definition() -> str:
@@ -129,11 +120,6 @@ def _tune_job_definition() -> str:
     if JOB_DEFINITION_REVISION:
         return f"{JOB_DEFINITION}:{JOB_DEFINITION_REVISION}"
     return JOB_DEFINITION
-
-
-def _stacked_suffix(stacked_seeds: int, stacked_epochs: int) -> str:
-    """Mirror of tune_nn.main's stacked namespace suffix (keep in sync)."""
-    return f"_ens{stacked_seeds}x{stacked_epochs}" if stacked_seeds >= 2 else ""
 
 
 def submit_tune_job(
@@ -210,15 +196,15 @@ def submit_tune_job(
     if timeout is not None:
         command += ["--timeout", str(timeout)]
 
-    storage_version = resolve_search_space_version(
-        _batch_storage_backend(parallel_backend),
-        # In-container, apply_ensemble_env forces the graphs off before the
-        # namespace resolves — predict the same graph-less base here.
-        cuda_graph=cuda_graph and not stacked,
-        full_graph=cuda_graph_full and not stacked,
-        # --scope history lands in the history_v2 root (separate study DB).
-        root=SCOPE_ROOTS.get(scope, SEARCH_SPACE_VERSION),
-    ) + _stacked_suffix(stacked_seeds, stacked_epochs)
+    storage_version = resolve_batch_storage_versions(
+        [position],
+        parallel_backend=parallel_backend,
+        cuda_graph=cuda_graph,
+        cuda_graph_full=cuda_graph_full,
+        stacked_seeds=stacked_seeds,
+        stacked_epochs=stacked_epochs,
+        scope=scope,
+    )[position]
     response = batch.submit_job(
         jobName=f"ff-tune-{position.lower()}-{timestamp}-{suffix}",
         jobQueue=JOB_QUEUE,
@@ -261,13 +247,14 @@ def submit_tune_job(
                 # FF_TUNE_STACKED_SEEDS / FF_TUNE_AB_SPEC).
                 {"name": "FF_TUNE_N_JOBS", "value": str(n_jobs)},
                 {"name": "TUNE_NN_STORAGE_VERSION", "value": storage_version},
+                # Zero must reach the container; omission re-enables its CUDA default.
+                {"name": "FF_TUNE_STACKED_SEEDS", "value": str(stacked_seeds)},
                 # Quieter than training (default LOG_EVERY=1). Tuning runs N
                 # trials × ~200 epochs each — 1 line per epoch would flood
                 # CloudWatch with ~6000 lines/trial × 30 trials = 180k lines.
                 {"name": "LOG_EVERY", "value": "20"},
                 *(
                     [
-                        {"name": "FF_TUNE_STACKED_SEEDS", "value": str(stacked_seeds)},
                         {"name": "FF_TUNE_STACKED_EPOCHS", "value": str(stacked_epochs)},
                     ]
                     if stacked
@@ -300,12 +287,15 @@ def _print_plan(
     scope: str = SCOPE_FULL,
 ) -> None:
     stacked = stacked_seeds >= 2
-    storage_version = resolve_search_space_version(
-        _batch_storage_backend(parallel_backend),
-        cuda_graph=cuda_graph and not stacked,
-        full_graph=cuda_graph_full and not stacked,
-        root=SCOPE_ROOTS.get(scope, SEARCH_SPACE_VERSION),
-    ) + _stacked_suffix(stacked_seeds, stacked_epochs)
+    storage_versions = resolve_batch_storage_versions(
+        positions,
+        parallel_backend=parallel_backend,
+        cuda_graph=cuda_graph,
+        cuda_graph_full=cuda_graph_full,
+        stacked_seeds=stacked_seeds,
+        stacked_epochs=stacked_epochs,
+        scope=scope,
+    )
     print("DRY RUN — no AWS calls will be made.")
     print(f"  region:       {AWS_REGION}")
     print(f"  bucket:       {S3_BUCKET}")
@@ -324,7 +314,7 @@ def _print_plan(
     print(
         f"  stacked:      {f'{stacked_seeds} seeds x {stacked_epochs} epochs' if stacked else 'off'}"
     )
-    print(f"  storage:      {storage_version}")
+    print(f"  storage:      {storage_versions}")
     print(f"  timeout:      {timeout if timeout is not None else 'no cap'}")
     print(f"  seed:         {seed}")
     print("  jobs:")
@@ -494,6 +484,16 @@ def main():
                 f"game-history branch); got {bad}"
             )
 
+    storage_versions = resolve_batch_storage_versions(
+        positions,
+        parallel_backend=args.parallel_backend,
+        cuda_graph=cuda_graph,
+        cuda_graph_full=cuda_graph_full,
+        stacked_seeds=stacked_seeds,
+        stacked_epochs=args.stacked_epochs,
+        scope=args.scope,
+    )
+
     if args.dry_run:
         _print_plan(
             positions,
@@ -554,16 +554,10 @@ def main():
         if submit_failures:
             print(f"ERROR: {len(submit_failures)} positions failed to submit: {submit_failures}")
             sys.exit(1)
-        storage_version = resolve_search_space_version(
-            _batch_storage_backend(args.parallel_backend),
-            cuda_graph=cuda_graph and not stacked_seeds,
-            full_graph=cuda_graph_full and not stacked_seeds,
-            root=SCOPE_ROOTS.get(args.scope, SEARCH_SPACE_VERSION),
-        ) + _stacked_suffix(stacked_seeds, args.stacked_epochs)
-        print(
-            f"Results land at s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
-            "{pos}/results.json per position."
-        )
+        for pos, version in storage_versions.items():
+            print(
+                f"{pos} results: s3://{S3_BUCKET}/{s3_prefix(version)}/{pos.lower()}/results.json"
+            )
         return
 
     print(
@@ -582,24 +576,14 @@ def main():
         print(f"\nTimed-out positions: {timed_out}")
     if succeeded:
         print(f"\nSucceeded positions: {succeeded}")
-        storage_version = resolve_search_space_version(
-            _batch_storage_backend(args.parallel_backend),
-            cuda_graph=cuda_graph and not stacked_seeds,
-            full_graph=cuda_graph_full and not stacked_seeds,
-            root=SCOPE_ROOTS.get(args.scope, SEARCH_SPACE_VERSION),
-        ) + _stacked_suffix(stacked_seeds, args.stacked_epochs)
-        print(
-            f"  Per-position results: s3://{S3_BUCKET}/{s3_prefix(storage_version)}/"
-            "{pos}/results.json"
-        )
-        print(
-            f"  Per-position study DBs (resumable): s3://{S3_BUCKET}/"
-            f"{s3_prefix(storage_version)}/{{pos}}/study.db"
-        )
-        print(
-            "  Run `python -m src.tuning.aggregate_results "
-            f"--search-space-version {storage_version}` to merge per-position JSONs."
-        )
+        for pos in succeeded:
+            version = storage_versions[pos]
+            prefix = f"s3://{S3_BUCKET}/{s3_prefix(version)}/{pos.lower()}"
+            print(f"  {pos} results: {prefix}/results.json; resumable study: {prefix}/study.db")
+            print(
+                "  Run `python -m src.tuning.aggregate_results "
+                f"--positions {pos} --search-space-version {version}` to collect this position."
+            )
 
     print("\nAll done.")
 

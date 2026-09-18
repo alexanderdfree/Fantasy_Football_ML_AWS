@@ -31,7 +31,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.analysis.recalibration_eval import _bias, _rmse, lowo_isotonic
 from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
@@ -75,6 +74,8 @@ def _regret(df: pd.DataFrame, col: str, n: int) -> float:
 
 
 def metric_fn(result, position):
+    from src.analysis.recalibration_eval import _bias, _rmse, lowo_isotonic
+
     df = result["test_df"].copy()
     df = df[df["fantasy_points"].notna()].copy()
     df["player_id"] = df["player_id"].astype(str)

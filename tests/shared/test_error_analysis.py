@@ -24,6 +24,19 @@ TARGETS = ["rushing_yards", "receiving_yards", "rushing_tds"]
 
 @pytest.mark.unit
 class TestAddStratificationColumns:
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            ([0.0] * 4, ["Q1_stable"] * 4),
+            ([0.0] * 6 + [1.0, 2.0], ["Q1_stable"] * 6 + ["Q4_volatile"] * 2),
+            ([0.0, 1.0, 2.0, 3.0], ["Q1_stable", "Q2", "Q3", "Q4_volatile"]),
+        ],
+    )
+    def test_volatility_quartiles_handle_tied_values(self, values, expected):
+        df = pd.DataFrame({"week": [1] * len(values), "rolling_std_fantasy_points_L3": values})
+        result = add_stratification_columns(df, TARGETS)
+        assert result["volatility_q"].tolist() == expected
+
     def test_adds_all_bucket_columns(self, error_df_factory):
         df = error_df_factory()
         result = add_stratification_columns(df, TARGETS)

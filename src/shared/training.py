@@ -767,67 +767,81 @@ class _GraphedFullStep:
         param_snapshot = [p.detach().clone() for p in self._params]
         bn_snapshot = _snapshot_batchnorm_state(self._model)
 
-        # LR LOAD-BEARING: force each param group's ``lr`` to a DEVICE TENSOR
-        # before capture. Fused+capturable AdamW happily reads a Python-float lr
-        # and the graph would then bake that VALUE constant (replays stuck on the
-        # build-time LR; the cosine schedule would silently no-op → ~1% trajectory
-        # fork vs A2-only). A device tensor is read on-device each replay, so
-        # refresh_lr_from_scheduler() can update the schedule in place. The value
-        # is unchanged (same float), so the captured steps stay bit-identical to
-        # the A2-only eager tail at the initial LR (verified 1-epoch Δ=0). FP32
-        # dtype matches AdamW's expectation for the capturable lr tensor.
-        self._baked_lr_tensors = []
-        for g in self.optimizer.param_groups:
-            lr = g["lr"]
-            lr_t = (
-                lr
-                if torch.is_tensor(lr)
-                else torch.tensor(float(lr), device=self._device, dtype=torch.float32)
-            )
-            g["lr"] = lr_t
-            self._baked_lr_tensors.append(lr_t)
+        original_lrs = [group["lr"] for group in self.optimizer.param_groups]
+        captured = False
+        try:
+            # LR LOAD-BEARING: force each param group's ``lr`` to a DEVICE TENSOR
+            # before capture. Fused+capturable AdamW happily reads a Python-float lr
+            # and the graph would then bake that VALUE constant (replays stuck on the
+            # build-time LR; the cosine schedule would silently no-op → ~1% trajectory
+            # fork vs A2-only). A device tensor is read on-device each replay, so
+            # refresh_lr_from_scheduler() can update the schedule in place. The value
+            # is unchanged (same float), so the captured steps stay bit-identical to
+            # the A2-only eager tail at the initial LR (verified 1-epoch Δ=0). FP32
+            # dtype matches AdamW's expectation for the capturable lr tensor.
+            self._baked_lr_tensors = []
+            for g in self.optimizer.param_groups:
+                lr = g["lr"]
+                lr_t = (
+                    lr
+                    if torch.is_tensor(lr)
+                    else torch.tensor(float(lr), device=self._device, dtype=torch.float32)
+                )
+                g["lr"] = lr_t
+                self._baked_lr_tensors.append(lr_t)
 
-        # Priming step — allocate capturable AdamW's state tensors (step,
-        # exp_avg, exp_avg_sq) BEFORE capture, on a valid arange batch (RNG-free,
-        # like A2's capture sample_idx).
-        self._idx_static.copy_(torch.arange(self._idx_static.numel(), device=self._device))
-        with self._autocast_factory():
-            self._run_body()
+            # Priming step — allocate capturable AdamW's state tensors (step,
+            # exp_avg, exp_avg_sq) BEFORE capture, on a valid arange batch (RNG-free,
+            # like A2's capture sample_idx).
+            self._idx_static.copy_(torch.arange(self._idx_static.numel(), device=self._device))
+            with self._autocast_factory():
+                self._run_body()
 
-        side = torch.cuda.Stream()
-        side.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(side):
-            for _ in range(3):
-                with self._autocast_factory():
-                    self._run_body()
-        torch.cuda.current_stream().wait_stream(side)
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):
+                for _ in range(3):
+                    with self._autocast_factory():
+                        self._run_body()
+            torch.cuda.current_stream().wait_stream(side)
 
-        graph = torch.cuda.CUDAGraph()
-        with self._autocast_factory(), torch.cuda.graph(graph):
-            self._run_body()
-        self._graph = graph
+            graph = torch.cuda.CUDAGraph()
+            with self._autocast_factory(), torch.cuda.graph(graph):
+                self._run_body()
+            self._graph = graph
 
-        # Restore params + BN to the pre-build state and reset the optimizer
-        # moments to the pristine step-0 values (the state tensors keep their
-        # baked addresses; only their VALUES are reset).
-        for p, saved in zip(self._params, param_snapshot, strict=True):
-            p.detach().copy_(saved)
-        _restore_batchnorm_state(bn_snapshot)
-        for p in self._params:
-            st = self.optimizer.state.get(p)
-            if not st:
-                continue
-            for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
-                buf = st.get(key)
-                if torch.is_tensor(buf):
-                    buf.zero_()
-            step = st.get("step")
-            if torch.is_tensor(step):
-                step.zero_()
-            elif step is not None:
-                st["step"] = 0
-        # ``_baked_lr_tensors`` was populated at the top of build() (the lr
-        # tensors the graph captured); the train loop refreshes them in place.
+            captured = True
+        finally:
+            # Warmup executes real updates. A failed capture must not leak them
+            # into the A2 eager-tail fallback; retain the success reset unchanged.
+            if not captured and self._device.type == "cuda":
+                torch.cuda.synchronize(self._device)
+            # Restore params + BN to the pre-build state and reset the optimizer
+            # moments to the pristine step-0 values (the state tensors keep their
+            # baked addresses; only their VALUES are reset).
+            for p, saved in zip(self._params, param_snapshot, strict=True):
+                p.detach().copy_(saved)
+            _restore_batchnorm_state(bn_snapshot)
+            for p in self._params:
+                st = self.optimizer.state.get(p)
+                if not st:
+                    continue
+                for key in ("exp_avg", "exp_avg_sq", "max_exp_avg_sq"):
+                    buf = st.get(key)
+                    if torch.is_tensor(buf):
+                        buf.zero_()
+                step = st.get("step")
+                if torch.is_tensor(step):
+                    step.zero_()
+                elif step is not None:
+                    st["step"] = 0
+            # ``_baked_lr_tensors`` was populated at the top of build() (the lr
+            # tensors the graph captured); the train loop refreshes them in place.
+            if not captured:
+                self._graph = None
+                self._baked_lr_tensors = []
+                for group, lr in zip(self.optimizer.param_groups, original_lrs, strict=True):
+                    group["lr"] = lr
 
     def refresh_lr_from_scheduler(self) -> None:
         """Write the scheduler's current LR into the baked device LR tensors.
@@ -1451,6 +1465,16 @@ class MultiHeadTrainer:
         self._graphed = True
 
     def train(self, train_loader, val_loader, n_epochs) -> dict:
+        empty_training_error = (
+            "Training loader produced no batches; provide more training rows or "
+            "use a smaller batch size when drop_last=True."
+        )
+        try:
+            train_batches = len(train_loader)
+        except TypeError:
+            train_batches = None  # Unsized iterators are checked before validation below.
+        if train_batches == 0:
+            raise ValueError(empty_training_error)
         # CUDA graph capture, widest applicable scope first: autodetect-ON
         # full-step (gather+fwd+loss; FF_CUDA_GRAPH_FULL=0 forces eager)
         # subsumes the autodetect-ON model-only capture (FF_CUDA_GRAPH=0 forces
@@ -1602,16 +1626,11 @@ class MultiHeadTrainer:
                 epoch_train_loss += loss.detach().float()
                 n_train_batches += 1
 
-            # Single end-of-epoch sync (forces accumulator off-GPU). Guard
-            # against ``n_train_batches == 0`` — possible on tiny datasets
-            # where ``len(train_loader) * batch_size < drop_last_threshold``
-            # produces an empty iterator (the GPU-resident batcher's
-            # ``drop_last=True`` floors to 0 when ``n < batch_size``). Without
-            # the guard, ``0 / 0`` produces NaN, which silently corrupts the
-            # history dict and the downstream early-stop comparison.
-            avg_train_loss = (
-                (epoch_train_loss / n_train_batches).item() if n_train_batches > 0 else 0.0
-            )
+            # Unsized or exhausted iterators must not validate/save an untrained model.
+            if n_train_batches == 0:
+                raise ValueError(empty_training_error)
+            # Single end-of-epoch sync (forces accumulator off-GPU).
+            avg_train_loss = (epoch_train_loss / n_train_batches).item()
             history["train_loss"].append(avg_train_loss)
 
             # --- Validation pass ---

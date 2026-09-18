@@ -501,6 +501,9 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
         if k.startswith("lgbm_") and k != "lgbm_objective"
     }
     old_params["objective"] = cfg.get("lgbm_objective", "huber")
+    # The loss family is fixed during tuning, so it is absent from trial.params.
+    # Preserve it when rebuilding the tuned model for the holdout comparison.
+    new_params = {**best_params, "objective": old_params["objective"]}
 
     agg = cfg.get("aggregate_fn")
 
@@ -533,7 +536,7 @@ def _run_comparison(pos, cfg, best_params, seeds: tuple[int, ...] = _DEFAULT_SEE
                 target_names=targets,
                 seed=seed,
                 n_jobs=leased_n_jobs,
-                **best_params,
+                **new_params,
             )
             new_model.fit(X_train, y_train_dict, X_val, y_val_dict, feature_names=feature_cols)
         new_preds = new_model.predict(X_test)

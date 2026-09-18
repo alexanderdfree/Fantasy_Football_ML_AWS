@@ -78,11 +78,15 @@ def add_stratification_columns(df: pd.DataFrame, targets: list[str]) -> pd.DataF
     # Volatility quartiles
     vol_col = "rolling_std_fantasy_points_L3"
     if vol_col in df.columns:
-        df["volatility_q"] = pd.qcut(
-            df[vol_col].fillna(0),
-            q=4,
-            labels=["Q1_stable", "Q2", "Q3", "Q4_volatile"],
-            duplicates="drop",
+        volatility = df[vol_col].fillna(0)
+        # Keep equal values together when quartile boundaries coincide (for
+        # example, week-one rows all have zero rolling volatility). qcut's
+        # duplicate-edge removal otherwise conflicts with four fixed labels.
+        boundaries = volatility.quantile([0.25, 0.5, 0.75]).to_numpy()
+        df["volatility_q"] = pd.Categorical.from_codes(
+            np.searchsorted(boundaries, volatility.to_numpy(), side="left"),
+            categories=["Q1_stable", "Q2", "Q3", "Q4_volatile"],
+            ordered=True,
         )
     else:
         df["volatility_q"] = "unknown"

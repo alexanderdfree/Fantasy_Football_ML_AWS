@@ -67,7 +67,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.shared.feature_build import rolling_agg, safe_divide
 from src.tuning._cohort_metrics import receiving_boom_metrics
 from src.tuning.ab_harness import Variant, ab_main
 
@@ -111,6 +110,8 @@ def _inject_wr_signals(train, val, test):
     per-game ``game_*`` / ``redzone_*`` columns are HISTORY-only — ``build_game_history_arrays``
     applies its own prior-games shift — so their current-week value never reaches the model.
     """
+
+    from src.shared.feature_build import rolling_agg, safe_divide
 
     def _add(df):
         df = df.copy()

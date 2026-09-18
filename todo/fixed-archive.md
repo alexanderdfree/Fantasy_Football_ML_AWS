@@ -78,6 +78,12 @@ Add a resolved issue as a separate file in `todo/fixed-archive/` using `### [FIX
 
 The original headings remain here so existing fragment links still resolve.
 
+### [FIXED] Experiments lost seeds, native frames, matched controls and scoring identity
+[Read the incident record](fixed-archive/runtime-experiment-audit-2026-09.md).
+
+### [FIXED] Failed CUDA optimizer capture retained warmup updates
+[Read the incident record](fixed-archive/runtime-cuda-rollback-2026-09.md).
+
 ### [FIXED] Remote SessionStart installed outside the intended virtual environment
 [Read the incident record](fixed-archive/remote-session-bootstrap.md).
 

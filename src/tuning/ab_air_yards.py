@@ -130,8 +130,8 @@ def metric_fn(result, position):
     if len(df):
         q75 = float(np.quantile(df["fantasy_points"].to_numpy(dtype=float), 0.75))
         cuts["q4"] = df[df["fantasy_points"] >= q75]
-        td_col = next((c for c in ("receiving_tds", "passing_tds") if c in df.columns), None)
-        if td_col is not None:
+        td_col = "passing_tds" if position.upper() == "QB" else "receiving_tds"
+        if td_col in df.columns:
             cuts["tdgame"] = df[df[td_col] >= 1]
     sub_m = {k: per_model_metrics(v, models) for k, v in cuts.items()}
 

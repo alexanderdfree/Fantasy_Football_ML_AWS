@@ -55,7 +55,7 @@ def _md_table(summaries: list[dict]) -> str:
         + " | ".join(SHORT[s] for s in SCHEDULERS)
         + " | winner | Δ vs prod | sentinel |"
     )
-    sep = "|" + "---|" * (4 + len(SCHEDULERS))
+    sep = "|" + "---|" * (5 + len(SCHEDULERS))
     lines = [head, sep]
     for sm in summaries:
         agg = sm["aggregated"]

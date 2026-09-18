@@ -38,8 +38,7 @@ install_parameterized_targets(
             "sack_fumbles_lost",
             "rushing_fumbles_lost",
             "receiving_fumbles_lost",
-            # Read by compute_targets' decomposition-discrepancy check (2pt
-            # conversions are scored in fantasy_points but aren't QB targets).
+            # Extra source stats must not alter the modeled target decomposition.
             "passing_2pt_conversions",
             "rushing_2pt_conversions",
             "receiving_2pt_conversions",
@@ -108,13 +107,7 @@ class TestComputeQBTargets:
         assert "discrepancy" in captured.out
 
     def test_no_spurious_warning_on_2pt_conversion_row(self, capsys):
-        """#1412: a 2pt conversion adds a flat +2 to the upstream (nflverse)
-        fantasy_points column but is not a QB target; the decomposition
-        diagnostic must back it out rather than WARN on an exact-2.0
-        discrepancy (mirrors the RB back-out shipped for #406)."""
-        df = _make_row(passing_2pt_conversions=1, rushing_2pt_conversions=1)
-        # The builder's auto-computed fantasy_points has no 2pt term; the
-        # upstream column includes the two conversions, so add them here.
-        df["fantasy_points"] = df["fantasy_points"] + 4.0
-        _ = compute_targets(df)
-        assert "discrepancy" not in capsys.readouterr().out
+        """Canonical fantasy_points excludes unmodeled two-point conversions."""
+        df = _make_row(receiving_2pt_conversions=1)
+        compute_targets(df)
+        assert "target decomposition discrepancy" not in capsys.readouterr().out

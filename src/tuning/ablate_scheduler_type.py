@@ -321,12 +321,21 @@ def _position_verdict(
         )
         return {"winner": None, "note": "sentinel_failed"}
 
+    if prod_type not in agg or len(scheds) < 2:
+        print("  VERDICT: incomplete — comparison needs production and an alternative scheduler.")
+        return {"winner": None, "note": "incomplete"}
+
     attn_means = {s: agg[s]["attn"][0] for s in scheds}
     winner = min(attn_means, key=attn_means.get)
     prod_mae = attn_means.get(prod_type)
     win_mae = attn_means[winner]
+    comparator = (
+        min((s for s in scheds if s != prod_type), key=attn_means.get)
+        if winner == prod_type
+        else winner
+    )
     pooled_sd = (
-        (agg[prod_type]["attn"][1] ** 2 + agg[winner]["attn"][1] ** 2) ** 0.5 if multi else 0.0
+        (agg[prod_type]["attn"][1] ** 2 + agg[comparator]["attn"][1] ** 2) ** 0.5 if multi else 0.0
     )
 
     if winner == prod_type:
@@ -464,7 +473,7 @@ def _print_position_done(sm: dict, idx: int, total: int) -> None:
     margin = v.get("margin_vs_production")
     mstr = f"{margin:+.4f}" if margin is not None else "n/a"
     prod = SHORT.get(sm["production_type"], sm["production_type"])
-    flag = "" if v.get("winner") == sm["production_type"] else "  <-- candidate switch"
+    flag = "  <-- candidate switch" if v.get("note", "").startswith("alt_candidate") else ""
     sentinel = "ok" if sm.get("sentinel_ok") else "FAILED"
     print(
         f"\n[done] {sm['position']} ({idx}/{total})  prod={prod}  winner={winner}  "

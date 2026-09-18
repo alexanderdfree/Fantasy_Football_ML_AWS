@@ -38,7 +38,6 @@ from src.shared.registry import get_config, get_runner
 from src.tuning.ablation_runner import (
     AblationJob,
     AblationResult,
-    fmt_mean_std,
     format_dry_run_table,
     mean_std,
     parse_seed_list,
@@ -284,15 +283,11 @@ def print_summary(rows: list[dict]) -> None:
         def _ms(row: dict, key: str) -> str:
             stats = row.get(f"{key}_stats")
             if stats and stats.get("mean") is not None:
-                return fmt_mean_std([stats["mean"]])
+                return f"{stats['mean']:.4f}±{stats['std']:.4f}"
             return f"{row[key]:.3f}"
 
         for r in rows:
-            fp_str = fmt_mean_std(
-                [v["mean"] for v in [r.get("fp_mae_stats", {})] if v.get("mean") is not None]
-                if r.get("fp_mae_stats")
-                else [r["fp_mae"]]
-            )
+            fp_str = _ms(r, "fp_mae")
             print(
                 f"{r['variant']:<4}{fp_str:>22}{_ms(r, 'rushing_tds_mae'):>14}"
                 f"{_ms(r, 'receiving_tds_mae'):>14}{_ms(r, 'fumbles_lost_mae'):>14}"

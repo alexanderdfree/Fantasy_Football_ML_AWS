@@ -19,10 +19,14 @@ fields rather than breaking the run it measures.
 from __future__ import annotations
 
 import os
-import resource
 import sys
 import threading
 import time
+
+try:
+    import resource
+except ImportError:  # Native Windows has no Unix resource module.
+    resource = None
 
 _CGROUP_V2 = "/sys/fs/cgroup/memory.current"
 _CGROUP_V1 = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
@@ -39,10 +43,15 @@ def _read_cgroup_bytes() -> int | None:
     return None
 
 
-def _maxrss_gb(who: int) -> float:
-    peak = resource.getrusage(who).ru_maxrss
-    # ru_maxrss is bytes on macOS, kibibytes on Linux.
-    return peak / (_GIB if sys.platform == "darwin" else 1024**2)
+def _maxrss_gb(who: int | None) -> float | None:
+    if resource is None or who is None:
+        return None
+    try:
+        peak = resource.getrusage(who).ru_maxrss
+        # ru_maxrss is bytes on macOS, kibibytes on Linux.
+        return round(peak / (_GIB if sys.platform == "darwin" else 1024**2), 3)
+    except (OSError, ValueError):
+        return None
 
 
 class ResourceProbe:
@@ -92,8 +101,8 @@ class ResourceProbe:
             "cpu_sec_self": round(cpu_self, 1),
             "cpu_sec_children": round(cpu_children, 1),
             "cpu_util_cores": round((cpu_self + cpu_children) / max(wall, 1e-9), 2),
-            "peak_rss_self_gb": round(_maxrss_gb(resource.RUSAGE_SELF), 3),
-            "peak_rss_children_gb": round(_maxrss_gb(resource.RUSAGE_CHILDREN), 3),
+            "peak_rss_self_gb": _maxrss_gb(getattr(resource, "RUSAGE_SELF", None)),
+            "peak_rss_children_gb": _maxrss_gb(getattr(resource, "RUSAGE_CHILDREN", None)),
             "cgroup_peak_gb": (
                 round(self._cgroup_peak / _GIB, 3) if self._cgroup_peak is not None else None
             ),

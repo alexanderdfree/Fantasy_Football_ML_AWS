@@ -839,7 +839,9 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
     In latest-retrieval mode, a missing manifest or "all entries failed"
     surfaces a per-position skip rather than raising.
     """
-    from src.shared.model_sync import load_manifest
+    from pathlib import Path
+
+    from src.shared.model_sync import _extract_tarball, load_manifest
 
     s3 = s3_client or boto3.client("s3", region_name=AWS_REGION)
     stopped_at_by_pos = stopped_at_by_pos or {}
@@ -851,8 +853,6 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
         plan_id = os.environ.get("FF_BUILD_PLAN_ID")
         run_id = os.environ.get("FF_LEGACY_RUN_ID")
         if plan_id or run_id:
-            from pathlib import Path
-
             from src.artifacts.receipts import download_receipt_artifact, download_run_artifact
 
             if plan_id and run_id:
@@ -931,9 +931,10 @@ def download_artifacts(positions, stopped_at_by_pos=None, s3_client=None):
                 print(f"[{pos}] Downloading s3://{S3_BUCKET}/{s3_key} (source={label}) ...")
                 try:
                     s3.download_file(S3_BUCKET, s3_key, tmp.name)
-                    with tarfile.open(tmp.name, "r:gz") as tar:
-                        tar.extractall(local_model_dir, filter="data")
-                except (ClientError, tarfile.TarError, OSError) as e:
+                    # Replace a complete generation only after safe extraction.
+                    # Removed sidecars must not survive from a previous model.
+                    _extract_tarball(Path(tmp.name).read_bytes(), Path(local_model_dir))
+                except (ClientError, tarfile.TarError, OSError, RuntimeError, EOFError) as e:
                     tried.append((label, s3_key, repr(e)))
                     print(f"[{pos}] {label} download/extract failed: {e!r} — falling through")
                     continue

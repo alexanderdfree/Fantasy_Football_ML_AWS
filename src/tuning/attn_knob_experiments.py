@@ -30,12 +30,11 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import optuna
-from optuna.importance import FanovaImportanceEvaluator, get_param_importances
-from optuna.samplers import TPESampler
-from optuna.trial import TrialState
+if TYPE_CHECKING:
+    import optuna
+    from optuna.importance import FanovaImportanceEvaluator
 
 from src.shared.core_pool import lease_cores
 from src.tuning.history import append_tuning_run
@@ -69,6 +68,8 @@ KNOB_NAMES = tuple(k.name for k in ATTN_KNOBS)
 
 def _sample_attention_overrides(trial: optuna.Trial) -> dict[str, Any]:
     """Sample the eight attention-only knobs for the fANOVA run."""
+
+    import optuna
 
     d_model = trial.suggest_categorical("attn_d_model", [16, 24, 32, 48, 64])
     n_heads = trial.suggest_categorical("attn_n_heads", [1, 2, 4])
@@ -244,6 +245,8 @@ def _set_fanova_rf_n_jobs(evaluator: FanovaImportanceEvaluator, n_jobs: int) -> 
 def _fanova_param_importances(study: optuna.Study, *, seed: int) -> dict[str, float]:
     """Compute fANOVA importances using the dynamic CPU core pool when active."""
 
+    from optuna.importance import FanovaImportanceEvaluator, get_param_importances
+
     evaluator = FanovaImportanceEvaluator(seed=seed)
     with lease_cores("fanova_importance", default=None) as n_jobs:
         if n_jobs is not None and n_jobs > 0:
@@ -309,6 +312,10 @@ def run_fanova(
     ridge_sentinel: bool,
     n_jobs: int,
 ) -> dict:
+    import optuna
+    from optuna.samplers import TPESampler
+    from optuna.trial import TrialState
+
     seed_results = {}
     if n_jobs > 1:
         _prime_feature_cache(position)
