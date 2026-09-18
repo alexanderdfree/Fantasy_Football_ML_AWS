@@ -1,20 +1,18 @@
 name: CI ROI build comparison
-
-# Temporary draft-only experiment. Remove after retaining measurement evidence.
+# Temporary draft experiment; staged to stay within the existing cache budget.
 on:
   push:
     branches: [codex/ci-roi-top3]
     paths:
       - .github/workflows/ci-roi-benchmark.yml
+      - .github/workflows/_ci-roi-measure.yml
       - src/analysis/ci_image_cache_benchmark.py
       - src/batch/Dockerfile.train
       - .github/workflows/batch-image.yml
       - .github/workflows/deploy.yml
-
 permissions:
   contents: read
   actions: read
-
 jobs:
   cache-write:
     runs-on: ubuntu-latest
@@ -39,277 +37,118 @@ jobs:
           echo '::error::Cache writes unavailable; refusing to benchmark an uncached build as warm.'
           exit 1
 
-  cold:
+  serving-cold:
     needs: cache-write
-    name: ${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include:
-          - variant: baseline
-            image: training
-            sample: 0
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: baseline
-            image: serving
-            sample: 0
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-          - variant: candidate
-            image: training
-            sample: 0
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: candidate
-            image: serving
-            sample: 0
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-          path: harness
-          persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.sha }}
-          path: source
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
-      - name: Prepare isolated cache and source identity
-        id: probe
-        env:
-          IMAGE: ${{ matrix.image }}
-          VARIANT: ${{ matrix.variant }}
-          SAMPLE: ${{ matrix.sample }}
-        run: |
-          python3 harness/src/analysis/ci_image_cache_benchmark.py prepare \
-            --image "$IMAGE" --variant "$VARIANT" --sample "$SAMPLE"
-      - name: Restore baseline local cache
-        id: local-cache
-        if: matrix.variant == 'baseline'
-        uses: actions/cache@v6
-        with:
-          path: /tmp/.buildx-cache
-          key: ci-roi-local-${{ github.run_id }}-${{ matrix.image }}
-          fail-on-cache-miss: ${{ matrix.sample != 0 }}
-      - name: Verify baseline cache regime
-        if: matrix.variant == 'baseline'
-        env:
-          SAMPLE: ${{ matrix.sample }}
-          CACHE_HIT: ${{ steps.local-cache.outputs.cache-hit }}
-        run: |
-          if [ "$SAMPLE" = 0 ]; then
-            test "$CACHE_HIT" != true
-          else
-            test "$CACHE_HIT" = true
-          fi
-      - name: Build comparison image
-        id: image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
-        with:
-          context: ./source
-          file: source/${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
-          push: false
-          provenance: false
-          tags: ci-roi:${{ matrix.image }}
-          build-args: |
-            TRAIN_GIT_SHA=${{ steps.probe.outputs.source_sha }}
-            PULL_THROUGH_PREFIX=
-          cache-from: ${{ steps.probe.outputs.cache_from }}
-          cache-to: ${{ steps.probe.outputs.cache_to }}
-          outputs: type=oci,dest=${{ runner.temp }}/ci-image.tar
-      - name: Complete baseline local cache export
-        if: matrix.variant == 'baseline'
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-      - name: Verify exported image and capture metadata
-        env:
-          BUILD_METADATA: ${{ steps.image.outputs.metadata }}
-          IMAGE_ARCHIVE: ${{ runner.temp }}/ci-image.tar
-        run: |
-          python3 -c 'import os; from pathlib import Path; Path("build-metadata.json").write_text(os.environ["BUILD_METADATA"])'
-          python3 harness/src/analysis/ci_image_cache_benchmark.py inspect --archive "$IMAGE_ARCHIVE"
-      - name: Verify invalid source identities fail the build
-        if: matrix.variant == 'candidate' && matrix.image == 'training' && matrix.sample == 0
-        run: python3 harness/src/analysis/ci_image_cache_benchmark.py reject-invalid
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ci-roi-${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
-          path: |
-            measurement.json
-            build-metadata.json
-          retention-days: 14
-  warm:
-    needs: cold
-    name: ${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+        variant: [baseline, candidate]
+        sample: [0]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: serving
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  serving-warm:
+    needs: serving-cold
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include:
-          - variant: baseline
-            image: training
-            sample: 1
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: baseline
-            image: training
-            sample: 2
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: baseline
-            image: training
-            sample: 3
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: baseline
-            image: serving
-            sample: 1
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-          - variant: baseline
-            image: serving
-            sample: 2
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-          - variant: baseline
-            image: serving
-            sample: 3
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-          - variant: candidate
-            image: training
-            sample: 1
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: candidate
-            image: training
-            sample: 2
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: candidate
-            image: training
-            sample: 3
-            runner: ubuntu-latest
-            platform: linux/amd64
-            dockerfile: src/batch/Dockerfile.train
-          - variant: candidate
-            image: serving
-            sample: 1
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-          - variant: candidate
-            image: serving
-            sample: 2
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
-          - variant: candidate
-            image: serving
-            sample: 3
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            dockerfile: Dockerfile
+        variant: [baseline, candidate]
+        sample: [1, 2, 3]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: serving
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  training-baseline-cold:
+    needs: serving-warm
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [baseline]
+        sample: [0]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: training
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  training-baseline-warm:
+    needs: training-baseline-cold
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [baseline]
+        sample: [1, 2, 3]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: training
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  release-baseline-cache:
+    needs: training-baseline-warm
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-          path: harness
-          persist-credentials: false
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ matrix.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || github.sha }}
-          path: source
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
-      - name: Prepare isolated cache and source identity
-        id: probe
+      - name: Remove only this experiment's temporary training cache
         env:
-          IMAGE: ${{ matrix.image }}
-          VARIANT: ${{ matrix.variant }}
-          SAMPLE: ${{ matrix.sample }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 harness/src/analysis/ci_image_cache_benchmark.py prepare \
-            --image "$IMAGE" --variant "$VARIANT" --sample "$SAMPLE"
-      - name: Restore baseline local cache
-        id: local-cache
-        if: matrix.variant == 'baseline'
-        uses: actions/cache@v6
-        with:
-          path: /tmp/.buildx-cache
-          key: ci-roi-local-${{ github.run_id }}-${{ matrix.image }}
-          fail-on-cache-miss: ${{ matrix.sample != 0 }}
-      - name: Verify baseline cache regime
-        if: matrix.variant == 'baseline'
+          test "$GITHUB_REF" = refs/heads/codex/ci-roi-top3
+          gh cache delete "ci-roi-local-$GITHUB_RUN_ID-training" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF"
+  training-candidate-cold:
+    needs: release-baseline-cache
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [candidate]
+        sample: [0]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: training
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  training-candidate-warm:
+    needs: training-candidate-cold
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [candidate]
+        sample: [1, 2, 3]
+    uses: ./.github/workflows/_ci-roi-measure.yml
+    with:
+      image: training
+      variant: ${{ matrix.variant }}
+      sample: ${{ matrix.sample }}
+      source_sha: ${{ github.sha }}
+  cleanup:
+    needs: [serving-warm, training-baseline-warm, training-candidate-warm]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Remove experiment branch caches after collecting results
         env:
-          SAMPLE: ${{ matrix.sample }}
-          CACHE_HIT: ${{ steps.local-cache.outputs.cache-hit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$SAMPLE" = 0 ]; then
-            test "$CACHE_HIT" != true
-          else
-            test "$CACHE_HIT" = true
-          fi
-      - name: Build comparison image
-        id: image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
-        with:
-          context: ./source
-          file: source/${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
-          push: false
-          provenance: false
-          tags: ci-roi:${{ matrix.image }}
-          build-args: |
-            TRAIN_GIT_SHA=${{ steps.probe.outputs.source_sha }}
-            PULL_THROUGH_PREFIX=
-          cache-from: ${{ steps.probe.outputs.cache_from }}
-          cache-to: ${{ steps.probe.outputs.cache_to }}
-          outputs: type=oci,dest=${{ runner.temp }}/ci-image.tar
-      - name: Complete baseline local cache export
-        if: matrix.variant == 'baseline'
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-      - name: Verify exported image and capture metadata
-        env:
-          BUILD_METADATA: ${{ steps.image.outputs.metadata }}
-          IMAGE_ARCHIVE: ${{ runner.temp }}/ci-image.tar
-        run: |
-          python3 -c 'import os; from pathlib import Path; Path("build-metadata.json").write_text(os.environ["BUILD_METADATA"])'
-          python3 harness/src/analysis/ci_image_cache_benchmark.py inspect --archive "$IMAGE_ARCHIVE"
-      - name: Verify invalid source identities fail the build
-        if: matrix.variant == 'candidate' && matrix.image == 'training' && matrix.sample == 0
-        run: python3 harness/src/analysis/ci_image_cache_benchmark.py reject-invalid
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ci-roi-${{ matrix.variant }}-${{ matrix.image }}-${{ matrix.sample }}
-          path: |
-            measurement.json
-            build-metadata.json
-          retention-days: 14
+          test "$GITHUB_REF" = refs/heads/codex/ci-roi-top3
+          # Cache blobs have content-derived keys; restrict deletion by our
+          # dedicated branch ref, never by a broad repository-wide key prefix.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?ref=$GITHUB_REF&per_page=100" \
+            --jq '.actions_caches[].id' > /tmp/ci-roi-cache-ids
+          while IFS= read -r cache_id; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$cache_id"
+          done < /tmp/ci-roi-cache-ids

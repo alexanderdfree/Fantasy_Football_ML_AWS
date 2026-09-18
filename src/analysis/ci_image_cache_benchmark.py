@@ -40,11 +40,15 @@ def prepare(args):
         )
     sha = git(source, "rev-parse", "HEAD")
     scope = f"ci-roi-{os.environ['GITHUB_RUN_ID']}-{args.variant}-{args.image}"
-    cache_from = f"type=gha,version=2,scope={scope}"
-    cache_to = f"{cache_from},mode=max"
     if args.variant == "baseline":
-        cache_from += "\ntype=local,src=/tmp/.buildx-cache"
-        cache_to += "\ntype=local,dest=/tmp/.buildx-cache-new,mode=max"
+        # Main's inline buildx invocation exports only local cache: its GHA
+        # backend has no runtime credentials. Preserve that observed baseline.
+        cache_from = "type=local,src=/tmp/.buildx-cache"
+        cache_to = "type=local,dest=/tmp/.buildx-cache-new,mode=max"
+    else:
+        cache_from = f"type=gha,version=2,scope={scope}"
+        destination = f"{scope}-sample-{args.sample}" if args.sample else scope
+        cache_to = f"type=gha,version=2,scope={destination},mode=max"
     output("source_sha", sha)
     output("cache_from", cache_from)
     output("cache_to", cache_to)
