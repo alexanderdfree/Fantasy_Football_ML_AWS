@@ -43,6 +43,8 @@
 ### [FIXED] Expert forecasts lost scoring components outside the model target list
 [Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
 
+### [FIXED] Pipeline reports scored full fantasy points and merged seasons' weekly slates
+[Read the incident record](fixed-archive/pipeline-reporting-truth-2026-09.md).
 ### [FIXED] QB availability rewrite removed the intended historical role proxy
 [Read the incident record](fixed-archive/qb-role-reconstruction.md).
 

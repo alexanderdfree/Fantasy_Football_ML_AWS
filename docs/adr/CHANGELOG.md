@@ -6,6 +6,8 @@
 
 - 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR #1592) · → ADR-0029
 
+- 2026-09-18 · Training-pipeline baseline, ranking, backtest and cohort reports now use the same certified shared-component truth as serving/analysis, with season-aware weekly slates · (PR pending, extracted from #1565) · → ADR-0024
+
 - 2026-09-18 · Replay QB synthetic cohorts against saved checkpoints with exported forecast context, per-family readiness and recorded responses · (PR #1590) · → ADR-0029
 
 - 2026-09-17 · Extract verified ECR digest pins for isolated A/B images while retaining source-SHA compatibility · (PR #1584) · → ADR-0020
