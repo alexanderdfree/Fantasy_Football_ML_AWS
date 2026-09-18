@@ -259,7 +259,8 @@
       ],
       "head_hidden": 32,
       "head_hidden_overrides": {},
-      "dropout": 0.2
+      "dropout": 0.2,
+      "magnitude_features": []
     },
     "loss_heads": {
       "head_losses": {
@@ -576,7 +577,8 @@
       "head_hidden_overrides": {
         "receptions": 64
       },
-      "dropout": 0.15
+      "dropout": 0.15,
+      "magnitude_features": []
     },
     "loss_heads": {
       "head_losses": {
@@ -895,7 +897,10 @@
       "head_hidden_overrides": {
         "receptions": 64
       },
-      "dropout": 0.2
+      "dropout": 0.2,
+      "magnitude_features": [
+        "inherited_opportunity"
+      ]
     },
     "loss_heads": {
       "head_losses": {
@@ -1194,7 +1199,8 @@
       "head_hidden_overrides": {
         "receptions": 32
       },
-      "dropout": 0.3
+      "dropout": 0.3,
+      "magnitude_features": []
     },
     "loss_heads": {
       "head_losses": {
@@ -1368,7 +1374,8 @@
       ],
       "head_hidden": 16,
       "head_hidden_overrides": {},
-      "dropout": 0.25
+      "dropout": 0.25,
+      "magnitude_features": []
     },
     "loss_heads": {
       "head_losses": {
@@ -1597,7 +1604,8 @@
         "special_teams_tds": 16,
         "yards_allowed": 48
       },
-      "dropout": 0.3
+      "dropout": 0.3,
+      "magnitude_features": []
     },
     "loss_heads": {
       "head_losses": {
