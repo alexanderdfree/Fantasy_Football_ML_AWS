@@ -61,9 +61,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # Partial clone: every commit + tree (git log/diff/rev-parse/rebase all work)
-          # but blobs only on demand, so the ~200 MB of since-removed data/media
-          # blobs in history are never downloaded.
+          # Partial clone: commits only are read here; the ~200 MB of dead blobs are never downloaded.
           filter: blob:none
           persist-credentials: false
       - id: check
