@@ -66,6 +66,13 @@ htmlcov/
 *.swp
 *.swo
 
+# Editor / merge / build leftovers (none tracked; guard against accidental adds)
+*.orig
+*.rej
+*.bak
+*.log
+*.map
+
 # Python packaging
 *.egg-info/
 dist/
