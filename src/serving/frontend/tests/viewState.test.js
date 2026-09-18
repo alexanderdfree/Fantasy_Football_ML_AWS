@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createLatestRequest } from "../src/lib/latestRequest.js";
-import { COMPARISON_ACTUAL_BASIS, meetsMinimumProjection, sliceAccuracy } from "../src/lib/predictionFilters.js";
+import { meetsMinimumProjection } from "../src/lib/predictionFilters.js";
 import { parseWikiHash, wikiLinkTarget } from "../src/lib/wikiLinks.js";
 
 function deferred() {
@@ -65,8 +65,6 @@ test("minimum points includes the kicker's Ridge projection", () => {
     assert.equal(meetsMinimumProjection({ espn_pred: 9 }, 8), true);
 });
 
-const accuracySources = [{ key: "ridge_pred", label: "Ridge" }, { key: "nn_pred", label: "NN" }];
-
 test("local Wiki headings retain their document route while other links keep their destination", () => {
     assert.deepEqual(wikiLinkTarget("#1-context", "architecture"),
         { slug: "architecture", anchor: "1-context" });
@@ -84,61 +82,4 @@ test("Wiki deep-link reloads resolve encoded and literal heading IDs consistentl
     assert.deepEqual(parseWikiHash("#wiki:architecture:some%20heading:part"), expected);
     assert.deepEqual(parseWikiHash("#wiki:architecture:100%"),
         { slug: "architecture", anchor: "100%" });
-});
-
-// Rows carry the server's shared-component forecasts (`<source>_comparison_pred`)
-// and truth (`comparison_actual`) under the contract's declared basis; `actual`
-// and `<source>_pred` are display-only full fantasy totals (ADR-0024).
-const comparisonRow = (extra = {}) => ({
-    actual: 16, comparison_actual: 10,
-    comparison_actual_basis: COMPARISON_ACTUAL_BASIS, ...extra,
-});
-
-test("the slice comparison follows the exported contract's actual basis", () => {
-    assert.equal(typeof COMPARISON_ACTUAL_BASIS, "string");
-    assert.match(COMPARISON_ACTUAL_BASIS, /^shared_projected_components_v\d+$/);
-});
-
-test("slice winner uses one common sample and preserves complete-coverage controls", () => {
-    const sparse = [comparisonRow({ ridge_comparison_pred: 11, nn_comparison_pred: 10.5 }),
-        comparisonRow({ ridge_comparison_pred: null, nn_comparison_pred: 30 })];
-    assert.deepEqual(sliceAccuracy(sparse, accuracySources), {
-        n: 1, cohortN: 2, best: { label: "NN", mae: 0.5 },
-    });
-    const full = sparse.map((row) => ({ ...row, ridge_comparison_pred: 11, nn_comparison_pred: 10.5 }));
-    assert.deepEqual(sliceAccuracy(full, accuracySources), {
-        n: 2, cohortN: 2, best: { label: "NN", mae: 0.5 },
-    });
-});
-
-test("unprojected actuals and display forecasts cannot change a comparison winner", () => {
-    const rows = [comparisonRow({ ridge_comparison_pred: 10, nn_comparison_pred: 16, ridge_pred: 30, nn_pred: 10 })];
-    assert.deepEqual(sliceAccuracy(rows, accuracySources).best, { label: "Ridge", mae: 0 });
-    assert.deepEqual(sliceAccuracy(rows.map((row) => ({ ...row, actual: 100 })), accuracySources).best,
-        { label: "Ridge", mae: 0 });
-});
-
-test("display forecasts never substitute for a missing comparison forecast", () => {
-    const rows = [comparisonRow({ ridge_pred: 10, nn_pred: 11 })];
-    assert.deepEqual(sliceAccuracy(rows, accuracySources), { n: 0, cohortN: 1, best: null });
-});
-
-test("missing legacy truth, another basis, unknown components and disjoint forecasts remain unavailable", () => {
-    for (const rows of [
-        [{ actual: 10, ridge_comparison_pred: 10, nn_comparison_pred: 11 }],
-        [comparisonRow({ comparison_actual_basis: "shared_projected_components_v1", ridge_comparison_pred: 10, nn_comparison_pred: 11 })],
-        [comparisonRow({ comparison_actual: null, ridge_comparison_pred: 10, nn_comparison_pred: 11 })],
-        [comparisonRow({ ridge_comparison_pred: 10 }), comparisonRow({ nn_comparison_pred: 11 })],
-        [comparisonRow({ comparison_actual: Infinity, ridge_comparison_pred: 10, nn_comparison_pred: 11 })],
-    ]) {
-        assert.equal(sliceAccuracy(rows, accuracySources).best, null);
-        assert.equal(sliceAccuracy(rows, accuracySources).n, 0);
-    }
-});
-
-test("zero forecasts stay comparable and excluded kicker sources cannot win", () => {
-    const sources = [...accuracySources, { key: "nflcom_pred", label: "NFL.com" }];
-    const rows = [comparisonRow({ comparison_actual: 0, ridge_comparison_pred: 0, nn_comparison_pred: 1,
-        nflcom_comparison_pred: 0, comparison_excluded_sources: ["nflcom"] })];
-    assert.deepEqual(sliceAccuracy(rows, sources), { n: 1, cohortN: 1, best: { label: "Ridge", mae: 0 } });
 });

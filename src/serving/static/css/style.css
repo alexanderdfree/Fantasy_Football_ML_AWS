@@ -1891,8 +1891,8 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 
 /* === Design-system filter bar v2 (dropdown menus, auto-fit rows, fields) ===
    Plain token-driven classes lifted from the design system's component CSS;
-   consumed by the React views' Columns/Filters menus, Age/Class filters and
-   the team labels. */
+   consumed by the React views' Columns/Filters menus, Age/Class filters,
+   the team labels and the stat blocks Timeline renders. */
 
 .field-label {
     display: block;
