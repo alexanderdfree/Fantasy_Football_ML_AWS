@@ -1,5 +1,7 @@
 # Fixed archive — index
 
+### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
+[Read the incident record](fixed-archive/runtime-ios-client-audit-2026-09.md).
 ### [FIXED] Provider hook paths, workflow inputs and infrastructure ownership diverged
 [Read the incident record](fixed-archive/runtime-tooling-audit-2026-09.md).
 
