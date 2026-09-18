@@ -45,6 +45,9 @@ def test_swap_image_tag():
     )
     with pytest.raises(ValueError):
         launch_ab._swap_image_tag("no-tag-image", "x")
+    assert launch_ab._swap_image_tag(
+        TEMPLATE_IMAGE + "@sha256:" + "a" * 64, "newsha"
+    ) == launch_ab._swap_image_tag(TEMPLATE_IMAGE, "newsha")
 
 
 def test_resolve_job_definition_registers_clone():
@@ -88,6 +91,101 @@ def test_resolve_job_definition_reuses_matching_revision():
 
     assert resolved == f"{launch_ab.AB_JOB_DEFINITION}:3"
     batch.register_job_definition.assert_not_called()
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_resolve_job_definition_pins_exact_bytes_in_isolated_revision(reuse):
+    digest = "sha256:" + "b" * 64
+    image = launch_ab._swap_image_tag(TEMPLATE_IMAGE, "a" * 40) + "@" + digest
+    template = _template_def()
+    pinned = {**_template_def(image=image), "revision": 7}
+    batch = MagicMock()
+    batch.describe_job_definitions.side_effect = [
+        {"jobDefinitions": [template]},
+        {"jobDefinitions": [pinned] if reuse else []},
+    ]
+    batch.register_job_definition.return_value = {"revision": 7}
+    assert (
+        launch_ab.resolve_job_definition("a" * 40, batch, image_digest=digest)
+        == f"{launch_ab.AB_JOB_DEFINITION}:7"
+    )
+    assert template == _template_def()
+    if reuse:
+        batch.register_job_definition.assert_not_called()
+    else:
+        registered = batch.register_job_definition.call_args.kwargs
+        assert registered["jobDefinitionName"] == launch_ab.AB_JOB_DEFINITION
+        assert registered["containerProperties"] == {
+            **template["containerProperties"],
+            "image": image,
+        }
+
+
+def test_resolve_job_definition_rejects_malformed_digest_before_registration():
+    batch = MagicMock()
+    batch.describe_job_definitions.return_value = {"jobDefinitions": [_template_def()]}
+    with pytest.raises(ValueError, match="complete sha256"):
+        launch_ab.resolve_job_definition("a" * 40, batch, image_digest="sha256:short")
+    batch.register_job_definition.assert_not_called()
+
+
+@pytest.mark.parametrize("matches", [False, True])
+def test_main_verifies_digest_before_mutations_and_records_pin(monkeypatch, matches):
+    sha, digest = "a" * 40, "sha256:" + "b" * 64
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_ab",
+            "--spec",
+            SPEC,
+            "--positions",
+            "WR",
+            "--seeds",
+            "42",
+            "--image-sha",
+            sha,
+            "--image-digest",
+            digest,
+            "--skip-image-check",
+            "--wait",
+            "false",
+        ],
+    )
+    clients = {name: MagicMock() for name in ("ecr", "batch", "s3")}
+    ecr = clients["ecr"]
+    ecr.describe_images.return_value = {
+        "imageDetails": [{"imageDigest": digest if matches else "sha256:" + "c" * 64}]
+    }
+    ecr.describe_repositories.return_value = {"repositories": [{"repositoryUri": "registry/repo"}]}
+    monkeypatch.setattr("boto3.client", lambda name, **kw: clients[name])
+    register = MagicMock(return_value="ff-ab-job:7")
+    pin = MagicMock()
+    submit = MagicMock(return_value=("WR", "job-1"))
+    manifest = MagicMock()
+    monkeypatch.setattr(launch_ab, "resolve_job_definition", register)
+    monkeypatch.setattr(
+        launch_ab,
+        "resolve_definition",
+        lambda *a: {"image_sha": sha, "job_definition": "ff-ab-job:7"},
+    )
+    monkeypatch.setattr(launch_ab, "pin_data_release", pin)
+    monkeypatch.setattr(launch_ab, "submit_ab_job", submit)
+    monkeypatch.setattr(launch_ab, "write_run_manifest", manifest)
+    if not matches:
+        with pytest.raises(RuntimeError, match="no longer matches"):
+            launch_ab.main()
+        for mutation in (register, pin, submit, manifest):
+            mutation.assert_not_called()
+        return
+    launch_ab.main()
+    register.assert_called_once_with(sha, clients["batch"], image_digest=digest)
+    assert submit.call_args.kwargs["job_definition"] == "ff-ab-job:7"
+    evidence = manifest.call_args.kwargs["manifest"]
+    assert (evidence["image_sha"], evidence["image_digest"]) == (sha, digest)
+    ecr.describe_images.assert_called_once_with(
+        repositoryName="ff-training", imageIds=[{"imageTag": sha}]
+    )
 
 
 @pytest.mark.parametrize("data_prefix", [None, "data/validation/live-data-fix"])
