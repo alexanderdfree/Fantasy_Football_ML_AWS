@@ -1,5 +1,6 @@
 /* Comparison — models and archived expert forecasts on shared player-weeks.
- * Expected starters use a fixed pregame reference; seasonal leaders and weekly
+ * Expected starters use the consensus of every displayed source; the archived
+ * expert reference is a secondary view, and seasonal leaders and weekly
  * leader capture are separate diagnostics. One /api/comparison fetch (mirroring the
  * vanilla comparisonLoaded flag); the MAE/RMSE/R² toggle re-renders from the
  * cached payload. Lower is better for MAE/RMSE, higher for R²; best cell per row
@@ -220,7 +221,12 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                 {Object.entries(data.scoring_components || {}).map(([position, components]) => (
                     <p key={position}><strong>{position}.</strong> {components.map((name) => name.replaceAll("_", " ")).join(", ")}</p>
                 ))}
-                {data.coverage?.all && <p><strong>Graded sources.</strong> {COMPARISON_POSITIONS.map((pos) => `${pos}: ${((data.coverage.all[pos] || {}).sources || []).map((s) => SOURCE_LABELS[s] || s).join(", ") || "unavailable"}`).join(" · ")}. The Timeline tab grades the same source groups.</p>}
+                {data.coverage?.all && <p><strong>Graded sources.</strong> {COMPARISON_POSITIONS.map((pos) => {
+                    const cell = data.coverage.all[pos] || {};
+                    const graded = (cell.sources || []).map((s) => SOURCE_LABELS[s] || s).join(", ") || "unavailable";
+                    const missing = (cell.unavailable_sources || []).map((s) => SOURCE_LABELS[s] || s).join(", ");
+                    return `${pos}: ${graded}${missing ? ` (no usable forecasts: ${missing})` : ""}`;
+                }).join(" · ")}. The Timeline tab grades the same source groups.</p>}
                 {Object.entries(data.excluded_sources || {}).flatMap(([position, sources]) =>
                     Object.entries(sources).map(([source, reason]) => <p key={`${position}-${source}`}>{position} · {SOURCE_LABELS[source] || source}: {reason}</p>))}
                 {Object.entries(data.excluded_components || {}).flatMap(([position, components]) =>

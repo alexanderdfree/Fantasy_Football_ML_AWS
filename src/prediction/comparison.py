@@ -146,16 +146,22 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
             quartiles[pos] = None
             rankings[pos] = {}
             continue
-        common_all, available_columns = _shared_rows(df, scoring)
+        graded = df[df[actual].notna()]
+        # Source admission and every metric use graded rows only; a source with
+        # forecasts solely on ungraded rows must not blank the position.
+        common_all, available_columns = _shared_rows(graded, scoring)
         # Consensus membership is fixed before outcome availability is applied: a
         # selected player-week without recorded actuals is dropped, never replaced.
         consensus_mask, consensus_meta = consensus_selection(df, available_columns, 24)
+        excluded = EXCLUDED_SOURCES.get(pos, {})
         unavailable_sources = [
             prefix
             for prefix in _ROW_PRED_PREFIXES
-            if prefix not in available_columns and _pred_col(prefix, scoring) in df
+            if prefix not in available_columns
+            and prefix not in excluded
+            and _pred_col(prefix, scoring) in graded
         ]
-        df = df[df[actual].notna()]
+        df = graded
         masks = {"weekly_consensus_top24": consensus_mask.reindex(df.index, fill_value=False)}
         masks["weekly_reference_top24"], ref_meta = reference_selection(pos, df, reference, 24)
         masks["all"] = pd.Series(True, index=df.index)

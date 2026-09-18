@@ -74,7 +74,6 @@
         ],
         "status": "available",
         "unavailable_sources": [
-          "nflcom",
           "rotowire"
         ]
       },
@@ -258,7 +257,6 @@
         ],
         "status": "available",
         "unavailable_sources": [
-          "nflcom",
           "rotowire"
         ]
       },
@@ -442,7 +440,6 @@
         ],
         "status": "available",
         "unavailable_sources": [
-          "nflcom",
           "rotowire"
         ]
       },
@@ -645,7 +642,6 @@
         ],
         "status": "available",
         "unavailable_sources": [
-          "nflcom",
           "rotowire"
         ]
       },
@@ -869,7 +865,6 @@
         ],
         "status": "available",
         "unavailable_sources": [
-          "nflcom",
           "rotowire"
         ]
       },

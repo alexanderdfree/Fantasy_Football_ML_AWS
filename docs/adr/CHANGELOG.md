@@ -2,8 +2,6 @@
 
 - 2026-09-18 · Score all-zero provider rows as missing forecasts (reference recipe v4, cache schema 12), add the symmetric weekly consensus cohort as the Comparison headline, and align Timeline groups with the tab's displayed sources · (PR #1595) · → ADR-0024
 
-- 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR pending) · → ADR-0029
-
 - 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
 
 - 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR #1592) · → ADR-0029
