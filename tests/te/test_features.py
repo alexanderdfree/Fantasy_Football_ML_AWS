@@ -7,6 +7,7 @@ yards/reception, reception rate, TD/target rate, team target-share
 assertions) stay in this file.
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -174,23 +175,57 @@ class TestComputeTERates:
         stint-aware share is exactly 1.0. The old ``player×season`` grouping
         spanned the trade (window weeks 4,5,6 → player 18 / team 12+6+6=24 =
         0.75) — mirrors the WR test (#674).
+
+        The two other team-relative rollings must be stint-aware too (#1500):
+        ``opportunity_index_L3`` (opp weight = carries + 2*targets = 12 for
+        TE_A every week; KC team weight 24 → per-game index 0.5, solo-SF →
+        1.0) and ``redzone_target_share_L3`` (per-game input set to 0.5 on the
+        KC weeks and 1.0 on the SF weeks). Stint-aware, week 7's window {5,6}
+        is all-SF → mean(1.0, 1.0) = 1.0; the buggy player×season grouping
+        mixed KC's week 4 in → mean(0.5, 1.0, 1.0) ≈ 0.8333.
+        ``redzone_targets_L3`` is the player's own raw COUNT (not
+        team-relative) and deliberately stays on the plain grouping, so it
+        keeps rolling across the trade.
         """
-        te_a_kc = te_player_games_factory("TE_A", n_weeks=4, targets=6, recent_team="KC")
-        te_a_sf = te_player_games_factory("TE_A", n_weeks=3, targets=6, recent_team="SF")
+        te_a_kc = te_player_games_factory(
+            "TE_A", n_weeks=4, targets=6, recent_team="KC", redzone_target_share=0.5
+        )
+        te_a_sf = te_player_games_factory(
+            "TE_A", n_weeks=3, targets=6, recent_team="SF", redzone_target_share=1.0
+        )
         te_a_sf["week"] = [5, 6, 7]
-        te_b_kc = te_player_games_factory("TE_B", n_weeks=4, targets=6, recent_team="KC")
+        te_b_kc = te_player_games_factory(
+            "TE_B", n_weeks=4, targets=6, recent_team="KC", redzone_target_share=0.5
+        )
         df = pd.concat([te_a_kc, te_a_sf, te_b_kc], ignore_index=True)
         _compute_features(df)
 
-        a = df[df["player_id"] == "TE_A"].set_index("week")["team_te_target_share_L3"]
+        a = df[df["player_id"] == "TE_A"].set_index("week")
         # Stint-aware: window {5,6} fully inside the SF stint → 12/12 = 1.0.
         # (A non-stint denominator would give 18/24 = 0.75, mixing KC's wk4.)
-        assert pytest.approx(a.loc[7], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[7, "team_te_target_share_L3"], abs=1e-9) == 1.0
         # Stint boundary (old→new 0.5→0.0 at week 5): first game of the new
         # stint has no prior-game window inside it → rolling NaN → safe_divide
         # fills 0; week 6 (window {5}) is already all-SF → 1.0.
-        assert pytest.approx(a.loc[5], abs=1e-9) == 0.0
-        assert pytest.approx(a.loc[6], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[5, "team_te_target_share_L3"], abs=1e-9) == 0.0
+        assert pytest.approx(a.loc[6, "team_te_target_share_L3"], abs=1e-9) == 1.0
+        # opportunity_index_L3, stint-aware (#1500): week 7's window {5,6} is
+        # all-SF → mean(1.0, 1.0) = 1.0 (buggy grouping: ≈0.8333); week 6
+        # (window {5}) → 1.0; week 5 is the first SF game → rolling NaN (no
+        # safe_divide fill on the mean rollings — fill_nans handles it later).
+        assert pytest.approx(a.loc[7, "opportunity_index_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[6, "opportunity_index_L3"], abs=1e-9) == 1.0
+        assert np.isnan(a.loc[5, "opportunity_index_L3"])
+        # redzone_target_share_L3, stint-aware (#1500): same 1.0 / 1.0 / NaN
+        # shape from the 0.5 (KC) → 1.0 (SF) per-game input.
+        assert pytest.approx(a.loc[7, "redzone_target_share_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(a.loc[6, "redzone_target_share_L3"], abs=1e-9) == 1.0
+        assert np.isnan(a.loc[5, "redzone_target_share_L3"])
+        # Negative control: redzone_targets_L3 is a raw count, NOT
+        # team-relative, so it must keep rolling across the trade — week 5
+        # sees KC weeks {2,3,4} (1.0 each) rather than a stint cold-start NaN.
+        assert not np.isnan(a.loc[5, "redzone_targets_L3"])
+        assert pytest.approx(a.loc[5, "redzone_targets_L3"], abs=1e-9) == 1.0
 
 
 @pytest.mark.unit

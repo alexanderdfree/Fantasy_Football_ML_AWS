@@ -116,13 +116,29 @@ def _compute_features(df: pd.DataFrame) -> None:
         player_w, team_w, out=np.zeros_like(player_w), where=team_w > 0
     )
     # Leakage-safe rolling forms (rolling_agg shift=1) → whitelist (Ridge/LGBM/NN-static).
+    # opportunity_index_L3 + redzone_target_share_L3 are stint-aware (#1500):
+    # both are TEAM-relative per-game shares (game_opportunity_index divides by
+    # this team-game's TE opportunity weight; redzone_target_share divides by
+    # the team's red-zone pass attempts in src/data/redzone_pbp.py), so the
+    # plain player×season grouping would average the OLD team's share into a
+    # mid-season-traded TE's first ≤3 games at the new team — the defect class
+    # already fixed for team_te_target_share_L3 above (#1192) and RB's
+    # opportunity_index_L3 (#1467/#1474). The per-game cols live on df;
+    # df_merged is row-order-identical (many-to-one merge onto the pre-sorted
+    # df), so copy them across, roll with stint_grp, and assign back
+    # positionally via .values (indexes differ). redzone_targets_L3 stays on
+    # the plain grp: it is the player's own raw red-zone-target COUNT, not
+    # team-relative, so it keeps rolling across the trade like every other
+    # raw-stat L3.
+    df_merged["game_opportunity_index"] = df["game_opportunity_index"].values
+    df_merged["redzone_target_share"] = df["redzone_target_share"].values
     df["opportunity_index_L3"] = rolling_agg(
-        df, "game_opportunity_index", grp, window=3, agg="mean"
-    )
+        df_merged, "game_opportunity_index", stint_grp, window=3, agg="mean"
+    ).values
     df["redzone_targets_L3"] = rolling_agg(df, "redzone_targets", grp, window=3, agg="mean")
     df["redzone_target_share_L3"] = rolling_agg(
-        df, "redzone_target_share", grp, window=3, agg="mean"
-    )
+        df_merged, "redzone_target_share", stint_grp, window=3, agg="mean"
+    ).values
     # Prior-season catch rate (S-1 → S), low-volume-guarded like src/wr/features.py.
     if {"prior_season_mean_receptions", "prior_season_mean_targets"} <= set(df.columns):
         catch_rate = safe_divide(
