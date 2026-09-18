@@ -1,4 +1,13 @@
-"""Fetch + cache + gsis-join Sleeper (RotoWire) weekly NFL projections.
+"""Compatibility re-export shim for the Sleeper (RotoWire) weekly projections loader.
+
+The implementation lives in ``src.data.expert_sources`` — it moved there in
+#1542, and #1574 pointed live serving (via the ``src.serving.expert_sources``
+alias) at the same module, so offline comparisons and the site share one
+fetch / normalize / cache / gsis-join path. This module only re-exports it so
+existing ``src.analysis.sleeper_loader`` imports keep working. Change the
+implementation there, not here — and note that ``src/data/`` is a
+global-retrain-trigger path in ``src/scripts/scope_positions.py``, so an
+implementation change retrains all six positions; this shim is analysis-only.
 
 Source: Sleeper's undocumented projections endpoint
 ``https://api.sleeper.app/projections/nfl/{season}/{week}`` (free, no auth). Every
@@ -6,25 +15,16 @@ record carries ``company: "rotowire"`` — so this is **one** additional expert
 (RotoWire), not a consensus. Covers offense (QB/RB/WR/TE, joined via the gsis
 crosswalk) and DST (team-keyed); K is totals-only and out of scope.
 
-Lives under ``src/analysis/`` (not ``src/data/``) on purpose: ``src/data/`` is a
-global retrain trigger in ``src/scripts/scope_positions.py`` and this loader is
-analysis-only. Mirrors the cache + network-defensiveness idiom of
-``src/data/nflcom_loader.py``.
-
 Two public entry points (parallel to ``nflcom_loader``):
 
     load_sleeper_projections(seasons, ...) -> pd.DataFrame
-        One row per (sleeper_player_id, position, season, week). Raw stats mapped
-        to our internal target names. Cached by ``src.data.expert_sources`` as
-        ``data/raw/sleeper_projections_v2_s{seasons}_{weeks}_{positions}.parquet``
-        — every requested season is enumerated in the key, so a sampled season
-        list can never satisfy a later full-range request (the #1477 collision
-        class that the old ``v1_{min}_{max}`` key had).
+        One row per (sleeper_player_id, position, season, week), raw stats
+        mapped to our internal target names. Fetch, retry and cache-key
+        details: ``src.data.expert_sources.load_sleeper_projections``.
 
     load_sleeper_with_gsis_id(seasons, ...) -> pd.DataFrame
-        Same frame, joined to ``player_id`` (gsis_id) via the nflverse
-        ``ff_playerids`` crosswalk (``nfl_source.player_ids()``), the same bridge
-        pattern used for ESPN-QBR (``external_sources.py``) and PFR (``loader.py``).
+        The same frame joined to ``player_id`` (gsis_id). Crosswalk and join
+        details: ``src.data.expert_sources.load_sleeper_with_gsis_id``.
 
 PROVENANCE CAVEAT: Sleeper does not document whether these historical projections
 are the as-of-kickoff snapshot or a later backfill. Spot evidence (fractional
@@ -32,10 +32,6 @@ expected-value stats that do not match actuals) suggests genuine pre-game
 projections, but callers should sanity-check RotoWire's error magnitude against a
 known expert (NFL.com) before trusting the comparison — see the comparison
 script's provenance gate.
-
-
-Implementation is shared with src.serving.expert_sources so offline and live
-normalization, retries, cache keys, and ID joins stay aligned.
 """
 
 from __future__ import annotations

@@ -20,6 +20,8 @@ pytestmark = pytest.mark.unit
 
 SPEC = "src.tuning.ab_example"
 TEMPLATE_IMAGE = "123.dkr.ecr.us-east-1.amazonaws.com/ff-training:oldsha"
+# The resolver / ECR preflight accept only a full 40-char lowercase SHA.
+NEW_SHA = "deadbeef" * 5
 
 
 def _template_def(image=TEMPLATE_IMAGE):
@@ -61,14 +63,14 @@ def test_resolve_job_definition_registers_clone():
     ]
     batch.register_job_definition.return_value = {"revision": 7}
 
-    resolved = launch_ab.resolve_job_definition("newsha", batch)
+    resolved = launch_ab.resolve_job_definition(NEW_SHA, batch)
 
     assert resolved == f"{launch_ab.AB_JOB_DEFINITION}:7"
     kwargs = batch.register_job_definition.call_args.kwargs
     assert kwargs["jobDefinitionName"] == launch_ab.AB_JOB_DEFINITION
     assert kwargs["type"] == "container"
     container = kwargs["containerProperties"]
-    assert container["image"].endswith("ff-training:newsha")
+    assert container["image"].endswith(f"ff-training:{NEW_SHA}")
     # GPU requirement + env caps carried over from the production template.
     assert container["resourceRequirements"] == [{"type": "GPU", "value": "1"}]
     assert {"name": "OMP_NUM_THREADS", "value": "1"} in container["environment"]
@@ -79,7 +81,7 @@ def test_resolve_job_definition_registers_clone():
 
 def test_resolve_job_definition_reuses_matching_revision():
     batch = MagicMock()
-    ab_def = _template_def(image="123.dkr.ecr.us-east-1.amazonaws.com/ff-training:newsha")
+    ab_def = _template_def(image=f"123.dkr.ecr.us-east-1.amazonaws.com/ff-training:{NEW_SHA}")
     ab_def["jobDefinitionName"] = launch_ab.AB_JOB_DEFINITION
     ab_def["revision"] = 3
     batch.describe_job_definitions.side_effect = [
@@ -87,7 +89,7 @@ def test_resolve_job_definition_reuses_matching_revision():
         {"jobDefinitions": [ab_def]},
     ]
 
-    resolved = launch_ab.resolve_job_definition("newsha", batch)
+    resolved = launch_ab.resolve_job_definition(NEW_SHA, batch)
 
     assert resolved == f"{launch_ab.AB_JOB_DEFINITION}:3"
     batch.register_job_definition.assert_not_called()
@@ -127,6 +129,26 @@ def test_resolve_job_definition_rejects_malformed_digest_before_registration():
     with pytest.raises(ValueError, match="complete sha256"):
         launch_ab.resolve_job_definition("a" * 40, batch, image_digest="sha256:short")
     batch.register_job_definition.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_sha", ["abc1234", "A" * 40, "a" * 39, "a" * 41, ""])
+def test_resolve_job_definition_rejects_non_full_lowercase_sha_before_any_batch_call(bad_sha):
+    """A short / uppercase / empty tag would otherwise mint a real ff-ab-job
+    revision pointing at a non-existent ff-training:<tag>; refuse before the
+    template lookup, let alone registration."""
+    batch = MagicMock()
+    with pytest.raises(ValueError, match="full 40-char lowercase git SHA"):
+        launch_ab.resolve_job_definition(bad_sha, batch)
+    batch.describe_job_definitions.assert_not_called()
+    batch.register_job_definition.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_sha", ["abc1234", "A" * 40])
+def test_check_image_exists_rejects_non_full_lowercase_sha_before_any_ecr_call(bad_sha):
+    ecr = MagicMock()
+    with pytest.raises(ValueError, match="full 40-char lowercase git SHA"):
+        launch_ab.check_image_exists(bad_sha, ecr)
+    ecr.describe_images.assert_not_called()
 
 
 @pytest.mark.parametrize("matches", [False, True])

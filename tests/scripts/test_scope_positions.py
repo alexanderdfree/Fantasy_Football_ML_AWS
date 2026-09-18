@@ -581,7 +581,13 @@ class TestComputeTestShards:
         (
             path,
             "serving",
-            {"tests/test_app.py", "tests/test_app_boot.py", "tests/serving/test_state.py"},
+            {
+                "tests/test_app.py",
+                "tests/test_app_boot.py",
+                "tests/serving/test_state.py",
+                # The fixture-currency gate rides along in the serving shard (and shared).
+                "tests/test_client_fixture_generation.py",
+            },
         )
         for path in ("src/serving/state.py", "tests/serving/test_state.py")
     ]
@@ -589,7 +595,11 @@ class TestComputeTestShards:
         (
             "tests/shared/test_helpers.py",
             "shared",
-            {"tests/test_other.py", "tests/shared/test_helpers.py"},
+            {
+                "tests/test_other.py",
+                "tests/shared/test_helpers.py",
+                "tests/test_client_fixture_generation.py",
+            },
         )
     ]
     + [
@@ -612,6 +622,7 @@ def test_workflow_shard_paths_collect_the_detected_suite(
         "tests/test_app.py",
         "tests/test_app_boot.py",
         "tests/serving/test_state.py",
+        "tests/test_client_fixture_generation.py",
         "tests/test_other.py",
         "tests/shared/test_helpers.py",
         *(f"tests/{pos.lower()}/test_features.py" for pos in ALL_SIX),

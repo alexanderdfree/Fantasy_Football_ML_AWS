@@ -237,7 +237,10 @@ jobs:
             # (#1056). No module-scoped trained fixtures and no pipeline TRAINING -> not an OOM
             # source; -n auto + worksteal is safe (sidesteps the loadfile replacement-worker
             # KeyError) and proven green.
-            echo "paths=tests/test_app*.py tests/serving/" >> "$GITHUB_OUTPUT"
+            # + the iOS client-contract fixture-currency gate (tests/test_client_fixture_generation.py):
+            # a serving-only PR changes the served payload it snapshots, so it must run here too
+            # (it also runs in the shared shard — cheap, and neither shard can skip it).
+            echo "paths=tests/test_app*.py tests/serving/ tests/test_client_fixture_generation.py" >> "$GITHUB_OUTPUT"
             echo "cov=--cov=src.serving --cov=src" >> "$GITHUB_OUTPUT"
             echo "dist=worksteal" >> "$GITHUB_OUTPUT"
             echo "jobs=auto" >> "$GITHUB_OUTPUT"

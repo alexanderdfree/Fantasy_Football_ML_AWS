@@ -81,6 +81,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
+          # Full history: the Resolve step expands an abbreviated image_sha with git rev-parse.
           fetch-depth: 0
 
       - name: Set up Python
@@ -104,24 +105,57 @@ jobs:
         # fails; consider all indexes so numpy comes from PyPI.
         run: uv pip install --system --index-strategy unsafe-best-match -r requirements-dev.txt
 
-      - name: Resolve image SHA + experiment prefix
+      - name: Resolve image SHA + experiment prefix (validate dispatch inputs)
         id: ctx
         env:
           INPUT_SHA: ${{ github.event.inputs.image_sha }}
+          POSITIONS: ${{ github.event.inputs.positions }}
+          SEED: ${{ github.event.inputs.seed }}
         run: |
-          SHA="${INPUT_SHA:-${GITHUB_SHA}}"
-          # Defense-in-depth (mirrors ab-batch.yml): the SHA feeds S3 keys, a Batch job-def name, and CLI args downstream, so reject anything that isn't a hex git SHA.
-          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
-            echo "Invalid image_sha: $SHA (expected a 7-40 char hex git SHA)" >&2
+          set -euo pipefail
+          # Defense-in-depth (mirrors ab-batch.yml): these dispatch inputs feed
+          # S3 keys, a Batch job-def name, $GITHUB_OUTPUT lines and CLI args
+          # downstream. Every check is a bash [[ =~ ]] match, which is
+          # whole-string — `printf '%s' "$X" | grep -Eq '^...$'` is
+          # line-anchored, so a multi-line value whose FIRST line matched would
+          # pass and then smuggle extra key=value lines into $GITHUB_OUTPUT.
+          REQUESTED_SHA="${INPUT_SHA:-${GITHUB_SHA:-}}"
+          if [[ -z "$REQUESTED_SHA" ]]; then
+            echo "image_sha is blank and GITHUB_SHA is unset" >&2
+            exit 1
+          fi
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            echo "Invalid image_sha: $REQUESTED_SHA (expected a 7-40 char hex git SHA)" >&2
             exit 1
           fi
           # launch.py's identity contract and the Batch image resolver
           # (src/scripts/resolve_training_image.py) both demand the FULL
           # lowercase 40-char SHA; expand an abbreviated input against the
           # fetch-depth-0 checkout (an unknown commit fails here, loudly).
-          SHA=$(git rev-parse --verify --end-of-options "${SHA}^{commit}")
-          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+          if ! SHA=$(git rev-parse --verify --end-of-options "${REQUESTED_SHA}^{commit}"); then
+            echo "image_sha ${REQUESTED_SHA} is not a commit in this checkout: dispatch batch-image.yml on the branch first, or pass a SHA that exists on this ref" >&2
+            exit 1
+          fi
+          if [[ -z "$SHA" || ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Could not expand image_sha to a full commit SHA: $SHA" >&2
+            exit 1
+          fi
+          # positions: whole-string shape first ([[:blank:]] is space/tab only;
+          # `read` stops at the first newline and would hide later tokens),
+          # then every token must be a known position.
+          if [[ ! "$POSITIONS" =~ ^[[:blank:]]*[A-Z]+([[:blank:]]+[A-Z]+)*[[:blank:]]*$ ]]; then
+            echo "Invalid positions: $POSITIONS (expected space-separated tokens from QB RB WR TE K DST)" >&2
+            exit 1
+          fi
+          read -ra POS_LIST <<< "$POSITIONS"
+          for p in "${POS_LIST[@]}"; do
+            case "$p" in
+              QB|RB|WR|TE|K|DST) ;;
+              *) echo "Invalid position: $p (expected QB RB WR TE K DST)" >&2; exit 1 ;;
+            esac
+          done
+          if [[ ! "$SEED" =~ ^[0-9]+$ ]]; then
+            echo "Invalid seed: $SEED (expected a non-negative integer)" >&2
             exit 1
           fi
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
@@ -159,7 +193,9 @@ jobs:
             *)
               # An explicit release id is still validated against the image's
               # recipe by pin_data_release at submit time.
-              if ! printf '%s' "$DATA_RELEASE" | grep -Eq '^[0-9a-f]{64}$'; then
+              # Whole-string [[ =~ ]] match (see the Resolve step): a
+              # line-anchored grep would let a multi-line value through.
+              if [[ ! "$DATA_RELEASE" =~ ^[0-9a-f]{64}$ ]]; then
                 echo "Invalid data_release: $DATA_RELEASE (expected blank, 'legacy', or a 64-char hex release id)" >&2
                 exit 1
               fi
@@ -176,6 +212,7 @@ jobs:
         env:
           HEAD_SHA: ${{ steps.ctx.outputs.sha }}
         run: |
+          set -euo pipefail
           REVISION=$(aws s3 cp \
             "s3://${S3_BUCKET}/job-def-revisions/${HEAD_SHA}.txt" - \
             --region "$AWS_REGION" --no-cli-pager 2>/dev/null || true)
@@ -193,10 +230,17 @@ jobs:
             # never reference a branch image.
             echo "No prod revision for ${HEAD_SHA}; cloning ff-ab-job onto ff-training:${HEAD_SHA}"
             # resolve_job_definition logs "[ab] registered ..." to stdout before
-            # returning the name:revision, so take only the final line. The
-            # program reads HEAD_SHA / AWS_REGION from the environment rather
-            # than having them shell-interpolated into the Python source.
+            # returning the name:revision, so take only the final line (pipefail
+            # above turns a resolver crash into a failed step instead of an
+            # empty job_def/revision; the shape check below catches anything
+            # else). The program reads HEAD_SHA / AWS_REGION from the
+            # environment rather than having them shell-interpolated into the
+            # Python source.
             JD=$(python -c 'import os, boto3; from src.tuning.launch_ab import resolve_job_definition; print(resolve_job_definition(os.environ["HEAD_SHA"], boto3.client("batch", region_name=os.environ["AWS_REGION"])))' | tail -n1)
+            if [[ ! "$JD" =~ ^[A-Za-z0-9_-]+:[0-9]+$ ]]; then
+              echo "resolve_job_definition returned '${JD}', expected <job-definition-name>:<revision>" >&2
+              exit 1
+            fi
             echo "Resolved job definition ${JD}"
             echo "job_def=${JD%%:*}" >> "$GITHUB_OUTPUT"
             echo "revision=${JD##*:}" >> "$GITHUB_OUTPUT"
@@ -220,6 +264,7 @@ jobs:
           # src/batch/launch.py::submit_job).
           FF_MODEL_S3_PREFIX: ${{ steps.ctx.outputs.prefix }}
         run: |
+          set -euo pipefail
           # --skip-upload: CI has no local data/splits (the Batch jobs pull the
           # pinned S3 release). --append-history false: no training_runs/
           # descriptor or History row is created; the download step below
@@ -246,6 +291,7 @@ jobs:
           # No FF_MODEL_S3_BUCKET -> benchmark.py does NOT mirror to the website
           # History tab; the artifact below is the only output.
         run: |
+          set -euo pipefail
           python -m src.batch.benchmark \
             --download-only \
             --positions $POSITIONS \
@@ -254,7 +300,10 @@ jobs:
             --note "$NOTE"
 
       - name: Upload benchmark results artifact
-        if: always()
+        # always(): a failed Spot fan-out still leaves partial metrics worth
+        # downloading — but not when the Resolve step rejected the input
+        # (there is nothing to collect and the artifact name would be empty).
+        if: always() && steps.ctx.outputs.sha != ''
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-${{ steps.ctx.outputs.sha }}
