@@ -47,6 +47,7 @@ from src.shared.feature_build import (
     BOUNDED_FLAG_DOMAINS,
     apply_bounded_flag_scaling,
     build_position_features,
+    make_nn_scaler,
     scale_and_clip,
 )
 from src.shared.models import (
@@ -235,6 +236,7 @@ def _scale_xs(
     *X_arrays: np.ndarray,
     cfg: dict | None = None,
     feature_cols: list[str] | None = None,
+    magnitude_features: tuple[str, ...] | list[str] = (),
 ) -> tuple[StandardScaler, list[np.ndarray]]:
     """Fit the NN scaler on train, apply requested policies, and transform/clip.
 
@@ -252,8 +254,21 @@ def _scale_xs(
     silently fall back to plain scaling, and an override that matches no column
     would report as a genuine "no effect" A/B result. Neither is recoverable at
     this depth and both are invisible in a fleet run's aggregate table.
+
+    ``magnitude_features`` (``cfg["nn_magnitude_features"]`` at every call site)
+    names sparse continuous columns whose positive magnitudes must stay
+    distinguishable inside the clip bounds: those columns are fitted with a
+    ``MagnitudePreservingScaler`` (``src/shared/feature_build.py``) instead of a
+    z-score + clip. Empty — the default for every position except WR — builds a
+    plain ``StandardScaler`` and takes exactly the legacy path below. When
+    non-empty, ``feature_cols`` must name the arrays' columns exactly so the
+    selected indices cannot be misaligned. The two policies compose: the flag
+    override rewrites fitted ``mean_``/``scale_`` entries that the magnitude
+    columns bypass in ``transform``, and their column sets are disjoint.
     """
-    scaler = StandardScaler()
+    if magnitude_features and (feature_cols is None or len(feature_cols) != X_arrays[0].shape[1]):
+        raise ValueError("NN scaler feature names must match the exact input columns")
+    scaler = make_nn_scaler(feature_cols, magnitude_features)
     flag_range = (cfg or {}).get("nn_bounded_flag_range")
     if flag_range is None:
         # Preserve main's fit_transform path exactly while the experiment is off.
@@ -809,8 +824,8 @@ def _train_nn(
 ):
     """Train a MultiHeadNet and return (model, scaler, test_preds, metrics, history).
 
-    ``feature_cols`` names the columns of ``X_*`` in order; it is only consumed
-    by the ``nn_bounded_flag_range`` scaler override.
+    ``feature_cols`` names the columns of ``X_*`` in order; it is consumed by
+    the ``nn_bounded_flag_range`` and ``nn_magnitude_features`` scaler policies.
     """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
@@ -822,6 +837,7 @@ def _train_nn(
         feature_cols=feature_cols
         if feature_cols is not None
         else (cfg["get_feature_columns_fn"]() if "get_feature_columns_fn" in cfg else None),
+        magnitude_features=cfg.get("nn_magnitude_features", ()),
     )
 
     device = _nn_device()
@@ -902,6 +918,7 @@ def _train_attention_nn(
     # attention branch learns its own temporal representation from raw game
     # stats, so rolling / EWMA / trend / share / specific categories are
     # excluded by config (``POSITION_CONFIG.attn_static_features``).
+    static_cols = cfg.get("attn_static_features")
     if feature_cols is not None:
         static_whitelist = cfg["attn_static_features"]
         static_cols = get_attn_static_columns(feature_cols, static_whitelist)
@@ -925,6 +942,7 @@ def _train_attention_nn(
         X_test,
         cfg=cfg,
         feature_cols=static_cols,
+        magnitude_features=cfg.get("nn_magnitude_features", ()),
     )
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
@@ -1051,8 +1069,8 @@ def _train_nested_attention_nn(
     inner-pool output before the outer attention.
 
     ``feature_cols`` names the columns of ``X_*`` in order (the caller's
-    ``attn_feature_cols``); it is only consumed by the
-    ``nn_bounded_flag_range`` scaler override.
+    ``attn_feature_cols``); it is consumed by the ``nn_bounded_flag_range``
+    and ``nn_magnitude_features`` scaler policies.
     """
     seed_everything(seed)
     cfg = _maybe_force_dropout_zero(cfg)
@@ -1062,6 +1080,7 @@ def _train_nested_attention_nn(
         X_test,
         cfg=cfg,
         feature_cols=feature_cols if feature_cols is not None else cfg.get("attn_static_features"),
+        magnitude_features=cfg.get("nn_magnitude_features", ()),
     )
 
     attn_batch_size = cfg.get("attn_batch_size", cfg["nn_batch_size"])
@@ -2379,6 +2398,7 @@ def run_cv_pipeline(position, cfg, full_df=None, test_df=None, seed=42, *, conte
             X_val,
             cfg=cfg,
             feature_cols=feature_cols,
+            magnitude_features=cfg.get("nn_magnitude_features", ()),
         )
 
         device = _nn_device()

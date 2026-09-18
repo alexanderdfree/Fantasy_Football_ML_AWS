@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
@@ -111,14 +112,16 @@ def tiny_splits():
     return _load_tiny_splits()
 
 
-def _run(tiny_splits, tmp_outputs_dir, seed: int = 42):
+def _run(tiny_splits, tmp_outputs_dir, seed: int = 42, **cfg_overrides):
     """Run the WR pipeline inside ``tmp_outputs_dir`` and return (predictions).
 
     The pipeline hard-codes ``WR/outputs`` for artifact saves; we ``chdir`` into
     a tmp workspace and symlink ``data/`` so the pipeline finds splits without
-    polluting the checked-in outputs directory.
+    polluting the checked-in outputs directory. ``cfg_overrides`` are merged
+    last over the tiny config.
     """
     cfg = _build_tiny_cfg()
+    cfg.update(cfg_overrides)
     train_df, val_df, test_df = tiny_splits
 
     cwd = os.getcwd()
@@ -184,3 +187,32 @@ def test_pipeline_deterministic_across_runs(pipeline_run, pipeline_run_repeat):
                 np.asarray(p2[key]),
                 err_msg=f"{backbone}.{key} differed across identical-seed runs",
             )
+
+
+@pytest.mark.e2e
+def test_magnitude_scaler_reaches_fitted_artifact(tiny_splits, tmp_path_factory):
+    """WR's ``nn_magnitude_features`` knob must reach the pickled NN scaler.
+
+    The tiny fixture leaves the knob off (the legacy StandardScaler path the
+    runs above cover); this run turns it on exactly as ``POSITION_CONFIG`` does
+    and inspects the fitted artifact that serving reloads, so a silently
+    inactive policy cannot read as "no effect" in a WR benchmark.
+    """
+    from src.shared.feature_build import MagnitudePreservingScaler
+
+    assert POSITION_CONFIG.nn_magnitude_features == ("inherited_opportunity",)
+    workdir = tmp_path_factory.mktemp("wr_e2e_magnitude")
+    result = _run(
+        tiny_splits, workdir, seed=42, nn_magnitude_features=POSITION_CONFIG.nn_magnitude_features
+    )
+    for key in _ALL_TARGETS:
+        assert np.isfinite(np.asarray(result["per_target_preds"]["nn"][key])).all()
+
+    (scaler_path,) = Path(workdir).rglob("nn_scaler.pkl")
+    scaler = joblib.load(scaler_path)
+    assert isinstance(scaler, MagnitudePreservingScaler)
+    cols = get_feature_columns()
+    assert scaler.n_features_in_ == len(cols)
+    assert scaler.magnitude_indices == (cols.index("inherited_opportunity"),)
+    assert scaler.magnitude_scales_.shape == (1,) and scaler.magnitude_scales_[0] > 0
+    assert scaler.magnitude_bound_ == 4.0

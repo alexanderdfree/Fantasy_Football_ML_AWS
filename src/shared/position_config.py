@@ -175,6 +175,8 @@ class PositionConfig:
     huber_deltas: dict[str, float] = field(default_factory=dict)
     poisson_targets: list[str] = field(default_factory=list)
     gated_targets: list[str] = field(default_factory=list)
+    # Sparse continuous values must not become a binary flag after z-score clipping.
+    nn_magnitude_features: tuple[str, ...] = ()
 
     # === LR scheduler (cosine_warm_restarts | onecycle) ===
     scheduler_type: str = "cosine_warm_restarts"
