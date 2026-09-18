@@ -24,6 +24,7 @@ import pytest
 _TEAMS = ["BUF", "KC", "SF", "DAL"]
 _SEASONS = [2024]
 _WEEKS = list(range(1, 4))  # 3 weeks — enough for L5 rolling shift to populate.
+_UNPLAYED_WEEK = max(_WEEKS) + 1  # a fixture nflverse lists but nobody has played yet
 
 
 def _make_weekly(seed: int = 0) -> pd.DataFrame:
@@ -120,6 +121,25 @@ def _make_scoring_events() -> pd.DataFrame:
     return _make_team_stats()[["team", "season", "week", "def_tds"]].assign(
         special_teams_tds=0, def_punt_blocks=0
     )
+
+
+def _injected_kwargs() -> dict:
+    """Fresh injected inputs for one ``build_data`` call (the live-builder call shape)."""
+    return dict(
+        weekly=_make_weekly(),
+        schedules=_make_schedules(),
+        team_stats=_make_team_stats(),
+        scoring_events=_make_scoring_events(),
+    )
+
+
+def _with_unplayed_fixture(schedules: pd.DataFrame) -> pd.DataFrame:
+    """Append one not-yet-played REG fixture (NaN scores) in a new week — what an
+    in-season nflverse schedule cache carries for every game still to come."""
+    fixture = schedules.iloc[[0]].copy()
+    fixture["week"] = _UNPLAYED_WEEK
+    fixture[["home_score", "away_score"]] = np.nan
+    return pd.concat([schedules, fixture], ignore_index=True)
 
 
 # --- Fixture wrapper ----------------------------------------------------
@@ -334,6 +354,74 @@ def test_build_dst_data_logo_fallback_on_nfl_error(synthetic_parquets, monkeypat
 
     df = dst_data.build_data()
     assert (df["headshot_url"] == "").all()
+
+
+@pytest.mark.unit
+def test_unplayed_fixture_dropped_by_default(synthetic_parquets):
+    """An in-season schedule cache lists not-yet-played REG fixtures with NaN
+    scores. By default build_data must drop them, so compute_targets has no
+    row on which to fabricate points_allowed=21 / fantasy_points (#1520)."""
+    from src.dst.data import build_data
+    from src.dst.targets import compute_targets
+
+    kw = _injected_kwargs()
+    kw["schedules"] = _with_unplayed_fixture(kw["schedules"])
+
+    df = build_data(**kw)
+    assert not df["week"].eq(_UNPLAYED_WEEK).any()
+    assert len(df) == len(_TEAMS) * len(_WEEKS) * len(_SEASONS)
+    assert df["points_allowed"].notna().all()
+    targets = compute_targets(df)
+    assert not targets["week"].eq(_UNPLAYED_WEEK).any()
+    # Positive control: the same input with the fixture kept is exactly the
+    # fabrication the default prevents — a league-average points_allowed and a
+    # real-looking fantasy_points for a game nobody played.
+    phantom = compute_targets(build_data(**kw, include_unplayed=True))
+    phantom = phantom[phantom["week"].eq(_UNPLAYED_WEEK)]
+    assert len(phantom) == 2
+    assert phantom["points_allowed"].eq(21).all()
+    assert phantom["fantasy_points"].notna().all()
+
+
+@pytest.mark.unit
+def test_unplayed_fixture_kept_when_opted_in(synthetic_parquets):
+    """The live upcoming-week builder NaNs the target week's scores by design and
+    needs that week's fixture context, so include_unplayed=True keeps both teams'
+    rows: points_allowed stays NaN (build_data fabricates nothing) while the
+    schedule context — spread (sign-flipped for the away side), is_home,
+    opponent_team — is the fixture's own, not a fill."""
+    from src.dst.data import build_data
+
+    kw = _injected_kwargs()
+    kw["schedules"] = _with_unplayed_fixture(kw["schedules"])
+    fixture = kw["schedules"].iloc[-1]
+    home, away = fixture["home_team"], fixture["away_team"]
+
+    df = build_data(**kw, include_unplayed=True)
+    rows = df[df["week"].eq(_UNPLAYED_WEEK)].set_index("team")
+    assert sorted(rows.index) == sorted([home, away])
+    assert rows["points_allowed"].isna().all()
+    assert rows.loc[home, "spread_line"] == fixture["spread_line"]
+    assert rows.loc[away, "spread_line"] == -fixture["spread_line"]
+    assert rows.loc[home, "is_home"] == 1
+    assert rows.loc[away, "is_home"] == 0
+    assert rows.loc[home, "opponent_team"] == away
+    assert rows.loc[away, "opponent_team"] == home
+    # The played weeks are untouched by the opt-in.
+    played = df[~df["week"].eq(_UNPLAYED_WEEK)]
+    assert len(played) == len(_TEAMS) * len(_WEEKS) * len(_SEASONS)
+    assert played["points_allowed"].notna().all()
+
+
+@pytest.mark.unit
+def test_include_unplayed_is_noop_on_fully_played_schedule(synthetic_parquets):
+    """Δ=0 guard: with every fixture played (today's 2012-2025 cache has zero
+    NaN-score REG rows) the default drop removes nothing, so both modes build
+    the identical frame — the training path is inert to the #1520 fix."""
+    from src.dst.data import build_data
+
+    kw = _injected_kwargs()
+    pd.testing.assert_frame_equal(build_data(**kw), build_data(**kw, include_unplayed=True))
 
 
 @pytest.mark.unit

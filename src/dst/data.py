@@ -17,6 +17,7 @@ def build_data(
     scoring_events: pd.DataFrame | None = None,
     allow_scoring_fetch: bool = True,
     impute_context: bool = True,
+    include_unplayed: bool = False,
 ) -> pd.DataFrame:
     """Build team-level D/ST data from schedules, weekly stats, and team-week stats.
 
@@ -33,6 +34,12 @@ def build_data(
       - def_safeties / def_fumbles_forced: from nflverse stats_team
       - def_blocked_kicks: opponent's fg_blocked + pat_blocked plus PBP punt blocks
       - yards_allowed: opponent's net passing + rushing yards from stats_team
+
+    ``include_unplayed`` keeps REG fixtures whose ``home_score`` / ``away_score``
+    are NaN (not yet played). The default ``False`` drops them so an in-season
+    schedule cache can't seed phantom team-week rows; the live upcoming-week
+    builder passes ``True`` because it NaNs the target week's scores by design
+    and needs that week's fixture context (#1520).
     """
     # Read src.config lazily (module-attr access, not an import-time name bind)
     # so a post-import mutation of src.config.SEASONS / CACHE_DIR — a mid-process
@@ -58,6 +65,14 @@ def build_data(
     if team_stats is None:
         team_stats = load_team_week_stats(seasons, cache_dir=cache_dir)
     schedules_reg = schedules[schedules["game_type"] == "REG"].copy()
+    # nflverse publishes the full fixture list up front, so an in-season cache
+    # carries not-yet-played REG rows with NaN home_score/away_score. Left in,
+    # they become phantom D/ST rows: compute_targets fills points_allowed=21 /
+    # yards_allowed=350 and zero counts, fabricating fantasy_points for a game
+    # nobody played (#1520). The live upcoming-week builder NaNs the target
+    # week's scores by design and NEEDS those rows, so it opts in.
+    if not include_unplayed:
+        schedules_reg = schedules_reg.dropna(subset=["home_score", "away_score"])
     # Normalize historical team codes (OAK/SD/STL → LV/LAC/LA) at the source so
     # every downstream ``team`` / ``opponent_team`` derived from the schedule
     # matches the modern-coded weekly frame's ``recent_team`` (verified: weekly
