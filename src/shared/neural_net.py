@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.prediction.bundle import record_constructor
+from src.shared.position_config import poisson_log_rate_targets
 
 
 def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
@@ -20,6 +21,63 @@ def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch
     if name in non_negative:
         return torch.clamp(val, min=0.0)
     return val
+
+
+class PoissonLogRateHead(nn.Sequential):
+    """Plain head MLP whose output is a log-rate, with checkpointed semantics.
+
+    Linear parameter keys match the legacy Sequential. An old checkpoint has
+    no marker and must keep its raw-rate/clamp interpretation when loaded by
+    new serving code; otherwise merely deploying code would change forecasts.
+    """
+
+    def __init__(self, *layers):
+        super().__init__(*layers)
+        self.register_buffer("_log_rate_version", torch.tensor(True))
+        self.uses_log_rate = True
+
+    def _load_from_state_dict(
+        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+    ):
+        key = prefix + "_log_rate_version"
+        if key not in state_dict:
+            state_dict[key] = self._log_rate_version.new_tensor(False)
+        # Resolve once at load time, not via a tensor-dependent branch in the
+        # forward pass (which also runs under vmap and CUDA graph capture).
+        self.uses_log_rate = bool(state_dict[key].item())
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )
+
+
+def initialize_poisson_heads(model: nn.Module, y_train: dict) -> None:
+    """Start new log-rate heads at their TRAIN-only event means."""
+    with torch.no_grad():
+        for name, head in model.heads.items():
+            if isinstance(head, PoissonLogRateHead) and head.uses_log_rate:
+                rate = max(float(np.mean(y_train[name])), 1e-6)
+                head[-1].weight.zero_()
+                head[-1].bias.fill_(float(np.log(rate)))
+
+
+def _store_plain_head_prediction(preds, name, head, raw, non_negative):
+    if isinstance(head, PoissonLogRateHead) and head.uses_log_rate:
+        # Keep the log-rate for numerically stable Poisson NLL. Training on
+        # exp(raw) with log_input=False loses corrective gradients once the
+        # rate falls below the loss's epsilon (or underflows under AMP).
+        log_rate = raw.float()
+        preds[name] = log_rate.exp()
+        preds[f"{name}_log_rate"] = log_rate
+    else:
+        preds[name] = apply_non_negative(raw, name, non_negative)
+
+
+def _configured_log_rate_targets(cfg: dict) -> set[str]:
+    return poisson_log_rate_targets(
+        cfg.get("head_losses") or {},
+        cfg.get("poisson_targets") or (),
+        enabled=cfg.get("nn_poisson_log_rate", True),
+    )
 
 
 def _apply_history_dropout(mask: torch.Tensor, rate: float, training: bool) -> torch.Tensor:
@@ -280,6 +338,34 @@ class GatedHead(nn.Module):
         return expected, gate_logit, mu, log_alpha
 
 
+def load_warm_start_state(model: nn.Module, state_dict: dict) -> None:
+    """Reuse weights for a new fit while retaining its requested output recipe.
+
+    Inference and early-stop restoration honor checkpoint semantics. A warm
+    start is a new training run, so an old checkpoint must not silently disable
+    the new fit's configured Poisson output link.
+    """
+    poisson_modes = {
+        name: (
+            head.uses_log_rate,
+            {key: value.detach().clone() for key, value in head[-1].state_dict().items()},
+        )
+        for name, head in model.named_modules()
+        if isinstance(head, PoissonLogRateHead)
+    }
+    model.load_state_dict(state_dict)
+    for name, head in model.named_modules():
+        if name in poisson_modes:
+            requested, initialization = poisson_modes[name]
+            if requested and not head.uses_log_rate:
+                # Raw-rate output weights cannot be reinterpreted as log-rates.
+                # Reuse the trunk, retaining this fit's train-only initialization
+                # for the changed output link.
+                head[-1].load_state_dict(initialization)
+            head.uses_log_rate = requested
+            head._log_rate_version.fill_(requested)
+
+
 class MultiHeadNet(nn.Module):
     """Multi-head neural network for position-agnostic raw-stat prediction.
 
@@ -287,7 +373,7 @@ class MultiHeadNet(nn.Module):
         Input (N features)
             -> Shared backbone [Linear -> BN -> ReLU -> Dropout] x len(backbone_layers)
             -> One head per target: Linear -> ReLU -> Linear -> squeeze
-            -> Clamp >= 0 on non-negative targets
+            -> Poisson log-rate or per-head non-negative clamp
     """
 
     @record_constructor
@@ -301,6 +387,7 @@ class MultiHeadNet(nn.Module):
         head_hidden_overrides: dict = None,
         non_negative_targets: set = None,
         backbone_norm: str | None = None,
+        log_rate_targets: set[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -323,7 +410,8 @@ class MultiHeadNet(nn.Module):
         self.heads = nn.ModuleDict()
         for name in target_names:
             h = overrides.get(name, head_hidden)
-            self.heads[name] = nn.Sequential(
+            head_cls = PoissonLogRateHead if name in (log_rate_targets or ()) else nn.Sequential
+            self.heads[name] = head_cls(
                 nn.Linear(backbone_out_dim, h),
                 nn.ReLU(),
                 nn.Linear(h, 1),
@@ -334,7 +422,7 @@ class MultiHeadNet(nn.Module):
         preds = {}
         for name, head in self.heads.items():
             val = head(shared).squeeze(-1)
-            preds[name] = apply_non_negative(val, name, self.non_negative_targets)
+            _store_plain_head_prediction(preds, name, head, val, self.non_negative_targets)
         return preds
 
     def predict_numpy(self, X: np.ndarray, device: torch.device) -> dict:
@@ -608,6 +696,7 @@ class MultiHeadNetWithHistory(nn.Module):
         opp_game_dim: int | None = None,
         no_history_embedding: bool = False,
         backbone_norm: str | None = None,
+        log_rate_targets: set[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -764,7 +853,8 @@ class MultiHeadNetWithHistory(nn.Module):
                     value_hidden=h,
                 )
             else:
-                self.heads[name] = nn.Sequential(
+                head_cls = PoissonLogRateHead if name in (log_rate_targets or ()) else nn.Sequential
+                self.heads[name] = head_cls(
                     nn.Linear(head_in_dim, h),
                     nn.ReLU(),
                     nn.Linear(h, 1),
@@ -889,7 +979,7 @@ class MultiHeadNetWithHistory(nn.Module):
                 preds[f"{name}_value_log_alpha"] = log_alpha
             else:
                 val = head(head_input).squeeze(-1)
-                preds[name] = apply_non_negative(val, name, self.non_negative_targets)
+                _store_plain_head_prediction(preds, name, head, val, self.non_negative_targets)
         return preds
 
     def attention_entropy_loss(self) -> torch.Tensor | None:
@@ -992,6 +1082,7 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         condition_queries_on_static: bool = False,
         game_dim: int = 0,
         backbone_norm: str | None = None,
+        log_rate_targets: set[str] | None = None,
     ):
         super().__init__()
         self.target_names = target_names
@@ -1096,7 +1187,8 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         self.heads = nn.ModuleDict()
         for name in target_names:
             h = overrides.get(name, head_hidden)
-            self.heads[name] = nn.Sequential(
+            head_cls = PoissonLogRateHead if name in (log_rate_targets or ()) else nn.Sequential
+            self.heads[name] = head_cls(
                 nn.Linear(head_in_dim, h),
                 nn.ReLU(),
                 nn.Linear(h, 1),
@@ -1164,8 +1256,9 @@ class MultiHeadNetWithNestedHistory(nn.Module):
         for i, name in enumerate(self.target_names):
             history_vec = self.history_norms[i](history_per_target[:, i, :])
             head_input = torch.cat([shared_static, history_vec], dim=-1)
-            val = self.heads[name](head_input).squeeze(-1)
-            preds[name] = apply_non_negative(val, name, self.non_negative_targets)
+            head = self.heads[name]
+            val = head(head_input).squeeze(-1)
+            _store_plain_head_prediction(preds, name, head, val, self.non_negative_targets)
         return preds
 
     def attention_entropy_loss(self) -> torch.Tensor | None:
@@ -1232,6 +1325,7 @@ def build_multihead_net(
         dropout=cfg["nn_dropout"],
         head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
         non_negative_targets=cfg.get("nn_non_negative_targets"),
+        log_rate_targets=_configured_log_rate_targets(cfg),
     )
 
 
@@ -1262,6 +1356,7 @@ def build_multihead_net_with_history(
         dropout=cfg["nn_dropout"],
         head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
         non_negative_targets=cfg.get("nn_non_negative_targets"),
+        log_rate_targets=_configured_log_rate_targets(cfg),
         project_kv=cfg.get("attn_project_kv", False),
         use_positional_encoding=cfg.get("attn_positional_encoding", False),
         max_seq_len=cfg.get("attn_max_seq_len", 17),
@@ -1315,6 +1410,7 @@ def build_multihead_net_with_nested_history(
         dropout=cfg["nn_dropout"],
         head_hidden_overrides=cfg.get("nn_head_hidden_overrides"),
         non_negative_targets=cfg.get("nn_non_negative_targets"),
+        log_rate_targets=_configured_log_rate_targets(cfg),
         project_kv=cfg.get("attn_project_kv", False),
         use_positional_encoding=cfg.get("attn_positional_encoding", False),
         max_games=max_games,
