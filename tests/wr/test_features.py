@@ -134,9 +134,37 @@ class TestComputeWRRates:
         ``player×season`` grouping spanned the trade (window weeks 4,5,6 →
         player 24 / team 16+8+8=32 = 0.75), so this value separates the fix
         from the bug.
+
+        The two other team-relative rollings must be stint-aware too (#1499,
+        mirrors RB #1474): with carries=0 the per-game opportunity index is
+        2·8 / 2·16 = 0.5 in the KC weeks and 1.0 solo on SF, and WR_A's
+        per-game ``redzone_target_share`` is set to 0.5 on KC / 1.0 on SF.
+        Week 7's window {5,6} is all-SF → mean 1.0 for both (the buggy
+        player×season grouping averaged KC's week 4 in → mean(0.5, 1.0, 1.0)
+        ≈ 0.8333); week 6 (window {5}) → 1.0; week 5 is the first SF game, so
+        shift(1) has no prior in-stint game → NaN (no safe_divide fill on
+        these mean rollings). ``redzone_targets_L3`` is the player's own raw
+        count, NOT team-relative, so it deliberately keeps rolling across the
+        trade on the plain player×season grouping (negative control).
         """
-        wr_a_kc = make_wr_player_games("WR_A", season=2023, n_weeks=4, targets=8, recent_team="KC")
-        wr_a_sf = make_wr_player_games("WR_A", season=2023, n_weeks=3, targets=8, recent_team="SF")
+        wr_a_kc = make_wr_player_games(
+            "WR_A",
+            season=2023,
+            n_weeks=4,
+            targets=8,
+            recent_team="KC",
+            redzone_targets=2.0,
+            redzone_target_share=0.5,
+        )
+        wr_a_sf = make_wr_player_games(
+            "WR_A",
+            season=2023,
+            n_weeks=3,
+            targets=8,
+            recent_team="SF",
+            redzone_targets=1.0,
+            redzone_target_share=1.0,
+        )
         wr_a_sf["week"] = [5, 6, 7]
         wr_b_kc = make_wr_player_games("WR_B", season=2023, n_weeks=4, targets=8, recent_team="KC")
         df = pd.concat([wr_a_kc, wr_a_sf, wr_b_kc], ignore_index=True)
@@ -147,6 +175,27 @@ class TestComputeWRRates:
         # Stint-aware: window {5,6} fully inside the SF stint → 16/16 = 1.0.
         # (A non-stint denominator would give 0.75, mixing KC's wk4 total.)
         assert pytest.approx(wk7, abs=1e-9) == 1.0
+
+        by_week = a.set_index("week")
+        # opportunity_index_L3 + redzone_target_share_L3, stint-aware (#1499):
+        # week 7's window {5,6} is all-SF → mean(1.0, 1.0) = 1.0. (The buggy
+        # player×season grouping mixed KC's wk4 0.5 in → ≈0.8333.)
+        assert pytest.approx(by_week.loc[7, "opportunity_index_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(by_week.loc[7, "redzone_target_share_L3"], abs=1e-9) == 1.0
+        # Week 6 (window {5}) is already all-SF → 1.0.
+        assert pytest.approx(by_week.loc[6, "opportunity_index_L3"], abs=1e-9) == 1.0
+        assert pytest.approx(by_week.loc[6, "redzone_target_share_L3"], abs=1e-9) == 1.0
+        # Stint cold-start boundary: week 5 is the first SF game, so shift(1)
+        # has no prior in-stint game → rolling NaN (fill_nans handles it in
+        # the pipeline). Pin it so a min_periods / NaN-fill refactor can't
+        # silently move the boundary.
+        assert np.isnan(by_week.loc[5, "opportunity_index_L3"])
+        assert np.isnan(by_week.loc[5, "redzone_target_share_L3"])
+        # Negative control: redzone_targets_L3 is a raw per-player count, so it
+        # keeps rolling across the trade — week 5's window {2,3,4} is WR_A's own
+        # KC-era count, mean(2, 2, 2) = 2.0, not NaN.
+        assert not np.isnan(by_week.loc[5, "redzone_targets_L3"])
+        assert pytest.approx(by_week.loc[5, "redzone_targets_L3"], abs=1e-9) == 2.0
 
 
 @pytest.mark.unit
