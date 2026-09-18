@@ -466,6 +466,7 @@ def inference_parity(result, position):
 def metric_fn(result, position):
     import torch
 
+    from src.shared import training
     from src.tuning.ab_harness import default_metric_fn
 
     context = current_context()
@@ -519,6 +520,7 @@ def metric_fn(result, position):
         "origin": STATE["origin"],
         "variant": STATE["arm"],
         "mode": STATE["mode"],
+        "count_likelihood_implementation": f"{training.ztnb2_log_prob.__module__}.{training.ztnb2_log_prob.__name__}",
         "seed": context.seed,
         "source_sha": os.environ.get("FF_TRAIN_GIT_SHA"),
         "data_release": os.environ.get("FF_DATA_RELEASE"),
