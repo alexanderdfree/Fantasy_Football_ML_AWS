@@ -109,7 +109,8 @@ def dst_raw_cache_files() -> dict[str, Path]:
 def export_dst_source():
     """DST: the runner's team-level build, prepared, plus the opponent stream inputs.
 
-    Returns ``(prepared, per_game, weekly)``: the production ``PreparedDataset``
+    Returns ``(prepared, per_game, weekly, cache_digests)``: the production
+    ``PreparedDataset``
     (train seasons), the opponent-offense per-game frame built by the
     production aggregation from the regular-season weekly player slice, and
     that slice itself (the columns the aggregation reads).
@@ -126,7 +127,15 @@ def export_dst_source():
             f"DST raw caches missing under {raw_data_dir(CACHE_DIR)}: {missing_caches}; "
             "hydrate the data release first"
         )
+    digests = {name: file_digest(path) for name, path in caches.items()}
     frame = compute_targets(build_data(allow_scoring_fetch=False))
+    rewritten = sorted(name for name, path in caches.items() if file_digest(path) != digests[name])
+    if rewritten:
+        # A loader refreshed a stale cache from the network; the export never fetches.
+        raise ValueError(
+            f"raw caches changed during the export: {rewritten}; a loader refreshed a "
+            "stale cache, so hydrate a current data release and rerun"
+        )
     # The team-logo column is fetched from the network when reachable; it feeds
     # nothing here and would make the export digest depend on connectivity.
     frame = frame.drop(columns=[c for c in ("headshot_url",) if c in frame.columns])
@@ -144,7 +153,7 @@ def export_dst_source():
     per_game = validate_opponent_per_game(
         build_opp_offense_per_game_df(weekly), POSITION_HISTORY_SCHEMAS["DST"]
     )
-    return prepared, per_game, weekly
+    return prepared, per_game, weekly, digests
 
 
 def canonical_values_hash(frame: pd.DataFrame) -> str:
@@ -195,7 +204,7 @@ def _export(position: str, splits_dir: Path) -> tuple[dict[str, pd.DataFrame], d
             split: file_digest(Path(splits_dir) / f"{split}.parquet") for split in ("train", "val")
         }
         return {f"{lower}.parquet": prepared.train}, _manifest(position, prepared, splits=splits)
-    prepared, per_game, weekly = export_dst_source()
+    prepared, per_game, weekly, cache_digests = export_dst_source()
     manifest = _manifest(
         position,
         prepared,
@@ -216,7 +225,7 @@ def _export(position: str, splits_dir: Path) -> tuple[dict[str, pd.DataFrame], d
             "opponent_weekly_rows": int(len(weekly)),
             "opponent_weekly_values_sha256": canonical_values_hash(weekly),
             "opponent_weekly_columns": list(DST_WEEKLY_COLUMNS),
-            "raw_caches": {name: file_digest(path) for name, path in dst_raw_cache_files().items()},
+            "raw_caches": cache_digests,
             "raw_cache_dir": str(raw_data_dir(CACHE_DIR)),
             "excluded_columns": ["headshot_url"],
         }

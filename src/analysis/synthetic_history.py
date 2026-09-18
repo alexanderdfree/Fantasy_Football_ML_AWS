@@ -461,6 +461,13 @@ def validate_opponent_per_game(
             "builder zero-fills a missing source (for example the schedules cache), so "
             "rebuild the frame with every input present"
         )
+    for name, violated in schema.opponent_checks:
+        if violated(frame).any():
+            raise ValueError(
+                f"opponent per-game frame: {name}; the production builder zero-fills the "
+                "points of a game missing from the schedules cache, so rebuild the frame "
+                "from caches that cover every week"
+            )
     return frame.sort_values(OPPONENT_KEYS, kind="stable").reset_index(drop=True)
 
 
