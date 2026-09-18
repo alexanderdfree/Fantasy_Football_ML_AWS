@@ -21,4 +21,29 @@
 
 ## Changelog
 
+- **2026-09-18 — Proposed (held): log-rate outputs for ungated Poisson heads.**
+  Isolated from #1575 as a held draft PR; not accepted until it passes the
+  dual-metric + protected-cohort gate. New training would use log-rate outputs
+  for ungated heads whose loss family is `poisson_nll`: the predicted raw count
+  is `exp(log_rate)` and the loss consumes the log-rate directly with
+  `log_input=True`. A clamped negative output previously received zero gradient
+  even when its label was positive; the stable RB/WR/TE attention fumble heads,
+  WR base-NN fumble head, and DST attention safety head were zero throughout
+  their 2025 holdouts. Log-space loss also avoids the vanishing gradient of
+  `log(rate + epsilon)` when a rate is very small. Each such head's final
+  weights start at zero with bias `log` of the TRAIN-only event mean (minimum
+  initial rate `1e-6`). Other heads, their losses/weights, and fantasy-point
+  aggregation keep their existing behavior; this does not restore global
+  Softplus outputs or the rejected hurdle-Poisson loss. K has no Poisson heads
+  and is unchanged; the generic path also covers its nested model. The head
+  persists `_log_rate_version` in its state dict: a missing/false marker keeps
+  the legacy raw-rate/clamp interpretation on load, including after a legacy
+  artifact is re-saved, so serving can deploy before retraining. A warm start
+  keeps the new fit's requested output link and its train-only final-layer
+  initialization instead of reinterpreting raw-rate weights as logarithms.
+  Training factories and the inference registry share one target resolver;
+  `nn_poisson_log_rate=False` retains the baseline for paired validation via
+  `src.tuning.ab_poisson_log_rate`. The clamp-based behavior remains for legacy
+  artifacts and for every head this amendment does not cover.
+
 - **2026-05-20** — D5 extended with `hurdle_poisson` loss family (zero-truncated Poisson on positives + BCE gate) as an available primitive alongside `hurdle_negbin`. RB sparse-count ablation (Variants D/E/Bf added to `src/tuning/ablate_rb_gate.py`) showed Variant E (hurdle_poisson on rushing_tds, receiving_tds, fumbles_lost) wins per-target MAE — count_sum 0.353 vs Ridge 0.369 — but regresses aggregate FP MAE +0.163 vs current Variant C. **Rejected for shipping**; primitive kept available for future use, current RB config unchanged.

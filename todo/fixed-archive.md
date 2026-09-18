@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Sparse Poisson heads lost corrective gradients behind nonnegative clamps
+[Read the incident record](fixed-archive/fixed-poisson-log-rate-gradients.md).
+
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 
