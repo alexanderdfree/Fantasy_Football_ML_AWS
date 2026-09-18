@@ -2,6 +2,8 @@
 
 - 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
 
+- 2026-09-18 · Add PPR-RMSE selection machinery (`ridge_selection_metric`/`nn_selection_metric`/`lgbm_selection_metric`) with defaults unchanged (`raw_mae`/`weighted_mae`/`per_target`); any flip needs the dual-metric + protected-cohort gate · (PR pending) · → ADR-0002
+
 - 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR #1592) · → ADR-0029
 
 - 2026-09-18 · Replay QB synthetic cohorts against saved checkpoints with exported forecast context, per-family readiness and recorded responses · (PR #1590) · → ADR-0029

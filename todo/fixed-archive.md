@@ -32,6 +32,8 @@
 ### [FIXED] Reporting discarded optional model-selection provenance
 [Read the incident record](fixed-archive/selection-reporting-provenance.md).
 
+### [FIXED] Fantasy-point RMSE selection could not be compared against the raw-stat selectors (machinery added; defaults unchanged)
+[Read the incident record](fixed-archive/nn-selection-metric-alignment.md).
 ### [FIXED] Scheduled maintenance used the superseded cache and rollout protocols
 [Read the incident record](fixed-archive/maintenance-contract-consolidation-2026-09.md).
 
