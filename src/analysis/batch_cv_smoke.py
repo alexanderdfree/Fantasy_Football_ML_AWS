@@ -1,4 +1,4 @@
-"""Disposable, AWS-Batch-only validation of the #1612/#1615 CV fixtures.
+"""Disposable, AWS-Batch-only validation of #1612/#1615 CV and #1599 replay fixtures.
 
 This diagnostic image never invokes a training/benchmark publisher. Model
 artifacts stay in pytest's temporary directories; only logs and receipts upload.
@@ -28,8 +28,13 @@ TESTS = {
         "tests/wr/test_run_cv_pipeline.py",
     ],
     "RB": ["tests/rb/test_pipeline_e2e.py", "tests/rb/test_run_cv_pipeline.py"],
+    "DST": [
+        "tests/analysis/test_synthetic_history_dst.py::test_replay_streams_the_opponent_and_the_control_rebuilds_it",
+        "tests/analysis/test_synthetic_history_dst.py::test_replay_refuses_mismatched_streams",
+        "tests/analysis/test_synthetic_history_dst.py::test_cli_round_trip_with_the_opponent_frame",
+    ],
 }
-EXPECTED_TESTS = {"WR": 14, "RB": 11}
+EXPECTED_TESTS = {"WR": 14, "RB": 11, "DST": 3}
 
 
 def without_tiny_hash(source: str) -> str:

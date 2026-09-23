@@ -1,0 +1,12 @@
+{
+  "schema_version": 3,
+  "name": "dst-eight-game-replay",
+  "position": "DST",
+  "seed": 42,
+  "cases": 20,
+  "history_games": 8,
+  "mode": "replay",
+  "window": "exact",
+  "min_history_ppg": 5.0,
+  "max_history_ppg": 15.0
+}

@@ -27,6 +27,7 @@ SEQUENCE_COUPLED = {
     "RB": ("week", "days_rest", "rest_advantage", "career_carries"),
     "WR": ("week", "days_rest", "is_returning_from_absence"),
     "TE": ("week", "days_rest", "is_returning_from_absence"),
+    "DST": ("week", "rest_days"),
 }
 
 
@@ -47,7 +48,16 @@ def test_registry_matches_the_production_configuration(position):
     assert set(schema.count_columns) <= known
     assert schema.team_accounting_columns <= set(schema.history_columns)
     assert not set(schema.transformable_columns) & set(schema.opaque_columns)
-    assert schema.transform_support == {"scale": None, "set_history_ppg": None}
+    assert set(schema.transform_support) == {"scale", "set_history_ppg"}
+    assert schema.transform_support["scale"] is None
+    assert (schema.transform_support["set_history_ppg"] is None) == (position != "DST")
+    assert set(schema.opponent_history_columns).isdisjoint(schema.history_columns)
+    if position == "DST":
+        assert schema.donor_identity == "team" and schema.fantasy_points_policy == "assert_equal"
+        assert schema.opponent_history_columns == tuple(config.opp_attn_history_stats)
+        assert schema.opponent_max_history_games == config.opp_attn_max_seq_len == 17
+    else:
+        assert schema.donor_identity == "player" and not schema.opponent_history_columns
 
 
 def test_registry_rejects_foreign_overlapping_or_unobserved_declarations():
@@ -60,6 +70,16 @@ def test_registry_rejects_foreign_overlapping_or_unobserved_declarations():
         dataclasses.replace(schema, opaque_columns=(*schema.opaque_columns, "carries"))
     with pytest.raises(ValueError, match="must observe every target"):
         dataclasses.replace(schema, must_observe=("carries",))
+    with pytest.raises(ValueError, match="donor_identity"):
+        dataclasses.replace(schema, donor_identity="franchise")
+    with pytest.raises(ValueError, match="fantasy_points_policy"):
+        dataclasses.replace(schema, fantasy_points_policy="ignore")
+    with pytest.raises(ValueError, match="opponent stream needs columns and a length"):
+        dataclasses.replace(schema, opponent_history_columns=("off_pass_yards",))
+    with pytest.raises(ValueError, match="overlap the history"):
+        dataclasses.replace(
+            schema, opponent_history_columns=("carries",), opponent_max_history_games=17
+        )
 
 
 def test_shared_receiver_declarations_are_not_aliased():

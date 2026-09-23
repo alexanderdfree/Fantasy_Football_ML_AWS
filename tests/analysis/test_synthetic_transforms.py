@@ -269,3 +269,11 @@ def test_shipped_presets_load_and_generate(qb_source_long, name):
         early = cohort.games["history_step"] <= 4
         assert (cohort.games.loc[early, "attempts"] == 9).all()
         assert (cohort.games.loc[~early, "attempts"] == 30).all()
+
+
+def test_scoring_weights_are_baseline_free_and_absent_for_tiered_points():
+    from src.analysis.synthetic_history_schema import position_schema
+    from src.analysis.synthetic_transforms import scoring_weights
+
+    assert scoring_weights(position_schema("QB"))["passing_tds"] == 4.0
+    assert scoring_weights(position_schema("DST")) is None

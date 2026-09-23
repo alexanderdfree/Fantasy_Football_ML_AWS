@@ -54,13 +54,22 @@ class SetHistoryPpgOp:
 OPS = {"scale": ScaleOp, "set_history_ppg": SetHistoryPpgOp}
 
 
-def scoring_weights(schema: PositionHistorySchema) -> dict[str, float]:
-    """Per-target points per unit, probed from the shared scoring function."""
+def scoring_weights(schema: PositionHistorySchema) -> dict[str, float] | None:
+    """Per-target points per unit, probed from the shared scoring function.
+
+    Only linear scorings have such weights; a position whose schema declines
+    ``set_history_ppg`` (tiered DST points) gets ``None`` rather than numbers
+    that absorb the tier bonuses of the all-zero probe.
+    """
+    if schema.transform_support.get("set_history_ppg") is not None:
+        return None
+    zeros = {name: np.zeros(1) for name in schema.targets}
+    baseline = float(predictions_to_fantasy_points(schema.position, zeros)[0])
     weights = {}
     for target in schema.targets:
-        probe = {name: np.zeros(1) for name in schema.targets}
+        probe = dict(zeros)
         probe[target] = np.ones(1)
-        weights[target] = float(predictions_to_fantasy_points(schema.position, probe)[0])
+        weights[target] = float(predictions_to_fantasy_points(schema.position, probe)[0]) - baseline
     return weights
 
 
