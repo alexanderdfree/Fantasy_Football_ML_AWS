@@ -40,7 +40,7 @@ EXPECTED_TESTS = {"WR": 14, "RB": 11, "DST": 3}
 
 
 def without_tiny_hash(source: str) -> str:
-    """Prove the sole producer mismatch is the test-only CONFIG_TINY value."""
+    """Runtime-local AST digest; ast.dump serialization differs across Python versions."""
     tree = ast.parse(source)
     tree.body = [
         node
@@ -60,8 +60,16 @@ def validate_source(root: Path, source: dict) -> None:
     for name in source.get("absent_source_files", []):
         if (root / name).exists():
             raise ValueError(f"Unexpected removed source file: {name}")
+    baseline = source["baseline_wr_source"].encode("utf-8")
+    if (
+        hashlib.sha256(baseline).hexdigest()
+        != source["baseline_data_producers"]["src/wr/config.py"]
+    ):
+        raise ValueError("Baseline WR source checksum mismatch")
+    # Parse BOTH pinned source texts with this interpreter. Persisted AST dumps
+    # are not portable between the host and the Python 3.12 training image.
     current = without_tiny_hash((root / "src/wr/config.py").read_text())
-    if current != source["baseline_wr_without_tiny_sha256"]:
+    if current != without_tiny_hash(baseline.decode("utf-8")):
         raise ValueError("WR production config changed beyond CONFIG_TINY")
 
 

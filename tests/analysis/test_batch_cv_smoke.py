@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from src.analysis import batch_cv_smoke as smoke
@@ -16,6 +18,34 @@ def test_tiny_config_is_the_only_ignored_assignment():
     production_changed = original.replace("'loss': 'huber'", "'loss': 'mse'")
     assert smoke.without_tiny_hash(original) == smoke.without_tiny_hash(tiny_changed)
     assert smoke.without_tiny_hash(original) != smoke.without_tiny_hash(production_changed)
+
+
+@pytest.mark.parametrize("change_production", [False, True])
+def test_validation_compares_both_pinned_source_texts_in_the_runtime(tmp_path, change_production):
+    baseline = "POSITION_CONFIG = {'loss': 'huber'}\nCONFIG_TINY = {'epochs': 1}\n"
+    candidate = baseline.replace("'epochs': 1", "'epochs': 2")
+    if change_production:
+        candidate = candidate.replace("'loss': 'huber'", "'loss': 'mse'")
+    path = tmp_path / "src/wr/config.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(candidate)
+    source = {
+        "baseline_wr_source": baseline,
+        "baseline_data_producers": {
+            "src/wr/config.py": hashlib.sha256(baseline.encode()).hexdigest()
+        },
+        # Both candidates pass byte identity so a production change must fail
+        # specifically at the independently parsed baseline comparison.
+        "test_source_files": {"src/wr/config.py": hashlib.sha256(candidate.encode()).hexdigest()},
+    }
+    if change_production:
+        with pytest.raises(ValueError, match="production config changed"):
+            smoke.validate_source(tmp_path, source)
+    else:
+        smoke.validate_source(tmp_path, source)
+    source["baseline_wr_source"] += "# modified baseline bytes\n"
+    with pytest.raises(ValueError, match="Baseline WR source checksum mismatch"):
+        smoke.validate_source(tmp_path, source)
 
 
 def test_dataset_producer_mismatch_is_rejected():
