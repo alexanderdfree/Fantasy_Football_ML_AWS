@@ -1,0 +1,800 @@
+{
+  "schema": "kdst-inert-proof/v1",
+  "ok": true,
+  "verifier_sha256": "0886bc53fd245d4b983c1627cc42b94cb9fe26cba7047471b319ab3499ae171f",
+  "production_source_delta": {
+    "src/dst/data.py": {
+      "baseline": "081e07fffe89ea0c4ecc3cee6be2f31780872c096dbdc522fb7498f3d468d5d8",
+      "candidate": "e3ae1c28e7000be10b7ce8ae556c1da07cbb972513e322275a10c3fb25fd4784"
+    },
+    "src/prediction/upcoming_special_teams.py": {
+      "baseline": "625fcd7c5f4e9dba49b9d886c3e093f7a30fb0b7157e2ab1d1a3d274ffd4515d",
+      "candidate": "3f6cd48ac5a102d4e148499fa376b6e2b1d4e92bc0ad62f1e3251eea86d1ed1c"
+    },
+    "src/shared/registry.py": {
+      "baseline": "058f6fc03122b5e3c7010f5d8c560b3f35ade0103c33247ea8546f89b333b44d",
+      "candidate": "95c076b7bc4167976efbf917ebcd229ef0fc9432af6be065fa21a135dec2a1e3"
+    }
+  },
+  "baseline": {
+    "code_sha": "0db5cfb496036e6f524ae54182353c30f2ad8df4",
+    "release_id": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+    "inputs": {
+      "weekly_2012_2025.parquet": {
+        "bytes": 9574017,
+        "sha256": "bd6309343c588daf18d359fbfcb72635ed4267f139babd090a2fdc83d0052af5"
+      },
+      "schedules_2012_2025.parquet": {
+        "bytes": 299752,
+        "sha256": "ff09919e4ba0484126d51f92afdc409ff1b113e6c941d789366b0b9085a8b24b"
+      },
+      "team_stats_2012_2025.parquet": {
+        "bytes": 912918,
+        "sha256": "2e2895a85814ce1c55b3fdc3b02224eda1831b60e1e83d6e4bba6e89551c8107"
+      },
+      "dst_scoring_pbp_v1_2012_2025.parquet": {
+        "bytes": 8406,
+        "sha256": "e5f53c2dcbb981e78e5738852b795f537f805e89545a7d64a41f4b0158b35b9e"
+      }
+    },
+    "regular_schedule_rows": 3663,
+    "affected_schedule_rows": 0,
+    "k_head_hidden_overrides": {},
+    "runtime": {
+      "python": "3.12.12",
+      "pandas": "3.0.2",
+      "numpy": "2.4.1",
+      "torch": "2.11.0"
+    }
+  },
+  "candidate": {
+    "code_sha": "2e9e1516b7545bb32a0460d368d9cdfff2548d92",
+    "release_id": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+    "inputs": {
+      "weekly_2012_2025.parquet": {
+        "bytes": 9574017,
+        "sha256": "bd6309343c588daf18d359fbfcb72635ed4267f139babd090a2fdc83d0052af5"
+      },
+      "schedules_2012_2025.parquet": {
+        "bytes": 299752,
+        "sha256": "ff09919e4ba0484126d51f92afdc409ff1b113e6c941d789366b0b9085a8b24b"
+      },
+      "team_stats_2012_2025.parquet": {
+        "bytes": 912918,
+        "sha256": "2e2895a85814ce1c55b3fdc3b02224eda1831b60e1e83d6e4bba6e89551c8107"
+      },
+      "dst_scoring_pbp_v1_2012_2025.parquet": {
+        "bytes": 8406,
+        "sha256": "e5f53c2dcbb981e78e5738852b795f537f805e89545a7d64a41f4b0158b35b9e"
+      }
+    },
+    "regular_schedule_rows": 3663,
+    "affected_schedule_rows": 0,
+    "k_head_hidden_overrides": {},
+    "runtime": {
+      "python": "3.12.12",
+      "pandas": "3.0.2",
+      "numpy": "2.4.1",
+      "torch": "2.11.0"
+    }
+  },
+  "frames": {
+    "dst_built": {
+      "rows": 7326,
+      "columns": 36,
+      "exact_equal": true,
+      "row_values_sha256": "483dd980d636b08d81aedf7ec219ccdbc63eefd305bcc8d2636b78180af64417",
+      "schema_sha256": "89643525f924c586fcd232d89a085d3fc6ee78b016cd39a7b3e76fff9eaef8a9"
+    },
+    "dst_native_train": {
+      "rows": 5726,
+      "columns": 63,
+      "exact_equal": true,
+      "row_values_sha256": "b5e42f48197a3c483846e01087cb48fd6e9a9fe755560115bbacf8688f9525c2",
+      "schema_sha256": "766b753a1d6fa755546a4ac559aa5b1e518f5b0659879cc88b9541d3b33b2174"
+    },
+    "dst_prepared_train": {
+      "rows": 5726,
+      "columns": 82,
+      "exact_equal": true,
+      "row_values_sha256": "38b53d5403a45934e34542424e031e5c97d66d5420350ef8eadf9395167d5752",
+      "schema_sha256": "8888654e02a7987ca07eba8cc2bdec4a1140c934542cc5e6e96622cca40efacd"
+    },
+    "dst_native_val": {
+      "rows": 544,
+      "columns": 63,
+      "exact_equal": true,
+      "row_values_sha256": "a8b6158c734e6c78f9adea731f99a4de6749b335b5487c27d49ce0d9cd372a8b",
+      "schema_sha256": "766b753a1d6fa755546a4ac559aa5b1e518f5b0659879cc88b9541d3b33b2174"
+    },
+    "dst_prepared_val": {
+      "rows": 544,
+      "columns": 82,
+      "exact_equal": true,
+      "row_values_sha256": "cb5f4b92f8c54081448529a41a75cf3fd093d8da7c6ec990d69e41b5db774c59",
+      "schema_sha256": "8888654e02a7987ca07eba8cc2bdec4a1140c934542cc5e6e96622cca40efacd"
+    },
+    "dst_native_test": {
+      "rows": 544,
+      "columns": 63,
+      "exact_equal": true,
+      "row_values_sha256": "2d2436e88521cb0b22d014e9e9dc5b1836189cb113e1d40bce6cf615110feccb",
+      "schema_sha256": "766b753a1d6fa755546a4ac559aa5b1e518f5b0659879cc88b9541d3b33b2174"
+    },
+    "dst_prepared_test": {
+      "rows": 544,
+      "columns": 82,
+      "exact_equal": true,
+      "row_values_sha256": "fdaef61d30678e0da9ed9852435f22b0e0b1191cca0932e8db46ccc33f7f55e0",
+      "schema_sha256": "8888654e02a7987ca07eba8cc2bdec4a1140c934542cc5e6e96622cca40efacd"
+    }
+  },
+  "arrays": {
+    "X_train": {
+      "shape": [
+        5726,
+        38
+      ],
+      "dtype": "float32",
+      "sha256": "32480816749639c576e47c0d70e6fbd8e0780779645590ee92c6ed67105fd868"
+    },
+    "y_train_def_sacks": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "89028573e2a9f265397eeae46f244264344d382ad8b241fa60061b16981cc30b"
+    },
+    "y_train_def_ints": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "362cda692ffed49585b808c0741d009057ba00120b9c75f94483cf5d2f45f6eb"
+    },
+    "y_train_def_fumble_rec": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "215f9918559ac10251e531ad4eae5268ab8e158fc6470c2bb777ab1a84d97451"
+    },
+    "y_train_def_fumbles_forced": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "2895c6dd3f100a2545c943459a8dc4b46fe5ffd48998a67174c38eb49cb25738"
+    },
+    "y_train_def_safeties": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "65066bc90fedf693183849a5be2e2b650a6fef67aae8f7efac9c65ec7f0e0635"
+    },
+    "y_train_def_tds": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "1a63ad5000b4a380203360d33f541bdb7823f22b0336b95c5d7b33421c9cfffb"
+    },
+    "y_train_def_blocked_kicks": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "d8d379bcdea74c7b4a8a4bb494b41a9b2d0638a93c5e94eb054ab9d6f7510af7"
+    },
+    "y_train_special_teams_tds": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "7503274a5de8205a7a3440f43d43c6d25cc61224c37dbf58c93532532277d120"
+    },
+    "y_train_points_allowed": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "521e53bc32aabfdd13db8bfd4e78c2f3ea37e971547a7eebdac4537bcd4a1c76"
+    },
+    "y_train_yards_allowed": {
+      "shape": [
+        5726
+      ],
+      "dtype": "float32",
+      "sha256": "0f704d82cb8cd9c41cb3d9a033f27b15ae1fa5b9bf020f7a019d1553d211a913"
+    },
+    "X_val": {
+      "shape": [
+        544,
+        38
+      ],
+      "dtype": "float32",
+      "sha256": "f61aae8ae6e2bb596db469798c8ace91650f88e044344e17dafd8cbc3c5c69a2"
+    },
+    "y_val_def_sacks": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "e918469468a285ff8275adc4387cb29d07bd8fec9d6f5f4ed47d7180de2b6e80"
+    },
+    "y_val_def_ints": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "d625e77936e16f768c026a3bb7368759bdf13db7053fa49aaa97e89d841c6204"
+    },
+    "y_val_def_fumble_rec": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "84bd65e8d58d95b0a62371527682290ea25e59fa5601d633cc1327a081c6ceb8"
+    },
+    "y_val_def_fumbles_forced": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "4a4725a11c54ff08203e79756f2ec65e8cadefb2761aeccffcace6917a401a71"
+    },
+    "y_val_def_safeties": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "03a012dadbf5b1dafb2d04f0e9ca1eba2df71cc8fb4f0051214334061a469fef"
+    },
+    "y_val_def_tds": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "6ad3c6eda282be377d847a4dae684b4b894a9c138d1abc67790920b7e97f4c53"
+    },
+    "y_val_def_blocked_kicks": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "7bf08d540dea4ed591e827dc13ec35e413e76d983fbbf92dbbf8256966c94e4b"
+    },
+    "y_val_special_teams_tds": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "7b2988059d1ceaa980ca0d25c5c3973246de6d5c229cc158c500feeec964c3ea"
+    },
+    "y_val_points_allowed": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "297cb3599e224a21d8b1ec6b751588353886a0d46647a8a33158256a04c02e56"
+    },
+    "y_val_yards_allowed": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "b8b1004288443a6586a2dd0168b8d06915684f05a207718074ad16a160dbf527"
+    },
+    "X_test": {
+      "shape": [
+        544,
+        38
+      ],
+      "dtype": "float32",
+      "sha256": "76792ad3a4b501942e4bc75c2f22537da56682abeb3a1fc126018514b94920b8"
+    },
+    "y_test_def_sacks": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "2f35aa3a0463ae9c26bbf21c19a8d0c3dbf836c3ce6b68412c562a82d8f244be"
+    },
+    "y_test_def_ints": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "ed1ca5d8db99c18f1ced8463026e57ba4dbb77353acf12436146852acd027889"
+    },
+    "y_test_def_fumble_rec": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "95f1aa24d356cddaa1e69626366c20a9f976a8d6b933d1bfee6b073182a531c6"
+    },
+    "y_test_def_fumbles_forced": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "11144cccc4fe4e4e948f4ec5bc9b7a1648c9a7750293b662ac9de9306dca5216"
+    },
+    "y_test_def_safeties": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "54bf5bec30a686b26ea38c933269fa1d444607a0a12f2102246f2bf0f14ff662"
+    },
+    "y_test_def_tds": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "a23399441166f650d4d186047aefe9d9e1574f2639740bd70f1ebfa7926a000c"
+    },
+    "y_test_def_blocked_kicks": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "68cb38eaab3391892aa77f6f177e9ff39170dfc7339f376822a0b9923bc880ac"
+    },
+    "y_test_special_teams_tds": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "b321e8131851f6b4645a4fd65141a62919c2d2e68b4a8cd6883f69d55a101d1a"
+    },
+    "y_test_points_allowed": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "29fce4cf84a3b162b714021e2b33c43aa25cedcf3eb1edbeb89f85d51bdca4e8"
+    },
+    "y_test_yards_allowed": {
+      "shape": [
+        544
+      ],
+      "dtype": "float32",
+      "sha256": "660b7c4c51a8c9dbb5dc1e39ef67a7ae4f009439bd52f10ffb067bbe0e1e036b"
+    },
+    "k_state_kick_encoder.0.weight": {
+      "shape": [
+        16,
+        9
+      ],
+      "dtype": "float32",
+      "sha256": "a42bfe92935a7fa9efb6a7f5e6670b676fef8ca9eb918a0f4926eb8e6166bd1f"
+    },
+    "k_state_kick_encoder.0.bias": {
+      "shape": [
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "9c875f806867c7957c7521c1f55b833fcecf5e4e2d3a1948c36ada6ae5a022ac"
+    },
+    "k_state_inner_pool.queries": {
+      "shape": [
+        1,
+        1,
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "fcca73990c572cefd04c536cd6e491295613e60aeb2b3fbdd6f750624c67419c"
+    },
+    "k_state_game_encoder.0.weight": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "8cca8d74725a2f0a0aa96407250bc0e27c1c3d8eab6f2bfadfb49b32cfc79414"
+    },
+    "k_state_game_encoder.0.bias": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "8d220e47d625803d55bba5cf68b7c3277fefa2c5aac8b60efd08a920ed5c4947"
+    },
+    "k_state_game_encoder.2.weight": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "b638277a8690e175a9137feff1e43c067f9faf4e2f600caf468fb05b0403b717"
+    },
+    "k_state_game_encoder.2.bias": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "38723a2e5e8a17aa7950dc008209944e898f69a7bd10a23c839d341e935fd5ca"
+    },
+    "k_state_game_encoder.3.weight": {
+      "shape": [
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "e26d6ff742fbbc5037892c6a494e7044dc5fdbbe2148a51142dd576cb3ef857a"
+    },
+    "k_state_game_encoder.3.bias": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "aaf937b748e5f6d57b776024e3170e3075b8dd28be8ee46302cf8c2aab608999"
+    },
+    "k_state_pos_embedding.weight": {
+      "shape": [
+        17,
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "f3da256a4673c90c246d582cbcd5a3035ec180f4f38c26f6b17e13151f073ffc"
+    },
+    "k_state_attn_pool.queries": {
+      "shape": [
+        4,
+        2,
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "c46dd42a9a15b12a009fa448e9923a53eba5d90073f1ec1cfc0149121931daf2"
+    },
+    "k_state_history_norms.0.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0"
+    },
+    "k_state_history_norms.0.bias": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    "k_state_history_norms.1.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0"
+    },
+    "k_state_history_norms.1.bias": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    "k_state_history_norms.2.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0"
+    },
+    "k_state_history_norms.2.bias": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    "k_state_history_norms.3.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0"
+    },
+    "k_state_history_norms.3.bias": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    "k_state_backbone.0.weight": {
+      "shape": [
+        64,
+        7
+      ],
+      "dtype": "float32",
+      "sha256": "67fda2bf41b69d0187c0d8390e015a929d5bbd71fd7fc693b5ab5e97736fbcd6"
+    },
+    "k_state_backbone.0.bias": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "d5ae6e0b003419cf000d961bea03652b39ac8b112009f399877b0c6c5f1a7f6a"
+    },
+    "k_state_backbone.1.weight": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0"
+    },
+    "k_state_backbone.1.bias": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    "k_state_backbone.1.running_mean": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "5341e6b2646979a70e57653007a1f310169421ec9bdd9f1a5648f75ade005af1"
+    },
+    "k_state_backbone.1.running_var": {
+      "shape": [
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "2f20cd03c9cd392a406c56232b0ff93a15f6d6d7da79086bfa14f55d4a4031b0"
+    },
+    "k_state_backbone.1.num_batches_tracked": {
+      "shape": [],
+      "dtype": "int64",
+      "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+    },
+    "k_state_backbone.4.weight": {
+      "shape": [
+        32,
+        64
+      ],
+      "dtype": "float32",
+      "sha256": "6ec86c75ce9e1723a6b03beec9b63fce6a59cb87740c50e68940c01ab03a952f"
+    },
+    "k_state_backbone.4.bias": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "ea3de82a9789dadc6a9b558d15ea12da5d879a7bc9e131113e27eddaab619dbd"
+    },
+    "k_state_backbone.5.weight": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "b638277a8690e175a9137feff1e43c067f9faf4e2f600caf468fb05b0403b717"
+    },
+    "k_state_backbone.5.bias": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "38723a2e5e8a17aa7950dc008209944e898f69a7bd10a23c839d341e935fd5ca"
+    },
+    "k_state_backbone.5.running_mean": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "38723a2e5e8a17aa7950dc008209944e898f69a7bd10a23c839d341e935fd5ca"
+    },
+    "k_state_backbone.5.running_var": {
+      "shape": [
+        32
+      ],
+      "dtype": "float32",
+      "sha256": "b638277a8690e175a9137feff1e43c067f9faf4e2f600caf468fb05b0403b717"
+    },
+    "k_state_backbone.5.num_batches_tracked": {
+      "shape": [],
+      "dtype": "int64",
+      "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+    },
+    "k_state_heads.fg_yard_points.0.weight": {
+      "shape": [
+        16,
+        96
+      ],
+      "dtype": "float32",
+      "sha256": "a10f302a87d01af6966a072b6c7dd66a997ae6fa4bc245c2d17f2c491a042fc1"
+    },
+    "k_state_heads.fg_yard_points.0.bias": {
+      "shape": [
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "654086ddba187f18fe9cb20e737a2e2ce014b712cd60ae5e021ee4609e32e223"
+    },
+    "k_state_heads.fg_yard_points.2.weight": {
+      "shape": [
+        1,
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "2f301b42ae6d4c2e50414512d858d3e507da44d6df4d838d7f3ed03f1f8c5c74"
+    },
+    "k_state_heads.fg_yard_points.2.bias": {
+      "shape": [
+        1
+      ],
+      "dtype": "float32",
+      "sha256": "8a7eeda200f929855296436e08761e3ce68ff02e9e200928d9654d2453802f6b"
+    },
+    "k_state_heads.pat_points.0.weight": {
+      "shape": [
+        16,
+        96
+      ],
+      "dtype": "float32",
+      "sha256": "eae1f5c8f07be11c82f379922ca53e7174b496f9d53e84605bd8b26fcfa7f169"
+    },
+    "k_state_heads.pat_points.0.bias": {
+      "shape": [
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "816e15fe97908fe03aa1af471747979d0a68b77efa847c2d0b6fd8d84e47bab1"
+    },
+    "k_state_heads.pat_points.2.weight": {
+      "shape": [
+        1,
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "ae7975e24b93c96d17ee715f95d90485de7bc8f31ddcfab36ea0ad332756fa03"
+    },
+    "k_state_heads.pat_points.2.bias": {
+      "shape": [
+        1
+      ],
+      "dtype": "float32",
+      "sha256": "eb49336fb5d7b3168c0bc247800539da523193db05836ba1cc2b1e8785c33c78"
+    },
+    "k_state_heads.fg_misses.0.weight": {
+      "shape": [
+        16,
+        96
+      ],
+      "dtype": "float32",
+      "sha256": "d47d432473333e9b914a04648b04a2b783d62d9ef5b21b8eb2f65f607f91207f"
+    },
+    "k_state_heads.fg_misses.0.bias": {
+      "shape": [
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "9d75c95d84637c8f4ff28e9cab7240622f5a739d5a185b91c896b8498e441152"
+    },
+    "k_state_heads.fg_misses.2.weight": {
+      "shape": [
+        1,
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "47e79feb252bf1ee4df75a8095fbe0c631bb971a60c05bc1b95a2a1c7da5e3e7"
+    },
+    "k_state_heads.fg_misses.2.bias": {
+      "shape": [
+        1
+      ],
+      "dtype": "float32",
+      "sha256": "764d0ec34fd5e77ab29aaf53588e94233bd09d9d0b3d7493b8d5bf5bf03f6c0a"
+    },
+    "k_state_heads.xp_misses.0.weight": {
+      "shape": [
+        16,
+        96
+      ],
+      "dtype": "float32",
+      "sha256": "5f1523e253866e37a317a19bd9f48b71673b480e91152cc9b3677478b4698ab0"
+    },
+    "k_state_heads.xp_misses.0.bias": {
+      "shape": [
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "29a78c9fe5e97aa52ec02014494ec7f4d2b2877eac84319d639b3629af0c3c9a"
+    },
+    "k_state_heads.xp_misses.2.weight": {
+      "shape": [
+        1,
+        16
+      ],
+      "dtype": "float32",
+      "sha256": "8e2e16a52e9537d86c557c9d78d448006e39d3112e47e688d53491c5675d0096"
+    },
+    "k_state_heads.xp_misses.2.bias": {
+      "shape": [
+        1
+      ],
+      "dtype": "float32",
+      "sha256": "3409e15a69b9901cc49cba87508a12539ebe0c59053b380fa3607f2177b91f0f"
+    },
+    "k_prediction_fg_yard_points": {
+      "shape": [
+        2
+      ],
+      "dtype": "float32",
+      "sha256": "95bdaa2a0c2669d2147e9ecfb77e626629e1829421fcc18b864e5f2791cbe3e4"
+    },
+    "k_prediction_pat_points": {
+      "shape": [
+        2
+      ],
+      "dtype": "float32",
+      "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+    },
+    "k_prediction_fg_misses": {
+      "shape": [
+        2
+      ],
+      "dtype": "float32",
+      "sha256": "8a46901f0a4da708b6fbd58edd97208b4683339d7cc9437e290792ea582f7733"
+    },
+    "k_prediction_xp_misses": {
+      "shape": [
+        2
+      ],
+      "dtype": "float32",
+      "sha256": "b0fd290f0d8b54ca9ba14d724693cc2155f61069234af9a6eb62e60790afed00"
+    }
+  },
+  "byte_equal_arrays": 86,
+  "dst_feature_columns": [
+    "sacks_L3",
+    "sacks_L5",
+    "ints_L3",
+    "fumble_rec_L3",
+    "forced_fumbles_L3",
+    "blocked_kicks_L5",
+    "pts_allowed_L3",
+    "pts_allowed_L5",
+    "yards_allowed_L3",
+    "yards_allowed_L5",
+    "yards_allowed_ewma",
+    "dst_pts_L3",
+    "dst_pts_L5",
+    "dst_pts_L8",
+    "pts_allowed_ewma",
+    "dst_pts_ewma",
+    "sack_trend",
+    "turnover_trend",
+    "pts_allowed_trend",
+    "pts_allowed_std_L3",
+    "dst_scoring_std_L3",
+    "is_home",
+    "week",
+    "spread_line",
+    "total_line",
+    "opp_scoring_L3",
+    "opp_scoring_L5",
+    "opp_turnovers_L5",
+    "opp_sacks_allowed_L5",
+    "opp_qb_epa_L5",
+    "opp_qb_int_rate_L5",
+    "opp_qb_sack_rate_L5",
+    "opp_qb_rush_yds_L5",
+    "rest_days",
+    "div_game",
+    "is_dome",
+    "prior_season_dst_pts_avg",
+    "prior_season_pts_allowed_avg"
+  ],
+  "all_six_training_recipes_equal": true,
+  "all_six_inference_specs_equal": true,
+  "training_recipes_sha256": "dfcac429c5bec8b3e6d19d9e7ca233aeb7df539cf5eb530fdd003a2e9ac88f66",
+  "inference_specs_sha256": "07fd32ae951cf5109617e5ee04741659d487bda7ad81f66faabfd0c16c49bd88",
+  "method": "Native DST data provider and unscaled preparation, including deterministic pandas fills; seed-42 untrained K constructor/state/forward parity.",
+  "limits": "No fitted-model benchmark, accuracy result, scaler fit or GPU claim. Display-only team logos stubbed identically. Proof is specific to this frozen release and current production configs; edge cases are covered separately by regression tests."
+}

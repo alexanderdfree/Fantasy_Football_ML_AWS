@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-18 · DST `build_data` drops unplayed (NaN-score) REG fixtures by default; the live upcoming-week special-teams builder opts back in via `include_unplayed=True` (#1520) · (PR pending) · → ADR-0018
+
 - 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
 
 - 2026-09-18 · Add PPR-RMSE selection machinery (`ridge_selection_metric`/`nn_selection_metric`/`lgbm_selection_metric`) with defaults unchanged (`raw_mae`/`weighted_mae`/`per_target`); any flip needs the dual-metric + protected-cohort gate · (PR pending) · → ADR-0002

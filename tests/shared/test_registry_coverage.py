@@ -201,13 +201,6 @@ def test_flat_attn_kwargs_static_uses_dataclass_defaults():
 
 
 @pytest.mark.unit
-def test_flat_attn_kwargs_static_populates_head_hidden_overrides_when_set():
-    overrides = {"a": 8, "b": 16}
-    kwargs = _flat_attn_kwargs_static(_make_pc(nn_head_hidden_overrides=overrides))
-    assert kwargs["head_hidden_overrides"] == overrides
-
-
-@pytest.mark.unit
 def test_flat_attn_kwargs_static_populates_gated_targets_when_set():
     kwargs = _flat_attn_kwargs_static(_make_pc(gated_targets=["a", "b"]))
     assert kwargs["gated_targets"] == ["a", "b"]
@@ -218,6 +211,38 @@ def test_flat_attn_kwargs_static_threads_non_negative_targets():
     nn = {"a", "b"}
     kwargs = _flat_attn_kwargs_static(_make_pc(nn_non_negative_targets=nn))
     assert kwargs["non_negative_targets"] == nn
+
+
+# --------------------------------------------------------------------------
+# ``nn_head_hidden_overrides`` -> ``head_hidden_overrides`` on BOTH builders.
+# #1503: K's nested-history builder forwarded every other nn_/attn_ field the
+# training factory consumes but dropped this one, so a K per-head override
+# would have trained one head shape and served another. Each builder emits the
+# key iff the config sets an override, and forwards a COPY — never the config's
+# own dict — so a served-kwargs mutation can't leak back into POSITION_CONFIG.
+# --------------------------------------------------------------------------
+
+_ATTN_KWARGS_BUILDERS = [
+    pytest.param(_flat_attn_kwargs_static, id="flat"),
+    pytest.param(_nested_attn_kwargs_static, id="nested"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("builder", _ATTN_KWARGS_BUILDERS)
+def test_attn_kwargs_static_forwards_head_hidden_overrides_as_a_copy(builder):
+    pc = _make_pc(nn_head_hidden_overrides={"a": 8, "b": 16})
+    kwargs = builder(pc)
+    assert kwargs["head_hidden_overrides"] == pc.nn_head_hidden_overrides
+    assert kwargs["head_hidden_overrides"] is not pc.nn_head_hidden_overrides
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("builder", _ATTN_KWARGS_BUILDERS)
+def test_attn_kwargs_static_omits_head_hidden_overrides_when_empty(builder):
+    """No override configured -> key absent, so an override-free position's
+    served kwargs are unchanged by the conditional forward."""
+    assert "head_hidden_overrides" not in builder(_make_pc())
 
 
 # --------------------------------------------------------------------------
@@ -240,12 +265,70 @@ def test_flat_attn_kwargs_static_threads_non_negative_targets():
 # diverges from serving (which reads the registry builder output) — the served
 # state_dict would no longer match. The assertion: every PositionConfig field
 # that maps to a constructor parameter MUST appear in the builder's output
-# keys. Both spellings are checked — the direct name overlap the task names
-# (``set(fields) & set(ctor_params)``) AND the ``attn_``-prefixed convention
-# (PositionConfig ``attn_d_model`` -> constructor ``d_model``), so the guard
-# covers the attention kwargs rather than only the two names that happen to be
-# spelled identically.
+# keys. A field resolves to a constructor parameter in this order — an
+# explicit alias for the RENAMED knobs (``attn_positional_encoding`` ->
+# ``use_positional_encoding``, ``attn_kick_dim`` -> ``d_kick``, ...;
+# ``_CONFIG_FIELD_ALIASES``), then the identical name (``gated_targets``),
+# then the ``attn_`` prefix convention (``attn_d_model`` -> ``d_model``), then
+# the ``nn_`` prefix the shared-NN knobs use (``nn_head_hidden_overrides`` ->
+# ``head_hidden_overrides`` — the K/nested drop #1503 caught, invisible to the
+# guard until this prefix was mapped). The alias tier exists because a prefix
+# strip cannot see a rename: without it the guard silently skipped five
+# state_dict- or numerics-affecting forwards (``use_positional_encoding``,
+# ``use_gated_fusion``, ``d_kick``, ``n_attn_heads``, and
+# ``encoder_hidden_dim`` — the last hidden by a blanket "ends in ``_dim``"
+# exemption, since narrowed to the enumerated runtime dims).
+#
+# Fixture caveat: ``head_hidden_overrides`` is emitted CONDITIONALLY by both
+# builders (only when ``nn_head_hidden_overrides`` is non-empty), so the parity
+# guards build their fixture with that knob POPULATED
+# (``_POPULATED_OPTIONAL_KNOBS``). On an empty fixture the key is legitimately
+# absent and the guard would false-positive on a builder that forwards it.
 # --------------------------------------------------------------------------
+
+# PositionConfig prefixes a constructor parameter drops: ``attn_`` for the
+# attention knobs (``attn_d_model`` -> ``d_model``) and ``nn_`` for the shared
+# NN knobs (``nn_head_hidden_overrides`` -> ``head_hidden_overrides``). Identity
+# matches win over prefix stripping, so ``attn_dropout`` (a real ctor param) is
+# NOT read as ``dropout``.
+_CONFIG_FIELD_PREFIXES = ("attn_", "nn_")
+
+# PositionConfig fields whose constructor parameter is a RENAME rather than a
+# prefix strip — consulted before the identity / prefix tiers. Without these
+# the guard is blind to the forward (``attn_positional_encoding`` strips to
+# ``positional_encoding``, which names no parameter). Every value must be a
+# real parameter of at least one served constructor (pinned below), else a
+# constructor rename would silently retire the alias.
+_CONFIG_FIELD_ALIASES = {
+    "attn_positional_encoding": "use_positional_encoding",
+    "attn_gated_fusion": "use_gated_fusion",
+    "attn_kick_dim": "d_kick",
+    "attn_encoder_hidden_dim": "encoder_hidden_dim",
+    "attn_n_heads": "n_attn_heads",
+}
+
+# Constructor parameters that are the net's data-derived feature dimensions,
+# injected at build time from the actual array shapes (see
+# ``build_multihead_net*``), NOT static knobs the ``_*_attn_kwargs_static``
+# builders forward from config — excluded from the mapping. Enumerated rather
+# than "ends in ``_dim``": ``encoder_hidden_dim`` (a sizing knob that adds
+# encoder layers when > 0) and ``self_attn_ffn_dim`` are real architecture
+# parameters a suffix rule would wrongly exempt. K's config carries a cached
+# ``attn_kick_dim``, which the alias tier routes to ``d_kick`` (the inner
+# attention width) — not to the runtime ``kick_dim`` (= len(attn_kick_stats)).
+_RUNTIME_DIM_PARAMS = frozenset({"static_dim", "kick_dim", "game_dim", "opp_game_dim", "input_dim"})
+
+# Optional knobs the parity fixtures populate so the ONE conditionally-emitted
+# builder key (``head_hidden_overrides``) is actually exercised. ``gated_targets``
+# needs no populating: the flat builder emits that key unconditionally
+# (``None`` when unset), and pairing a non-empty list with the default
+# ``attn_gated=False`` is a combination ``MultiHeadNetWithHistory`` rejects.
+_POPULATED_OPTIONAL_KNOBS = dict(nn_head_hidden_overrides={"a": 8})
+
+_PARITY_CASES = [
+    pytest.param(_flat_attn_kwargs_static, MultiHeadNetWithHistory, id="flat"),
+    pytest.param(_nested_attn_kwargs_static, MultiHeadNetWithNestedHistory, id="nested"),
+]
 
 
 def _ctor_param_names(ctor) -> set[str]:
@@ -253,37 +336,49 @@ def _ctor_param_names(ctor) -> set[str]:
     return set(inspect.signature(ctor.__init__).parameters) - {"self"}
 
 
-def _config_fields_mapped_to_ctor(ctor) -> set[str]:
-    """PositionConfig fields that map to a parameter of ``ctor``.
+def _ctor_param_for_field(fld: str, ctor_params: set[str]) -> str | None:
+    """Constructor parameter name a PositionConfig field forwards to, or
+    ``None`` when the field maps to no parameter of the constructor.
 
-    A field maps either by identical name (``gated_targets`` ->
-    ``gated_targets``) or by stripping the ``attn_`` prefix the config uses for
-    attention knobs (``attn_d_model`` -> ``d_model``). Returns the
-    *PositionConfig field names* so the failure message names the field a
-    contributor would have just added.
-
-    Constructor params ending in ``_dim`` (``kick_dim``/``opp_dim``/
-    ``history_dim``/``static_dim``/``input_dim``) are excluded: those are the
-    net's data-derived feature dimensions, injected at build time from the
-    actual array shapes (see ``build_multihead_net*``), NOT static knobs the
-    ``_*_attn_kwargs_static`` builders forward from config. K's config carries a
-    cached ``attn_kick_dim``, so without this exclusion the heuristic would
-    false-positive on ``attn_kick_dim`` -> ``kick_dim``.
-    """
-    params = {p for p in _ctor_param_names(ctor) if not p.endswith("_dim")}
-    fields = set(PositionConfig.__dataclass_fields__)
-    mapped = set()
-    for fld in fields:
-        if fld in params or fld.startswith("attn_") and fld[len("attn_") :] in params:
-            mapped.add(fld)
-    return mapped
-
-
-def _ctor_param_for_field(fld: str, ctor_params: set[str]) -> str:
-    """Constructor parameter name a PositionConfig field forwards to."""
+    Resolution order: explicit alias (``_CONFIG_FIELD_ALIASES``), identical
+    name, then one stripped ``_CONFIG_FIELD_PREFIXES`` prefix."""
+    alias = _CONFIG_FIELD_ALIASES.get(fld)
+    if alias in ctor_params:
+        return alias
     if fld in ctor_params:
         return fld
-    return fld[len("attn_") :]
+    for prefix in _CONFIG_FIELD_PREFIXES:
+        if fld.startswith(prefix) and fld[len(prefix) :] in ctor_params:
+            return fld[len(prefix) :]
+    return None
+
+
+def _mappable_ctor_params(ctor) -> set[str]:
+    """``ctor``'s parameters minus the runtime feature dims (see
+    ``_RUNTIME_DIM_PARAMS``) — the set a config field can legitimately map to."""
+    return _ctor_param_names(ctor) - _RUNTIME_DIM_PARAMS
+
+
+def _config_fields_mapped_to_ctor(ctor) -> set[str]:
+    """PositionConfig fields that map to a (non-runtime-dim) parameter of
+    ``ctor``. Returns the *PositionConfig field names* so the failure message
+    names the field a contributor would have just added."""
+    params = _mappable_ctor_params(ctor)
+    fields = set(PositionConfig.__dataclass_fields__)
+    return {fld for fld in fields if _ctor_param_for_field(fld, params) is not None}
+
+
+def _unforwarded_fields(ctor, builder_keys: set[str]) -> list[tuple[str, str]]:
+    """``(field, expected builder key)`` for every PositionConfig field that
+    maps to a ``ctor`` parameter but is absent from ``builder_keys`` — the
+    parity guard's verdict, factored out so a simulated drop can be pinned on a
+    plain key-set without monkeypatching the builders."""
+    params = _mappable_ctor_params(ctor)
+    return sorted(
+        (fld, _ctor_param_for_field(fld, params))
+        for fld in _config_fields_mapped_to_ctor(ctor)
+        if _ctor_param_for_field(fld, params) not in builder_keys
+    )
 
 
 @pytest.mark.unit
@@ -297,43 +392,113 @@ def test_flat_factory_params_overlap_is_non_empty():
 
 
 @pytest.mark.unit
-def test_flat_attn_kwargs_static_forwards_every_mapped_config_field():
-    """Every PositionConfig field that maps to a ``MultiHeadNetWithHistory``
-    constructor parameter must be forwarded by ``_flat_attn_kwargs_static``.
-
-    Passes today; FAILS if someone adds a PositionConfig field the flat
-    registry builder forgets to forward."""
-    builder_keys = set(_flat_attn_kwargs_static(_make_pc()))
-    ctor_params = _ctor_param_names(MultiHeadNetWithHistory)
-    forwarded = {_ctor_param_for_field(f, ctor_params) for f in builder_keys & ctor_params}
-    # Account for the ``attn_``-prefix mapping on both sides: a field
-    # ``attn_d_model`` is "forwarded" iff the builder emits ``d_model``.
-    forwarded |= builder_keys
-
-    missing = []
-    for fld in _config_fields_mapped_to_ctor(MultiHeadNetWithHistory):
-        param = _ctor_param_for_field(fld, ctor_params)
-        if param not in builder_keys:
-            missing.append((fld, param))
-    assert not missing, (
-        "PositionConfig fields not forwarded by _flat_attn_kwargs_static "
-        f"(field -> expected builder key): {missing}"
-    )
+@pytest.mark.parametrize("ctor", [MultiHeadNetWithHistory, MultiHeadNetWithNestedHistory])
+def test_nn_prefixed_override_field_is_visible_to_the_parity_guard(ctor):
+    """Pin the ``nn_`` prefix mapping itself: ``nn_head_hidden_overrides`` must
+    be recognised as feeding ``head_hidden_overrides`` on BOTH constructors,
+    else the parity guards go blind to exactly the drop #1503 found."""
+    assert "nn_head_hidden_overrides" in _config_fields_mapped_to_ctor(ctor)
+    param = _ctor_param_for_field("nn_head_hidden_overrides", _ctor_param_names(ctor))
+    assert param == "head_hidden_overrides"
 
 
 @pytest.mark.unit
-def test_nested_attn_kwargs_static_forwards_every_mapped_config_field():
-    """Same parity guard for K's nested-history builder /
-    ``MultiHeadNetWithNestedHistory`` constructor."""
-    builder_keys = set(_nested_attn_kwargs_static(_make_pc()))
-    ctor_params = _ctor_param_names(MultiHeadNetWithNestedHistory)
+def test_alias_targets_are_real_constructor_parameters():
+    """Every alias must name a parameter of at least one served constructor
+    (a constructor rename would otherwise silently retire it), and on each
+    constructor that takes the parameter the aliased field must resolve to it
+    — the alias tier is load-bearing, not shadowed by a prefix-strip miss."""
+    ctors = (MultiHeadNetWithHistory, MultiHeadNetWithNestedHistory)
+    all_params = set().union(*(_ctor_param_names(c) for c in ctors))
+    stale = {f: p for f, p in _CONFIG_FIELD_ALIASES.items() if p not in all_params}
+    assert not stale, f"aliases naming no constructor parameter: {stale}"
+    for fld, param in _CONFIG_FIELD_ALIASES.items():
+        for ctor in ctors:
+            params = _mappable_ctor_params(ctor)
+            if param in params:
+                assert _ctor_param_for_field(fld, params) == param, (fld, ctor.__name__)
+                assert fld in _config_fields_mapped_to_ctor(ctor), (fld, ctor.__name__)
 
-    missing = []
-    for fld in _config_fields_mapped_to_ctor(MultiHeadNetWithNestedHistory):
-        param = _ctor_param_for_field(fld, ctor_params)
-        if param not in builder_keys:
-            missing.append((fld, param))
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("builder", "ctor", "dropped_key", "field"),
+    [
+        pytest.param(
+            _flat_attn_kwargs_static,
+            MultiHeadNetWithHistory,
+            "use_positional_encoding",
+            "attn_positional_encoding",
+            id="flat-use_positional_encoding",
+        ),
+        pytest.param(
+            _flat_attn_kwargs_static,
+            MultiHeadNetWithHistory,
+            "use_gated_fusion",
+            "attn_gated_fusion",
+            id="flat-use_gated_fusion",
+        ),
+        pytest.param(
+            _flat_attn_kwargs_static,
+            MultiHeadNetWithHistory,
+            "encoder_hidden_dim",
+            "attn_encoder_hidden_dim",
+            id="flat-encoder_hidden_dim",
+        ),
+        pytest.param(
+            _flat_attn_kwargs_static,
+            MultiHeadNetWithHistory,
+            "n_attn_heads",
+            "attn_n_heads",
+            id="flat-n_attn_heads",
+        ),
+        pytest.param(
+            _nested_attn_kwargs_static,
+            MultiHeadNetWithNestedHistory,
+            "use_positional_encoding",
+            "attn_positional_encoding",
+            id="nested-use_positional_encoding",
+        ),
+        pytest.param(
+            _nested_attn_kwargs_static,
+            MultiHeadNetWithNestedHistory,
+            "d_kick",
+            "attn_kick_dim",
+            id="nested-d_kick",
+        ),
+        pytest.param(
+            _nested_attn_kwargs_static,
+            MultiHeadNetWithNestedHistory,
+            "encoder_hidden_dim",
+            "attn_encoder_hidden_dim",
+            id="nested-encoder_hidden_dim",
+        ),
+    ],
+)
+def test_parity_guard_names_a_dropped_renamed_forward(builder, ctor, dropped_key, field):
+    """Red-side pin for the alias tier: delete one renamed forward from the
+    builder's output (on a copy of the key-set — no monkeypatching) and the
+    guard's missing-list must name the PositionConfig field behind it. Before
+    the alias map + runtime-dim-only exemption every one of these drops was
+    invisible to the guard."""
+    keys = set(builder(_make_pc(**_POPULATED_OPTIONAL_KNOBS)))
+    assert dropped_key in keys, f"{builder.__name__} no longer forwards {dropped_key!r}"
+    assert _unforwarded_fields(ctor, keys) == []
+    assert _unforwarded_fields(ctor, keys - {dropped_key}) == [(field, dropped_key)]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("builder", "ctor"), _PARITY_CASES)
+def test_attn_kwargs_static_forwards_every_mapped_config_field(builder, ctor):
+    """Every PositionConfig field that maps to the served constructor's
+    parameters must be forwarded by the registry builder that feeds it.
+
+    Passes today; FAILS if someone adds (or renames) a PositionConfig field the
+    builder forgets to forward. The nested arm was red on the pre-#1503 builder
+    (``nn_head_hidden_overrides`` -> ``head_hidden_overrides`` was dropped)."""
+    builder_keys = set(builder(_make_pc(**_POPULATED_OPTIONAL_KNOBS)))
+    missing = _unforwarded_fields(ctor, builder_keys)
     assert not missing, (
-        "PositionConfig fields not forwarded by _nested_attn_kwargs_static "
+        f"PositionConfig fields not forwarded by {builder.__name__} "
         f"(field -> expected builder key): {missing}"
     )
