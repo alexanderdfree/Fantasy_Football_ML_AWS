@@ -8,7 +8,6 @@
  * (via onResetFilter) so it can't invisibly constrain the table. */
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useFilterFit } from "../hooks/useFilterFit.js";
-import { sliceAccuracy } from "../lib/predictionFilters.js";
 
 export const AGE_BUCKETS = [
     { value: "ALL", label: "All Ages", test: () => true },
@@ -22,7 +21,7 @@ export function ageBucketFor(value) {
     return AGE_BUCKETS.find((b) => b.value === value) || AGE_BUCKETS[0];
 }
 
-export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFilter, stats }) {
+export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFilter }) {
     const keys = items.map((i) => i.value);
     const { rowRef, measureRef, fit } = useFilterFit(keys.length);
     // null → auto-fit (show what the row can hold); an array → manual picks.
@@ -61,43 +60,6 @@ export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFil
                     <Fragment key={i.value}>{renderControl(i.value, true)}</Fragment>
                 ))}
                 <div className="filter-menus">{renderMenus({ visibleFilters: visible, onFiltersChange, measure: true })}</div>
-            </div>
-            {stats || null}
-        </div>
-    );
-}
-
-/* Live readout of the filtered slice — average actual output and which
- * source best predicts these exact rows (updates with every filter change). */
-export function FilterSliceStats({ rows, sources }) {
-    if (!rows.length) return null;
-    const withActual = rows.filter((p) => Number.isFinite(p.actual));
-    const avgActual = withActual.length
-        ? withActual.reduce((s, p) => s + p.actual, 0) / withActual.length : null;
-    const { best, n, cohortN } = sliceAccuracy(rows, sources);
-    return (
-        <div className="filters-stats-row">
-            <div className="stat-block-row">
-                <div className="stat-block">
-                    <span className="stat-block-label">Avg Actual</span>
-                    <span className="stat-block-value neutral">{avgActual == null ? "--" : avgActual.toFixed(1)}</span>
-                </div>
-                {best && (
-                    <div className="stat-block">
-                        <span className="stat-block-label">Most Accurate</span>
-                        <span className="stat-block-value">{best.label}</span>
-                    </div>
-                )}
-                <div className="stat-block" title="Matching projected components and forecasts from every available source">
-                    <span className="stat-block-label">Comparison rows</span>
-                    <span className="stat-block-value neutral">{best ? `${n} / ${cohortN}` : "Unavailable"}</span>
-                </div>
-                {best && (
-                    <div className="stat-block">
-                        <span className="stat-block-label">Best MAE</span>
-                        <span className="stat-block-value neutral">{best.mae.toFixed(2)}</span>
-                    </div>
-                )}
             </div>
         </div>
     );
