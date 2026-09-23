@@ -1,0 +1,55 @@
+{
+  "schema": "audit-development-plan/v1",
+  "purpose": "development",
+  "candidate": "count_precision",
+  "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+  "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
+  "candidate_sha": "00873f2b9dbddfc338b53604555ccc9ae9bac97f",
+  "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+  "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+  "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
+  "positions": [
+    "RB",
+    "WR",
+    "TE"
+  ],
+  "origins": [
+    2022,
+    2023
+  ],
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "runs": [
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-count-2022-90265546",
+      "origin": 2022,
+      "positions": [
+        "RB",
+        "WR",
+        "TE"
+      ],
+      "seeds": [
+        42,
+        123,
+        7
+      ]
+    },
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-count-2023-90265546",
+      "origin": 2023,
+      "positions": [
+        "RB",
+        "WR",
+        "TE"
+      ],
+      "seeds": [
+        42,
+        123,
+        7
+      ]
+    }
+  ]
+}

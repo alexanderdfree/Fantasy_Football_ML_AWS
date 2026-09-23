@@ -1,0 +1,36 @@
+{
+  "schema": "audit-development-plan/v2",
+  "purpose": "smoke",
+  "candidate": "stint_reset",
+  "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
+  "candidate_sha": "d27a876cc80dde55a1d33f65b04664171fb3380f",
+  "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+  "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
+  "positions": [
+    "WR"
+  ],
+  "origins": [
+    2022
+  ],
+  "seeds": [
+    42
+  ],
+  "sources": {
+    "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277": {
+      "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28"
+    }
+  },
+  "runs": [
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-wr-s42-b42e26a8",
+      "origin": 2022,
+      "positions": [
+        "WR"
+      ],
+      "seeds": [
+        42
+      ],
+      "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277"
+    }
+  ]
+}

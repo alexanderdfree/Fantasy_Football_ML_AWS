@@ -1,15 +1,18 @@
 {
   "schema": "audit-development-plan/v2",
   "purpose": "development",
-  "candidate": "count_precision",
+  "candidate": "bagging",
   "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
-  "candidate_sha": "00873f2b9dbddfc338b53604555ccc9ae9bac97f",
+  "candidate_sha": "d690b417e6d521d379843b924707db8ab16efff1",
   "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
   "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
   "positions": [
+    "QB",
     "RB",
     "WR",
-    "TE"
+    "TE",
+    "K",
+    "DST"
   ],
   "origins": [
     2022,
@@ -21,9 +24,6 @@
     7
   ],
   "sources": {
-    "90265546bb05269a697af0635633d861b3eda738": {
-      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7"
-    },
     "87213b853c4d724f6574dccddbb62dfcb6601cd1": {
       "image_digest": "sha256:1efe7ddca433f36395d500046a042e3d4854ca24cbccc99299277792aea41fbc",
       "bridge": {
@@ -34,31 +34,12 @@
   },
   "runs": [
     {
-      "prefix": "ab_runs/audit-isolated-development-20260923/full-count-2022-90265546",
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-bagging-2022-skill-87213b85",
       "origin": 2022,
       "positions": [
+        "QB",
         "RB",
         "WR",
-        "TE"
-      ],
-      "include_positions": [
-        "RB",
-        "WR"
-      ],
-      "superseded_positions": {
-        "TE": "observer_position_identity"
-      },
-      "seeds": [
-        42,
-        123,
-        7
-      ],
-      "source_sha": "90265546bb05269a697af0635633d861b3eda738"
-    },
-    {
-      "prefix": "ab_runs/audit-isolated-development-20260923/full-count-2022-te-87213b85",
-      "origin": 2022,
-      "positions": [
         "TE"
       ],
       "seeds": [
@@ -69,32 +50,41 @@
       "source_sha": "87213b853c4d724f6574dccddbb62dfcb6601cd1"
     },
     {
-      "prefix": "ab_runs/audit-isolated-development-20260923/full-count-2023-90265546",
-      "origin": 2023,
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-bagging-2022-native-87213b85",
+      "origin": 2022,
       "positions": [
-        "RB",
-        "WR",
-        "TE"
+        "K",
+        "DST"
       ],
-      "include_positions": [
-        "RB",
-        "WR"
-      ],
-      "superseded_positions": {
-        "TE": "observer_position_identity"
-      },
       "seeds": [
         42,
         123,
         7
       ],
-      "source_sha": "90265546bb05269a697af0635633d861b3eda738"
+      "source_sha": "87213b853c4d724f6574dccddbb62dfcb6601cd1"
     },
     {
-      "prefix": "ab_runs/audit-isolated-development-20260923/full-count-2023-te-87213b85",
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-bagging-2023-skill-87213b85",
       "origin": 2023,
       "positions": [
+        "QB",
+        "RB",
+        "WR",
         "TE"
+      ],
+      "seeds": [
+        42,
+        123,
+        7
+      ],
+      "source_sha": "87213b853c4d724f6574dccddbb62dfcb6601cd1"
+    },
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-bagging-2023-native-87213b85",
+      "origin": 2023,
+      "positions": [
+        "K",
+        "DST"
       ],
       "seeds": [
         42,
@@ -103,5 +93,10 @@
       ],
       "source_sha": "87213b853c4d724f6574dccddbb62dfcb6601cd1"
     }
+  ],
+  "execution_smokes": [
+    "smoke-bagging-2022-wr-s42",
+    "smoke-bagging-2022-native-s42",
+    "smoke-count-2022-te-s42-87213b85"
   ]
 }

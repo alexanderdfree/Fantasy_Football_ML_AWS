@@ -76,8 +76,31 @@ core/dependency hashes, confirms the count candidate is unchanged and verifies
 that reversing only the reviewed identity replacement restores the parent AST.
 It never relabels the resulting evidence as one common source SHA.
 
-The original `count-plan.json` records the initial submission. It must be
-replaced by a version-2 plan with the corrected TE image/run pins before the
-complete count campaign can pass. Its original failed TE cells are not a
-forecast-quality conclusion. Smoke plans for WR and native K/DST bagging are
-independent of this replacement.
+`count-initial-plan.json` preserves the original submission. `count-plan.json`
+declares the valid original RB/WR cells and the two corrected TE replacement
+runs, with both source/image pins and the verified bridge. The original failed
+TE cells are not a forecast-quality conclusion. `bagging-plan.json` declares
+the separately submitted 108-cell, six-position study on the corrected observer
+source, retaining the bridge to the source used for its execution smokes.
+Stint smoke plans and results remain separate from both full studies.
+
+Submission receipts in `receipts/` preserve the exact run manifests, hashes,
+job IDs and Spot queue. Root owns promotion decisions, merges and pool restore.
+
+## Completed development evidence
+
+- [Count precision: 54 verified cells](evidence/count-full.md). No position
+  passes both development seasons. The stable numerical candidate passes its
+  numerical checks but fails the required forecast/cohort gate.
+- [Bagging: 108 verified cells](evidence/bagging-full.md). The global six-position
+  change fails. TE LightGBM alone improves overall MAE/RMSE and preserves both
+  elite metrics in both development seasons; a TE-only unit would still need
+  explicit scope, a frozen candidate and confirmation.
+- [WR stint execution smoke: 3 verified cells](evidence/stint-wr-smoke.md).
+  Per-column containment and unchanged actual attention inputs/scaler,
+  checkpoint and predictions pass. This single seed is not a development gate.
+
+The JSON siblings retain full precision, paired seasonal results, uncertainty,
+selected checkpoints, all source/image pins and immutable object proofs.
+No confirmation, production default change or merge is authorized by these
+results. The 2022/2023 weekly-reference cohort remains explicitly unavailable.

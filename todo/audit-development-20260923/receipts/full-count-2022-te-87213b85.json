@@ -1,0 +1,64 @@
+{
+  "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/full-count-2022-te-87213b85/run.json",
+  "sha256": "21ea7c7bad0124d298be5df9c574a9ba00a64d5b29f81a76b6f98d438d4d3039",
+  "manifest": {
+    "schema_version": 1,
+    "spec": "src.tuning.ab_audit_count_development",
+    "positions": [
+      "TE"
+    ],
+    "seeds": [
+      42,
+      123,
+      7
+    ],
+    "only": [
+      "baseline_rep",
+      "count_precision"
+    ],
+    "variants": [
+      "baseline",
+      "baseline_rep",
+      "count_precision"
+    ],
+    "baseline": "baseline",
+    "image_sha": "87213b853c4d724f6574dccddbb62dfcb6601cd1",
+    "image_digest": "sha256:1efe7ddca433f36395d500046a042e3d4854ca24cbccc99299277792aea41fbc",
+    "data_prefix": "data",
+    "job_definition": "arn:aws:batch:us-east-1:432981645194:job-definition/ff-ab-job:43",
+    "cuda_graph": "auto",
+    "extra_env": {
+      "FF_AUDIT_ORIGIN": "2022",
+      "FF_AMP_DTYPE": "fp32",
+      "FF_CUDA_GRAPH_FULL": "1",
+      "FF_FEATURE_CACHE_DISABLE": "1",
+      "FF_NN_FIXED_EPOCHS": "0"
+    },
+    "jobs": {
+      "TE": "0d44bb72-451e-4172-9a81-9a91df2011af"
+    },
+    "created_at": "2026-09-23T06:27:44.300666+00:00"
+  },
+  "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+  "purchase_model": "SPOT",
+  "queue": "ff-training-queue",
+  "smoke_gate": "verified944a34da",
+  "verified_submission": {
+    "job_id": "0d44bb72-451e-4172-9a81-9a91df2011af",
+    "job_queue": "arn:aws:batch:us-east-1:432981645194:job-queue/ff-training-queue",
+    "job_definition": "arn:aws:batch:us-east-1:432981645194:job-definition/ff-ab-job:43",
+    "container_image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/ff-training:87213b853c4d724f6574dccddbb62dfcb6601cd1@sha256:1efe7ddca433f36395d500046a042e3d4854ca24cbccc99299277792aea41fbc",
+    "created_at": 1790144864351,
+    "environment": {
+      "FF_TRAIN_GIT_SHA": "87213b853c4d724f6574dccddbb62dfcb6601cd1",
+      "FF_DATA_RELEASE": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+      "FF_AMP_DTYPE": "fp32",
+      "FF_AUDIT_ORIGIN": "2022",
+      "FF_CUDA_GRAPH_FULL": "1",
+      "FF_FEATURE_CACHE_DISABLE": "1",
+      "FF_NN_FIXED_EPOCHS": "0"
+    }
+  },
+  "terminal_status": "SUCCEEDED",
+  "terminal_exit_code": 0
+}
