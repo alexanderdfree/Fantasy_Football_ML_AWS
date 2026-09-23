@@ -111,14 +111,22 @@ def test_test_process_cannot_inherit_production_credentials_or_publish(tmp_path)
         "FF_DEVICE": "cpu",
         "FF_AMP_DTYPE": "fp32",
     }
-    env = smoke.isolated_test_environment(parent, tmp_path, "diagnostics/cv-smoke/test")
+    env = smoke.isolated_test_environment(
+        parent, tmp_path, "diagnostics/cv-smoke/test", target="UNIT"
+    )
     assert parent["AWS_ACCESS_KEY_ID"] == "real"
     assert env["AWS_ACCESS_KEY_ID"] == env["AWS_SECRET_ACCESS_KEY"] == "testing"
     assert "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" not in env
     assert "AWS_WEB_IDENTITY_TOKEN_FILE" not in env and "AWS_PROFILE" not in env
     assert env["AWS_EC2_METADATA_DISABLED"] == "true"
-    assert env["FF_MODEL_S3_BUCKET"] == env["FF_S3_BUCKET"] == env["S3_BUCKET"] == ""
+    assert env["FF_MODEL_S3_BUCKET"] == ""
+    assert "FF_S3_BUCKET" not in env and "S3_BUCKET" not in env
+    assert "FF_MODEL_S3_PREFIX" not in env
     assert env["FF_BENCHMARK_SYNC_INTERVAL_S"] == "0"
+    cv_env = smoke.isolated_test_environment(
+        parent, tmp_path, "diagnostics/cv-smoke/test", target="WR"
+    )
+    assert cv_env["FF_MODEL_S3_PREFIX"] == "diagnostics/cv-smoke/test/unpublished-models"
 
 
 def test_workflow_exports_only_tracked_files_and_sanitized_git(tmp_path):

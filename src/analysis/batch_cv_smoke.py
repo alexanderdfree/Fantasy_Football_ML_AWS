@@ -94,10 +94,19 @@ def suite_passed(target: str, exit_code: int, counts: dict[str, int]) -> bool:
     return counts.get("tests") == EXPECTED_TESTS[target] and counts.get("skipped") == 0
 
 
-def isolated_test_environment(parent: dict[str, str], output: Path, prefix: str) -> dict[str, str]:
+def isolated_test_environment(
+    parent: dict[str, str], output: Path, prefix: str, *, target: str
+) -> dict[str, str]:
     """Keep AWS credentials exclusively in the parent hydration/evidence process."""
     env = {name: value for name, value in parent.items() if not name.startswith("AWS_")}
-    for name in ("ALLOW_SKIP_E2E", "FF_CACHE_DIR", "PYTEST_ADDOPTS"):
+    for name in (
+        "ALLOW_SKIP_E2E",
+        "FF_CACHE_DIR",
+        "PYTEST_ADDOPTS",
+        "FF_S3_BUCKET",
+        "S3_BUCKET",
+        "FF_MODEL_S3_PREFIX",
+    ):
         env.pop(name, None)
     empty_config = output / "empty-aws-config"
     empty_config.write_text("")
@@ -113,15 +122,14 @@ def isolated_test_environment(parent: dict[str, str], output: Path, prefix: str)
             "AWS_DEFAULT_REGION": "us-east-1",
             "AWS_REGION": "us-east-1",
             "FF_MODEL_S3_BUCKET": "",
-            "FF_S3_BUCKET": "",
-            "S3_BUCKET": "",
             "FF_BENCHMARK_SYNC_INTERVAL_S": "0",
-            "FF_MODEL_S3_PREFIX": f"{prefix}/unpublished-models",
             "MODEL_OUTPUT_DIR": str(output / "models"),
             "TMPDIR": str(output),
             "PYTHONPATH": str(ROOT),
         }
     )
+    if target != "UNIT":
+        env["FF_MODEL_S3_PREFIX"] = f"{prefix}/unpublished-models"
     for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         env[name] = "1"
     return env
@@ -183,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="cv-smoke-") as tmp:
         output = Path(tmp)
         log, junit = output / "pytest.log", output / "junit.xml"
-        env = isolated_test_environment(dict(os.environ), output, prefix)
+        env = isolated_test_environment(dict(os.environ), output, prefix, target=args.position)
         env["FF_DATA_RELEASE"] = args.data_release
         with log.open("w") as stream:
             result = subprocess.run(
