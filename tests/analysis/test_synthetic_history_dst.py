@@ -488,6 +488,10 @@ def test_cli_round_trip_with_the_opponent_frame(tmp_path, dst_schedules, capsys)
 def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_schedules):
     from types import SimpleNamespace
 
+    # get_config lazily imports the native runner and binds its data/feature
+    # functions. Resolve those real callbacks before installing export doubles
+    # so the cached runner cannot retain a no-op after monkeypatch teardown.
+    sources.get_config("DST")
     source, weekly = dst_rows().assign(headshot_url="https://logo"), opponent_weekly_rows()
     calls = []
     monkeypatch.setattr("src.dst.data.build_data", lambda **kwargs: calls.append(kwargs) or source)
