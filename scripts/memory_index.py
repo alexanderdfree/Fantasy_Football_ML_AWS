@@ -132,13 +132,16 @@ def _line_parts(path):
 
 def _fit(prefix, hook, budget):
     """Render ``prefix + hook`` with the hook truncated (… if cut) so the UTF-8 size is
-    <= ``budget`` bytes. The prefix is never cut: a hook-less line is emitted verbatim."""
-    if not hook or len((prefix + hook).encode("utf-8")) <= budget:
+    <= ``budget`` bytes when possible. Preserve the prefix and any hook no longer than
+    the truncation marker, even when that fixed content exceeds the budget."""
+    hook_bytes = hook.encode("utf-8")
+    marker_bytes = len("…".encode())
+    if len(hook_bytes) <= marker_bytes or len((prefix + hook).encode("utf-8")) <= budget:
         return prefix + hook
-    avail = budget - len(prefix.encode("utf-8")) - len("…".encode())
+    avail = budget - len(prefix.encode("utf-8")) - marker_bytes
     if avail <= 0:
         return f"{prefix}…"
-    cut = hook.encode("utf-8")[:avail].decode("utf-8", "ignore").rstrip()
+    cut = hook_bytes[:avail].decode("utf-8", "ignore").rstrip()
     return f"{prefix}{cut}…"
 
 
@@ -179,8 +182,8 @@ def generate_index(memdir):
     lines = full
     if _total_bytes(full) > target:
         # Binary-search the largest cap L whose rendering fits. Rendering is monotone in L. At
-        # L=0 every hook collapses to "…" behind its link prefix; if even that does not fit the
-        # index has too many entries for any trim to save and we say so below.
+        # L=0 long hooks collapse to "…" behind their link prefixes; hooks no longer than
+        # the marker stay intact. If even that does not fit, trimming cannot save the index.
         lo, hi = 0, max((len(ln.encode("utf-8")) for ln in full), default=0)
         if _total_bytes(_render(parts, lo)) <= target:
             while lo < hi:

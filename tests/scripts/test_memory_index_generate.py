@@ -167,6 +167,37 @@ def test_over_cap_curated_lines_are_trimmed_not_dropped(tmp_path: Path) -> None:
     assert not any(">= cap" in w for w in warnings)  # it fit, so not the hopeless case
 
 
+@pytest.mark.parametrize("short_hook", ["x", "xy", "é"])
+def test_short_hooks_do_not_make_a_feasible_index_exceed_the_cap(
+    tmp_path: Path, short_hook: str
+) -> None:
+    # The minimum rendering must not enlarge a one- or two-byte hook into the
+    # three-byte ellipsis and falsely reject an index that can fit by trimming
+    # its only long hook. Include a multibyte character to pin byte accounting.
+    hook_bytes = len(short_hook.encode("utf-8"))
+    prefix_bytes = 129 - hook_bytes
+    original = []
+    for i in range(190):
+        slug = f"topic_{i:03d}.md"
+        title_bytes = prefix_bytes - len(f"- []({slug}) — ".encode())
+        prefix = f"- [{'T' * title_bytes}]({slug}) — "
+        assert len(prefix.encode("utf-8")) == prefix_bytes
+        hook = short_hook if i < 189 else "z" * (100 + hook_bytes)
+        original.append(prefix + hook)
+        _write(tmp_path, slug, index_line=(prefix + hook)[2:])
+    assert len(("\n".join(original) + "\n").encode("utf-8")) == 24800
+
+    text, warnings = memory_index.generate_index(str(tmp_path))
+
+    assert len(text.encode("utf-8")) <= memory_index.CAP_BYTES - memory_index.CAP_MARGIN_BYTES
+    lines = text.splitlines()
+    assert len(lines) == 190
+    assert lines[:189] == original[:189]
+    assert lines[-1].endswith("…")
+    assert any("1 index line(s) trimmed" in warning for warning in warnings)
+    assert not any(">= cap" in warning for warning in warnings)
+
+
 def test_generate_is_idempotent_when_trimming(tmp_path: Path) -> None:
     for i in range(200):
         _write(tmp_path, f"m{i:03d}.md", index_line=f"[M{i}](m{i:03d}.md) — " + "y" * 150)
