@@ -454,13 +454,9 @@ def validate_opponent_per_game(
         raise ValueError("opponent per-game stream columns must be observed and finite")
     if frame.empty:
         raise ValueError("opponent per-game frame is empty")
-    zeroed = [column for column in columns if not frame[column].any()]
-    if zeroed:
-        raise ValueError(
-            f"opponent per-game columns {zeroed} are zero everywhere; the production "
-            "builder zero-fills a missing source (for example the schedules cache), so "
-            "rebuild the frame with every input present"
-        )
+    # Observed zeros are legitimate, including turnover-free opponent windows.
+    # Missing sources are identified by schema, finite-value and coverage
+    # checks, not by whether a measured column happens to contain an event.
     for name, violated in schema.opponent_checks:
         if violated(frame).any():
             raise ValueError(

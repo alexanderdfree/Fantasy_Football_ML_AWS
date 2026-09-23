@@ -252,16 +252,20 @@ families never read the frame); the builder reads the schedules cache for
 the opponent's points, so run the replay with the same `FF_CACHE_DIR` the
 export used, or the control fails loudly, and the replay manifest pins the
 schedules-cache digest it rebuilt from. Generation refuses an empty per-game
-frame, a stream column that is zero everywhere (the builder's fallback for a
-missing source), a game recorded with zero points but touchdowns (the builder's
+frame, missing columns or non-finite observations, a game recorded with zero
+points but touchdowns (the builder's
 fill for a week absent from the schedules cache) and a forecast opponent-season
 absent from the frame, so a
 broken export cannot become silent zero padding; an opponent with no game
-before the forecast week is legitimate and recorded per case. Because DST
+before the forecast week is legitimate and recorded per case. Observed zero
+counts, including opponent windows with no interceptions or lost fumbles, are
+preserved. Because DST
 points are tiered, no per-unit scoring weights exist and the transform report
-records none. The exporter refuses to run when a raw cache is missing (the
-team-stats loader would otherwise fetch it), refuses an export during which a
-loader rewrote a cache (a stale-schema refresh) and drops the network-fetched
+records none. The exporter refuses to run when a raw cache is missing or the
+team-stats cache lacks the native loader's schema marker. It applies the existing
+cache-only source boundary during preparation, including for unsealed caches,
+and rejects concurrent raw-cache changes before publishing. It drops the
+network-fetched
 team-logo column so the export digest does not depend on connectivity. A checkpoint
 without an opponent stream cannot replay a DST cohort and vice versa. No
 DST relation holds by construction (fumble recoveries are not bounded by
@@ -404,3 +408,6 @@ shared validator are the extension points):
   exports it; the replay streams it to the checkpoint and its identity control
   rebuilds it from the weekly slice; the exporter builds DST from the raw
   caches; two DST recipes ship.
+- 2026-09-23: DST export checks team-cache compatibility before the native build
+  and enforces cache-only source reads throughout preparation; valid observed
+  zero turnover histories are preserved instead of treated as missing data.
