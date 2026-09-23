@@ -100,6 +100,28 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Export tracked diagnostic fixtures without checkout credentials
+        run: |
+          set -euo pipefail
+          mkdir .diagnostic-checkout
+          git archive --format=tar HEAD | tar -x -C .diagnostic-checkout
+          diagnostic_git_dir=$(git rev-parse --git-dir)
+          mkdir .diagnostic-checkout/.git
+          for part in objects refs HEAD packed-refs shallow; do
+            if [ -e "$diagnostic_git_dir/$part" ]; then
+              cp -a "$diagnostic_git_dir/$part" .diagnostic-checkout/.git/
+            fi
+          done
+          # No remotes/auth headers, hooks, logs, index, alternates or user files.
+          rm -f .diagnostic-checkout/.git/objects/info/alternates
+          git -C .diagnostic-checkout read-tree HEAD
+          test "$(git -C .diagnostic-checkout rev-parse HEAD)" = "$(git rev-parse HEAD)"
+          test ! -e .diagnostic-checkout/.git/config
 
       - name: Configure AWS credentials
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.

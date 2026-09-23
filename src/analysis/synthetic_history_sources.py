@@ -40,6 +40,7 @@ from src.analysis.synthetic_history import (
 from src.analysis.synthetic_history_schema import POSITION_HISTORY_SCHEMAS
 from src.config import CACHE_DIR, SEASONS, SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
 from src.data.external_sources import _seasons_cache_signature
+from src.data.release import require_cached_sources
 from src.features.engineer import build_opp_offense_per_game_df
 from src.prediction.bundle import file_digest
 from src.shared.pipeline import _prepare_position_data, _read_split
@@ -127,32 +128,43 @@ def export_dst_source():
             f"DST raw caches missing under {raw_data_dir(CACHE_DIR)}: {missing_caches}; "
             "hydrate the data release first"
         )
+    team_cache = caches["team_stats"]
+    if "_team_stats_schema_v2" not in pq.read_schema(team_cache).names:
+        raise ValueError(
+            "DST team_stats cache is incompatible with the native loader; "
+            "hydrate a current data release before exporting"
+        )
     digests = {name: file_digest(path) for name, path in caches.items()}
-    frame = compute_targets(build_data(allow_scoring_fetch=False))
+    # An unsealed cache directory must obey the same source-fetch boundary as
+    # a release. A later digest check cannot prevent a refresh, and a partial
+    # fetch may return new inputs without changing the old cache at all.
+    with require_cached_sources(team_cache.parent):
+        frame = compute_targets(build_data(allow_scoring_fetch=False))
+        # The team-logo column feeds nothing here and would make the exported
+        # values depend on connectivity.
+        frame = frame.drop(columns=[c for c in ("headshot_url",) if c in frame.columns])
+        compute_features(frame)
+        train = frame[frame["season"].isin(TRAIN_SEASONS)].copy()
+        val = frame[frame["season"].isin(VAL_SEASONS)].copy()
+        prepared = _check_prepared(
+            _prepare_position_data("DST", get_config("DST"), train, val), "DST"
+        )
+        weekly_path = caches["weekly"]
+        missing = sorted(set(DST_WEEKLY_COLUMNS) - set(pq.read_schema(weekly_path).names))
+        if missing:
+            raise ValueError(f"weekly cache lacks the opponent-offense columns: {missing}")
+        weekly = validate_opponent_weekly(
+            pd.read_parquet(weekly_path, columns=list(DST_WEEKLY_COLUMNS))
+        )
+        per_game = validate_opponent_per_game(
+            build_opp_offense_per_game_df(weekly), POSITION_HISTORY_SCHEMAS["DST"]
+        )
     rewritten = sorted(name for name, path in caches.items() if file_digest(path) != digests[name])
     if rewritten:
-        # A loader refreshed a stale cache from the network; the export never fetches.
         raise ValueError(
-            f"raw caches changed during the export: {rewritten}; a loader refreshed a "
-            "stale cache, so hydrate a current data release and rerun"
+            f"raw caches changed during the export: {rewritten}; "
+            "hydrate a current data release and rerun without concurrent cache writers"
         )
-    # The team-logo column is fetched from the network when reachable; it feeds
-    # nothing here and would make the export digest depend on connectivity.
-    frame = frame.drop(columns=[c for c in ("headshot_url",) if c in frame.columns])
-    compute_features(frame)
-    train = frame[frame["season"].isin(TRAIN_SEASONS)].copy()
-    val = frame[frame["season"].isin(VAL_SEASONS)].copy()
-    prepared = _check_prepared(_prepare_position_data("DST", get_config("DST"), train, val), "DST")
-    weekly_path = caches["weekly"]
-    missing = sorted(set(DST_WEEKLY_COLUMNS) - set(pq.read_schema(weekly_path).names))
-    if missing:
-        raise ValueError(f"weekly cache lacks the opponent-offense columns: {missing}")
-    weekly = validate_opponent_weekly(
-        pd.read_parquet(weekly_path, columns=list(DST_WEEKLY_COLUMNS))
-    )
-    per_game = validate_opponent_per_game(
-        build_opp_offense_per_game_df(weekly), POSITION_HISTORY_SCHEMAS["DST"]
-    )
     return prepared, per_game, weekly, digests
 
 
@@ -214,6 +226,7 @@ def _export(position: str, splits_dir: Path) -> tuple[dict[str, pd.DataFrame], d
             "shared/weather_features.py",
             "data/dst_scoring.py",
             "data/loader.py",
+            "data/release.py",
         ),
     )
     manifest.update(

@@ -26,10 +26,18 @@ import os
 import re
 import sys
 
-# ~24.4 KiB: above this the auto-loader truncates MEMORY.md (dropping the NEWEST entries).
+# ~24.4 KiB: above this the auto-loader truncates MEMORY.md. The index is slug-sorted, so an
+# over-cap file loses its alphabetical TAIL (the project_*/user_* entries), not its newest
+# lines -- which is why generate_index shortens hooks to stay under CAP_BYTES (see its
+# docstring). Only a hookless curated line (no " — " after its link) cannot be shortened; if
+# such lines alone exceed the cap the generator emits them and warns instead.
 CAP_BYTES = 24985
+# Headroom kept under the hard cap. The byte accounting in generate_index is exact (UTF-8 +
+# newline per line), so this only absorbs loader-side slack, not estimation error.
+CAP_MARGIN_BYTES = 256
 INDEX = "MEMORY.md"
 _LINK_RE = re.compile(r"\]\(([^)]+\.md)\)")  # slug from "...](slug.md)..."
+_HOOK_SEP = " — "  # "[title](slug.md) — hook": the link is fixed, the hook is trimmable
 
 
 def split_frontmatter(text):
@@ -85,15 +93,24 @@ def read_key(fm_lines, key):
 def _line_parts(path):
     """Return (prefix, hook, fell_back, warning); the rendered index line is ``prefix + hook``.
 
-    For an `index_line` file the whole curated line is the hook (prefix ``"- "``). For a fallback
-    the prefix is the ``"- [title](slug) — "`` scaffold and the hook is the *untruncated*
-    description (or first body line) — generate_index trims it to a cap-aware budget.
+    The prefix is the ``"- [title](slug) — "`` scaffold and the hook is the *untruncated* text
+    after it — generate_index trims hooks to a cap-aware budget but never touches a prefix, so
+    the ``[title](slug.md)`` link the recall layer resolves survives any trim. For an
+    `index_line` file the curated line is split at its first hook separator after the link; a
+    curated line with no separator is all prefix (never trimmed). For a fallback the hook is the
+    description (or first body line).
     """
     with open(path, encoding="utf-8") as fh:
         fm, body = split_frontmatter(fh.read())
     val = read_key(fm, "index_line")
     if val:
-        return "- ", " ".join(val.split()), False, None
+        line = " ".join(val.split())
+        link = _LINK_RE.search(line)
+        sep = line.find(_HOOK_SEP, link.end() if link else 0)
+        if sep < 0:
+            return "- " + line, "", False, None
+        cut = sep + len(_HOOK_SEP)
+        return "- " + line[:cut], line[cut:], False, None
     slug = os.path.basename(path)
     title = read_key(fm, "name") or slug[:-3]
     desc = read_key(fm, "description")
@@ -114,25 +131,39 @@ def _line_parts(path):
 
 
 def _fit(prefix, hook, budget):
-    """Render ``prefix + hook`` truncated so its UTF-8 size is <= ``budget`` bytes (… if cut)."""
-    if len((prefix + hook).encode("utf-8")) <= budget:
+    """Render ``prefix + hook`` with the hook truncated (… if cut) so the UTF-8 size is
+    <= ``budget`` bytes when possible. Preserve the prefix and any hook no longer than
+    the truncation marker, even when that fixed content exceeds the budget."""
+    hook_bytes = hook.encode("utf-8")
+    marker_bytes = len("…".encode())
+    if len(hook_bytes) <= marker_bytes or len((prefix + hook).encode("utf-8")) <= budget:
         return prefix + hook
-    avail = budget - len(prefix.encode("utf-8")) - len("…".encode())
+    avail = budget - len(prefix.encode("utf-8")) - marker_bytes
     if avail <= 0:
         return f"{prefix}…"
-    cut = hook.encode("utf-8")[:avail].decode("utf-8", "ignore").rstrip()
+    cut = hook_bytes[:avail].decode("utf-8", "ignore").rstrip()
     return f"{prefix}{cut}…"
+
+
+def _render(parts, cap):
+    return [_fit(p, h, cap) for p, h, _fb in parts]
+
+
+def _total_bytes(lines):
+    return sum(len(ln.encode("utf-8")) + 1 for ln in lines)  # + newline per line
 
 
 def generate_index(memdir):
     """Rebuild the index text from every topic file. Returns (text, warnings).
 
-    Deterministic (slug-sorted) and idempotent. Curated `index_line` lines are emitted in full;
-    fallback (description/body) lines are trimmed to a DYNAMIC per-line budget so the total can
-    never exceed the auto-load cap. A bulk-fallback state (e.g. mid-migration, when a concurrent
-    pull has stripped `index_line` from many files) thus degrades to a short-but-complete index
-    instead of an over-cap one the loader would silently truncate. Still warns near/over the cap
-    (the over case means too many *curated* lines — those are never trimmed; prune instead).
+    Deterministic (slug-sorted) and idempotent. When every line fits, curated `index_line` lines
+    are emitted verbatim. When the full index would exceed the auto-load cap, every line — curated
+    and fallback alike — is rendered under the LARGEST uniform per-line byte cap that fits
+    (water-fill): short lines stay byte-identical, only the longest hooks are shortened with ``…``,
+    and the ``[title](slug.md)`` link prefix is never cut. The generator, not the loader, therefore
+    decides what gets shortened; the loader's own truncation would silently drop the alphabetical
+    tail (project_*/user_*), which is never acceptable. Trimming a *curated* line is reported so the
+    topic files get pruned/consolidated — that, not a bigger cap, is the fix.
     """
     files = sorted(
         f
@@ -146,24 +177,37 @@ def generate_index(memdir):
         if warn:
             warnings.append(warn)
 
-    def nbytes(prefix, hook):
-        return len((prefix + hook + "\n").encode("utf-8"))
-
-    target = int(CAP_BYTES * 0.93)  # leave margin below the hard cap (newlines + safety)
-    fixed = sum(nbytes(p, h) for p, h, fb in parts if not fb)
-    fallback = [(p, h) for p, h, fb in parts if fb]
-    budget = ((target - fixed) // len(fallback)) if fallback else 0  # bytes per fallback line
-
-    lines = [(_fit(p, h, max(1, budget)) if fb else p + h) for p, h, fb in parts]
+    target = CAP_BYTES - CAP_MARGIN_BYTES
+    full = [p + h for p, h, _fb in parts]
+    lines = full
+    if _total_bytes(full) > target:
+        # Binary-search the largest cap L whose rendering fits. Rendering is monotone in L. At
+        # L=0 long hooks collapse to "…" behind their link prefixes; hooks no longer than
+        # the marker stay intact. If even that does not fit, trimming cannot save the index.
+        lo, hi = 0, max((len(ln.encode("utf-8")) for ln in full), default=0)
+        if _total_bytes(_render(parts, lo)) <= target:
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if _total_bytes(_render(parts, mid)) <= target:
+                    lo = mid
+                else:
+                    hi = mid - 1
+        lines = _render(parts, lo)
+        trimmed = [i for i in range(len(parts)) if lines[i] != full[i]]
+        n_curated = sum(1 for i in trimmed if not parts[i][2])
+        if trimmed:
+            warnings.append(
+                f"{len(trimmed)} index line(s) trimmed to {lo} B/line to fit the {CAP_BYTES} B "
+                f"cap ({n_curated} curated) -- prune/consolidate topic files"
+            )
     out = "\n".join(lines) + ("\n" if lines else "")
 
     size = len(out.encode("utf-8"))
     if size >= CAP_BYTES:
         warnings.append(
-            f"index {size} B >= cap {CAP_BYTES} B -- too many curated entries; prune/consolidate"
+            f"index {size} B >= cap {CAP_BYTES} B even with every hook trimmed -- "
+            "too many entries; prune now"
         )
-    elif size >= int(CAP_BYTES * 0.92):
-        warnings.append(f"index {size} B is near the {CAP_BYTES} B cap ({CAP_BYTES - size} B left)")
     return out, warnings
 
 
@@ -197,7 +241,11 @@ def backfill(memdir):
     """Write each topic file's current ``MEMORY.md`` line into its frontmatter ``index_line``.
 
     Source of truth is the existing curated index. Returns (changed, missing) basenames;
-    ``missing`` = files with no current index line (orphans) -> left untouched + reported.
+    ``missing`` = files with no USABLE index line -> left untouched + reported: orphans (no line
+    at all) and lines the generator shortened — writing a trimmed line back would permanently
+    lose the curated hook text. A line is "shortened" when it ends in ``…`` AND differs from
+    what the file itself renders in full; a verbatim match (a hook that genuinely ends in an
+    ellipsis) is usable, and writing it back is idempotent.
     """
     with open(os.path.join(memdir, INDEX), encoding="utf-8") as fh:
         index_text = fh.read()
@@ -219,6 +267,11 @@ def backfill(memdir):
         if f not in slug_to_line:
             missing.append(f)
             continue
+        if slug_to_line[f].endswith("…"):
+            prefix, hook, _fb, _warn = _line_parts(path)
+            if slug_to_line[f] != (prefix + hook)[2:]:  # a shortened rendering, not the full line
+                missing.append(f)
+                continue
         block = ["index_line: |-", f"  {slug_to_line[f]}"]
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
@@ -258,6 +311,11 @@ def main(argv):
         return 1
     if cmd == "generate":
         text, warnings = generate_index(memdir)
+        # The cap accounting counts one byte per newline; stop text-mode stdout from
+        # translating "\n" to "\r\n" on native Windows (same guard as agent-hooks-lib.sh).
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(newline="\n")
         sys.stdout.write(text)
         for w in warnings:
             sys.stderr.write(f"[memory-index] WARN: {w}\n")
@@ -265,7 +323,10 @@ def main(argv):
     changed, missing = backfill(memdir)
     sys.stderr.write(f"[memory-index] backfill: wrote index_line into {len(changed)} file(s)\n")
     for m in missing:
-        sys.stderr.write(f"[memory-index] WARN: {m} not in {INDEX}, no index_line written\n")
+        sys.stderr.write(
+            f"[memory-index] WARN: {m}: no usable line in {INDEX} (missing or trimmed), "
+            "no index_line written\n"
+        )
     return 0
 
 

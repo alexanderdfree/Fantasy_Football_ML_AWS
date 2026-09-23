@@ -33,7 +33,7 @@ FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}nvidia/cuda:13.0.3-base-ubuntu
 # a requirements change doesn't invalidate it.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3 python3-dev g++ libgomp1 ca-certificates && \
+        python3 python3-dev python3-venv g++ libgomp1 ca-certificates git jq curl nodejs npm && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
@@ -68,19 +68,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # loading is validated by the post-build Batch smoke run (docs/batch_design.md).
 RUN python -c "import torch, lightgbm, sklearn, scipy, pandas, numpy, pyarrow; print('import smoke OK; torch', torch.__version__)"
 
-# All Python source lives under src/. .dockerignore handles coarse exclusions
-# (Flask UI, scratch scripts, tests); src/ is the only Python copy needed.
-COPY src/ src/
-
-# Disposable diagnostic branch only: retain the training dependency versions
-# while adding the canonical pytest tools needed by the RB/WR CV fixtures.
-COPY requirements-dev.txt pyproject.toml conftest.py ./
-COPY tests/ tests/
-COPY scripts/pytest-fair.sh scripts/pytest-fair.sh
+# Disposable integration image only: the workflow exports tracked fixtures and
+# sanitized Git metadata, excluding credentials and ignored workspace files.
+COPY .diagnostic-checkout/ ./
+# Full canonical dev dependencies, using the matching CUDA Torch variant.
+# Freeze every installed training package so adding test tools cannot drift it.
 RUN uv pip freeze --system > /tmp/training-constraints.txt && \
-    python -c "from pathlib import Path; Path('/tmp/pytest-requirements.txt').write_text('\n'.join(line for line in Path('requirements-dev.txt').read_text().splitlines() if line.startswith('pytest')) + '\n')" && \
     uv pip install --system --break-system-packages \
-      --constraint /tmp/training-constraints.txt --requirement /tmp/pytest-requirements.txt && \
+      --constraint /tmp/training-constraints.txt --requirement requirements-gpu.txt && \
     uv pip freeze --system > /opt/ml/test-environment.txt
 
 # Runtime job variables cannot relabel the code actually copied into this image.

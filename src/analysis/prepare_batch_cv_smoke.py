@@ -54,7 +54,7 @@ def payloads(template: dict, image: str, release: str, run_id: str) -> dict:
         if key in template:
             definition[key] = template[key]
     result = {"definition.json": definition}
-    for position in ("WR", "RB", "DST"):
+    for position in ("WR", "RB", "DST", "UNIT"):
         result[f"submit-{position.lower()}.json"] = {
             "jobName": f"cv-smoke-{position.lower()}-{run_id}",
             "jobQueue": "ff-cpu-training-queue",
@@ -62,7 +62,7 @@ def payloads(template: dict, image: str, release: str, run_id: str) -> dict:
             # it intentionally cannot submit against an unpinned latest name.
             "jobDefinition": "REPLACE_WITH_REGISTERED_DIAGNOSTIC_ARN",
             "retryStrategy": {"attempts": 1},
-            "timeout": {"attemptDurationSeconds": 1800},
+            "timeout": {"attemptDurationSeconds": 7200 if position == "UNIT" else 1800},
             "containerOverrides": {
                 "vcpus": 4,
                 "memory": 7500,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.metadata
 import json
 import os
 import re
@@ -33,6 +34,7 @@ TESTS = {
         "tests/analysis/test_synthetic_history_dst.py::test_replay_refuses_mismatched_streams",
         "tests/analysis/test_synthetic_history_dst.py::test_cli_round_trip_with_the_opponent_frame",
     ],
+    "UNIT": ["-m", "unit"],
 }
 EXPECTED_TESTS = {"WR": 14, "RB": 11, "DST": 3}
 
@@ -55,6 +57,9 @@ def validate_source(root: Path, source: dict) -> None:
     for name, expected in source["test_source_files"].items():
         if hashlib.sha256((root / name).read_bytes()).hexdigest() != expected:
             raise ValueError(f"Test source checksum mismatch: {name}")
+    for name in source.get("absent_source_files", []):
+        if (root / name).exists():
+            raise ValueError(f"Unexpected removed source file: {name}")
     current = without_tiny_hash((root / "src/wr/config.py").read_text())
     if current != source["baseline_wr_without_tiny_sha256"]:
         raise ValueError("WR production config changed beyond CONFIG_TINY")
@@ -78,6 +83,48 @@ def junit_counts(path: Path) -> dict[str, int]:
         "errors": sum(c.find("error") is not None for c in cases),
         "skipped": sum(c.find("skipped") is not None for c in cases),
     }
+
+
+def suite_passed(target: str, exit_code: int, counts: dict[str, int]) -> bool:
+    if exit_code or counts.get("errors", 1) or counts.get("failures", 1):
+        return False
+    if target == "UNIT":
+        # Legitimate platform skips remain visible; empty/all-skipped does not pass.
+        return counts.get("tests", 0) > counts.get("skipped", 0)
+    return counts.get("tests") == EXPECTED_TESTS[target] and counts.get("skipped") == 0
+
+
+def isolated_test_environment(parent: dict[str, str], output: Path, prefix: str) -> dict[str, str]:
+    """Keep AWS credentials exclusively in the parent hydration/evidence process."""
+    env = {name: value for name, value in parent.items() if not name.startswith("AWS_")}
+    for name in ("ALLOW_SKIP_E2E", "FF_CACHE_DIR", "PYTEST_ADDOPTS"):
+        env.pop(name, None)
+    empty_config = output / "empty-aws-config"
+    empty_config.write_text("")
+    env.update(
+        {
+            "AWS_ACCESS_KEY_ID": "testing",
+            "AWS_SECRET_ACCESS_KEY": "testing",
+            "AWS_SESSION_TOKEN": "testing",
+            "AWS_EC2_METADATA_DISABLED": "true",
+            "AWS_SHARED_CREDENTIALS_FILE": str(empty_config),
+            "AWS_CONFIG_FILE": str(empty_config),
+            "BOTO_CONFIG": str(empty_config),
+            "AWS_DEFAULT_REGION": "us-east-1",
+            "AWS_REGION": "us-east-1",
+            "FF_MODEL_S3_BUCKET": "",
+            "FF_S3_BUCKET": "",
+            "S3_BUCKET": "",
+            "FF_BENCHMARK_SYNC_INTERVAL_S": "0",
+            "FF_MODEL_S3_PREFIX": f"{prefix}/unpublished-models",
+            "MODEL_OUTPUT_DIR": str(output / "models"),
+            "TMPDIR": str(output),
+            "PYTHONPATH": str(ROOT),
+        }
+    )
+    for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+        env[name] = "1"
+    return env
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -136,18 +183,8 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="cv-smoke-") as tmp:
         output = Path(tmp)
         log, junit = output / "pytest.log", output / "junit.xml"
-        env = dict(os.environ)
-        env.pop("ALLOW_SKIP_E2E", None)
-        env.pop("FF_CACHE_DIR", None)  # root conftest provides a disposable cache
+        env = isolated_test_environment(dict(os.environ), output, prefix)
         env["FF_DATA_RELEASE"] = args.data_release
-        # No publisher is called. These defensive namespaces also keep any
-        # incidental writer away from the production models/history prefixes.
-        env["FF_MODEL_S3_PREFIX"] = f"{prefix}/unpublished-models"
-        env["MODEL_OUTPUT_DIR"] = str(output / "models")
-        env["TMPDIR"] = str(output)
-        env["PYTHONPATH"] = str(ROOT)
-        for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
-            env[name] = "1"
         with log.open("w") as stream:
             result = subprocess.run(
                 [*command, f"--basetemp={output / 'pytest'}", f"--junitxml={junit}"],
@@ -158,12 +195,7 @@ def main(argv: list[str] | None = None) -> int:
                 check=False,
             )
         counts = junit_counts(junit) if junit.exists() else {}
-        passed = result.returncode == 0 and counts == {
-            "tests": EXPECTED_TESTS[args.position],
-            "failures": 0,
-            "errors": 0,
-            "skipped": 0,
-        }
+        passed = suite_passed(args.position, result.returncode, counts)
         receipt = {
             "schema": "batch-cv-fixture-smoke/v1",
             "image_source_sha": built_sha,
@@ -172,7 +204,18 @@ def main(argv: list[str] | None = None) -> int:
             "position": args.position,
             "job_id": job,
             "attempt": attempt,
-            "execution": {"device": "cpu", "dtype": "fp32", "purpose": "fixture-contract-only"},
+            "execution": {
+                "device": "cpu",
+                "dtype": "fp32",
+                "purpose": "full-unit-gate" if args.position == "UNIT" else "fixture-contract-only",
+                "test_aws_credentials": "dummy",
+                "model_history_publishing": "disabled",
+            },
+            "dependency_versions": {
+                dist.metadata["Name"]: dist.version
+                for dist in importlib.metadata.distributions()
+                if dist.metadata["Name"]
+            },
             "pytest_exit_code": result.returncode,
             "counts": counts,
             "passed": passed,

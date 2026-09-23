@@ -86,3 +86,84 @@ def test_prepared_jobs_keep_production_definition_untouched():
     assert result["submit-rb.json"]["containerOverrides"]["command"][1] == "RB"
     assert result["submit-dst.json"]["containerOverrides"]["command"][1] == "DST"
     assert smoke.EXPECTED_TESTS == {"WR": 14, "RB": 11, "DST": 3}
+    assert result["submit-unit.json"]["timeout"]["attemptDurationSeconds"] == 7200
+
+
+def test_unit_allows_platform_skips_but_not_empty_or_failed_suites():
+    counts = {"tests": 10, "failures": 0, "errors": 0, "skipped": 2}
+    assert smoke.suite_passed("UNIT", 0, counts)
+    assert not smoke.suite_passed("UNIT", 1, counts)
+    assert not smoke.suite_passed("UNIT", 0, {**counts, "errors": 1})
+    assert not smoke.suite_passed("UNIT", 0, {**counts, "tests": 2})
+    assert not smoke.suite_passed("UNIT", 0, {})
+    assert not smoke.suite_passed("WR", 0, {**counts, "tests": 14})
+
+
+def test_test_process_cannot_inherit_production_credentials_or_publish(tmp_path):
+    parent = {
+        "AWS_ACCESS_KEY_ID": "real",
+        "AWS_SECRET_ACCESS_KEY": "real",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI": "/credentials",
+        "AWS_WEB_IDENTITY_TOKEN_FILE": "/token",
+        "AWS_PROFILE": "production",
+        "FF_MODEL_S3_BUCKET": "production",
+        "S3_BUCKET": "production",
+        "FF_DEVICE": "cpu",
+        "FF_AMP_DTYPE": "fp32",
+    }
+    env = smoke.isolated_test_environment(parent, tmp_path, "diagnostics/cv-smoke/test")
+    assert parent["AWS_ACCESS_KEY_ID"] == "real"
+    assert env["AWS_ACCESS_KEY_ID"] == env["AWS_SECRET_ACCESS_KEY"] == "testing"
+    assert "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" not in env
+    assert "AWS_WEB_IDENTITY_TOKEN_FILE" not in env and "AWS_PROFILE" not in env
+    assert env["AWS_EC2_METADATA_DISABLED"] == "true"
+    assert env["FF_MODEL_S3_BUCKET"] == env["FF_S3_BUCKET"] == env["S3_BUCKET"] == ""
+    assert env["FF_BENCHMARK_SYNC_INTERVAL_S"] == "0"
+
+
+def test_workflow_exports_only_tracked_files_and_sanitized_git(tmp_path):
+    import subprocess
+
+    workflow = (smoke.ROOT / ".github/workflows/batch-image.yml").read_text()
+    section = workflow.split("- name: Export tracked diagnostic fixtures", 1)[1]
+    script = section.split("run: |\n", 1)[1].split("\n      - name:", 1)[0]
+    script = "\n".join(line[10:] for line in script.splitlines())
+    subprocess.run(["bash", "-n"], input=script, text=True, check=True)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "tracked.txt").write_text("tracked fixture\n")
+    (tmp_path / "untracked-private.txt").write_text("not exported\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "config",
+            "http.extraHeader",
+            "AUTHORIZATION: test-only",
+        ],
+        check=True,
+    )
+    subprocess.run(["bash", "-c", script], cwd=tmp_path, check=True)
+    exported = tmp_path / ".diagnostic-checkout"
+    assert (exported / "tracked.txt").is_file()
+    assert not (exported / "untracked-private.txt").exists()
+    for path in ("config", "logs", "hooks", "objects/info/alternates"):
+        assert not (exported / ".git" / path).exists()
+    head = subprocess.check_output(["git", "-C", str(tmp_path), "rev-parse", "HEAD"])
+    assert subprocess.check_output(["git", "-C", str(exported), "rev-parse", "HEAD"]) == head

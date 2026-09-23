@@ -194,7 +194,10 @@ def test_source_without_a_points_column_is_rejected():
         (lambda f: f.assign(off_ints=[np.nan] + list(f["off_ints"][1:])), "observed and finite"),
         (lambda f: f.assign(week=[1.5] + list(f["week"][1:])), "finite integers"),
         (lambda f: f.iloc[:0], "frame is empty"),
-        (lambda f: f.assign(off_pts_scored=0.0), "zero everywhere"),
+        (
+            lambda f: f.assign(off_pts_scored=0.0),
+            "touchdowns in a game recorded with zero points",
+        ),
         (
             lambda f: f.assign(off_pts_scored=[0.0] + list(f["off_pts_scored"][1:])),
             "touchdowns in a game recorded with zero points",
@@ -204,6 +207,58 @@ def test_source_without_a_points_column_is_rejected():
 def test_invalid_opponent_frames_fail(mutate, error):
     with pytest.raises(ValueError, match=error):
         validate_opponent_per_game(mutate(opponent_per_game_rows()), SCHEMA)
+
+
+def test_observed_zero_turnover_histories_are_preserved():
+    per_game = opponent_per_game_rows().assign(off_ints=0.0, off_fumbles_lost=0.0)
+    validated = validate_opponent_per_game(per_game, SCHEMA)
+    assert validated[["off_ints", "off_fumbles_lost"]].eq(0).all().all()
+    cohort = generate_cohort(dst_rows(), recipe(), opponent_per_game=per_game)
+    assert cohort.cases["opponent_prior_games"].gt(0).all()
+    for column in ("off_ints", "off_fumbles_lost"):
+        index = SCHEMA.opponent_history_columns.index(column)
+        assert (cohort.opponent_history[:, :, index] == 0).all()
+        with pytest.raises(ValueError, match="missing columns"):
+            validate_opponent_per_game(per_game.drop(columns=column), SCHEMA)
+
+
+def test_dst_export_rejects_incompatible_team_cache_before_build(monkeypatch, tmp_path):
+    team_path = tmp_path / "team_stats_2023.parquet"
+    pd.DataFrame({"team": ["KC"], "season": [2023]}).to_parquet(team_path)
+    before = team_path.read_bytes()
+    monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: {"team_stats": team_path})
+    monkeypatch.setattr(
+        "src.dst.data.build_data",
+        lambda **kwargs: pytest.fail("incompatible cache reached the native build"),
+    )
+    with pytest.raises(ValueError, match="team_stats.*incompatible"):
+        sources.export_dst_source()
+    assert team_path.read_bytes() == before
+
+
+def test_dst_export_enforces_cache_only_during_native_build(monkeypatch, tmp_path):
+    from src.data import loader
+    from src.data.release import DataReleaseError
+
+    team_path = tmp_path / "team_stats_2023.parquet"
+    pd.DataFrame({"_team_stats_schema_v2": [True]}).to_parquet(team_path)
+    before = team_path.read_bytes()
+    monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: {"team_stats": team_path})
+    monkeypatch.setattr(
+        loader.nfl_source,
+        "team_week_stats_release",
+        lambda season: pytest.fail("cache-only export attempted a source fetch"),
+    )
+    # A newly requested producer dependency must not recover from the network,
+    # even when the preflight cache was compatible and has no release seal.
+    monkeypatch.setattr(
+        "src.dst.data.build_data",
+        lambda **kwargs: loader.load_team_week_stats([2022], cache_dir=str(tmp_path)),
+    )
+    with pytest.raises(DataReleaseError, match="missing or incompatible"):
+        sources.export_dst_source()
+    assert team_path.read_bytes() == before
+    assert not (tmp_path / "team_stats_2022.parquet").exists()
 
 
 def test_forecast_opponents_missing_from_the_frame_fail_loudly():
@@ -455,7 +510,9 @@ def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_sched
     with pytest.raises(ValueError, match="raw caches missing"):
         sources.write_sources("DST", tmp_path / "dst")
     assert calls == []  # refused before build_data could fetch anything
-    monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: {"weekly": weekly_path})
+    pd.DataFrame({"_team_stats_schema_v2": [True]}).to_parquet(missing)
+    caches = {"weekly": weekly_path, "team_stats": missing}
+    monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: caches)
     output = sources.write_sources("DST", tmp_path / "dst")
     manifest = json.loads((output / "sources.json").read_text())
     assert calls[0] == {"allow_scoring_fetch": False}
@@ -467,7 +524,9 @@ def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_sched
         per_game, validate_opponent_per_game(opponent_per_game_rows(), SCHEMA)
     )
     assert manifest["opponent_per_game_rows"] == len(per_game)
-    assert manifest["raw_caches"] == {"weekly": sources.file_digest(weekly_path)}
+    assert manifest["raw_caches"] == {
+        name: sources.file_digest(path) for name, path in caches.items()
+    }
     assert manifest["excluded_columns"] == ["headshot_url"]
     assert "headshot_url" not in pd.read_parquet(output / "dst.parquet").columns
     assert "src/shared/weather_features.py" in manifest["code_sha256"]
