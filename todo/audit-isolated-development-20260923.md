@@ -11,6 +11,7 @@ not silently include the held corrected ZTNB expectation.
 |---|---|---|---|
 | `count_precision` | #1613, `00873f2b9dbddfc338b53604555ccc9ae9bac97f` | RB/WR/TE attention | Ridge, LightGBM, plain NN |
 | `bagging` | #1606, `d690b417e6d521d379843b924707db8ab16efff1` | All six LightGBM | Ridge, plain NN, attention |
+| `stint_reset` | #1607, `d27a876cc80dde55a1d33f65b04664171fb3380f` | WR/TE Ridge, LightGBM, plain NN | Attention |
 
 Count functions are copied verbatim into the experiment-only
 `audit_count_candidate` module. A per-cell mutator installs them only for the
@@ -18,6 +19,12 @@ count arm. The bagging mutator sets the exact PR frequency on both saved
 parameters and constructed estimators before any fit. Every cell resets both
 switches, including the identical `baseline_rep` noise/control arm. No training
 entrypoint imports these modules outside an explicitly requested experiment.
+The follow-up stint spec installs exact copies of the two proposed feature
+functions (only their names change), then rebuilds production features and
+replays saved inference under that same arm. Each subsequent baseline restores
+the original functions. The Ridge identity sentinel is explicitly disabled for
+this feature-changing arm. Prepared feature hashes are expected to change;
+player-weeks, targets and attention predictions must remain matched.
 
 Development origins are 2022 and 2023, each with seeds 42, 123 and 7. Training
 starts in 2013 (2015 for K), ends at origin minus two, and uses the preceding
@@ -65,6 +72,18 @@ the count spec has 27 cells per origin (RB/WR/TE × three arms × three seeds).
 skill path on one position and each native K/DST path before those fanouts.
 Pass `FF_AUDIT_ORIGIN` to both submitter and container for every launch.
 
+The initial count/bagging image source is
+`90265546bb05269a697af0635633d861b3eda738` on
+`codex/audit-isolated-development`; it is kept fixed while its smoke runs.
+This follow-up on `codex/audit-stint-development` adds
+`src.tuning.ab_audit_stint_development` (WR/TE × three arms × three seeds =
+18 cells per origin). Its first smoke uses WR, seed 42,
+`--only baseline_rep stint_reset` and the separately built follow-up source
+SHA/digest. Both `baseline` and `baseline_rep` must remain equivalent;
+the unchanged attention control must also remain equivalent.
+
 Local checks are restricted to no-fit unit tests, source-equivalence checks,
-lint/format and launcher dry runs. The separately held #1607 feature change is
-not included in this first image.
+lint/format and launcher dry runs. All 18 no-fit orchestration/numerical/feature
+checks pass. Both stint implementations are AST-identical to the pinned PR
+after function renaming, and all ten count functions are AST-identical without
+renaming. These mechanical checks do not establish forecast improvement.

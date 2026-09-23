@@ -28,6 +28,7 @@ BASELINE_SHA = "ecddeca88d8011cc18866b8842815bd7bc7999e5"
 CANDIDATE_PINS = {
     "count_precision": "00873f2b9dbddfc338b53604555ccc9ae9bac97f",
     "bagging": "d690b417e6d521d379843b924707db8ab16efff1",
+    "stint_reset": "d27a876cc80dde55a1d33f65b04664171fb3380f",
 }
 STATE = {}
 
@@ -60,7 +61,15 @@ def select_changes(arm):
     """Reset every switch on every cell, including baseline and repeat controls."""
     from src.shared import training
     from src.shared.models import LightGBMMultiTarget
-    from src.tuning import audit_count_candidate
+    from src.tuning import audit_count_candidate, audit_stint_candidate
+
+    for position in ("wr", "te"):
+        module = importlib.import_module(f"src.{position}.features")
+        current = module._compute_features
+        original = getattr(current, "_audit_original", current)
+        candidate = getattr(audit_stint_candidate, f"{position}_compute_features")
+        candidate._audit_original = original
+        module._compute_features = candidate if arm == "stint_reset" else original
 
     for name in ("negbin2_log_prob", "ztnb2_log_prob", "ztp_log_prob"):
         current = getattr(training, name)
@@ -176,6 +185,8 @@ def configure(config, *, arm):
     position = infer_position(config["targets"])
     if arm == "count_precision" and position not in {"RB", "WR", "TE"}:
         raise ValueError("Count candidate has no production hurdle head on this position")
+    if arm == "stint_reset" and position not in {"WR", "TE"}:
+        raise ValueError("Stint reset changes WR/TE feature building only")
     STATE.clear()
     STATE.update(arm=arm, origin=origin, position=position, trainers=[])
     select_changes(arm)
@@ -197,7 +208,7 @@ def variants(candidate, *, native=False):
             arm,
             cfg_mutator=partial(configure, arm=arm),
             frame_injector=None if native else origin_frames,
-            expect_ridge_identical=None if arm == "baseline" else True,
+            expect_ridge_identical=None if arm == "baseline" else arm != "stint_reset",
         )
         for arm in ("baseline", "baseline_rep", candidate)
     ]
