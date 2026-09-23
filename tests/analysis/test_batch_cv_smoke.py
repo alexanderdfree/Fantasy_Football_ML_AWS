@@ -84,3 +84,5 @@ def test_prepared_jobs_keep_production_definition_untouched():
     assert result["definition.json"]["jobDefinitionName"] == "ff-cv-fixture-diagnostic"
     assert result["submit-wr.json"]["jobDefinition"] == "REPLACE_WITH_REGISTERED_DIAGNOSTIC_ARN"
     assert result["submit-rb.json"]["containerOverrides"]["command"][1] == "RB"
+    assert result["submit-dst.json"]["containerOverrides"]["command"][1] == "DST"
+    assert smoke.EXPECTED_TESTS == {"WR": 14, "RB": 11, "DST": 3}

@@ -54,7 +54,7 @@ def payloads(template: dict, image: str, release: str, run_id: str) -> dict:
         if key in template:
             definition[key] = template[key]
     result = {"definition.json": definition}
-    for position in ("WR", "RB"):
+    for position in ("WR", "RB", "DST"):
         result[f"submit-{position.lower()}.json"] = {
             "jobName": f"cv-smoke-{position.lower()}-{run_id}",
             "jobQueue": "ff-cpu-training-queue",

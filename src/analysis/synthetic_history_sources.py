@@ -3,11 +3,16 @@
 Skill positions (QB/RB/WR/TE) start from the split parquets and run the shared
 production preparation once, without training: the exported frame is the
 train split after target computation, schedule and team box-score merges and
-feature engineering (``PreparedDataset.train``). Nothing is fetched here; the
-raw caches the preparation reads must already be hydrated from a verified data
-release (ADR-0026). Outputs are published into a new directory with their
-hashes so a cohort manifest can tie back to the exact export. The production
-preparation logs to stdout, so the CLI's JSON summary is the final stdout line.
+feature engineering (``PreparedDataset.train``). DST is built the way its
+runner builds it, from the raw caches (team-level rows, no split parquets),
+and additionally exports the opponent-offense per-game frame its second
+attention stream reads plus the regular-season weekly player slice that frame
+was aggregated from (the replay's identity control rebuilds the stream from
+it). Nothing is fetched here; the raw caches must already be hydrated from a
+verified data release (ADR-0026). Outputs are published into a new directory
+with their hashes so a cohort manifest can tie back to the exact export. The
+production preparation logs to stdout, so the CLI's JSON summary is the final
+stdout line.
 """
 
 from __future__ import annotations
@@ -19,22 +24,30 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from src.analysis.synthetic_history import (
     KEYS,
+    OPPONENT_WEEKLY_COLUMNS,
     _frame_hash,
     code_hashes,
     duplicate_game_keys,
     publish_artifact_dir,
     runtime_versions,
+    validate_opponent_per_game,
+    validate_opponent_weekly,
 )
 from src.analysis.synthetic_history_schema import POSITION_HISTORY_SCHEMAS
-from src.config import SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
+from src.config import CACHE_DIR, SEASONS, SPLITS_DIR, TRAIN_SEASONS, VAL_SEASONS
+from src.data.external_sources import _seasons_cache_signature
+from src.features.engineer import build_opp_offense_per_game_df
 from src.prediction.bundle import file_digest
 from src.shared.pipeline import _prepare_position_data, _read_split
 from src.shared.registry import get_config
+from src.training.context import raw_data_dir
 
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
+EXPORT_POSITIONS = tuple(POSITION_HISTORY_SCHEMAS)
 # Shared preparation code whose edits change exported values; per-position
 # modules are added per export.
 SOURCE_LOADER_PATHS = (
@@ -49,6 +62,26 @@ DUPLICATE_KEY_SCOPE = (
     "whole prepared frame; a cohort manifest reports only the recipe's position, "
     "regular-season and donor-season pool"
 )
+DST_WEEKLY_COLUMNS = OPPONENT_WEEKLY_COLUMNS
+DST_RAW_CACHES = ("weekly", "schedules", "team_stats", "dst_scoring_pbp_v1")
+
+
+def _check_prepared(prepared, position: str):
+    """The prepared dataset must match the registry and carry every consumed column."""
+    schema = POSITION_HISTORY_SCHEMAS[position]
+    if tuple(prepared.feature_columns) != schema.feature_columns:
+        raise ValueError(
+            f"prepared {position} feature columns differ from the registry; "
+            "the preparation and the position whitelist disagree"
+        )
+    frame = prepared.train
+    required = {*KEYS, *schema.source_columns, *schema.feature_columns}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"prepared {position} frame lacks columns: {missing}")
+    if frame[KEYS].isna().any().any():
+        raise ValueError(f"prepared {position} frame has missing player/season/week keys")
+    return prepared
 
 
 def export_skill_source(position: str, *, splits_dir: Path = Path(SPLITS_DIR)):
@@ -59,29 +92,68 @@ def export_skill_source(position: str, *, splits_dir: Path = Path(SPLITS_DIR)):
     and ``.data_id`` identifies the splits, configuration and side inputs.
     """
     if position not in SKILL_POSITIONS:
-        raise ValueError(f"{position} is not a skill position; K and DST export separately")
+        raise ValueError(f"{position} is not a skill position; DST exports from its raw caches")
     train = _read_split(Path(splits_dir) / "train.parquet")
     val = _read_split(Path(splits_dir) / "val.parquet")
     prepared = _prepare_position_data(position, get_config(position), train, val)
-    schema = POSITION_HISTORY_SCHEMAS[position]
-    if tuple(prepared.feature_columns) != schema.feature_columns:
+    return _check_prepared(prepared, position)
+
+
+def dst_raw_cache_files() -> dict[str, Path]:
+    """The raw caches the DST build and the opponent stream read, named as the loaders name them."""
+    root = Path(raw_data_dir(CACHE_DIR))
+    signature = _seasons_cache_signature(list(SEASONS))
+    return {name: root / f"{name}_{signature}.parquet" for name in DST_RAW_CACHES}
+
+
+def export_dst_source():
+    """DST: the runner's team-level build, prepared, plus the opponent stream inputs.
+
+    Returns ``(prepared, per_game, weekly, cache_digests)``: the production
+    ``PreparedDataset``
+    (train seasons), the opponent-offense per-game frame built by the
+    production aggregation from the regular-season weekly player slice, and
+    that slice itself (the columns the aggregation reads).
+    """
+    from src.dst.data import build_data
+    from src.dst.features import compute_features
+    from src.dst.targets import compute_targets
+
+    caches = dst_raw_cache_files()
+    missing_caches = sorted(name for name, path in caches.items() if not path.is_file())
+    if missing_caches:
+        # build_data would fetch a missing team-stats cache; an export never fetches.
         raise ValueError(
-            f"prepared {position} feature columns differ from the registry; "
-            "the preparation and the position whitelist disagree"
+            f"DST raw caches missing under {raw_data_dir(CACHE_DIR)}: {missing_caches}; "
+            "hydrate the data release first"
         )
-    frame = prepared.train
-    required = {
-        *KEYS,
-        *schema.identity_columns,
-        *schema.validated_columns,
-        *schema.feature_columns,
-    }
-    missing = sorted(required - set(frame.columns))
+    digests = {name: file_digest(path) for name, path in caches.items()}
+    frame = compute_targets(build_data(allow_scoring_fetch=False))
+    rewritten = sorted(name for name, path in caches.items() if file_digest(path) != digests[name])
+    if rewritten:
+        # A loader refreshed a stale cache from the network; the export never fetches.
+        raise ValueError(
+            f"raw caches changed during the export: {rewritten}; a loader refreshed a "
+            "stale cache, so hydrate a current data release and rerun"
+        )
+    # The team-logo column is fetched from the network when reachable; it feeds
+    # nothing here and would make the export digest depend on connectivity.
+    frame = frame.drop(columns=[c for c in ("headshot_url",) if c in frame.columns])
+    compute_features(frame)
+    train = frame[frame["season"].isin(TRAIN_SEASONS)].copy()
+    val = frame[frame["season"].isin(VAL_SEASONS)].copy()
+    prepared = _check_prepared(_prepare_position_data("DST", get_config("DST"), train, val), "DST")
+    weekly_path = caches["weekly"]
+    missing = sorted(set(DST_WEEKLY_COLUMNS) - set(pq.read_schema(weekly_path).names))
     if missing:
-        raise ValueError(f"prepared {position} frame lacks columns: {missing}")
-    if frame[KEYS].isna().any().any():
-        raise ValueError(f"prepared {position} frame has missing player/season/week keys")
-    return prepared
+        raise ValueError(f"weekly cache lacks the opponent-offense columns: {missing}")
+    weekly = validate_opponent_weekly(
+        pd.read_parquet(weekly_path, columns=list(DST_WEEKLY_COLUMNS))
+    )
+    per_game = validate_opponent_per_game(
+        build_opp_offense_per_game_df(weekly), POSITION_HISTORY_SCHEMAS["DST"]
+    )
+    return prepared, per_game, weekly, digests
 
 
 def canonical_values_hash(frame: pd.DataFrame) -> str:
@@ -90,21 +162,14 @@ def canonical_values_hash(frame: pd.DataFrame) -> str:
     return _frame_hash(frame.iloc[np.argsort(row_hashes, kind="stable")])
 
 
-def write_sources(position: str, output: Path, *, splits_dir: Path = Path(SPLITS_DIR)) -> Path:
-    output = Path(output)
-    if output.exists():
-        raise FileExistsError(f"output already exists: {output}")
-    prepared = export_skill_source(position, splits_dir=splits_dir)
+def _manifest(
+    position: str, prepared, *, splits: dict, extra_code_paths: tuple[str, ...] = ()
+) -> dict:
     frame = prepared.train
-    name = f"{position.lower()}.parquet"
-
-    def _write(directory: Path) -> None:
-        frame.to_parquet(directory / name, index=False)
-
     lower = position.lower()
-    manifest = {
+    return {
         "position": position,
-        "source": name,
+        "source": f"{lower}.parquet",
         "rows": int(len(frame)),
         "columns": int(len(frame.columns)),
         "seasons": sorted(int(s) for s in frame["season"].unique()),
@@ -114,9 +179,7 @@ def write_sources(position: str, output: Path, *, splits_dir: Path = Path(SPLITS
         "val_seasons": list(VAL_SEASONS),
         "values_sha256": canonical_values_hash(frame),
         "prepared_data_id": str(prepared.data_id),
-        "splits": {
-            split: file_digest(Path(splits_dir) / f"{split}.parquet") for split in ("train", "val")
-        },
+        "splits": splits,
         "versions": runtime_versions(),
         "code_sha256": code_hashes(
             (
@@ -125,17 +188,78 @@ def write_sources(position: str, output: Path, *, splits_dir: Path = Path(SPLITS
                 f"{lower}/features.py",
                 f"{lower}/data.py",
                 f"{lower}/targets.py",
+                *extra_code_paths,
                 *SOURCE_LOADER_PATHS,
             )
         ),
     }
+
+
+def _export(position: str, splits_dir: Path) -> tuple[dict[str, pd.DataFrame], dict]:
+    """The parquets to publish and the complete manifest for a position."""
+    lower = position.lower()
+    if position != "DST":
+        prepared = export_skill_source(position, splits_dir=splits_dir)
+        splits = {
+            split: file_digest(Path(splits_dir) / f"{split}.parquet") for split in ("train", "val")
+        }
+        return {f"{lower}.parquet": prepared.train}, _manifest(position, prepared, splits=splits)
+    prepared, per_game, weekly, cache_digests = export_dst_source()
+    manifest = _manifest(
+        position,
+        prepared,
+        splits={},
+        extra_code_paths=(
+            "shared/aggregate_targets.py",
+            "shared/weather_features.py",
+            "data/dst_scoring.py",
+            "data/loader.py",
+        ),
+    )
+    manifest.update(
+        {
+            "opponent_per_game": "dst_opponent_per_game.parquet",
+            "opponent_per_game_rows": int(len(per_game)),
+            "opponent_per_game_values_sha256": _frame_hash(per_game),
+            "opponent_weekly": "dst_opponent_weekly.parquet",
+            "opponent_weekly_rows": int(len(weekly)),
+            "opponent_weekly_values_sha256": canonical_values_hash(weekly),
+            "opponent_weekly_columns": list(DST_WEEKLY_COLUMNS),
+            "raw_caches": cache_digests,
+            "raw_cache_dir": str(raw_data_dir(CACHE_DIR)),
+            "excluded_columns": ["headshot_url"],
+        }
+    )
+    files = {
+        "dst.parquet": prepared.train,
+        "dst_opponent_per_game.parquet": per_game,
+        "dst_opponent_weekly.parquet": weekly,
+    }
+    return files, manifest
+
+
+def write_sources(position: str, output: Path, *, splits_dir: Path = Path(SPLITS_DIR)) -> Path:
+    output = Path(output)
+    if output.exists():
+        raise FileExistsError(f"output already exists: {output}")
+    files, manifest = _export(position, Path(splits_dir))
+
+    def _write(directory: Path) -> None:
+        for name, frame in files.items():
+            frame.to_parquet(directory / name, index=False)
+
     return publish_artifact_dir(output, _write, manifest, manifest_name="sources.json")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--position", required=True, type=str.upper, choices=SKILL_POSITIONS)
-    parser.add_argument("--splits-dir", type=Path, default=Path(SPLITS_DIR))
+    parser.add_argument("--position", required=True, type=str.upper, choices=EXPORT_POSITIONS)
+    parser.add_argument(
+        "--splits-dir",
+        type=Path,
+        default=Path(SPLITS_DIR),
+        help="Split parquets for skill positions (DST reads the raw caches instead)",
+    )
     parser.add_argument(
         "--output", type=Path, required=True, help="New source directory (never overwritten)"
     )
@@ -153,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                 "rows": manifest["rows"],
                 "source": manifest["source"],
                 "duplicate_game_keys": len(manifest["duplicate_game_keys"]),
+                "opponent_per_game_rows": manifest.get("opponent_per_game_rows"),
             }
         )
     )
