@@ -41,7 +41,7 @@
   "purchase_model": "SPOT",
   "queue": "ff-training-queue",
   "preceding_smoke": "WR82f1b281 independently verified",
-  "verification_status": "pending",
+  "verification_status": "PASS3/3 including input containment and actual attention equivalence",
   "verified_submission": {
     "job_id": "59d17f87-103a-40c0-9ec0-86ff03da13f3",
     "job_queue": "arn:aws:batch:us-east-1:432981645194:job-queue/ff-training-queue",
@@ -57,5 +57,7 @@
       "FF_FEATURE_CACHE_DISABLE": "1",
       "FF_NN_FIXED_EPOCHS": "0"
     }
-  }
+  },
+  "terminal_status": "SUCCEEDED",
+  "terminal_exit_code": 0
 }

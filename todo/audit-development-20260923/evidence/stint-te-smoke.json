@@ -1,0 +1,544 @@
+{
+  "schema": "audit-development-report/v1",
+  "purpose": "smoke",
+  "candidate": "stint_reset",
+  "records": 3,
+  "expected_records": 3,
+  "verification_passed": true,
+  "errors": [],
+  "comparisons": [
+    {
+      "position": "TE",
+      "origin": 2022,
+      "family": "ridge",
+      "seeds": [
+        42
+      ],
+      "deltas": {
+        "all:mae": {
+          "paired": [
+            0.00011957442263899054
+          ],
+          "mean": 0.00011957442263899054,
+          "std": null,
+          "baseline_mean": 3.083125562888098,
+          "candidate_mean": 3.083245137310737,
+          "ci95_seed_mean": null
+        },
+        "all:rmse": {
+          "paired": [
+            7.36052832079892e-05
+          ],
+          "mean": 7.36052832079892e-05,
+          "std": null,
+          "baseline_mean": 4.9163320403886,
+          "candidate_mean": 4.916405645671808,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:mae": {
+          "paired": [
+            0.0007438416729073083
+          ],
+          "mean": 0.0007438416729073083,
+          "std": null,
+          "baseline_mean": 5.049084069872955,
+          "candidate_mean": 5.049827911545862,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:rmse": {
+          "paired": [
+            0.0010758179768393106
+          ],
+          "mean": 0.0010758179768393106,
+          "std": null,
+          "baseline_mean": 6.697823929406152,
+          "candidate_mean": 6.698899747382991,
+          "ci95_seed_mean": null
+        }
+      },
+      "passes": false
+    },
+    {
+      "position": "TE",
+      "origin": 2022,
+      "family": "nn",
+      "seeds": [
+        42
+      ],
+      "deltas": {
+        "all:mae": {
+          "paired": [
+            0.010519183144549693
+          ],
+          "mean": 0.010519183144549693,
+          "std": null,
+          "baseline_mean": 2.7705950325708115,
+          "candidate_mean": 2.781114215715361,
+          "ci95_seed_mean": null
+        },
+        "all:rmse": {
+          "paired": [
+            -0.010094292851428044
+          ],
+          "mean": -0.010094292851428044,
+          "std": null,
+          "baseline_mean": 4.413897567655922,
+          "candidate_mean": 4.403803274804494,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:mae": {
+          "paired": [
+            -0.003955982357598309
+          ],
+          "mean": -0.003955982357598309,
+          "std": null,
+          "baseline_mean": 4.924455530539658,
+          "candidate_mean": 4.920499548182059,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:rmse": {
+          "paired": [
+            -0.02050776763148221
+          ],
+          "mean": -0.02050776763148221,
+          "std": null,
+          "baseline_mean": 6.683608779747998,
+          "candidate_mean": 6.663101012116516,
+          "ci95_seed_mean": null
+        }
+      },
+      "passes": false
+    },
+    {
+      "position": "TE",
+      "origin": 2022,
+      "family": "lgbm",
+      "seeds": [
+        42
+      ],
+      "deltas": {
+        "all:mae": {
+          "paired": [
+            -0.00545487446792281
+          ],
+          "mean": -0.00545487446792281,
+          "std": null,
+          "baseline_mean": 2.9802974541865854,
+          "candidate_mean": 2.9748425797186626,
+          "ci95_seed_mean": null
+        },
+        "all:rmse": {
+          "paired": [
+            0.010453572828768465
+          ],
+          "mean": 0.010453572828768465,
+          "std": null,
+          "baseline_mean": 4.327552931259611,
+          "candidate_mean": 4.338006504088379,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:mae": {
+          "paired": [
+            0.004068716019394181
+          ],
+          "mean": 0.004068716019394181,
+          "std": null,
+          "baseline_mean": 5.032664963295264,
+          "candidate_mean": 5.036733679314658,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:rmse": {
+          "paired": [
+            0.04569458407432414
+          ],
+          "mean": 0.04569458407432414,
+          "std": null,
+          "baseline_mean": 6.576838644742333,
+          "candidate_mean": 6.622533228816657,
+          "ci95_seed_mean": null
+        }
+      },
+      "passes": false
+    }
+  ],
+  "numerical_findings": [],
+  "candidate_numerical_checks_passed": true,
+  "cells": [
+    {
+      "position": "TE",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "baseline",
+      "batch_job_id": "59d17f87-103a-40c0-9ec0-86ff03da13f3",
+      "gpu": "NVIDIA L4",
+      "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+      "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28",
+      "metrics": {
+        "all:ridge": {
+          "n": 1656,
+          "mae": 3.083125562888098,
+          "rmse": 4.9163320403886
+        },
+        "all:nn": {
+          "n": 1656,
+          "mae": 2.7705950325708115,
+          "rmse": 4.413897567655922
+        },
+        "all:attn_nn": {
+          "n": 1656,
+          "mae": 2.8334292580598537,
+          "rmse": 4.419252741721984
+        },
+        "all:lgbm": {
+          "n": 1656,
+          "mae": 2.9802974541865854,
+          "rmse": 4.327552931259611
+        },
+        "elite_top24:ridge": {
+          "n": 356,
+          "mae": 5.049084069872955,
+          "rmse": 6.697823929406152
+        },
+        "elite_top24:nn": {
+          "n": 356,
+          "mae": 4.924455530539658,
+          "rmse": 6.683608779747998
+        },
+        "elite_top24:attn_nn": {
+          "n": 356,
+          "mae": 4.91000135791059,
+          "rmse": 6.700099606191858
+        },
+        "elite_top24:lgbm": {
+          "n": 356,
+          "mae": 5.032664963295264,
+          "rmse": 6.576838644742333
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 15,
+          "epochs_executed": 40,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 2.801257715157865,
+            "rmse": 4.401945909665428
+          }
+        },
+        "attn_nn": {
+          "epoch": 27,
+          "epochs_executed": 47,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 2.848034540736823,
+            "rmse": 4.3635583001909195
+          }
+        }
+      }
+    },
+    {
+      "position": "TE",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "baseline_rep",
+      "batch_job_id": "59d17f87-103a-40c0-9ec0-86ff03da13f3",
+      "gpu": "NVIDIA L4",
+      "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+      "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28",
+      "metrics": {
+        "all:ridge": {
+          "n": 1656,
+          "mae": 3.083125562888098,
+          "rmse": 4.9163320403886
+        },
+        "all:nn": {
+          "n": 1656,
+          "mae": 2.7705950325708115,
+          "rmse": 4.413897567655922
+        },
+        "all:attn_nn": {
+          "n": 1656,
+          "mae": 2.8334292580598537,
+          "rmse": 4.419252741721984
+        },
+        "all:lgbm": {
+          "n": 1656,
+          "mae": 2.9802974541865854,
+          "rmse": 4.327552931259611
+        },
+        "elite_top24:ridge": {
+          "n": 356,
+          "mae": 5.049084069872955,
+          "rmse": 6.697823929406152
+        },
+        "elite_top24:nn": {
+          "n": 356,
+          "mae": 4.924455530539658,
+          "rmse": 6.683608779747998
+        },
+        "elite_top24:attn_nn": {
+          "n": 356,
+          "mae": 4.91000135791059,
+          "rmse": 6.700099606191858
+        },
+        "elite_top24:lgbm": {
+          "n": 356,
+          "mae": 5.032664963295264,
+          "rmse": 6.576838644742333
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 15,
+          "epochs_executed": 40,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 2.801257715157865,
+            "rmse": 4.401945909665428
+          }
+        },
+        "attn_nn": {
+          "epoch": 27,
+          "epochs_executed": 47,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 2.848034540736823,
+            "rmse": 4.3635583001909195
+          }
+        }
+      }
+    },
+    {
+      "position": "TE",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "stint_reset",
+      "batch_job_id": "59d17f87-103a-40c0-9ec0-86ff03da13f3",
+      "gpu": "NVIDIA L4",
+      "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+      "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28",
+      "metrics": {
+        "all:ridge": {
+          "n": 1656,
+          "mae": 3.083245137310737,
+          "rmse": 4.916405645671808
+        },
+        "all:nn": {
+          "n": 1656,
+          "mae": 2.781114215715361,
+          "rmse": 4.403803274804494
+        },
+        "all:attn_nn": {
+          "n": 1656,
+          "mae": 2.8334292580598537,
+          "rmse": 4.419252741721984
+        },
+        "all:lgbm": {
+          "n": 1656,
+          "mae": 2.9748425797186626,
+          "rmse": 4.338006504088379
+        },
+        "elite_top24:ridge": {
+          "n": 356,
+          "mae": 5.049827911545862,
+          "rmse": 6.698899747382991
+        },
+        "elite_top24:nn": {
+          "n": 356,
+          "mae": 4.920499548182059,
+          "rmse": 6.663101012116516
+        },
+        "elite_top24:attn_nn": {
+          "n": 356,
+          "mae": 4.91000135791059,
+          "rmse": 6.700099606191858
+        },
+        "elite_top24:lgbm": {
+          "n": 356,
+          "mae": 5.036733679314658,
+          "rmse": 6.622533228816657
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 15,
+          "epochs_executed": 40,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 2.8131313068348187,
+            "rmse": 4.391947324163086
+          }
+        },
+        "attn_nn": {
+          "epoch": 27,
+          "epochs_executed": 47,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 2.848034540736823,
+            "rmse": 4.3635583001909195
+          }
+        }
+      }
+    }
+  ],
+  "development_qualified": false,
+  "merge_authorized": false,
+  "confirmation_complete": false,
+  "weekly_reference_top24": "Unavailable before 2024; required confirmation remains separate.",
+  "uncertainty": "Paired sample standard deviations and Student-t intervals describe three training seeds within each retrospective season, not independent season uncertainty.",
+  "plan": {
+    "schema": "audit-development-plan/v2",
+    "purpose": "smoke",
+    "candidate": "stint_reset",
+    "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
+    "candidate_sha": "d27a876cc80dde55a1d33f65b04664171fb3380f",
+    "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+    "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
+    "positions": [
+      "TE"
+    ],
+    "origins": [
+      2022
+    ],
+    "seeds": [
+      42
+    ],
+    "sources": {
+      "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277": {
+        "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28"
+      }
+    },
+    "runs": [
+      {
+        "prefix": "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8",
+        "origin": 2022,
+        "positions": [
+          "TE"
+        ],
+        "seeds": [
+          42
+        ],
+        "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+        "include_positions": [
+          "TE"
+        ],
+        "superseded_positions": {}
+      }
+    ]
+  },
+  "source_bridges": [],
+  "source_pins": {
+    "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277": {
+      "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28"
+    }
+  },
+  "object_proofs": {
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/manifest.json": {
+      "sha256": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+      "bytes": 62794
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/splits/test.parquet": {
+      "sha256": "e0334f5f05cb3899d558200884479bf83045d9f754c13e3e7eb21d1e330e99db",
+      "bytes": 2544486
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/splits/val.parquet": {
+      "sha256": "246be1368b0174095d0d32aaec1affca157f7afc78caf2e051ea4c66c964a0f1",
+      "bytes": 2556311
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/splits/train.parquet": {
+      "sha256": "4820b16707a0b1c904a0e2a6f0b59646687535cd793dbf1640432bca74c8c0d8",
+      "bytes": 19852382
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/run.json": {
+      "sha256": "36b10a3cd747ade2ffaeb82499725026718376e8dcb7306013570dc78c9263c1",
+      "bytes": 874
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline-42/a4459f5f25117345a289e6fab91bbc17c3e0dd0aa76b80106e7c483122a5bd3c-manifest.json": {
+      "sha256": "a4459f5f25117345a289e6fab91bbc17c3e0dd0aa76b80106e7c483122a5bd3c",
+      "bytes": 332712
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/cells/TE-baseline-42.json": {
+      "sha256": "f5509055ce548a2468264fb3e71af77c31871bfa7c705130376c7f0bd387ddab",
+      "bytes": 6749
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline-42/0ba1eeb328ea1f52097dbf5d6d2e5935a3ca164969ce71d69145365436f92411-predictions.parquet": {
+      "sha256": "0ba1eeb328ea1f52097dbf5d6d2e5935a3ca164969ce71d69145365436f92411",
+      "bytes": 1140935
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline-42/a500ca976931cb6e11989887e7c2bcb7bc385a3dc573399607e2ef1c6a99d708-nn-validation.npz": {
+      "sha256": "a500ca976931cb6e11989887e7c2bcb7bc385a3dc573399607e2ef1c6a99d708",
+      "bytes": 24477
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline-42/7e3e97f9dc15c37d91284345bfd22cea53b68ccdcb1f7976b5e21e6843bb2053-nn-selected.pt": {
+      "sha256": "7e3e97f9dc15c37d91284345bfd22cea53b68ccdcb1f7976b5e21e6843bb2053",
+      "bytes": 92361
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline-42/2918b959e24f61941dd63c93bd260376274c657ad3ac92147a988a517cb14d38-attn_nn-validation.npz": {
+      "sha256": "2918b959e24f61941dd63c93bd260376274c657ad3ac92147a988a517cb14d38",
+      "bytes": 77284
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline-42/a84aebd67458e434d95d23a7f1c85ba52657b6aa23f3a04d5e8bf8c17e1f3843-attn_nn-selected.pt": {
+      "sha256": "a84aebd67458e434d95d23a7f1c85ba52657b6aa23f3a04d5e8bf8c17e1f3843",
+      "bytes": 174520
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline_rep-42/5c503770ac50e51a0842932dfe097c84badf78dea83345439fc1a0173300de92-manifest.json": {
+      "sha256": "5c503770ac50e51a0842932dfe097c84badf78dea83345439fc1a0173300de92",
+      "bytes": 332736
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/cells/TE-baseline_rep-42.json": {
+      "sha256": "c9b37ce9d41a5cd45164b008f875cf312fa0db1fe6700f2abc51993ce86f9209",
+      "bytes": 6757
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline_rep-42/0ba1eeb328ea1f52097dbf5d6d2e5935a3ca164969ce71d69145365436f92411-predictions.parquet": {
+      "sha256": "0ba1eeb328ea1f52097dbf5d6d2e5935a3ca164969ce71d69145365436f92411",
+      "bytes": 1140935
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline_rep-42/a500ca976931cb6e11989887e7c2bcb7bc385a3dc573399607e2ef1c6a99d708-nn-validation.npz": {
+      "sha256": "a500ca976931cb6e11989887e7c2bcb7bc385a3dc573399607e2ef1c6a99d708",
+      "bytes": 24477
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline_rep-42/7e3e97f9dc15c37d91284345bfd22cea53b68ccdcb1f7976b5e21e6843bb2053-nn-selected.pt": {
+      "sha256": "7e3e97f9dc15c37d91284345bfd22cea53b68ccdcb1f7976b5e21e6843bb2053",
+      "bytes": 92361
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline_rep-42/2918b959e24f61941dd63c93bd260376274c657ad3ac92147a988a517cb14d38-attn_nn-validation.npz": {
+      "sha256": "2918b959e24f61941dd63c93bd260376274c657ad3ac92147a988a517cb14d38",
+      "bytes": 77284
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-baseline_rep-42/a84aebd67458e434d95d23a7f1c85ba52657b6aa23f3a04d5e8bf8c17e1f3843-attn_nn-selected.pt": {
+      "sha256": "a84aebd67458e434d95d23a7f1c85ba52657b6aa23f3a04d5e8bf8c17e1f3843",
+      "bytes": 174520
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-stint_reset-42/2f55999b585513fdfab9c048845418297b7b5fc131c2574c50ad684949dae4b4-manifest.json": {
+      "sha256": "2f55999b585513fdfab9c048845418297b7b5fc131c2574c50ad684949dae4b4",
+      "bytes": 332733
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/cells/TE-stint_reset-42.json": {
+      "sha256": "a6e953d784b98d5e162d873779f885fb2f022e160a28466568b88c81229c69a2",
+      "bytes": 6755
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-stint_reset-42/e54e394679317b60e660aec91cc6b4e803a49d77daca4f47eeed2144cfdd1049-predictions.parquet": {
+      "sha256": "e54e394679317b60e660aec91cc6b4e803a49d77daca4f47eeed2144cfdd1049",
+      "bytes": 1139731
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-stint_reset-42/f41454d1a391b56a477b3f6c58955722a3cdec97e7df8acf8da78aad130846fa-nn-validation.npz": {
+      "sha256": "f41454d1a391b56a477b3f6c58955722a3cdec97e7df8acf8da78aad130846fa",
+      "bytes": 23937
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-stint_reset-42/042ecbaa1b48759b505a99faee6da9c577e3e7bac2ec5b4cbe59621ab2d356a8-nn-selected.pt": {
+      "sha256": "042ecbaa1b48759b505a99faee6da9c577e3e7bac2ec5b4cbe59621ab2d356a8",
+      "bytes": 92361
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-stint_reset-42/2918b959e24f61941dd63c93bd260376274c657ad3ac92147a988a517cb14d38-attn_nn-validation.npz": {
+      "sha256": "2918b959e24f61941dd63c93bd260376274c657ad3ac92147a988a517cb14d38",
+      "bytes": 77284
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-stint-2022-te-s42-b42e26a8/evidence/TE-stint_reset-42/a84aebd67458e434d95d23a7f1c85ba52657b6aa23f3a04d5e8bf8c17e1f3843-attn_nn-selected.pt": {
+      "sha256": "a84aebd67458e434d95d23a7f1c85ba52657b6aa23f3a04d5e8bf8c17e1f3843",
+      "bytes": 174520
+    }
+  }
+}

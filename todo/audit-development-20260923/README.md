@@ -99,8 +99,19 @@ job IDs and Spot queue. Root owns promotion decisions, merges and pool restore.
 - [WR stint execution smoke: 3 verified cells](evidence/stint-wr-smoke.md).
   Per-column containment and unchanged actual attention inputs/scaler,
   checkpoint and predictions pass. This single seed is not a development gate.
+- [Complete stint study: 36 verified cells](evidence/stint-full.md). The shared
+  WR/TE feature change fails because affected NN/LightGBM families regress or
+  trade MAE against RMSE/cohort errors. WR Ridge alone has tiny improvements in
+  both years; those do not qualify a shared feature change affecting other
+  families. The separate TE smoke passed before this last approved fanout.
 
 The JSON siblings retain full precision, paired seasonal results, uncertainty,
 selected checkpoints, all source/image pins and immutable object proofs.
 No confirmation, production default change or merge is authorized by these
 results. The 2022/2023 weekly-reference cohort remains explicitly unavailable.
+
+The completed studies total 198 decision-bearing cells, excluding all smokes
+and the superseded TE observer failures. Count precision, global bagging and
+shared stint reset remain held. Only the [TE-only bagging proposal](te-bagging-frozen-proposal.md)
+is frozen as development-qualified; activation and confirmation remain blocked.
+No further tuning, default-repair reruns or model fanouts are part of this round.

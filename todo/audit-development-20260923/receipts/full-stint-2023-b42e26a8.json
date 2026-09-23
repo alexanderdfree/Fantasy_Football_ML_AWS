@@ -1,0 +1,89 @@
+{
+  "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/full-stint-2023-b42e26a8/run.json",
+  "sha256": "d79f7c3d8412214ac429d9ee43ac6d2520e0cc48a2b849ecde04d5e6e42eeb2c",
+  "manifest": {
+    "schema_version": 1,
+    "spec": "src.tuning.ab_audit_stint_development",
+    "positions": [
+      "WR",
+      "TE"
+    ],
+    "seeds": [
+      42,
+      123,
+      7
+    ],
+    "only": [
+      "baseline_rep",
+      "stint_reset"
+    ],
+    "variants": [
+      "baseline",
+      "baseline_rep",
+      "stint_reset"
+    ],
+    "baseline": "baseline",
+    "image_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+    "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28",
+    "data_prefix": "data",
+    "job_definition": "arn:aws:batch:us-east-1:432981645194:job-definition/ff-ab-job:44",
+    "cuda_graph": "auto",
+    "extra_env": {
+      "FF_AUDIT_ORIGIN": "2023",
+      "FF_AMP_DTYPE": "fp32",
+      "FF_CUDA_GRAPH_FULL": "1",
+      "FF_FEATURE_CACHE_DISABLE": "1",
+      "FF_NN_FIXED_EPOCHS": "0"
+    },
+    "jobs": {
+      "WR": "e756b23a-9455-476b-9575-1e117dc14f3f",
+      "TE": "f2346f53-6202-43a1-a6fc-e5ec8821e9b8"
+    },
+    "created_at": "2026-09-23T18:15:11.730601+00:00"
+  },
+  "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+  "purchase_model": "SPOT",
+  "queue": "ff-training-queue",
+  "preceding_smokes": [
+    "82f1b281-31d8-4fcb-8487-db6d651c121c",
+    "59d17f87-103a-40c0-9ec0-86ff03da13f3"
+  ],
+  "smoke_gates": "WR and TE independently verified, including strengthened input proofs",
+  "verified_submissions": [
+    {
+      "job_id": "e756b23a-9455-476b-9575-1e117dc14f3f",
+      "job_queue": "arn:aws:batch:us-east-1:432981645194:job-queue/ff-training-queue",
+      "job_definition": "arn:aws:batch:us-east-1:432981645194:job-definition/ff-ab-job:44",
+      "container_image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/ff-training:b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277@sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28",
+      "created_at": 1790187311682,
+      "environment": {
+        "FF_TRAIN_GIT_SHA": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+        "FF_DATA_RELEASE": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+        "FF_AMP_DTYPE": "fp32",
+        "FF_AUDIT_ORIGIN": "2023",
+        "FF_CUDA_GRAPH_FULL": "1",
+        "FF_FEATURE_CACHE_DISABLE": "1",
+        "FF_NN_FIXED_EPOCHS": "0"
+      }
+    },
+    {
+      "job_id": "f2346f53-6202-43a1-a6fc-e5ec8821e9b8",
+      "job_queue": "arn:aws:batch:us-east-1:432981645194:job-queue/ff-training-queue",
+      "job_definition": "arn:aws:batch:us-east-1:432981645194:job-definition/ff-ab-job:44",
+      "container_image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/ff-training:b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277@sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28",
+      "created_at": 1790187311748,
+      "environment": {
+        "FF_TRAIN_GIT_SHA": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277",
+        "FF_DATA_RELEASE": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+        "FF_AMP_DTYPE": "fp32",
+        "FF_AUDIT_ORIGIN": "2023",
+        "FF_CUDA_GRAPH_FULL": "1",
+        "FF_FEATURE_CACHE_DISABLE": "1",
+        "FF_NN_FIXED_EPOCHS": "0"
+      }
+    }
+  ],
+  "terminal_status": "SUCCEEDED",
+  "terminal_exit_code": 0,
+  "verification_status": "PASS complete grid including strengthened input proofs"
+}

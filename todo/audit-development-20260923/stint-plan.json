@@ -1,0 +1,57 @@
+{
+  "schema": "audit-development-plan/v2",
+  "purpose": "development",
+  "candidate": "stint_reset",
+  "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
+  "candidate_sha": "d27a876cc80dde55a1d33f65b04664171fb3380f",
+  "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+  "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
+  "positions": [
+    "WR",
+    "TE"
+  ],
+  "origins": [
+    2022,
+    2023
+  ],
+  "seeds": [
+    42,
+    123,
+    7
+  ],
+  "sources": {
+    "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277": {
+      "image_digest": "sha256:654bf288cda8cf40095edd5e4d6153959c1b425a85106ca30b01a89539a7de28"
+    }
+  },
+  "runs": [
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-stint-2022-b42e26a8",
+      "origin": 2022,
+      "positions": [
+        "WR",
+        "TE"
+      ],
+      "seeds": [
+        42,
+        123,
+        7
+      ],
+      "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277"
+    },
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/full-stint-2023-b42e26a8",
+      "origin": 2023,
+      "positions": [
+        "WR",
+        "TE"
+      ],
+      "seeds": [
+        42,
+        123,
+        7
+      ],
+      "source_sha": "b42e26a8ff79a9ca71d9fbbf5ea2067483cf8277"
+    }
+  ]
+}
