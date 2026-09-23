@@ -6,7 +6,7 @@ nflreadpy==0.1.5
 polars==1.44.2
 scikit-learn==1.9.0
 scipy==1.18.1
-matplotlib==3.11.1
+matplotlib==3.11.2
 joblib==1.6.0
 flask==3.1.3
 gunicorn==26.2.0
@@ -15,6 +15,6 @@ mord==0.7
 shap>=0.52.0,<0.53
 appdirs==1.4.4
 requests==2.34.2
-boto3==1.43.91
+boto3==1.43.93
 markdown==3.10.3
 bleach==6.4.0
