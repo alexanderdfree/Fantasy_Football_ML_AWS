@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] CI test scope missed unknown paths mixed with recognized changes
+[Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
+
 ### [FIXED] Nested (K) served-kwargs builder dropped `nn_head_hidden_overrides` the training factory consumes
 [Read the incident record](fixed-archive/audit-1499-nested-served-kwargs-head-overrides.md).
 
