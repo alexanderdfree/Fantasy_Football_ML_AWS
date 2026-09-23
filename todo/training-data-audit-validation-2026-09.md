@@ -2,6 +2,13 @@
 
 **The bundled corrections regress offline MAE for QB, WR, and D/ST on the common test cohort. They are not metric-neutral.** RB improves slightly; TE and K are mixed. These runs validate the requested data/contract corrections, not a claim about live performance. They do not identify the causal contribution of individual fixes: multiple changes are bundled, and the baseline availability feature used retrospective game participants. Retuning is outside this PR. The overall D/ST points-allowed scoring contract remains unchanged.
 
+The subsequent [WR causal investigation](wr-pr1564-regression/findings.md) isolates
+the three change groups with archived inputs and a three-seed GPU factorial.
+It identifies depth normalization as the dominant WR MAE contributor; the
+original CPU results below remain unchanged historical evidence.
+The [September 23 review](wr-pr1564-regression/review-2026-09-23.md) dates that
+archive and records the current execution and model-promotion gates.
+
 ## Regime and comparison basis
 
 - Baseline code: `6406cf213cc0a5fbcd1e56e449e3d7f82804dc01`, clean detached checkout, frozen audit raw/split inputs copied before execution. Fixed code: `5044ea6687a561871799052c97c67c85b4f8ea5e`.

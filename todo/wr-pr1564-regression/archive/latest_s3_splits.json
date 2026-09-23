@@ -1,0 +1,44 @@
+[
+  {
+    "split": "train",
+    "version": "f_jjF8Dg0Sr2.d1DLEGVArsI4zqN_v6N",
+    "modified": "2026-09-10 11:45:30+00:00",
+    "rows": 75408,
+    "positions": {
+      "WR": 27970,
+      "RB": 18356,
+      "TE": 16379,
+      "QB": 6957,
+      "K": 5746
+    },
+    "sha256": "e6dfaa6cbea71f9bf26b0ca901e6ecb503c52a08114cdeb573f0de7fda4c9bf7"
+  },
+  {
+    "split": "val",
+    "version": "h.0hH8m1wpjBQckuEfvyII8GA9Hrv2rK",
+    "modified": "2026-09-10 11:45:31+00:00",
+    "rows": 7371,
+    "positions": {
+      "WR": 2749,
+      "RB": 1722,
+      "TE": 1675,
+      "QB": 682,
+      "K": 543
+    },
+    "sha256": "f0a15ee4ee9cce8d2578f60fbf5f4b4d11728ef1aef1d369a2fe3db872334a82"
+  },
+  {
+    "split": "test",
+    "version": "nOEVd3nSZGwN2GWvgjWUGwoodYE.1zgj",
+    "modified": "2026-09-10 11:45:31+00:00",
+    "rows": 7402,
+    "positions": {
+      "WR": 2761,
+      "RB": 1757,
+      "TE": 1655,
+      "QB": 686,
+      "K": 543
+    },
+    "sha256": "0d9a3d99f6bc99c8997a0269939f514a87e8464e1827fc42c0f2cc0c2824d110"
+  }
+]
