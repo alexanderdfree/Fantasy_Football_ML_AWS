@@ -72,8 +72,19 @@ RUN python -c "import torch, lightgbm, sklearn, scipy, pandas, numpy, pyarrow; p
 # (Flask UI, scratch scripts, tests); src/ is the only Python copy needed.
 COPY src/ src/
 
+# Disposable diagnostic branch only: retain the training dependency versions
+# while adding the canonical pytest tools needed by the RB/WR CV fixtures.
+COPY requirements-dev.txt pyproject.toml conftest.py ./
+COPY tests/ tests/
+COPY scripts/pytest-fair.sh scripts/pytest-fair.sh
+RUN uv pip freeze --system > /tmp/training-constraints.txt && \
+    python -c "from pathlib import Path; Path('/tmp/pytest-requirements.txt').write_text('\n'.join(line for line in Path('requirements-dev.txt').read_text().splitlines() if line.startswith('pytest')) + '\n')" && \
+    uv pip install --system --break-system-packages \
+      --constraint /tmp/training-constraints.txt --requirement /tmp/pytest-requirements.txt && \
+    uv pip freeze --system > /opt/ml/test-environment.txt
+
 # Runtime job variables cannot relabel the code actually copied into this image.
 ARG TRAIN_GIT_SHA
 RUN python -c "import os, re; from pathlib import Path; value=os.environ.get('TRAIN_GIT_SHA', ''); assert re.fullmatch(r'[0-9a-f]{40}', value), 'TRAIN_GIT_SHA must be the full built Git SHA'; Path('.training-source-sha').write_text(value + '\\n')"
 
-ENTRYPOINT ["python", "-m", "src.batch.train"]
+ENTRYPOINT ["python", "-m", "src.analysis.batch_cv_smoke"]

@@ -7,6 +7,10 @@
 !src/**
 !requirements.txt
 !pyproject.toml
+!requirements-dev.txt
+!conftest.py
+!tests/**
+!scripts/pytest-fair.sh
 src/batch/tests/**
 src/**/tests/**
 src/**/__pycache__/**
