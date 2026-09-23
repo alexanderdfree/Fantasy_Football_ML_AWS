@@ -1,0 +1,66 @@
+{
+  "schema": "audit-development-publication/v1",
+  "experiment_prefix": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports",
+  "decision_cells": 198,
+  "execution_smoke_cells": 21,
+  "reports": {
+    "count-summary": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/847a4f5dac801fef04121f7bb3346844114c174949ad16903870b032b2b0c52d-count-summary.json",
+      "sha256": "847a4f5dac801fef04121f7bb3346844114c174949ad16903870b032b2b0c52d",
+      "bytes": 11766
+    },
+    "count-proofs": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/6eae64e7c7f6c3b50c960a2169a450f67a64e5d68ca01f043668af3e4b74ce3a-count-proofs.json",
+      "sha256": "6eae64e7c7f6c3b50c960a2169a450f67a64e5d68ca01f043668af3e4b74ce3a",
+      "bytes": 137249
+    },
+    "count-full-report": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/8ce22d2d2e3f5b978e4c406ea202daae27752a403a7fb9c7e1c0c499d8040416-count-full-report.json",
+      "sha256": "8ce22d2d2e3f5b978e4c406ea202daae27752a403a7fb9c7e1c0c499d8040416",
+      "bytes": 240838
+    },
+    "bagging-summary": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/e4201f4cb3e3ca76a615b644ac917778a9d710e9e2057424ac7206b7d71520d7-bagging-summary.json",
+      "sha256": "e4201f4cb3e3ca76a615b644ac917778a9d710e9e2057424ac7206b7d71520d7",
+      "bytes": 19400
+    },
+    "bagging-proofs": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/fee24071ec9272b05fa72943b37aa342f8e966132ae21b59500823bfc1f41f82-bagging-proofs.json",
+      "sha256": "fee24071ec9272b05fa72943b37aa342f8e966132ae21b59500823bfc1f41f82",
+      "bytes": 272408
+    },
+    "bagging-full-report": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/c08c4ef5085be972c87d578ddafd70ccc786325d921feafb2896518f9a9af98a-bagging-full-report.json",
+      "sha256": "c08c4ef5085be972c87d578ddafd70ccc786325d921feafb2896518f9a9af98a",
+      "bytes": 473214
+    },
+    "stint-summary": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/06d31a7ee3cb686451aaf3727a968e6624cf5d93d2116ff31cde6dc622309e29-stint-summary.json",
+      "sha256": "06d31a7ee3cb686451aaf3727a968e6624cf5d93d2116ff31cde6dc622309e29",
+      "bytes": 17893
+    },
+    "stint-proofs": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/a760d040e129bc15a2002baf93e7f7e11768a75366be92fec5124f77d7122939-stint-proofs.json",
+      "sha256": "a760d040e129bc15a2002baf93e7f7e11768a75366be92fec5124f77d7122939",
+      "bytes": 89363
+    },
+    "stint-full-report": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/7fe6cf0954092ca0fb66b9f3bbb27e61f4e9e4fcdef34e8117952622edb7749f-stint-full-report.json",
+      "sha256": "7fe6cf0954092ca0fb66b9f3bbb27e61f4e9e4fcdef34e8117952622edb7749f",
+      "bytes": 175133
+    },
+    "te-bagging-frozen-proposal": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/05bb467c3dec130bc9ef32dbbcdd5d20a11afd3e54480a7d12523b8e08efd6b0-te-bagging-frozen-proposal.json",
+      "sha256": "05bb467c3dec130bc9ef32dbbcdd5d20a11afd3e54480a7d12523b8e08efd6b0",
+      "bytes": 16344
+    },
+    "execution-smokes": {
+      "uri": "s3://ff-predictor-training/ab_runs/audit-isolated-development-20260923/reports/d903129fe744fc2ab7371b5779a021f12b7fc9fa36f2091406a1e729493548d8-execution-smokes.json",
+      "sha256": "d903129fe744fc2ab7371b5779a021f12b7fc9fa36f2091406a1e729493548d8",
+      "bytes": 18980
+    }
+  },
+  "raw_artifacts": "Existing per-run content-addressed evidence remains unchanged at its original S3 locations.",
+  "model_promotions": false,
+  "confirmation_performed": false
+}
