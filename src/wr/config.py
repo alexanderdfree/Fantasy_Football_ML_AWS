@@ -167,7 +167,15 @@ CONFIG_TINY = {
         "receptions": 1.0,
         "fumbles_lost": 1.0,
     },
-    "huber_deltas": {"receiving_yards": 15.0},
+    # Cover every target: standalone consumers (tests/wr/test_run_cv_pipeline.py,
+    # tests/wr/test_pipeline_e2e.py) resolve this dict without head_losses, so
+    # every head defaults to Huber and the #1566 contract validator requires a
+    # delta per target. The count heads keep the pre-#1566 implicit delta of
+    # 1.0. head_losses stays deliberately absent: run_pipeline_factory's --tiny
+    # path and tests/_pipeline_e2e_utils.py merge this dict LAST over
+    # POSITION_CONFIG, so declaring all-Huber here would override production's
+    # poisson/mse/hurdle heads there, whereas the extra deltas are inert.
+    "huber_deltas": {**dict.fromkeys(_TARGETS, 1.0), "receiving_yards": 15.0},
     "scheduler_type": "cosine_warm_restarts",
     "cosine_t0": 1,
     "cosine_t_mult": 2,
