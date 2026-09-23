@@ -30,7 +30,7 @@ Start new local Codex sessions for this repo through:
 scripts/codex-fresh-worktree.sh
 ```
 
-The launcher reuses the current checkout only when it is a clean Codex-owned worktree under `${CODEX_HOME:-$HOME/.codex}/worktrees/*/<repo-basename>` (the basename is derived from the main checkout's — `Fantasy_Football_ML_AWS` here). From the main checkout, a dirty worktree, or any other checkout shape, it creates `${CODEX_HOME:-$HOME/.codex}/worktrees/<id>/<repo-basename>` on `codex/session-<id>` from `origin/main`, best-effort links ignored `data/raw`, `data/splits` and the content-addressed `.cache/features` from the main checkout, and then runs `codex --cd <that-worktree>`.
+The launcher reuses the current checkout only when it is a clean Codex-owned worktree under `${CODEX_HOME:-$HOME/.codex}/worktrees/*/<repo-basename>` (the basename is derived from the main checkout's — `Fantasy_Football_ML_AWS` here). From the main checkout, a dirty worktree, or any other checkout shape, it creates `${CODEX_HOME:-$HOME/.codex}/worktrees/<id>/<repo-basename>` on `codex/session-<id>` from `origin/main`, best-effort links ignored `data/raw` and `data/splits` from the main checkout, and then runs `codex --cd <that-worktree>`.
 
 Useful options: `--force-new`, `--base <ref>`, `--branch <name>`, `--no-fetch`, and `--print-path`. Use `--` before Codex arguments when a prompt or Codex option could be confused with a launcher option.
 

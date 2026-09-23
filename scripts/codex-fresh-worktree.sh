@@ -121,13 +121,11 @@ else
   mkdir -p "$(dirname "$target")"
   git -C "$main_worktree" worktree add -b "$branch_name" "$target" "$base_ref" >/dev/null
 
-  # Mirrors .claude/hooks/lib.sh claude_link_worktree_data: prebuilt data plus the
-  # content-addressed feature cache (shared across branches without collisions).
-  for rel_dir in data/raw data/splits .cache/features; do
-    source_dir="$main_worktree/$rel_dir"
-    dest_dir="$target/$rel_dir"
+  for data_dir in raw splits; do
+    source_dir="$main_worktree/data/$data_dir"
+    dest_dir="$target/data/$data_dir"
     if [ -e "$source_dir" ] && [ ! -e "$dest_dir" ]; then
-      mkdir -p "$(dirname "$dest_dir")" 2>/dev/null || continue  # best-effort, like ln below
+      mkdir -p "$target/data"
       ln -s "$source_dir" "$dest_dir" || true
     fi
   done

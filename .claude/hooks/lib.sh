@@ -25,29 +25,24 @@ claude_command_invokes_gh_pr_merge() { agent_hooks_command_invokes_gh_pr_merge "
 
 # Link the parent checkout's gitignored data/{raw,splits} into a worktree so the
 # pre-PR `pytest -m unit` (reads data/{raw,splits}/*.parquet) works without a slow
-# first pull, and its .cache/features so feature building hits the shared cache
-# instead of rebuilding 200-400 MB per worktree (src/shared/feature_cache.py keys
-# entries on data rows + code + prepare AST and publishes them atomically, so sharing
-# across branches is collision-free). Mirrors scripts/codex-fresh-worktree.sh's
-# linker. Idempotent + fail-open; no-op in the main checkout, when the parent has
-# nothing prebuilt, or when the worktree already has its own real dir (a
-# locally-built splits, an existing cache). $1 = worktree root (defaults to CWD).
+# first pull. Mirrors scripts/codex-fresh-worktree.sh's linker. Idempotent +
+# fail-open; no-op in the main checkout, when the parent has no prebuilt data, or
+# when the worktree already has its own real data dir (a locally-built splits).
+# $1 = worktree root (defaults to CWD).
 claude_link_worktree_data() {
-  local wt parent src dst dir rel linked=""
+  local wt parent src dst d linked=""
   wt="$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null || true)"
   [ -n "$wt" ] || return 0
   parent="$(cd "$wt" 2>/dev/null && claude_main_worktree)"
   { [ -n "$parent" ] && [ -d "$parent" ] && [ "$wt" != "$parent" ]; } || return 0
-  for rel in data/raw data/splits .cache/features; do
-    src="$parent/$rel"
-    dst="$wt/$rel"
+  for d in raw splits; do
+    src="$parent/data/$d"
+    dst="$wt/data/$d"
     [ -e "$src" ] || continue        # parent has nothing to link
     [ -e "$dst" ] && continue        # already present (real dir OR resolving symlink)
     [ -L "$dst" ] && rm -f "$dst"     # dangling symlink from a prior parent state
-    dir="$(dirname "$dst")"
-    if [ -L "$dir" ] && [ ! -e "$dir" ]; then rm -f "$dir"; fi  # dangling parent (.cache) link
-    mkdir -p "$dir" 2>/dev/null || continue  # e.g. a plain-file .cache: skip quietly
-    ln -s "$src" "$dst" 2>/dev/null && linked="$linked ${rel#data/}" || true
+    mkdir -p "$wt/data"
+    ln -s "$src" "$dst" 2>/dev/null && linked="$linked $d" || true
   done
   [ -n "$linked" ] && echo "worktree data: linked$linked from $parent"
   return 0
