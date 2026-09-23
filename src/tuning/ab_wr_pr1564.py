@@ -14,6 +14,7 @@ import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
 
+from src.analysis.wr_pr1564_inputs import require_batch, validate_numerical_source
 from src.tuning.ab_harness import Variant, ab_main
 
 POSITIONS = ["WR"]
@@ -68,6 +69,17 @@ def _inputs():
 def _activate(name):
     def configure(cfg):
         global _ACTIVE
+        require_batch()
+        root = _inputs()
+        manifest = json.loads((root / "input-manifest.json").read_text())
+        validate_numerical_source(manifest, Path(__file__).resolve().parents[2])
+        if (
+            os.environ.get("FF_AMP_DTYPE") != "fp32"
+            or os.environ.get("FF_CUDA_GRAPH") not in {"0", "false"}
+            or os.environ.get("FF_COMPILE", "0") not in {"0", "false"}
+            or os.environ.get("FF_AB_STACKED", "0") == "1"
+        ):
+            raise ValueError("Historical experiment requires eager FP32 with graphs/compile off")
         _ACTIVE = name
         return cfg
 

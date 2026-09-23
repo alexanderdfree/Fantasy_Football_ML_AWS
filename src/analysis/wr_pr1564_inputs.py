@@ -1,4 +1,4 @@
-"""Build orthogonal, archived WR data interventions; never fit a model."""
+"""Build archived WR interventions on Batch, including scaler-fit fingerprints."""
 
 from __future__ import annotations
 
@@ -13,11 +13,89 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.analysis.wr_pr1564_recovery import FIXED_RELEASE, relative_path
+
 BASELINE = "6406cf213cc0a5fbcd1e56e449e3d7f82804dc01"
 RECIPE = "b9d24f9259c7fd261ab1a4e77d4212d821726420"
 KEYS = ["player_id", "season", "week"]
 AVAILABILITY = ["is_top_available", "inherited_opportunity"]
 SPLITS = ("train", "val", "test")
+
+
+def require_batch():
+    if not os.environ.get("AWS_BATCH_JOB_ID"):
+        raise ValueError("Historical preparation and fitting require AWS Batch, including scalers")
+
+
+def validate_numerical_source(manifest, root):
+    """Reject reuse of the historical inputs with a different numerical recipe."""
+    if manifest.get("recipe") != RECIPE or not manifest.get("numerical_files"):
+        raise ValueError("Missing historical numerical-source provenance")
+    mismatch = []
+    for name, expected in manifest["numerical_files"].items():
+        path = root / name
+        if not path.is_file() or sha(path.read_bytes()) != expected:
+            mismatch.append(name)
+    if mismatch:
+        raise ValueError("Historical numerical source mismatch: " + ", ".join(mismatch[:6]))
+
+
+def historical_numerical_files(root):
+    names = subprocess.check_output(
+        ["git", "ls-tree", "-r", "--name-only", RECIPE], cwd=root, text=True
+    ).splitlines()
+    selected = [
+        name
+        for name in names
+        if name in {"requirements.txt", "src/config.py"}
+        or (
+            name.endswith(".py")
+            and name.startswith(("src/data/", "src/features/", "src/shared/", "src/wr/"))
+        )
+    ]
+    expected = {
+        name: sha(subprocess.check_output(["git", "show", f"{RECIPE}:{name}"], cwd=root))
+        for name in selected
+    }
+    validate_numerical_source({"recipe": RECIPE, "numerical_files": expected}, root)
+    return expected
+
+
+def verify_recovered_inputs(recovered):
+    """Bind preparation to the receipt and reject changed or unrecorded inputs."""
+    raw_receipt = (recovered / "recovery.json").read_bytes()
+    receipt = json.loads(raw_receipt)
+    records = receipt["records"]
+    if (
+        not records
+        or receipt.get("missing")
+        or receipt.get("recovered") != len(records)
+        or receipt.get("fixed_release") != FIXED_RELEASE
+        or not all(record.get("ok") for record in records)
+    ):
+        raise ValueError("Historical input recovery is incomplete or uses a different release")
+    release = (recovered / "fixed-release-manifest.json").read_bytes()
+    if sha(release) != FIXED_RELEASE:
+        raise ValueError("Recovered fixed-release manifest checksum mismatch")
+    expected = set()
+    for record in records:
+        name = record["destination"]
+        if not name.startswith(("baseline/data/", "fixed/data/")) or name in expected:
+            raise ValueError("Unexpected or duplicate recovered input destination")
+        expected.add(name)
+        path = recovered / relative_path(name)
+        content = path.read_bytes()
+        if sha(content) != record["sha256"] or len(content) != record["bytes"]:
+            raise ValueError(f"Recovered input changed after verification: {name}")
+    actual = {
+        str(path.relative_to(recovered))
+        for arm in ("baseline", "fixed")
+        for path in (recovered / arm / "data").rglob("*")
+        if path.is_file()
+    }
+    if actual != expected:
+        raise ValueError("Unrecorded or missing recovered input files")
+    return sha(raw_receipt)
 
 
 def sha(raw):
@@ -98,6 +176,9 @@ def selected_inventory(left, right, columns):
 
 
 def build(recovered: Path, output: Path):
+    require_batch()
+    numerical_files = historical_numerical_files(Path(__file__).resolve().parents[2])
+    recovery_sha256 = verify_recovered_inputs(recovered.resolve())
     from sklearn.preprocessing import StandardScaler
 
     from src.data.loader import load_raw_data
@@ -128,6 +209,8 @@ def build(recovered: Path, output: Path):
     ]
     report = {
         "recipe": RECIPE,
+        "numerical_files": numerical_files,
+        "recovery_sha256": recovery_sha256,
         "baseline_source": BASELINE,
         "legacy_availability_ast_sha256": function_hash,
         "scope": "Reconstruction from archived production data, not original local CPU output bytes",

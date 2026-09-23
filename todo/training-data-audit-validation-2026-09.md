@@ -6,6 +6,8 @@ The subsequent [WR causal investigation](wr-pr1564-regression/findings.md) isola
 the three change groups with archived inputs and a three-seed GPU factorial.
 It identifies depth normalization as the dominant WR MAE contributor; the
 original CPU results below remain unchanged historical evidence.
+The [September 23 review](wr-pr1564-regression/review-2026-09-23.md) dates that
+archive and records the current execution and model-promotion gates.
 
 ## Regime and comparison basis
 
