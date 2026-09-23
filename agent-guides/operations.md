@@ -11,6 +11,10 @@ Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies 
   run `pytest` locally before an otherwise-authorized squash merge. Follow
   [delivery gates](delivery.md#pr-and-merge-gates); this exception does not
   authorize `--admin` or bypass another failing/pending check.
+- Test scope recognizes agent configuration and provider hooks as `shared`.
+  Any unclassified non-documentation path still selects every shard, including
+  mixed changes. Keep the allowlist in `scope_positions.py` and its tests;
+  broader script/configuration changes must not inherit a tooling exemption.
 - [batch-image.yml](../.github/workflows/batch-image.yml) builds the image;
   `BATCH_ACTIVE` selects [Batch](../.github/workflows/train-batch.yml) versus
   [EC2 rollback](../.github/workflows/train-ec2.yml). `BATCH_SPLIT_ACTIVE`
