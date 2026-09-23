@@ -106,7 +106,9 @@ def install_observer():
         import torch
 
         from src.analysis.repair_count_diagnostics import error_summary, observed_likelihood_check
+        from src.tuning.audit_input_observer import observe_loaders
 
+        observe_loaders(train_loader, val_loader)
         history = original(trainer, train_loader, val_loader, n_epochs)
         predictions, truth = _validation_predictions(trainer, val_loader)
         selection = history["checkpoint_selection"]
@@ -202,6 +204,10 @@ def configure(config, *, arm):
     STATE.update(arm=arm, origin=origin, position=position, trainers=[])
     select_changes(arm)
     install_observer()
+    if position in {"WR", "TE"}:
+        from src.tuning.audit_input_observer import install
+
+        install(STATE)
     if position in {"K", "DST"}:
         module = importlib.import_module(f"src.{position.lower()}.run_pipeline")
         config = module.with_fold_imputation(config)
@@ -509,6 +515,10 @@ def metric_fn(result, position):
     metadata["truth_hash"] = hashlib.sha256(
         pd.util.hash_pandas_object(rows[[*KEYS, "comparison_actual"]], index=False).values.tobytes()
     ).hexdigest()
+    if position in {"WR", "TE"}:
+        from src.tuning.audit_input_observer import result_proof
+
+        metadata["input_proof"] = result_proof(result.prepared, STATE)
     receipt = evidence("manifest.json", canonical_json(metadata).encode())
     print("[repair-evidence] " + json.dumps(receipt), flush=True)
     metrics["repair"] = {
