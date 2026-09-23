@@ -1,0 +1,819 @@
+{
+  "schema": "audit-development-report/v1",
+  "purpose": "smoke",
+  "candidate": "bagging",
+  "records": 6,
+  "expected_records": 6,
+  "verification_passed": true,
+  "errors": [],
+  "comparisons": [
+    {
+      "position": "K",
+      "origin": 2022,
+      "family": "lgbm",
+      "seeds": [
+        42
+      ],
+      "deltas": {
+        "all:mae": {
+          "paired": [
+            0.0003509807284198807
+          ],
+          "mean": 0.0003509807284198807,
+          "std": null,
+          "baseline_mean": 3.834653993394602,
+          "candidate_mean": 3.835004974123022,
+          "ci95_seed_mean": null
+        },
+        "all:rmse": {
+          "paired": [
+            -0.0009813850805748814
+          ],
+          "mean": -0.0009813850805748814,
+          "std": null,
+          "baseline_mean": 4.807130509728717,
+          "candidate_mean": 4.806149124648142,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:mae": {
+          "paired": [
+            0.0019737376303856635
+          ],
+          "mean": 0.0019737376303856635,
+          "std": null,
+          "baseline_mean": 3.857028875370633,
+          "candidate_mean": 3.8590026130010187,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:rmse": {
+          "paired": [
+            0.0018965995678685843
+          ],
+          "mean": 0.0018965995678685843,
+          "std": null,
+          "baseline_mean": 4.903555790580761,
+          "candidate_mean": 4.905452390148629,
+          "ci95_seed_mean": null
+        }
+      },
+      "passes": false
+    },
+    {
+      "position": "DST",
+      "origin": 2022,
+      "family": "lgbm",
+      "seeds": [
+        42
+      ],
+      "deltas": {
+        "all:mae": {
+          "paired": [
+            -0.040921235302906034
+          ],
+          "mean": -0.040921235302906034,
+          "std": null,
+          "baseline_mean": 4.048149764731297,
+          "candidate_mean": 4.007228529428391,
+          "ci95_seed_mean": null
+        },
+        "all:rmse": {
+          "paired": [
+            -0.044482984858129626
+          ],
+          "mean": -0.044482984858129626,
+          "std": null,
+          "baseline_mean": 5.233826459207218,
+          "candidate_mean": 5.189343474349088,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:mae": {
+          "paired": [
+            -0.05925697734780888
+          ],
+          "mean": -0.05925697734780888,
+          "std": null,
+          "baseline_mean": 4.038822661205323,
+          "candidate_mean": 3.979565683857514,
+          "ci95_seed_mean": null
+        },
+        "elite_top24:rmse": {
+          "paired": [
+            -0.0723642368466626
+          ],
+          "mean": -0.0723642368466626,
+          "std": null,
+          "baseline_mean": 5.2951698134048275,
+          "candidate_mean": 5.222805576558165,
+          "ci95_seed_mean": null
+        }
+      },
+      "passes": true
+    }
+  ],
+  "numerical_findings": [],
+  "candidate_numerical_checks_passed": true,
+  "cells": [
+    {
+      "position": "DST",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "bagging",
+      "batch_job_id": "26bfe7c9-cb04-4162-809a-79ebc0cdb485",
+      "gpu": "NVIDIA L4",
+      "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+      "metrics": {
+        "all:ridge": {
+          "n": 542,
+          "mae": 4.052160615053098,
+          "rmse": 5.217288051313746
+        },
+        "all:nn": {
+          "n": 542,
+          "mae": 4.0522784642132885,
+          "rmse": 5.242882349202042
+        },
+        "all:attn_nn": {
+          "n": 542,
+          "mae": 4.054047849366091,
+          "rmse": 5.269695731029693
+        },
+        "all:lgbm": {
+          "n": 542,
+          "mae": 4.007228529428391,
+          "rmse": 5.189343474349088
+        },
+        "elite_top24:ridge": {
+          "n": 406,
+          "mae": 4.034181127847381,
+          "rmse": 5.279852539441681
+        },
+        "elite_top24:nn": {
+          "n": 406,
+          "mae": 4.0291595754071405,
+          "rmse": 5.29422274154162
+        },
+        "elite_top24:attn_nn": {
+          "n": 406,
+          "mae": 4.0122689437488175,
+          "rmse": 5.301562186538134
+        },
+        "elite_top24:lgbm": {
+          "n": 406,
+          "mae": 3.979565683857514,
+          "rmse": 5.222805576558165
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 118,
+          "epochs_executed": 153,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 5.58033562495428,
+            "rmse": 7.053663210342872
+          }
+        },
+        "attn_nn": {
+          "epoch": 134,
+          "epochs_executed": 154,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 5.4893870862091285,
+            "rmse": 6.9947886461932525
+          }
+        }
+      }
+    },
+    {
+      "position": "DST",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "baseline",
+      "batch_job_id": "26bfe7c9-cb04-4162-809a-79ebc0cdb485",
+      "gpu": "NVIDIA L4",
+      "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+      "metrics": {
+        "all:ridge": {
+          "n": 542,
+          "mae": 4.052160615053098,
+          "rmse": 5.217288051313746
+        },
+        "all:nn": {
+          "n": 542,
+          "mae": 4.0522784642132885,
+          "rmse": 5.242882349202042
+        },
+        "all:attn_nn": {
+          "n": 542,
+          "mae": 4.054047849366091,
+          "rmse": 5.269695731029693
+        },
+        "all:lgbm": {
+          "n": 542,
+          "mae": 4.048149764731297,
+          "rmse": 5.233826459207218
+        },
+        "elite_top24:ridge": {
+          "n": 406,
+          "mae": 4.034181127847381,
+          "rmse": 5.279852539441681
+        },
+        "elite_top24:nn": {
+          "n": 406,
+          "mae": 4.0291595754071405,
+          "rmse": 5.29422274154162
+        },
+        "elite_top24:attn_nn": {
+          "n": 406,
+          "mae": 4.0122689437488175,
+          "rmse": 5.301562186538134
+        },
+        "elite_top24:lgbm": {
+          "n": 406,
+          "mae": 4.038822661205323,
+          "rmse": 5.2951698134048275
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 118,
+          "epochs_executed": 153,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 5.58033562495428,
+            "rmse": 7.053663210342872
+          }
+        },
+        "attn_nn": {
+          "epoch": 134,
+          "epochs_executed": 154,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 5.4893870862091285,
+            "rmse": 6.9947886461932525
+          }
+        }
+      }
+    },
+    {
+      "position": "DST",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "baseline_rep",
+      "batch_job_id": "26bfe7c9-cb04-4162-809a-79ebc0cdb485",
+      "gpu": "NVIDIA L4",
+      "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+      "metrics": {
+        "all:ridge": {
+          "n": 542,
+          "mae": 4.052160615053098,
+          "rmse": 5.217288051313746
+        },
+        "all:nn": {
+          "n": 542,
+          "mae": 4.0522784642132885,
+          "rmse": 5.242882349202042
+        },
+        "all:attn_nn": {
+          "n": 542,
+          "mae": 4.054047849366091,
+          "rmse": 5.269695731029693
+        },
+        "all:lgbm": {
+          "n": 542,
+          "mae": 4.048149764731297,
+          "rmse": 5.233826459207218
+        },
+        "elite_top24:ridge": {
+          "n": 406,
+          "mae": 4.034181127847381,
+          "rmse": 5.279852539441681
+        },
+        "elite_top24:nn": {
+          "n": 406,
+          "mae": 4.0291595754071405,
+          "rmse": 5.29422274154162
+        },
+        "elite_top24:attn_nn": {
+          "n": 406,
+          "mae": 4.0122689437488175,
+          "rmse": 5.301562186538134
+        },
+        "elite_top24:lgbm": {
+          "n": 406,
+          "mae": 4.038822661205323,
+          "rmse": 5.2951698134048275
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 118,
+          "epochs_executed": 153,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 5.58033562495428,
+            "rmse": 7.053663210342872
+          }
+        },
+        "attn_nn": {
+          "epoch": 134,
+          "epochs_executed": 154,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 5.4893870862091285,
+            "rmse": 6.9947886461932525
+          }
+        }
+      }
+    },
+    {
+      "position": "K",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "bagging",
+      "batch_job_id": "69ca0e6a-d794-49f8-a1ac-6978220d4b15",
+      "gpu": "NVIDIA L4",
+      "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+      "metrics": {
+        "all:ridge": {
+          "n": 547,
+          "mae": 3.840336748739207,
+          "rmse": 4.82955429603636
+        },
+        "all:nn": {
+          "n": 547,
+          "mae": 3.9104558050305585,
+          "rmse": 5.015438575970211
+        },
+        "all:attn_nn": {
+          "n": 547,
+          "mae": 3.9071734887590366,
+          "rmse": 4.967695551100135
+        },
+        "all:lgbm": {
+          "n": 547,
+          "mae": 3.835004974123022,
+          "rmse": 4.806149124648142
+        },
+        "elite_top24:ridge": {
+          "n": 344,
+          "mae": 3.8977194430856694,
+          "rmse": 4.963832464383755
+        },
+        "elite_top24:nn": {
+          "n": 344,
+          "mae": 3.984701403351717,
+          "rmse": 5.167748651695459
+        },
+        "elite_top24:attn_nn": {
+          "n": 344,
+          "mae": 3.9207648634910583,
+          "rmse": 5.058840725645722
+        },
+        "elite_top24:lgbm": {
+          "n": 344,
+          "mae": 3.8590026130010187,
+          "rmse": 4.905452390148629
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 37,
+          "epochs_executed": 67,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 3.8955670840599956,
+            "rmse": 4.896746659067043
+          }
+        },
+        "attn_nn": {
+          "epoch": 38,
+          "epochs_executed": 58,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 3.9544749487848843,
+            "rmse": 4.886416683969401
+          }
+        }
+      }
+    },
+    {
+      "position": "K",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "baseline",
+      "batch_job_id": "69ca0e6a-d794-49f8-a1ac-6978220d4b15",
+      "gpu": "NVIDIA L4",
+      "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+      "metrics": {
+        "all:ridge": {
+          "n": 547,
+          "mae": 3.840336748739207,
+          "rmse": 4.82955429603636
+        },
+        "all:nn": {
+          "n": 547,
+          "mae": 3.9104558050305585,
+          "rmse": 5.015438575970211
+        },
+        "all:attn_nn": {
+          "n": 547,
+          "mae": 3.9071734887590366,
+          "rmse": 4.967695551100135
+        },
+        "all:lgbm": {
+          "n": 547,
+          "mae": 3.834653993394602,
+          "rmse": 4.807130509728717
+        },
+        "elite_top24:ridge": {
+          "n": 344,
+          "mae": 3.8977194430856694,
+          "rmse": 4.963832464383755
+        },
+        "elite_top24:nn": {
+          "n": 344,
+          "mae": 3.984701403351717,
+          "rmse": 5.167748651695459
+        },
+        "elite_top24:attn_nn": {
+          "n": 344,
+          "mae": 3.9207648634910583,
+          "rmse": 5.058840725645722
+        },
+        "elite_top24:lgbm": {
+          "n": 344,
+          "mae": 3.857028875370633,
+          "rmse": 4.903555790580761
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 37,
+          "epochs_executed": 67,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 3.8955670840599956,
+            "rmse": 4.896746659067043
+          }
+        },
+        "attn_nn": {
+          "epoch": 38,
+          "epochs_executed": 58,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 3.9544749487848843,
+            "rmse": 4.886416683969401
+          }
+        }
+      }
+    },
+    {
+      "position": "K",
+      "origin": 2022,
+      "seed": 42,
+      "variant": "baseline_rep",
+      "batch_job_id": "69ca0e6a-d794-49f8-a1ac-6978220d4b15",
+      "gpu": "NVIDIA L4",
+      "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7",
+      "metrics": {
+        "all:ridge": {
+          "n": 547,
+          "mae": 3.840336748739207,
+          "rmse": 4.82955429603636
+        },
+        "all:nn": {
+          "n": 547,
+          "mae": 3.9104558050305585,
+          "rmse": 5.015438575970211
+        },
+        "all:attn_nn": {
+          "n": 547,
+          "mae": 3.9071734887590366,
+          "rmse": 4.967695551100135
+        },
+        "all:lgbm": {
+          "n": 547,
+          "mae": 3.834653993394602,
+          "rmse": 4.807130509728717
+        },
+        "elite_top24:ridge": {
+          "n": 344,
+          "mae": 3.8977194430856694,
+          "rmse": 4.963832464383755
+        },
+        "elite_top24:nn": {
+          "n": 344,
+          "mae": 3.984701403351717,
+          "rmse": 5.167748651695459
+        },
+        "elite_top24:attn_nn": {
+          "n": 344,
+          "mae": 3.9207648634910583,
+          "rmse": 5.058840725645722
+        },
+        "elite_top24:lgbm": {
+          "n": 344,
+          "mae": 3.857028875370633,
+          "rmse": 4.903555790580761
+        }
+      },
+      "inference_max_absolute_error": 0.0,
+      "selected_checkpoints": {
+        "nn": {
+          "epoch": 37,
+          "epochs_executed": 67,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 3.8955670840599956,
+            "rmse": 4.896746659067043
+          }
+        },
+        "attn_nn": {
+          "epoch": 38,
+          "epochs_executed": 58,
+          "stop_reason": "patience",
+          "restored_scores": {
+            "mae": 3.9544749487848843,
+            "rmse": 4.886416683969401
+          }
+        }
+      }
+    }
+  ],
+  "development_qualified": false,
+  "merge_authorized": false,
+  "confirmation_complete": false,
+  "weekly_reference_top24": "Unavailable before 2024; required confirmation remains separate.",
+  "uncertainty": "Paired sample standard deviations and Student-t intervals describe three training seeds within each retrospective season, not independent season uncertainty.",
+  "plan": {
+    "schema": "audit-development-plan/v2",
+    "purpose": "smoke",
+    "candidate": "bagging",
+    "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
+    "candidate_sha": "d690b417e6d521d379843b924707db8ab16efff1",
+    "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+    "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
+    "positions": [
+      "K",
+      "DST"
+    ],
+    "origins": [
+      2022
+    ],
+    "seeds": [
+      42
+    ],
+    "runs": [
+      {
+        "prefix": "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42",
+        "origin": 2022,
+        "positions": [
+          "K",
+          "DST"
+        ],
+        "seeds": [
+          42
+        ],
+        "source_sha": "90265546bb05269a697af0635633d861b3eda738",
+        "include_positions": [
+          "K",
+          "DST"
+        ],
+        "superseded_positions": {}
+      }
+    ],
+    "sources": {
+      "90265546bb05269a697af0635633d861b3eda738": {
+        "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7"
+      }
+    }
+  },
+  "source_bridges": [],
+  "source_pins": {
+    "90265546bb05269a697af0635633d861b3eda738": {
+      "image_digest": "sha256:ef2af454c8694898d03e7239c9d456532fcbecb0f48aba49a8cce008d4722ff7"
+    }
+  },
+  "object_proofs": {
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/manifest.json": {
+      "sha256": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+      "bytes": 62794
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/dst_scoring_pbp_v1_2012_2025.parquet": {
+      "sha256": "e5f53c2dcbb981e78e5738852b795f537f805e89545a7d64a41f4b0158b35b9e",
+      "bytes": 8406
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/kicker_pbp_2015_2024.parquet": {
+      "sha256": "5889788496cd49b813ac5be5bad08fc9d00808cd69ee5055570a8bd78fd5b925",
+      "bytes": 124169
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/schedules_2012_2025.parquet": {
+      "sha256": "ff09919e4ba0484126d51f92afdc409ff1b113e6c941d789366b0b9085a8b24b",
+      "bytes": 299752
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/rosters_2012_2025.parquet": {
+      "sha256": "801cb7c4ceaa9eec62d32b182ddac712bf88f74eda08bfbc955435bb83934214",
+      "bytes": 3093848
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/team_stats_2012_2025.parquet": {
+      "sha256": "2e2895a85814ce1c55b3fdc3b02224eda1831b60e1e83d6e4bba6e89551c8107",
+      "bytes": 912918
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/snap_counts_2012_2025.parquet": {
+      "sha256": "46c67cfd298b39dcedb44fafb217dbbbd11530aeb824b1823a2bcab62aa01384",
+      "bytes": 2549832
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/kicker_backfill_pbp_v1_2025.parquet": {
+      "sha256": "bf74035daa19551dd7d2cd4fee271ea0d3497913bd67669fa6ce3a2c3228ede6",
+      "bytes": 537324
+    },
+    "data/releases/9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4/raw/weekly_2012_2025.parquet": {
+      "sha256": "bd6309343c588daf18d359fbfcb72635ed4267f139babd090a2fdc83d0052af5",
+      "bytes": 9574017
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/run.json": {
+      "sha256": "262341bf4430267fd0c01cc7fbc319a2b061714ecf8b4f2e82e2b0b8a8d8fea6",
+      "bytes": 935
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-bagging-42/4dd6a0cfbada6ee17b669986afb38e6bf3f409d8dd8eb08302e6c84bf5f58103-manifest.json": {
+      "sha256": "4dd6a0cfbada6ee17b669986afb38e6bf3f409d8dd8eb08302e6c84bf5f58103",
+      "bytes": 28668
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/cells/DST-bagging-42.json": {
+      "sha256": "c38d772f9563d957ef4c5536f505ee4a29bbf7122ee49a1e8cb5841545499403",
+      "bytes": 5871
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-bagging-42/d838da5cc065a54061f1ddbf0aafce1c9e43e42b63ada2e9b8dd8edced5bd735-predictions.parquet": {
+      "sha256": "d838da5cc065a54061f1ddbf0aafce1c9e43e42b63ada2e9b8dd8edced5bd735",
+      "bytes": 311768
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-bagging-42/c51b2c781d837e2565ebeb8037f81651df3f99ad1f020772212b98fc15165dc9-nn-validation.npz": {
+      "sha256": "c51b2c781d837e2565ebeb8037f81651df3f99ad1f020772212b98fc15165dc9",
+      "bytes": 25037
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-bagging-42/495b723d7e580da41c0fb50e231d4fa6759da3ae61289f44f640446d528c781c-nn-selected.pt": {
+      "sha256": "495b723d7e580da41c0fb50e231d4fa6759da3ae61289f44f640446d528c781c",
+      "bytes": 148161
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-bagging-42/85b684139adbadd58ea3bf3502035012068475937baab027f3770cd9aa207129-attn_nn-validation.npz": {
+      "sha256": "85b684139adbadd58ea3bf3502035012068475937baab027f3770cd9aa207129",
+      "bytes": 22875
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-bagging-42/e7a0e1ae49f37e47a490c09a54e3c49d60267a777a4d81597647797ceef8c81d-attn_nn-selected.pt": {
+      "sha256": "e7a0e1ae49f37e47a490c09a54e3c49d60267a777a4d81597647797ceef8c81d",
+      "bytes": 331297
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline-42/bce1da378317e4faa12ef9034cd8c8b5ba346b649af98e58c8e9e51b876941a7-manifest.json": {
+      "sha256": "bce1da378317e4faa12ef9034cd8c8b5ba346b649af98e58c8e9e51b876941a7",
+      "bytes": 28678
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/cells/DST-baseline-42.json": {
+      "sha256": "e2a18e7cd6cf8e88eb9fd1cda63a862c48c081f0075ac5a00d0d7928b2cb562e",
+      "bytes": 5874
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline-42/bcc86ed7168749ef31a755047973d696885d118e8d2b3a56cf3197ebf5701bb2-predictions.parquet": {
+      "sha256": "bcc86ed7168749ef31a755047973d696885d118e8d2b3a56cf3197ebf5701bb2",
+      "bytes": 308568
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline-42/c51b2c781d837e2565ebeb8037f81651df3f99ad1f020772212b98fc15165dc9-nn-validation.npz": {
+      "sha256": "c51b2c781d837e2565ebeb8037f81651df3f99ad1f020772212b98fc15165dc9",
+      "bytes": 25037
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline-42/495b723d7e580da41c0fb50e231d4fa6759da3ae61289f44f640446d528c781c-nn-selected.pt": {
+      "sha256": "495b723d7e580da41c0fb50e231d4fa6759da3ae61289f44f640446d528c781c",
+      "bytes": 148161
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline-42/85b684139adbadd58ea3bf3502035012068475937baab027f3770cd9aa207129-attn_nn-validation.npz": {
+      "sha256": "85b684139adbadd58ea3bf3502035012068475937baab027f3770cd9aa207129",
+      "bytes": 22875
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline-42/e7a0e1ae49f37e47a490c09a54e3c49d60267a777a4d81597647797ceef8c81d-attn_nn-selected.pt": {
+      "sha256": "e7a0e1ae49f37e47a490c09a54e3c49d60267a777a4d81597647797ceef8c81d",
+      "bytes": 331297
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline_rep-42/f43a0a660c89737ed0cb9d143f49228c60b0a8c8dd2c9ec0882d9f88df8acf77-manifest.json": {
+      "sha256": "f43a0a660c89737ed0cb9d143f49228c60b0a8c8dd2c9ec0882d9f88df8acf77",
+      "bytes": 28702
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/cells/DST-baseline_rep-42.json": {
+      "sha256": "27445c3643291b19d3630c047321c9b86085f66310a10a1e0bcd2ab56dd9dcf4",
+      "bytes": 5882
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline_rep-42/bcc86ed7168749ef31a755047973d696885d118e8d2b3a56cf3197ebf5701bb2-predictions.parquet": {
+      "sha256": "bcc86ed7168749ef31a755047973d696885d118e8d2b3a56cf3197ebf5701bb2",
+      "bytes": 308568
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline_rep-42/c51b2c781d837e2565ebeb8037f81651df3f99ad1f020772212b98fc15165dc9-nn-validation.npz": {
+      "sha256": "c51b2c781d837e2565ebeb8037f81651df3f99ad1f020772212b98fc15165dc9",
+      "bytes": 25037
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline_rep-42/495b723d7e580da41c0fb50e231d4fa6759da3ae61289f44f640446d528c781c-nn-selected.pt": {
+      "sha256": "495b723d7e580da41c0fb50e231d4fa6759da3ae61289f44f640446d528c781c",
+      "bytes": 148161
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline_rep-42/85b684139adbadd58ea3bf3502035012068475937baab027f3770cd9aa207129-attn_nn-validation.npz": {
+      "sha256": "85b684139adbadd58ea3bf3502035012068475937baab027f3770cd9aa207129",
+      "bytes": 22875
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/DST-baseline_rep-42/e7a0e1ae49f37e47a490c09a54e3c49d60267a777a4d81597647797ceef8c81d-attn_nn-selected.pt": {
+      "sha256": "e7a0e1ae49f37e47a490c09a54e3c49d60267a777a4d81597647797ceef8c81d",
+      "bytes": 331297
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-bagging-42/3676951d18010b576549b1ed91ff00045c7e4c95d3c4d99e7df7621608fb6670-manifest.json": {
+      "sha256": "3676951d18010b576549b1ed91ff00045c7e4c95d3c4d99e7df7621608fb6670",
+      "bytes": 15842
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/cells/K-bagging-42.json": {
+      "sha256": "62e35e827ca1f5cb1e1fe5e199eacc127343aaa4ed8c5744f2210cd7a158823e",
+      "bytes": 5415
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-bagging-42/b6e2200566ef06559c45f458e7d9f2cf14ccab425953aa15b6d802f605365ae5-predictions.parquet": {
+      "sha256": "b6e2200566ef06559c45f458e7d9f2cf14ccab425953aa15b6d802f605365ae5",
+      "bytes": 246127
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-bagging-42/0a5d98ec2ff2a24f5ffdfd70aa1654939c7affb2e78aa7007fdf345aacec1171-nn-validation.npz": {
+      "sha256": "0a5d98ec2ff2a24f5ffdfd70aa1654939c7affb2e78aa7007fdf345aacec1171",
+      "bytes": 11076
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-bagging-42/e3a2a78c64b595bc16000d1964bc625f47554e3576e16484a80bf0ac5a201a93-nn-selected.pt": {
+      "sha256": "e3a2a78c64b595bc16000d1964bc625f47554e3576e16484a80bf0ac5a201a93",
+      "bytes": 32585
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-bagging-42/4ed2f05fb62a63077663b25c8b98146820468b163f129b1d16f2c99357bbf4fb-attn_nn-validation.npz": {
+      "sha256": "4ed2f05fb62a63077663b25c8b98146820468b163f129b1d16f2c99357bbf4fb",
+      "bytes": 11212
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-bagging-42/c7e4b9f95ebea6891e83bd98dff3d1aa7227e24abecdbc409d2f5747cbed14f2-attn_nn-selected.pt": {
+      "sha256": "c7e4b9f95ebea6891e83bd98dff3d1aa7227e24abecdbc409d2f5747cbed14f2",
+      "bytes": 66000
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline-42/c7048aab5cd4b91900b6f0fb82aaf62b90726655d1d543f337d080fd3de79e48-manifest.json": {
+      "sha256": "c7048aab5cd4b91900b6f0fb82aaf62b90726655d1d543f337d080fd3de79e48",
+      "bytes": 15844
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/cells/K-baseline-42.json": {
+      "sha256": "5807e06f6a33527105822d9dd30d803a36b620f92e2ff78b53b76253d3c922de",
+      "bytes": 5415
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline-42/c7ec847a9a38669e5cc97c92baa9353d67d2bf8aa505a194e313868f6195305a-predictions.parquet": {
+      "sha256": "c7ec847a9a38669e5cc97c92baa9353d67d2bf8aa505a194e313868f6195305a",
+      "bytes": 243173
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline-42/0a5d98ec2ff2a24f5ffdfd70aa1654939c7affb2e78aa7007fdf345aacec1171-nn-validation.npz": {
+      "sha256": "0a5d98ec2ff2a24f5ffdfd70aa1654939c7affb2e78aa7007fdf345aacec1171",
+      "bytes": 11076
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline-42/e3a2a78c64b595bc16000d1964bc625f47554e3576e16484a80bf0ac5a201a93-nn-selected.pt": {
+      "sha256": "e3a2a78c64b595bc16000d1964bc625f47554e3576e16484a80bf0ac5a201a93",
+      "bytes": 32585
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline-42/4ed2f05fb62a63077663b25c8b98146820468b163f129b1d16f2c99357bbf4fb-attn_nn-validation.npz": {
+      "sha256": "4ed2f05fb62a63077663b25c8b98146820468b163f129b1d16f2c99357bbf4fb",
+      "bytes": 11212
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline-42/c7e4b9f95ebea6891e83bd98dff3d1aa7227e24abecdbc409d2f5747cbed14f2-attn_nn-selected.pt": {
+      "sha256": "c7e4b9f95ebea6891e83bd98dff3d1aa7227e24abecdbc409d2f5747cbed14f2",
+      "bytes": 66000
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline_rep-42/a94ff3c2b64eccb70030f0bf7e698d66ffe7a620dec3aeee47e29d961add1c52-manifest.json": {
+      "sha256": "a94ff3c2b64eccb70030f0bf7e698d66ffe7a620dec3aeee47e29d961add1c52",
+      "bytes": 15868
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/cells/K-baseline_rep-42.json": {
+      "sha256": "69e8bd984e7bb89554777855f4d52a892f4685799bdcebd3e93ef3c3913b4c7f",
+      "bytes": 5423
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline_rep-42/c7ec847a9a38669e5cc97c92baa9353d67d2bf8aa505a194e313868f6195305a-predictions.parquet": {
+      "sha256": "c7ec847a9a38669e5cc97c92baa9353d67d2bf8aa505a194e313868f6195305a",
+      "bytes": 243173
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline_rep-42/0a5d98ec2ff2a24f5ffdfd70aa1654939c7affb2e78aa7007fdf345aacec1171-nn-validation.npz": {
+      "sha256": "0a5d98ec2ff2a24f5ffdfd70aa1654939c7affb2e78aa7007fdf345aacec1171",
+      "bytes": 11076
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline_rep-42/e3a2a78c64b595bc16000d1964bc625f47554e3576e16484a80bf0ac5a201a93-nn-selected.pt": {
+      "sha256": "e3a2a78c64b595bc16000d1964bc625f47554e3576e16484a80bf0ac5a201a93",
+      "bytes": 32585
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline_rep-42/4ed2f05fb62a63077663b25c8b98146820468b163f129b1d16f2c99357bbf4fb-attn_nn-validation.npz": {
+      "sha256": "4ed2f05fb62a63077663b25c8b98146820468b163f129b1d16f2c99357bbf4fb",
+      "bytes": 11212
+    },
+    "ab_runs/audit-isolated-development-20260923/smoke-bagging-2022-native-s42/evidence/K-baseline_rep-42/c7e4b9f95ebea6891e83bd98dff3d1aa7227e24abecdbc409d2f5747cbed14f2-attn_nn-selected.pt": {
+      "sha256": "c7e4b9f95ebea6891e83bd98dff3d1aa7227e24abecdbc409d2f5747cbed14f2",
+      "bytes": 66000
+    }
+  }
+}
