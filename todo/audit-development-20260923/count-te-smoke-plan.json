@@ -1,0 +1,40 @@
+{
+  "schema": "audit-development-plan/v2",
+  "purpose": "smoke",
+  "candidate": "count_precision",
+  "baseline_sha": "ecddeca88d8011cc18866b8842815bd7bc7999e5",
+  "candidate_sha": "00873f2b9dbddfc338b53604555ccc9ae9bac97f",
+  "data_release": "9758de7902913140b9e1f766a63db89e558d9ebe11257c5f7946ace4ff3d8db4",
+  "campaign_prefix": "ab_runs/audit-isolated-development-20260923",
+  "positions": [
+    "TE"
+  ],
+  "origins": [
+    2022
+  ],
+  "seeds": [
+    42
+  ],
+  "runs": [
+    {
+      "prefix": "ab_runs/audit-isolated-development-20260923/smoke-count-2022-te-s42-87213b85",
+      "origin": 2022,
+      "positions": [
+        "TE"
+      ],
+      "seeds": [
+        42
+      ],
+      "source_sha": "87213b853c4d724f6574dccddbb62dfcb6601cd1"
+    }
+  ],
+  "sources": {
+    "87213b853c4d724f6574dccddbb62dfcb6601cd1": {
+      "image_digest": "sha256:1efe7ddca433f36395d500046a042e3d4854ca24cbccc99299277792aea41fbc",
+      "bridge": {
+        "path": "todo/audit-source-bridge-20260923.json",
+        "sha256": "3fa558d550aac896748975d72f842b2604b612d13595fb80f8ac7324e29ac7a2"
+      }
+    }
+  }
+}
