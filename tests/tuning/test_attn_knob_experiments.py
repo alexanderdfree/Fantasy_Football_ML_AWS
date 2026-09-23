@@ -108,6 +108,7 @@ def test_prime_feature_cache_forces_cpu_device_and_restores(monkeypatch):
         seen.append((os.environ.get("FF_DEVICE"), config))
 
     monkeypatch.setenv("FF_DEVICE", "cuda")
+    monkeypatch.setenv("FF_FEATURE_CACHE_DISABLE", "0")
     monkeypatch.setattr(ake, "_load_position", lambda position: ({}, fake_run))
 
     ake._prime_feature_cache("RB")

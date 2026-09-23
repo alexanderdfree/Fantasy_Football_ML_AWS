@@ -186,14 +186,78 @@ def test_splits_stat_key_tracks_file_changes(monkeypatch, tmp_path):
 
 @pytest.mark.unit
 def test_splits_stat_key_catches_preserved_mtime_and_directory_change(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    for name in ("train.parquet", "val.parquet", "test.parquet"):
+        (tmp_path / name).write_bytes(b"x")
+    monkeypatch.setattr(pipeline_mod, "SPLITS_DIR", str(tmp_path))
+    real_os = pipeline_mod.os
+    ctimes = {
+        str(tmp_path / n): (tmp_path / n).stat().st_ctime_ns
+        for n in ("train.parquet", "val.parquet", "test.parquet")
+    }
+
+    def same_tick_stat(name):
+        st = real_os.stat(name)
+        return SimpleNamespace(
+            st_dev=st.st_dev,
+            st_ino=st.st_ino,
+            st_size=st.st_size,
+            st_mtime_ns=st.st_mtime_ns,
+            st_ctime_ns=ctimes[name],
+        )
+
+    path = tmp_path / "train.parquet"
+    stat = path.stat()
+    # Production split writers publish with os.replace. In-place writes can
+    # retain ctime within a filesystem tick, so they cannot establish the
+    # metadata-change precondition of this deliberately stat-only key.
+    replacement = tmp_path / "replacement.parquet"
+    replacement.write_bytes(b"y")
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    with monkeypatch.context() as same_tick:
+        same_tick.setattr(
+            pipeline_mod, "os", SimpleNamespace(path=real_os.path, stat=same_tick_stat)
+        )
+        before = pipeline_mod._splits_stat_key()
+        os.replace(replacement, path)
+        assert path.stat().st_size == stat.st_size
+        assert path.stat().st_mtime_ns == stat.st_mtime_ns
+        assert pipeline_mod._splits_stat_key() != before
+
+    # Isolate the directory identity: hard links share all stat metadata.
+    other = tmp_path / "other"
+    other.mkdir()
+    for name in ("train.parquet", "val.parquet", "test.parquet"):
+        os.link(tmp_path / name, other / name)
+    before_move = pipeline_mod._splits_stat_key()
+    monkeypatch.setattr(pipeline_mod, "SPLITS_DIR", str(other))
+    after_move = pipeline_mod._splits_stat_key()
+    assert tuple(row[1:] for row in before_move) == tuple(row[1:] for row in after_move)
+    assert after_move != before_move
+
+
+@pytest.mark.unit
+def test_splits_stat_key_catches_ctime_only_change(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
     for name in ("train.parquet", "val.parquet", "test.parquet"):
         (tmp_path / name).write_bytes(b"x")
     monkeypatch.setattr(pipeline_mod, "SPLITS_DIR", str(tmp_path))
     before = pipeline_mod._splits_stat_key()
-    path = tmp_path / "train.parquet"
-    stat = path.stat()
-    path.write_bytes(b"y")
-    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    real_os = pipeline_mod.os
+
+    def changed_stat(path):
+        st = real_os.stat(path)
+        return SimpleNamespace(
+            st_dev=st.st_dev,
+            st_ino=st.st_ino,
+            st_size=st.st_size,
+            st_mtime_ns=st.st_mtime_ns,
+            st_ctime_ns=st.st_ctime_ns + 1,
+        )
+
+    monkeypatch.setattr(pipeline_mod, "os", SimpleNamespace(path=real_os.path, stat=changed_stat))
     assert pipeline_mod._splits_stat_key() != before
 
 
