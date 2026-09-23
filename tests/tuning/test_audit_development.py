@@ -105,6 +105,38 @@ def test_local_training_and_confirmation_are_rejected(monkeypatch):
         audit.configure({}, arm="baseline")
 
 
+@pytest.mark.parametrize("position", ["QB", "RB", "WR", "TE", "K", "DST"])
+def test_configured_position_uses_each_native_filter(position):
+    module = importlib.import_module(f"src.{position.lower()}.run_pipeline")
+    assert audit.configured_position(module.CONFIG) == position
+
+
+def test_wr_and_te_shared_targets_keep_distinct_observer_identities(monkeypatch):
+    wr = importlib.import_module("src.wr.run_pipeline").CONFIG
+    te = importlib.import_module("src.te.run_pipeline").CONFIG
+    assert set(wr["targets"]) == set(te["targets"])
+    monkeypatch.setenv("AWS_BATCH_JOB_ID", "fake-for-no-fit-test")
+    monkeypatch.setenv("FF_AUDIT_ORIGIN", "2022")
+    monkeypatch.setenv("FF_AMP_DTYPE", "fp32")
+    monkeypatch.setattr(audit, "select_changes", lambda arm: None)
+    monkeypatch.setattr(audit, "install_observer", lambda: None)
+    audit.configure(dict(wr), arm="count_precision")
+    assert audit.STATE["position"] == "WR"
+    audit.configure(dict(te), arm="count_precision")
+    assert audit.STATE["position"] == "TE"
+
+
+def test_unknown_filter_identity_fails_before_installing_any_fit_observer(monkeypatch):
+    monkeypatch.setenv("AWS_BATCH_JOB_ID", "fake-for-no-fit-test")
+    monkeypatch.setenv("FF_AUDIT_ORIGIN", "2022")
+    monkeypatch.setenv("FF_AMP_DTYPE", "fp32")
+    with monkeypatch.context() as guard:
+        guard.setattr(audit, "select_changes", lambda arm: pytest.fail("switches installed"))
+        guard.setattr(audit, "install_observer", lambda: pytest.fail("observer installed"))
+        with pytest.raises(ValueError, match="Unknown production position filter identity"):
+            audit.configure({"filter_fn": lambda frame: frame}, arm="baseline")
+
+
 @pytest.mark.parametrize(
     "suffix,native,positions",
     [

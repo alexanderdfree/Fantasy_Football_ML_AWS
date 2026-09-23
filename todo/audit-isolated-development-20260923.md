@@ -87,3 +87,21 @@ lint/format and launcher dry runs. All 18 no-fit orchestration/numerical/feature
 checks pass. Both stint implementations are AST-identical to the pinned PR
 after function renaming, and all ten count functions are AST-identical without
 renaming. These mechanical checks do not establish forecast improvement.
+
+## Observer identity repair
+
+The first full TE cells failed after fitting because the observer inferred WR
+from their shared raw-stat target names. The experiment now resolves its identity
+from the existing production `filter_fn` module and rejects unknown identities
+before installing observers or fitting. All six positions and the WR/TE shared
+target case have explicit no-fit regression coverage. This changes experiment
+identity routing only; it does not change production configuration or defaults.
+
+The machine-readable [source bridge](audit-source-bridge-20260923.json) records
+every unchanged core training/data/model file and dependency recipe versus
+`90265546bb05269a697af0635633d861b3eda738`, including the exact count candidate.
+Existing valid RB/WR cells retain their original source and image pins. TE
+repeats use a new, independently pinned source/image after a successful TE smoke.
+Reports must declare each run's source and image and check the bridge; they must
+never represent these runs as having one common source SHA. The failed TE
+receipts are excluded from the replacement plan, not counted as measurements.

@@ -164,8 +164,19 @@ def install_observer():
     MultiHeadTrainer.train = train
 
 
+def configured_position(config):
+    """Use the native loader identity; WR and TE deliberately share targets."""
+    module = getattr(config.get("filter_fn"), "__module__", "")
+    expected = {
+        f"src.{position.lower()}.data": position
+        for position in ("QB", "RB", "WR", "TE", "K", "DST")
+    }
+    if module not in expected:
+        raise ValueError(f"Unknown production position filter identity: {module!r}")
+    return expected[module]
+
+
 def configure(config, *, arm):
-    from src.shared.aggregate_targets import infer_position
 
     if not os.environ.get("AWS_BATCH_JOB_ID"):
         raise RuntimeError("All model fitting, including smoke cells, must run on AWS Batch")
@@ -182,7 +193,7 @@ def configure(config, *, arm):
         raise ValueError(
             "Freeze a qualifying candidate before any confirmation; this spec refuses 2024/25"
         )
-    position = infer_position(config["targets"])
+    position = configured_position(config)
     if arm == "count_precision" and position not in {"RB", "WR", "TE"}:
         raise ValueError("Count candidate has no production hurdle head on this position")
     if arm == "stint_reset" and position not in {"WR", "TE"}:
