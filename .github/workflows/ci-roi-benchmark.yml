@@ -6,13 +6,16 @@ on:
     paths:
       - .github/workflows/ci-roi-benchmark.yml
       - .github/workflows/_ci-roi-measure.yml
-      - src/analysis/ci_image_cache_benchmark.py
+      - .github/scripts/ci_image_cache_benchmark.py
       - src/batch/Dockerfile.train
       - .github/workflows/batch-image.yml
       - .github/workflows/deploy.yml
 permissions:
   contents: read
   actions: read
+concurrency:
+  group: ci-roi-benchmark-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   cache-write:
     runs-on: ubuntu-latest
@@ -43,7 +46,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        variant: [baseline, candidate]
+        variant: [baseline]
         sample: [0]
     uses: ./.github/workflows/_ci-roi-measure.yml
     with:
@@ -55,22 +58,27 @@ jobs:
     needs: serving-cold
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix:
-        variant: [baseline, candidate]
-        sample: [1, 2, 3]
+        include:
+          - {variant: baseline, sample: 1}
+          - {variant: candidate, sample: 1}
+          - {variant: candidate, sample: 2}
+          - {variant: baseline, sample: 2}
+          - {variant: baseline, sample: 3}
+          - {variant: candidate, sample: 3}
     uses: ./.github/workflows/_ci-roi-measure.yml
     with:
       image: serving
       variant: ${{ matrix.variant }}
       sample: ${{ matrix.sample }}
       source_sha: ${{ github.sha }}
-  training-candidate-cold:
+  training-cold:
     needs: serving-warm
     strategy:
       fail-fast: false
       matrix:
-        variant: [candidate]
+        variant: [baseline]
         sample: [0]
     uses: ./.github/workflows/_ci-roi-measure.yml
     with:
@@ -78,14 +86,19 @@ jobs:
       variant: ${{ matrix.variant }}
       sample: ${{ matrix.sample }}
       source_sha: ${{ github.sha }}
-  training-candidate-warm:
-    needs: training-candidate-cold
+  training-warm:
+    needs: training-cold
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 2
       matrix:
-        variant: [candidate]
-        sample: [1, 2, 3]
+        include:
+          - {variant: baseline, sample: 1}
+          - {variant: candidate, sample: 1}
+          - {variant: candidate, sample: 2}
+          - {variant: baseline, sample: 2}
+          - {variant: baseline, sample: 3}
+          - {variant: candidate, sample: 3}
     uses: ./.github/workflows/_ci-roi-measure.yml
     with:
       image: training
@@ -93,7 +106,7 @@ jobs:
       sample: ${{ matrix.sample }}
       source_sha: ${{ github.sha }}
   cleanup:
-    needs: [serving-warm, training-candidate-warm]
+    needs: [serving-warm, training-warm]
     if: always()
     runs-on: ubuntu-latest
     permissions:

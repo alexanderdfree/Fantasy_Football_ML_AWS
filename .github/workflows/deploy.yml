@@ -100,6 +100,7 @@ jobs:
       # comparisons favored this over per-layer GHA exports. Layer archives
       # do not persist uv download-cache mounts across fresh builders.
       - name: Cache BuildKit state
+        id: buildx-cache
         uses: actions/cache@v6
         with:
           path: /tmp/.buildx-cache
@@ -111,12 +112,18 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
+          CACHE_HIT: ${{ steps.buildx-cache.outputs.cache-hit }}
         run: |
+          # Misses and fallback restores still populate a new primary key.
+          CACHE_EXPORT_ARGS=()
+          if [ "$CACHE_HIT" != "true" ]; then
+            CACHE_EXPORT_ARGS=(--cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max)
+          fi
           docker buildx build \
             --platform linux/arm64 \
             --provenance=false \
             --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            "${CACHE_EXPORT_ARGS[@]}" \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --push .
@@ -124,6 +131,7 @@ jobs:
       # Swap caches so actions/cache stores the freshly-written one on
       # post-job save, rather than the (now stale) input cache.
       - name: Move BuildKit cache
+        if: steps.buildx-cache.outputs.cache-hit != 'true'
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache

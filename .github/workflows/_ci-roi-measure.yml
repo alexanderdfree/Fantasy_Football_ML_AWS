@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.variant == 'baseline' && '429404d08a6f5ec64d6b5cfef387488624578682' || inputs.source_sha }}
+          ref: ${{ inputs.variant == 'baseline' && '66514437c5940d88dcfd1090e07592ad5c8b99c3' || inputs.source_sha }}
           path: source
           persist-credentials: false
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
@@ -40,14 +40,14 @@ jobs:
           VARIANT: ${{ inputs.variant }}
           SAMPLE: ${{ inputs.sample }}
         run: |
-          python3 harness/src/analysis/ci_image_cache_benchmark.py prepare \
+          python3 harness/.github/scripts/ci_image_cache_benchmark.py prepare \
             --image "$IMAGE" --variant "$VARIANT" --sample "$SAMPLE"
       - name: Restore local image cache
         id: local-cache
         uses: actions/cache@v6
         with:
           path: /tmp/.buildx-cache
-          key: ci-roi-local-${{ github.run_id }}-${{ inputs.variant }}-${{ inputs.image }}
+          key: ci-roi-local-${{ github.run_id }}-${{ inputs.image }}
           fail-on-cache-miss: ${{ inputs.sample != 0 }}
       - name: Verify local cache regime
         env:
@@ -76,6 +76,7 @@ jobs:
           cache-to: ${{ steps.probe.outputs.cache_to }}
           outputs: type=oci,dest=${{ runner.temp }}/ci-image.tar
       - name: Complete local cache export
+        if: steps.probe.outputs.export_cache == 'true'
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
@@ -85,10 +86,7 @@ jobs:
           IMAGE_ARCHIVE: ${{ runner.temp }}/ci-image.tar
         run: |
           python3 -c 'import os; from pathlib import Path; Path("build-metadata.json").write_text(os.environ["BUILD_METADATA"])'
-          python3 harness/src/analysis/ci_image_cache_benchmark.py inspect --archive "$IMAGE_ARCHIVE"
-      - name: Verify invalid source identities fail the build
-        if: inputs.variant == 'candidate' && inputs.image == 'training' && inputs.sample == 0
-        run: python3 harness/src/analysis/ci_image_cache_benchmark.py reject-invalid
+          python3 harness/.github/scripts/ci_image_cache_benchmark.py inspect --archive "$IMAGE_ARCHIVE"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -18,10 +18,10 @@ Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies 
 - Training/AMD64 and serving/ARM64 use separate local layer-cache archives,
   keyed and restored by image and architecture. Native comparisons rejected
   per-layer GHA exports because of upload costs. Each build exports to one
-  backend; layer exports do not preserve uv cache mounts. Training source
-  identity is validated in a small metadata stage
-  and copied with the source using independent layers; preserve the source-SHA
-  contract and dependency/import smoke checks when changing this layout.
+  backend; layer exports do not preserve uv cache mounts. Exact primary-key
+  hits skip cache export/move because Actions would discard the updated archive;
+  misses and fallback restores still export/save. Preserve every image build,
+  source-SHA validation and runtime smoke check on both paths.
   Verify cache writes before timing warm builds: budget exhaustion can make
   storage read-only. Keep benchmark caches isolated and remove them afterwards.
 - [batch-image.yml](../.github/workflows/batch-image.yml) builds the image;

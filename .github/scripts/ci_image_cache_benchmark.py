@@ -22,6 +22,26 @@ def output(name, value):
 
 def prepare(args):
     source = args.source.resolve()
+    # Both variants may share one immutable dependency-cache seed only while
+    # their complete Docker inputs match. The harness itself is outside src.
+    inputs = (
+        "src",
+        "docs",
+        "benchmark_history",
+        "Dockerfile",
+        ".dockerignore",
+        "requirements-serving.txt",
+        "README.md",
+        "SETUP.md",
+        "TODO.md",
+        "gunicorn.conf.py",
+        "infra/ec2/README.md",
+        "infra/aws/README.md",
+    )
+    for name in inputs:
+        assert git(source, "rev-parse", f"HEAD:{name}") == git(
+            Path("harness"), "rev-parse", f"HEAD:{name}"
+        ), f"Cannot share dependency cache with different Docker input: {name}"
     parent = git(source, "rev-parse", "HEAD")
     if args.sample:
         # Change a copied, non-executable source file on a disposable checkout.
@@ -39,12 +59,14 @@ def prepare(args):
             "Local cache probe",
         )
     sha = git(source, "rev-parse", "HEAD")
-    # Follow-up isolates the linked-layer change without per-layer uploads.
+    # Compare only the export discarded on an exact immutable cache-key hit.
     cache_from = "type=local,src=/tmp/.buildx-cache"
-    cache_to = "type=local,dest=/tmp/.buildx-cache-new,mode=max"
+    export_cache = args.variant == "baseline" or args.sample == 0
+    cache_to = "type=local,dest=/tmp/.buildx-cache-new,mode=max" if export_cache else ""
     output("source_sha", sha)
     output("cache_from", cache_from)
     output("cache_to", cache_to)
+    output("export_cache", str(export_cache).lower())
     Path("measurement.json").write_text(
         json.dumps(
             {
@@ -56,6 +78,8 @@ def prepare(args):
                 "run_id": os.environ["GITHUB_RUN_ID"],
                 "runner_arch": os.environ["RUNNER_ARCH"],
                 "export": "local OCI; excludes production ECR push and deployment",
+                "cache_export": export_cache,
+                "shared_dependency_seed": True,
             },
             indent=2,
         )

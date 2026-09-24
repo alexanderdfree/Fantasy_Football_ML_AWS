@@ -17,14 +17,6 @@
 # leave unset to pull from Docker Hub directly. nvidia/cuda is an org image, so
 # it routes through the cache exactly like pytorch/pytorch did.
 ARG PULL_THROUGH_PREFIX=
-
-# Validate provenance without unpacking the CUDA dependency filesystem on every
-# source-only build. This stage contributes just the immutable source-SHA file.
-FROM --platform=$BUILDPLATFORM python:3.12-slim AS source-metadata
-ARG TRAIN_GIT_SHA
-WORKDIR /source-provenance
-RUN python -c "import os, re; from pathlib import Path; value=os.environ.get('TRAIN_GIT_SHA', ''); assert re.fullmatch(r'[0-9a-f]{40}', value), 'TRAIN_GIT_SHA must be the full built Git SHA'; Path('.training-source-sha').write_text(value + '\\n')"
-
 FROM --platform=linux/amd64 ${PULL_THROUGH_PREFIX}nvidia/cuda:13.0.3-base-ubuntu24.04
 
 # System deps the conda base provided that the slim CUDA base lacks:
@@ -63,8 +55,8 @@ ENV UV_LINK_MODE=copy
 ENV UV_INDEX_STRATEGY=unsafe-best-match
 
 # Single uv-install layer: any requirements.txt change invalidates exactly one
-# cached layer. The uv mount reuses downloads within a retained builder; CI
-# exports immutable layers, not cache mounts, for its fresh runners.
+# cached layer. The cache mount on /root/.cache/uv persists wheel downloads
+# across builds (CI mirrors this via actions/cache — see batch-image.yml).
 # --break-system-packages: Ubuntu's system Python 3.12 is PEP 668 marked.
 COPY src/batch/requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -76,9 +68,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # loading is validated by the post-build Batch smoke run (docs/batch_design.md).
 RUN python -c "import torch, lightgbm, sklearn, scipy, pandas, numpy, pyarrow; print('import smoke OK; torch', torch.__version__)"
 
-# Independent layers let source-only builds reuse dependency layers remotely.
-# No RUN may follow these copies: it would materialize the heavy parent again.
-COPY --link src/ /opt/ml/code/src/
-COPY --link --from=source-metadata /source-provenance/.training-source-sha /opt/ml/code/.training-source-sha
+# All Python source lives under src/. .dockerignore handles coarse exclusions
+# (Flask UI, scratch scripts, tests); src/ is the only Python copy needed.
+COPY src/ src/
+
+# Runtime job variables cannot relabel the code actually copied into this image.
+ARG TRAIN_GIT_SHA
+RUN python -c "import os, re; from pathlib import Path; value=os.environ.get('TRAIN_GIT_SHA', ''); assert re.fullmatch(r'[0-9a-f]{40}', value), 'TRAIN_GIT_SHA must be the full built Git SHA'; Path('.training-source-sha').write_text(value + '\\n')"
 
 ENTRYPOINT ["python", "-m", "src.batch.train"]
