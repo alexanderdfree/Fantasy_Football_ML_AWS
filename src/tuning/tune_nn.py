@@ -1159,88 +1159,30 @@ def _trial_to_params(
 
 
 def _sqlite_backup(db_path: str, sqlite_timeout: int = _DEFAULT_SQLITE_TIMEOUT_SECONDS) -> str:
-    """Return a temporary consistent SQLite backup path for S3 upload."""
-    if not os.path.exists(db_path):
-        raise FileNotFoundError(db_path)
-    fd, tmp_path = tempfile.mkstemp(prefix=os.path.basename(db_path) + ".", suffix=".backup")
-    os.close(fd)
-    src = sqlite3.connect(
-        f"file:{os.path.abspath(db_path)}?mode=ro", uri=True, timeout=sqlite_timeout
-    )
-    dst = sqlite3.connect(tmp_path)
-    try:
-        src.backup(dst)
-    finally:
-        dst.close()
-        src.close()
-    return tmp_path
+    from src.tuning.study_checkpoint import sqlite_backup
+
+    return sqlite_backup(db_path, sqlite_timeout)
 
 
-class _S3Checkpoint:
-    """Round-trip the Optuna SQLite study DB to S3 so a Spot interruption
-    can be resumed on Batch's retry.
+from src.tuning.study_checkpoint import StudyCheckpoint  # noqa: E402
 
-    Layout: ``s3://{bucket}/tune_nn/{search-space-version}/{pos}/study.db`` (+ ``results.json``
-    after the run completes). On startup we pull the DB if it exists;
-    Optuna's ``load_if_exists=True`` then picks up every trial already
-    completed and the next attempt only runs ``n_trials - already_done``
-    more. After each trial completes (Optuna callback) we re-upload the DB
-    so the worst case (immediate Spot reclaim) loses at most one in-flight
-    trial. A SIGTERM handler does the same on graceful shutdown — Spot
-    gives a 2-minute warning that Batch propagates to the container.
-    """
+
+class _S3Checkpoint(StudyCheckpoint):
+    """Compatibility facade over the shared SQLite-safe checkpoint service."""
 
     def __init__(self, bucket: str, pos: str, db_path: str, storage_version: str):
-        # Local import — boto3 is only required when --checkpoint-s3 is set,
-        # so the local CLI form runs without it.
-        import boto3
-
-        self.bucket = bucket
         self.pos = pos
-        self.db_path = db_path
-        self.s3 = boto3.client("s3")
-        self.key_prefix = _s3_key_prefix(pos, storage_version)
-
-    def _study_key(self) -> str:
-        return f"{self.key_prefix}/study.db"
-
-    def _results_key(self) -> str:
-        return f"{self.key_prefix}/results.json"
-
-    def download_study_db(self) -> None:
-        """Pull the prior study.db from S3 if present so the next study.optimize()
-        resumes from the previous attempt's last-completed trial."""
-        from botocore.exceptions import ClientError
-
-        key = self._study_key()
-        try:
-            self.s3.download_file(self.bucket, key, self.db_path)
-            print(f"[checkpoint] resumed from s3://{self.bucket}/{key}")
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code")
-            if code in ("404", "NoSuchKey", "NotFound"):
-                print(f"[checkpoint] no prior study at s3://{self.bucket}/{key}; starting fresh")
-                return
-            raise
-
-    def upload_study_db(self) -> None:
-        if not os.path.exists(self.db_path):
-            return
-        key = self._study_key()
-        snapshot_path = _sqlite_backup(self.db_path)
-        try:
-            self.s3.upload_file(snapshot_path, self.bucket, key)
-            print(f"[checkpoint] uploaded s3://{self.bucket}/{key}")
-        finally:
-            with contextlib.suppress(FileNotFoundError):
-                os.remove(snapshot_path)
-
-    def upload_results(self, results_path: str) -> None:
-        if not os.path.exists(results_path):
-            return
-        key = self._results_key()
-        self.s3.upload_file(results_path, self.bucket, key)
-        print(f"[checkpoint] uploaded s3://{self.bucket}/{key}")
+        prefix = _s3_key_prefix(pos, storage_version)
+        campaign = os.environ.get("FF_CAMPAIGN_STUDY_PREFIX")
+        if campaign:
+            prefix = f"{campaign}/{prefix}"
+        super().__init__(
+            bucket,
+            db_path,
+            prefix,
+            backup=lambda path: _sqlite_backup(path),
+            conditional=bool(campaign),
+        )
 
 
 def _install_sigterm_handler(checkpoint: "_S3Checkpoint") -> None:
@@ -1806,6 +1748,19 @@ def main():
 
         completed = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE)
         remaining = max(0, args.n_trials - completed)
+        campaign_budget = None
+        if os.environ.get("FF_CAMPAIGN_STUDY_DIR"):
+            from src.tuning.study_checkpoint import (
+                CampaignBudget,
+                recover_trials,
+                remaining_attempts,
+            )
+
+            recover_trials(study)
+            if parallel_backend != _MPS_BACKEND:
+                remaining = remaining_attempts(study, args.n_trials)
+            campaign_budget = CampaignBudget(study, args.timeout, checkpoint)
+        effective_timeout = campaign_budget.remaining if campaign_budget else args.timeout
 
         objective = _make_objective(
             pos,
@@ -1819,7 +1774,7 @@ def main():
 
         probe = ResourceProbe().start()
         callbacks = []
-        if checkpoint is not None:
+        if checkpoint is not None and campaign_budget is None:
             # Optuna invokes callbacks after every trial regardless of state
             # (complete / pruned / failed). Upload after each so the worst-case
             # Spot reclaim loses at most the in-flight trial. Bind `checkpoint`
@@ -1840,49 +1795,52 @@ def main():
         )
         print(f"{'=' * 70}")
 
-        effective_n_jobs = n_jobs
-        if remaining > 0:
-            if parallel_backend == _MPS_BACKEND:
-                with _NvidiaMPS(enabled=True):
-                    effective_n_jobs = _run_mps_optimize(
+        with campaign_budget or contextlib.nullcontext():
+            effective_n_jobs = n_jobs
+            if campaign_budget:
+                callbacks.append(campaign_budget.callback)
+            if remaining > 0:
+                if parallel_backend == _MPS_BACKEND:
+                    with _NvidiaMPS(enabled=True):
+                        effective_n_jobs = _run_mps_optimize(
+                            pos,
+                            n_jobs=n_jobs,
+                            n_trials=args.n_trials,
+                            seed=args.seed,
+                            timeout=effective_timeout,
+                            storage_version=storage_version,
+                            sqlite_timeout=args.sqlite_timeout,
+                            checkpoint=checkpoint,
+                            checkpoint_interval=args.checkpoint_interval,
+                            stacked_n=stacked_n,
+                            stacked_epochs=stacked_epochs,
+                            scope=scope,
+                        )
+                    study = _create_or_load_study(
                         pos,
-                        n_jobs=n_jobs,
-                        n_trials=args.n_trials,
-                        seed=args.seed,
-                        timeout=args.timeout,
                         storage_version=storage_version,
                         sqlite_timeout=args.sqlite_timeout,
-                        checkpoint=checkpoint,
-                        checkpoint_interval=args.checkpoint_interval,
-                        stacked_n=stacked_n,
-                        stacked_epochs=stacked_epochs,
-                        scope=scope,
+                        base_cfg=base_cfg,
+                        max_resource=stacked_epochs if stacked_n else None,
                     )
-                study = _create_or_load_study(
-                    pos,
-                    storage_version=storage_version,
-                    sqlite_timeout=args.sqlite_timeout,
-                    base_cfg=base_cfg,
-                    max_resource=stacked_epochs if stacked_n else None,
-                )
+                else:
+                    study.optimize(
+                        objective,
+                        n_trials=remaining,
+                        timeout=effective_timeout,
+                        show_progress_bar=True,
+                        # Concurrent-trial count via --n-jobs (default 2). Trials are
+                        # attention-NN-only (Ridge / base NN / LGBM skipped via the cfg
+                        # overrides in _make_objective). GPU VRAM is NOT the constraint
+                        # (~0.1 GiB/trial); the training loop is CPU-launch-bound and
+                        # threads contend on the GIL, so thread mode tops out ~2-3.
+                        # For more concurrency use the mps backend (worker processes),
+                        # where container RAM (~2 GiB/worker) is what binds.
+                        n_jobs=n_jobs,
+                        callbacks=callbacks,
+                    )
             else:
-                study.optimize(
-                    objective,
-                    n_trials=remaining,
-                    timeout=args.timeout,
-                    show_progress_bar=True,
-                    # Concurrent-trial count via --n-jobs (default 2). Trials are
-                    # attention-NN-only (Ridge / base NN / LGBM skipped via the cfg
-                    # overrides in _make_objective). GPU VRAM is NOT the constraint
-                    # (~0.1 GiB/trial); the training loop is CPU-launch-bound and
-                    # threads contend on the GIL, so thread mode tops out ~2-3.
-                    # For more concurrency use the mps backend (worker processes),
-                    # where container RAM (~2 GiB/worker) is what binds.
-                    n_jobs=n_jobs,
-                    callbacks=callbacks,
-                )
-        else:
-            print(f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()")
+                print(f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()")
 
         resources = probe.stop()
         elapsed = time.time() - t0

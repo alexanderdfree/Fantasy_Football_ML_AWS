@@ -130,7 +130,11 @@ def _study_name(pos: str, seeds: tuple[int, ...]) -> str:
 
 
 def _study_db_path(pos: str, seeds: tuple[int, ...]) -> str:
-    return f"tune_lgbm_{_OBJECTIVE_VERSION}_{_seed_key(seeds)}_{pos.lower()}.db"
+    from src.tuning.study_checkpoint import campaign_study_path
+
+    return campaign_study_path(
+        f"tune_lgbm_{_OBJECTIVE_VERSION}_{_seed_key(seeds)}_{pos.lower()}.db"
+    )
 
 
 def _physical_core_ids() -> list[int]:
@@ -805,6 +809,14 @@ def main():
             cfg = _get_position_config(pos)
             t0 = time.time()
 
+            checkpoint = None
+            if os.environ.get("FF_CAMPAIGN_STUDY_DIR"):
+                from src.tuning.study_checkpoint import campaign_checkpoint
+
+                checkpoint = campaign_checkpoint(db_path, study_name)
+                if checkpoint:
+                    checkpoint.download_study_db()
+
             # Prepare data once
             folds_data, targets = _prepare_cv_folds(pos, cfg)
 
@@ -818,6 +830,19 @@ def main():
                 sampler=TPESampler(seed=42, multivariate=False, constant_liar=False),
                 pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=1),
             )
+
+            campaign_budget = None
+            remaining = args.n_trials
+            if os.environ.get("FF_CAMPAIGN_STUDY_DIR"):
+                from src.tuning.study_checkpoint import (
+                    CampaignBudget,
+                    recover_trials,
+                    remaining_attempts,
+                )
+
+                recover_trials(study)
+                remaining = remaining_attempts(study, args.n_trials)
+                campaign_budget = CampaignBudget(study, args.timeout, checkpoint)
 
             lgbm_objective = cfg.get("lgbm_objective", "huber")
             objective = _make_objective(
@@ -837,13 +862,15 @@ def main():
             print(f"  Core pool: {core_pool_status}")
             print(f"{'=' * 70}")
 
-            study.optimize(
-                objective,
-                n_trials=args.n_trials,
-                timeout=args.timeout,
-                show_progress_bar=True,
-                n_jobs=args.n_jobs,
-            )
+            with campaign_budget or contextlib.nullcontext():
+                study.optimize(
+                    objective,
+                    n_trials=remaining,
+                    timeout=campaign_budget.remaining if campaign_budget else args.timeout,
+                    show_progress_bar=True,
+                    n_jobs=args.n_jobs,
+                    callbacks=[campaign_budget.callback] if campaign_budget else [],
+                )
 
             elapsed = time.time() - t0
             best = _trial_to_params(study.best_trial)
@@ -890,7 +917,8 @@ def main():
             import boto3
 
             s3 = boto3.client("s3")
-            s3_key = "tune_lgbm/tune_lgbm_results.json"
+            prefix = os.environ.get("FF_CAMPAIGN_STUDY_PREFIX", "tune_lgbm")
+            s3_key = f"{prefix}/tune_lgbm_results.json"
             s3.upload_file(results_path, bucket, s3_key)
             print(f"Uploaded results to s3://{bucket}/{s3_key}")
 
