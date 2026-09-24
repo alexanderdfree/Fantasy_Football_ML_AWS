@@ -1,0 +1,59 @@
+{
+  "schema": "serving-cache-native-held/v1",
+  "status": "held",
+  "recorded_date": "2026-09-23",
+  "run_id": 35942815000,
+  "run_url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35942815000",
+  "workflow_head_sha": "92fc113ce23e8a87ad60b9d7fab88a14bcab5c8f",
+  "application_source_sha": "fe368b1ae6cadafd94bb67f7ffd92499266188bb",
+  "attempts": [
+    {
+      "attempt": 1,
+      "legacy_job_id": 107454242511,
+      "legacy_conclusion": "failure",
+      "candidate_job_id": 107454242197,
+      "candidate_conclusion": "success",
+      "comparison": "skipped"
+    },
+    {
+      "attempt": 2,
+      "trigger": "one authorized rerun-failed on unchanged inputs",
+      "legacy_job_id": 107455038870,
+      "legacy_conclusion": "failure",
+      "candidate_job_id": 107455040378,
+      "candidate_conclusion": "reused attempt-1 success",
+      "comparison": "skipped"
+    }
+  ],
+  "recurring_legacy_failure": {
+    "stage": "GitHub Actions cache export",
+    "message": "error writing layer blob: failed to reserve cache",
+    "dockerfile_build_completed_before_failure": true,
+    "legacy_inspection_receipt_present": false
+  },
+  "candidate_only_proof": {
+    "execution_attempt": 1,
+    "artifact_id": 10785119620,
+    "artifact_name": "serving-cache-parity-35942815000-candidate",
+    "receipt_sha256": "7ee7a75c8365fe2f69bdf555147d7912bbc9a184e233204b6044b1b9c8378f3c",
+    "image_digest": "sha256:89fa02a1b53c412192636032ec1249b3866a41868c1f8d2594cb035b3cea4304",
+    "config_digest": "sha256:ec7619b49409f9486ef0a619d4f90577ce52068f54b2687d113eed9bb96b4c5f",
+    "native_machine": "aarch64",
+    "source_files_independently_matched_to_fixed_git_blobs": 198,
+    "dependency_file_hash_records": 6304,
+    "installed_dependency_inventory_count": 27,
+    "direct_dependency_pins_independently_verified": 9,
+    "runtime_command_environment_and_readiness_contract_verified": true,
+    "attempt_2_reused_original_job_timestamps_and_unchanged_artifact": true
+  },
+  "paired_pass": false,
+  "comparison_receipt_present": false,
+  "performance_claim": false,
+  "whole_image_bitwise_equivalence_claim": false,
+  "cache_usage_snapshot": {
+    "active_entries": 27,
+    "bytes": 11553737882,
+    "caveat": "Context only; this snapshot does not establish the reservation-error cause."
+  },
+  "follow_up": "Stop this transport unit after two failed attempts. Preserve the candidate-only proof; require an actual legacy receipt and independent paired comparison before acceptance. Training-image optimization remains unvalidated."
+}
