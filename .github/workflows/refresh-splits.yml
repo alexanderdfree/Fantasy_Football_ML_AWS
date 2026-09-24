@@ -194,6 +194,7 @@ jobs:
         # ``KeyError`` on missing cols rather than zero-filling silently.
         env:
           NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
+          NFLREADPY_TIMEOUT: "120"  # large historical PBP downloads can exceed the 30s default
           FF_CAPTURE_PROVIDER_SOURCES: data/raw/provider_sources
         # CI and AWS use exactly the same production producer and season policy.
         run: python -m src.data.maintenance_build
