@@ -63,6 +63,13 @@ def test_stacked_validation_pools_rows_then_roots_each_member():
 
 
 _TARGETS = ["a", "b"]
+_LOSS_PARITY_CASES = [
+    ({}, {}),  # plain heads
+    (
+        {"attn_gated": True, "gated_targets": ["a"]},
+        {"head_losses": {"a": "hurdle_poisson", "b": "huber"}, "gated_targets": ["a"]},
+    ),
+]
 
 
 def _tiny_cfg(**overrides) -> dict:
@@ -108,7 +115,7 @@ def _criterion(cfg, **kwargs) -> MultiTargetLoss:
     )
 
 
-def _synthetic(n=24, static_dim=5, game_dim=3, seq=4, batch_size=8):
+def _synthetic(n=24, static_dim=5, game_dim=3, seq=4, batch_size=8, count_targets=()):
     torch.manual_seed(7)
     feats = (
         torch.randn(n, static_dim),
@@ -116,6 +123,10 @@ def _synthetic(n=24, static_dim=5, game_dim=3, seq=4, batch_size=8):
         torch.ones(n, seq, dtype=torch.bool),
     )
     y = {t: torch.randn(n).abs() for t in _TARGETS}
+    # Hurdle likelihoods require integer event counts. Keep the same random
+    # draws for other targets, and cover both the zero gate and positive law.
+    for target in count_targets:
+        y[target] = torch.arange(n, dtype=torch.float32).remainder(3)
     loader = _GPUResidentBatcher(
         feature_tensors=feats, y_dict=y, batch_size=batch_size, shuffle=True, drop_last=True
     )
@@ -196,11 +207,7 @@ def test_clip_per_member_matches_clip_grad_norm():
 @pytest.mark.parametrize(
     "cfg_overrides,criterion_kwargs",
     [
-        ({}, {}),  # plain heads
-        (
-            {"attn_gated": True, "gated_targets": ["a"]},
-            {"head_losses": {"a": "hurdle_poisson", "b": "huber"}, "gated_targets": ["a"]},
-        ),
+        *_LOSS_PARITY_CASES,
         ({"attn_use_alibi_bias": True}, {}),  # exercises the buffer path
     ],
 )
@@ -212,7 +219,7 @@ def test_stacked_matches_sequential(cfg_overrides, criterion_kwargs):
     (batched matmul vs mm reduction order) compounds over steps, the same
     sub-ULP-amplification physics documented for CUDA graphs (ADR-0017)."""
     cfg = _tiny_cfg(**cfg_overrides)
-    feats, y, loader = _synthetic()
+    feats, y, loader = _synthetic(count_targets=criterion_kwargs.get("gated_targets", ()))
     models = _build_models(cfg, n_members=2)
     criterion = _criterion(cfg, **criterion_kwargs)
     captures = _captures_for(models, criterion, loader)
@@ -252,7 +259,8 @@ def test_stacked_matches_sequential(cfg_overrides, criterion_kwargs):
     assert not np.allclose(stacked_preds[0][any_key], stacked_preds[1][any_key])
 
 
-def test_single_batch_grad_parity():
+@pytest.mark.parametrize("cfg_overrides,criterion_kwargs", _LOSS_PARITY_CASES)
+def test_single_batch_grad_parity(cfg_overrides, criterion_kwargs):
     """Protocol tier (b), real path: POST-CLIP GRADIENTS on one batch —
     stacked member grads must match per-model eager grads tightly — and then
     post-Adam-step params must match on the WELL-CONDITIONED mask. At step 1
@@ -264,10 +272,10 @@ def test_single_batch_grad_parity():
     test_adam_step_parity_with_injected_grads (noise-free grads)."""
     import torch.func as tf
 
-    cfg = _tiny_cfg()
-    feats, y, loader = _synthetic()
+    cfg = _tiny_cfg(**cfg_overrides)
+    feats, y, loader = _synthetic(count_targets=criterion_kwargs.get("gated_targets", ()))
     models = _build_models(cfg, n_members=2)
-    criterion = _criterion(cfg)
+    criterion = _criterion(cfg, **criterion_kwargs)
 
     template = copy.deepcopy(models[0]).to("meta")
     template.train()
@@ -320,7 +328,8 @@ def test_single_batch_grad_parity():
     assert checked > 0  # the mask must not silently empty the check
 
 
-def test_adam_step_parity_with_injected_grads():
+@pytest.mark.parametrize("cfg_overrides,criterion_kwargs", _LOSS_PARITY_CASES)
+def test_adam_step_parity_with_injected_grads(cfg_overrides, criterion_kwargs):
     """The well-conditioned reformulation of post-Adam-step parity: with
     IDENTICAL injected gradients (no kernel-order noise) one stacked
     foreach-AdamW over [N, *shape] params must equal N independent AdamWs
@@ -332,7 +341,7 @@ def test_adam_step_parity_with_injected_grads():
     for Adam's sign-like step-1 ill-conditioning near g=0) could not."""
     import torch.func as tf
 
-    cfg = _tiny_cfg()
+    cfg = _tiny_cfg(**{**cfg_overrides, **criterion_kwargs})
     models = _build_models(cfg, n_members=3)
     seq_models = [copy.deepcopy(m) for m in models]
     seq_named = [dict(m.named_parameters()) for m in seq_models]
