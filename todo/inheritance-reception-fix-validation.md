@@ -1,5 +1,15 @@
 # Inheritance preprocessing and reception expectation — PR validation
 
+> Historical combined-source validation, retained from September 2026. The
+> record below describes the source revisions and recipes it names, including
+> magnitude scaling and Poisson work outside #1608. It does not describe current
+> defaults or validate the rebased #1608/#1613 combination. The owner authorized
+> delivering proven mathematical corrections after technical checks on
+> 2026-09-24 despite disclosed forecast regressions; the current decision is in
+> [ADR-0005](../docs/adr/0005-output-constraint-stack.md). Any new fitting,
+> including fixture/scaler fitting, runs on AWS Batch Spot. The reproduction
+> commands below are historical, not authorization for local fitting.
+
 The two requested correctness fixes are implemented. The inheritance scaler is
 enabled for **WR only**. Corrected zero-truncated negative-binomial expectations
 apply to the affected reception heads at **RB/WR/TE**. QB/K/DST retain their

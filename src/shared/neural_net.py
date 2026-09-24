@@ -1,5 +1,6 @@
 """Generic multi-head neural network for fantasy point decomposition."""
 
+import math
 import os
 
 import numpy as np
@@ -8,6 +9,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.prediction.bundle import record_constructor
+from src.shared.count_math import (
+    _count_loss_inputs,
+    _log1p_div_minus_one,
+    _log_exprel,
+    _nb2_zero_mass_terms,
+)
 
 
 def apply_non_negative(val: torch.Tensor, name: str, non_negative: set) -> torch.Tensor:
@@ -234,14 +241,26 @@ def _build_backbone(
 def ztnb2_conditional_mean(mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.Tensor:
     """E[Y | Y > 0] for NB-2 with untruncated mean mu and dispersion alpha.
 
-    log1p/expm1 avoid cancellation for small means. Do probability arithmetic
-    in at least FP32 even when the surrounding NN forward uses autocast.
+    Share the likelihood's effective parameters and stable zero-mass terms.
+    Evaluate the mean in log space: materializing alpha or dividing by a tiny
+    positive mass can overflow even when the mean and gradients are finite.
+    Probability arithmetic uses at least FP32, preserving FP64 callers.
     """
-    if mu.dtype in (torch.float16, torch.bfloat16):
-        mu, log_alpha = mu.float(), log_alpha.float()
-    alpha = log_alpha.exp().clamp(min=1e-6)
-    log_p_zero = -torch.log1p(alpha * mu) / alpha
-    return mu / (-torch.expm1(log_p_zero))
+    mu, log_alpha = _count_loss_inputs(mu, log_alpha)
+    mu, log_alpha, r, z = _nb2_zero_mass_terms(mu, log_alpha)
+    log_product = mu.log() + log_alpha
+    small_product = log_product < math.log(0.001)
+    product = torch.exp(
+        torch.where(small_product, log_product, torch.full_like(log_product, math.log(0.001)))
+    )
+    # mu/z = alpha*mu/log1p(alpha*mu). Near zero, the series preserves
+    # the dispersion gradient instead of subtracting equal log derivatives.
+    log_mu_over_z = torch.where(
+        small_product,
+        -torch.log1p(_log1p_div_minus_one(product)),
+        log_product - r.log(),
+    )
+    return torch.exp(log_mu_over_z - _log_exprel(-z))
 
 
 class GatedHead(nn.Module):

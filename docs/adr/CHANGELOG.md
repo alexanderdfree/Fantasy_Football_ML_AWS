@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-24 · Deliver the corrected ZTNB expectation after technical checks despite disclosed historical forecast regressions; preserve legacy checkpoint interpretation · (PR #1608) · → ADR-0005
+
 - 2026-09-18 · Correct the gated hurdle head's reception expectation to the zero-truncated NB mean with checkpointed legacy semantics (isolated from #1575; historical proposal) · (PR #1608) · → ADR-0005
 
 - 2026-09-23 · Enforce DST synthetic-export cache compatibility before loading and preserve observed zero opponent counts · (PR #1599) · → ADR-0029
