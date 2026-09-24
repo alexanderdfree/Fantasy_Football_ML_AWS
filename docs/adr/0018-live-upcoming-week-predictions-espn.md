@@ -70,6 +70,14 @@ without removing an already published forecast. The serving container performs
 no archival or feature building. No new scheduler or automatic model promotion
 is introduced.
 
+The forecast artifact's additive `evaluation_context` metadata freezes returning
+status and protected cohort membership before kickoff, retaining these labels
+on unchanged-input refreshes. Elite membership uses mean component-matched
+points across the full previous regular season, before this week's bye/Out
+filter; weekly-reference membership uses the existing versioned pregame
+reference artifact. Missing historical components or references produce unknown
+membership. Injury reason coverage is distinct from participation coverage.
+
 `src.analysis.practice_cutoffs` selects the latest eligible archived forecast
 48 or 24 hours before **each game's** kickoff and compares two supplied archive
 directories on identical player-weeks and projected scoring components. Its
@@ -80,7 +88,10 @@ report time. Missing timestamps are never backfilled from later snapshots.
 Hourly polls are observations, not additional practices; dated daily trajectories
 and a probability-of-playing model remain outside this experiment. Prospective
 accuracy acceptance still requires candidate shadow forecasts and protected
-cohort review; the collector/evaluator alone establishes no live improvement.
+cohort review; the evaluator includes injured/rest/illness/unknown/healthy,
+returning, and protected-cohort MAE/RMSE/bias comparisons, with missing or
+disagreeing protected membership explicitly unavailable. The collector/evaluator
+alone establishes no live improvement.
 
 ## Changelog
 

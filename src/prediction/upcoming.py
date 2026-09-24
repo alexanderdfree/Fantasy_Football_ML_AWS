@@ -35,7 +35,7 @@ import pandas as pd
 import src.data.roster_meta as roster_meta
 from src.artifacts import snapshot_state as app_pkg
 from src.artifacts import upcoming_transfer as upcoming_artifact
-from src.artifacts.practice_archive import archive_refresh
+from src.artifacts.practice_archive import archive_refresh, build_cohort_context
 from src.config import CACHE_DIR, SEASONS
 from src.contracts import upcoming_status
 from src.contracts.serialization import (
@@ -1100,6 +1100,9 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     # Expert columns for the homepage (best-effort; nulls when a feed is down).
     _apply_upcoming_experts(results, raw_nflcom, raw_rotowire, raw_espn)
     payload = _build_artifact(season, week, results, source_status=special.source_status)
+    # Retained with cached forecasts too, so a later poll cannot rebuild these
+    # labels from outcomes unavailable at the forecast's original cutoff.
+    payload["evaluation_context"] = build_cohort_context(featurized, season, week)
     payload["sources"] = {
         "roster": {
             "provider": "ESPN",

@@ -316,6 +316,8 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
         seen["injuries"] = kwargs["injuries_df"].copy()
         seen["statuses"] = deepcopy(kwargs["game_status_map"])
         frame = roster.copy()
+        frame["season"] = season
+        frame["week"] = week
         frame.attrs["live_history_sources"] = {"completed_games": 0, "coverage": {}}
         return frame
 

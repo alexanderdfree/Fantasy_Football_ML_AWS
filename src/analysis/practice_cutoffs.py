@@ -20,7 +20,11 @@ import pandas as pd
 
 from src.artifacts.practice_archive import SCHEMA_VERSION
 from src.evaluation.metrics import compute_metrics
-from src.features.practice_context import reason_features
+from src.features.practice_context import (
+    LOCATION_FEATURES,
+    PRACTICE_CONTEXT_FEATURES,
+    reason_features,
+)
 from src.shared.comparison_scoring import comparison_actuals
 from src.shared.evaluation_cohorts import regular_season_rows
 
@@ -64,6 +68,10 @@ def select_cutoff_rows(snapshots, *, hours=48, scoring="ppr") -> pd.DataFrame:
         available = max(timestamps)
         games = {game["team"]: _time(game.get("kickoff")) for game in snapshot["games"]}
         reports = {row["player_id"]: row for row in snapshot["practice"]["observations"]}
+        labels = {
+            row["player_id"]: row
+            for row in forecast.get("evaluation_context", {}).get("players", [])
+        }
         for row in forecast["scoring"][scoring]:
             if row["position"] not in {"QB", "RB", "WR", "TE"}:
                 continue
@@ -91,11 +99,80 @@ def select_cutoff_rows(snapshots, *, hours=48, scoring="ppr") -> pd.DataFrame:
                 "kickoff": kickoff.isoformat(),
                 "available_at": max(available, observed).isoformat(),
                 "input_signature": forecast.get("input_signature"),
+                **{
+                    name: labels.get(row["player_id"], {}).get(name)
+                    for name in (
+                        "returning",
+                        "game_status",
+                        "elite_top24",
+                        "weekly_reference_top24",
+                    )
+                },
             }
             previous = chosen.get(key)
             if previous is None or candidate["available_at"] > previous["available_at"]:
                 chosen[key] = candidate
     return pd.DataFrame(chosen.values(), columns=[*KEYS, *MODELS] if not chosen else None)
+
+
+def _paired_metrics(frame):
+    metrics = {}
+    for model in MODELS:
+        columns = ["actual", f"{model}_base", f"{model}_candidate"]
+        values = frame[columns].apply(pd.to_numeric, errors="coerce").astype(float)
+        valid = np.isfinite(values).all(axis=1)
+        pair = values[valid]
+        item = {"n": len(pair), "unavailable": int((~valid).sum())}
+        if not pair.empty:
+            for arm in ("base", "candidate"):
+                prediction = pair[f"{model}_{arm}"]
+                item[arm] = {
+                    **{
+                        k: v
+                        for k, v in compute_metrics(pair["actual"], prediction).items()
+                        if k != "r2"
+                    },
+                    "bias": float((prediction - pair["actual"]).mean()),
+                }
+            item["delta"] = {
+                key: item["candidate"][key] - item["base"][key] for key in ("mae", "rmse", "bias")
+            }
+        metrics[model] = item
+    return metrics
+
+
+def _cohort_comparisons(frame):
+    """Use pregame labels; disagreement/missing protected membership is explicit."""
+    masks = {
+        "injured": frame[[f"{name}_base" for name in LOCATION_FEATURES]].gt(0).any(axis=1),
+        "rest_only": frame["practice_rest_only_base"].eq(1),
+        "illness": frame["practice_illness_base"].eq(1),
+        "unknown": frame["practice_reason_unknown_base"].eq(1),
+        "healthy": frame[[f"{name}_base" for name in PRACTICE_CONTEXT_FEATURES]].eq(0).all(axis=1)
+        & pd.to_numeric(frame["game_status_base"], errors="coerce").ge(1),
+    }
+    result = {}
+    for name in ("returning", "elite_top24", "weekly_reference_top24"):
+        left, right = frame[f"{name}_base"], frame[f"{name}_candidate"]
+        known = left.notna() & right.notna() & left.eq(right)
+        mask = known & left.eq(True)
+        n = int(mask.sum())
+        result[name] = {
+            "status": "available" if known.all() else "partial" if known.any() else "unavailable",
+            "unknown_or_disagreed": int((~known).sum()),
+            "n": n,
+            "sparse": n < 30,
+            "models": _paired_metrics(frame[mask]),
+        }
+    for name, mask in masks.items():
+        n = int(mask.sum())
+        result[name] = {
+            "status": "available",
+            "n": n,
+            "sparse": n < 30,
+            "models": _paired_metrics(frame[mask]),
+        }
+    return result
 
 
 def compare_cutoff(baseline, candidate, actuals, *, scoring="ppr") -> dict:
@@ -129,29 +206,8 @@ def compare_cutoff(baseline, candidate, actuals, *, scoring="ppr") -> dict:
         "acceptance": "requires protected-cohort review; never auto-promotes a model",
     }
     for position, frame in paired.groupby("position"):
-        metrics = {}
-        for model in MODELS:
-            columns = ["actual", f"{model}_base", f"{model}_candidate"]
-            values = frame[columns].apply(pd.to_numeric, errors="coerce")
-            valid = np.isfinite(values).all(axis=1)
-            pair = values[valid]
-            item = {"n": len(pair), "unavailable": int((~valid).sum())}
-            if not pair.empty:
-                for arm in ("base", "candidate"):
-                    prediction = pair[f"{model}_{arm}"]
-                    item[arm] = {
-                        **{
-                            k: v
-                            for k, v in compute_metrics(pair["actual"], prediction).items()
-                            if k != "r2"
-                        },
-                        "bias": float((prediction - pair["actual"]).mean()),
-                    }
-                item["delta"] = {
-                    key: item["candidate"][key] - item["base"][key]
-                    for key in ("mae", "rmse", "bias")
-                }
-            metrics[model] = item
+        metrics = _paired_metrics(frame)
+        metrics["cohorts"] = _cohort_comparisons(frame)
         output["positions"][position] = metrics
     return output
 

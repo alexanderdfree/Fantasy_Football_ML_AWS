@@ -8,7 +8,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 from src.analysis.practice_cutoffs import load_snapshots
-from src.artifacts.practice_archive import archive_refresh
+from src.artifacts.practice_archive import archive_refresh, build_cohort_context
 from src.data.practice_reports import PracticeReport
 
 pytestmark = pytest.mark.unit
@@ -124,3 +124,50 @@ def test_revision_creates_new_evidence_and_week_mismatch_fails(tmp_path, inputs)
     report.observations[0]["week"] = 2
     with pytest.raises(ValueError, match="different weeks"):
         archive_refresh(report, forecast, slate, directory=tmp_path)
+
+
+def test_pregame_cohorts_use_prior_season_and_archived_reference_not_current_actuals():
+    from src.shared.evaluation_cohorts import REFERENCE_VERSION
+
+    prior = pd.DataFrame(
+        {
+            "player_id": [f"p{i:02d}" for i in range(26)],
+            "position": "RB",
+            "season": 2025,
+            "week": 1,
+            "rushing_yards": [i * 10.0 for i in range(26)],
+            "season_type": "REG",
+        }
+    )
+    for column in (
+        "rushing_tds",
+        "receiving_tds",
+        "receiving_yards",
+        "receptions",
+        "sack_fumbles_lost",
+        "rushing_fumbles_lost",
+        "receiving_fumbles_lost",
+    ):
+        prior[column] = 0.0
+    current = prior.iloc[[0, 25]].copy()
+    current["season"] = 2026
+    current["week"] = 3
+    current["rushing_yards"] = [99999, 0]  # These outcomes must be ignored.
+    current["is_returning_from_absence"] = [0, 1]
+    current["game_status"] = [1.0, 0.5]
+    reference = current[["player_id", "position", "season", "week"]].assign(
+        reference_rank=[1, 30], reference_version=REFERENCE_VERSION
+    )
+    frame = pd.concat([prior, current], ignore_index=True)
+    context = build_cohort_context(frame, 2026, 3, reference=reference)
+    labels = {row["player_id"]: row for row in context["players"]}
+    assert labels["p00"]["elite_top24"] is False
+    assert labels["p25"]["elite_top24"] is True
+    assert labels["p00"]["weekly_reference_top24"] is True
+    assert labels["p25"]["weekly_reference_top24"] is False
+    assert labels["p25"]["returning"] is True
+    missing = build_cohort_context(
+        frame.drop(columns="sack_fumbles_lost"), 2026, 3, reference=reference.iloc[:0]
+    )
+    assert all(row["elite_top24"] is None for row in missing["players"])
+    assert all(row["weekly_reference_top24"] is None for row in missing["players"])

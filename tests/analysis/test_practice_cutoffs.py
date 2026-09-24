@@ -34,6 +34,17 @@ def snapshot(time="2026-09-25T16:00:00Z", *, kickoff="2026-09-27T17:00:00Z", pre
             "available": True,
             "generated_at": time,
             "input_signature": "test",
+            "evaluation_context": {
+                "players": [
+                    {
+                        "player_id": "a",
+                        "returning": True,
+                        "game_status": 0.5,
+                        "elite_top24": True,
+                        "weekly_reference_top24": None,
+                    }
+                ]
+            },
             "scoring": {
                 "ppr": [
                     {"player_id": "a", "position": "RB", "team": "BAL", "ridge_pred": prediction}
@@ -102,6 +113,16 @@ def test_comparison_uses_identical_rows_and_projected_actual_components():
     assert metrics["candidate"]["mae"] == 0.0
     assert report["coverage"]["both"] == 1
     assert report["positions"]["RB"]["nn_pred"]["unavailable"] == 1
+    cohorts = report["positions"]["RB"]["cohorts"]
+    for name in ("injured", "returning", "elite_top24"):
+        assert cohorts[name]["models"]["ridge_pred"]["delta"]["mae"] == -2.0
+        assert cohorts[name]["sparse"] is True
+    assert cohorts["weekly_reference_top24"]["status"] == "unavailable"
+    assert cohorts["rest_only"]["n"] == 0
+    disagreed = candidate.copy()
+    disagreed["elite_top24"] = False
+    mismatch = compare_cutoff(baseline, disagreed, actuals)
+    assert mismatch["positions"]["RB"]["cohorts"]["elite_top24"]["unknown_or_disagreed"] == 1
     missing = compare_cutoff(baseline, candidate, actuals.drop(columns="fumbles_lost"))
     assert missing["missing_actuals"] == 1
     assert missing["positions"]["RB"]["ridge_pred"]["n"] == 0

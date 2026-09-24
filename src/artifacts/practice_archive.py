@@ -14,10 +14,75 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pandas as pd
+
 from src.data.practice_reports import PracticeReport
 
 SCHEMA_VERSION = 1
 ARCHIVE_DIRECTORY = "practice_archive"
+
+
+def build_cohort_context(frame: pd.DataFrame, season: int, week: int, *, reference=None) -> dict:
+    """Freeze pregame cohort membership, never reconstruct it from game outcomes."""
+    from src.shared.comparison_scoring import comparison_actuals
+    from src.shared.comparison_truth import comparison_source_availability
+    from src.shared.evaluation_cohorts import (
+        load_reference,
+        ranked_rows,
+        reference_selection,
+        regular_season_rows,
+    )
+
+    if reference is None:
+        reference = load_reference()
+    current = frame[frame["season"].eq(season) & frame["week"].eq(week)]
+    context = {"players": [], "cohorts": {}}
+    for position, players in current.groupby("position"):
+        if position not in {"QB", "RB", "WR", "TE"}:
+            continue
+        prior = regular_season_rows(
+            frame[frame["season"].eq(season - 1) & frame["position"].eq(position)]
+        ).copy()
+        # The general frame retains raw fumble components; preserve unknowns
+        # when deriving the target, exactly as the scoring availability contract.
+        components = ["sack_fumbles_lost", "rushing_fumbles_lost", "receiving_fumbles_lost"]
+        if set(components) <= set(prior):
+            prior["fumbles_lost"] = prior[components].sum(axis=1, min_count=len(components))
+        prior["importance"] = comparison_actuals(prior, position).where(
+            comparison_source_availability(prior, position)
+        )
+        importance = prior.groupby("player_id", as_index=False)["importance"].mean().dropna()
+        # Select on the full prior-season population, before dropping bye/Out
+        # players from this week's slate. Neither arm's forecasts select its pool.
+        importance["season"] = season - 1
+        elite = set(ranked_rows(importance, "importance", ["season"], 24)["player_id"])
+        elite_available = not importance.empty
+        reference_mask, reference_metadata = reference_selection(position, players, reference, 24)
+        reference_available = reference_metadata["status"] == "available"
+        context["cohorts"][position] = {
+            "elite_top24": {
+                "status": "available" if elite_available else "unavailable",
+                "definition": "prior_season_mean_shared_component_points",
+                "selection_population": "full_previous_regular_season",
+            },
+            "weekly_reference_top24": reference_metadata,
+        }
+        for index, row in players.iterrows():
+            returning = row.get("is_returning_from_absence")
+            game_status = row.get("game_status")
+            context["players"].append(
+                {
+                    "player_id": str(row["player_id"]),
+                    "position": position,
+                    "returning": bool(returning) if pd.notna(returning) else None,
+                    "game_status": float(game_status) if pd.notna(game_status) else None,
+                    "elite_top24": str(row["player_id"]) in elite if elite_available else None,
+                    "weekly_reference_top24": bool(reference_mask.loc[index])
+                    if reference_available
+                    else None,
+                }
+            )
+    return context
 
 
 def archive_refresh(

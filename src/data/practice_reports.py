@@ -19,7 +19,7 @@ from src.data.identity import schedule_team_code_normalization
 from src.data.roster_identity import current_rosters, practice_alias_lookup
 from src.data.roster_identity import name_key as _name
 from src.data.source_result import SourceResult, SourceStatus
-from src.features.practice_context import PRACTICE_STATUSES, normalize_descriptions
+from src.features.practice_context import PRACTICE_STATUSES, normalize_descriptions, reason_features
 
 _STATUS = PRACTICE_STATUSES
 _HEADERS = ["Player", "Position", "Injuries", "Practice Status", "Game Status"]
@@ -301,6 +301,14 @@ def fetch_practice_report(
         "missing_teams": sorted(expected - covered),
         "known_players": len(values),
         "unknown_players": len(roster_ids - set(values)),
+        "unknown_reason_players": sum(
+            int(
+                reason_features(row["injury_descriptions"], coverage=row["coverage"])[
+                    "practice_reason_unknown"
+                ]
+            )
+            for row in observations
+        ),
         "unmatched_report_names": sorted(set(unmatched)),
         "errors": errors,
     }
