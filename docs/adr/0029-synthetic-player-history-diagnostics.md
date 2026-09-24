@@ -411,3 +411,5 @@ shared validator are the extension points):
 - 2026-09-23: DST export checks team-cache compatibility before the native build
   and enforces cache-only source reads throughout preparation; valid observed
   zero turnover histories are preserved instead of treated as missing data.
+  Opponent weekly team-game keys must match finite schedule scores before the
+  native aggregation can zero-fill them; genuine observed shutouts remain valid.

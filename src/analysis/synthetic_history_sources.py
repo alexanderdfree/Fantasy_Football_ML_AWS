@@ -45,6 +45,7 @@ from src.features.engineer import build_opp_offense_per_game_df
 from src.prediction.bundle import file_digest
 from src.shared.pipeline import _prepare_position_data, _read_split
 from src.shared.registry import get_config
+from src.shared.weather_features import TEAM_CODE_NORMALIZATION
 from src.training.context import raw_data_dir
 
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
@@ -107,6 +108,36 @@ def dst_raw_cache_files() -> dict[str, Path]:
     return {name: root / f"{name}_{signature}.parquet" for name in DST_RAW_CACHES}
 
 
+def _require_opponent_schedule_scores(weekly: pd.DataFrame, schedules: pd.DataFrame) -> None:
+    """Check observations before the production opponent builder zero-fills them."""
+    keys = ["opponent_team", "season", "week"]
+    needed = weekly.rename(columns={"recent_team": "opponent_team"})[keys].copy()
+    needed["opponent_team"] = needed["opponent_team"].replace(TEAM_CODE_NORMALIZATION)
+    # Match the production groupby: missing grouping keys do not form a game.
+    needed = needed.dropna().drop_duplicates()
+    schedules = schedules.loc[schedules["game_type"].eq("REG")]
+    scores = pd.concat(
+        [
+            schedules[[f"{side}_team", "season", "week", f"{side}_score"]].rename(
+                columns={f"{side}_team": "opponent_team", f"{side}_score": "score"}
+            )
+            for side in ("home", "away")
+        ],
+        ignore_index=True,
+    )
+    scores["opponent_team"] = scores["opponent_team"].replace(TEAM_CODE_NORMALIZATION)
+    # The native builder keeps the first schedule row for each normalized key.
+    observed = needed.merge(
+        scores.drop_duplicates(keys), on=keys, how="left", validate="one_to_one"
+    )
+    missing = observed.loc[~np.isfinite(pd.to_numeric(observed["score"], errors="coerce")), keys]
+    if not missing.empty:
+        raise ValueError(
+            "opponent weekly games lack observed schedule scores: "
+            f"{missing.head(8).to_dict('records')}; hydrate complete schedules before exporting"
+        )
+
+
 def export_dst_source():
     """DST: the runner's team-level build, prepared, plus the opponent stream inputs.
 
@@ -156,6 +187,7 @@ def export_dst_source():
         weekly = validate_opponent_weekly(
             pd.read_parquet(weekly_path, columns=list(DST_WEEKLY_COLUMNS))
         )
+        _require_opponent_schedule_scores(weekly, pd.read_parquet(caches["schedules"]))
         per_game = validate_opponent_per_game(
             build_opp_offense_per_game_df(weekly), POSITION_HISTORY_SCHEMAS["DST"]
         )

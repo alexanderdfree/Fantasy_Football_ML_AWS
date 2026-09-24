@@ -23,6 +23,7 @@ from tests.analysis.conftest import (
     DST_POISON,
     LONG_WEEKS,
     dst_rows,
+    fake_schedules,
     opponent_per_game_rows,
     opponent_weekly_rows,
     position_rows,
@@ -259,6 +260,63 @@ def test_dst_export_enforces_cache_only_during_native_build(monkeypatch, tmp_pat
         sources.export_dst_source()
     assert team_path.read_bytes() == before
     assert not (tmp_path / "team_stats_2022.parquet").exists()
+
+
+@pytest.mark.parametrize("score_state", ["missing_row", "null_score", "observed_zero"])
+def test_dst_export_requires_observed_schedule_scores(monkeypatch, tmp_path, score_state):
+    from types import SimpleNamespace
+
+    sources.get_config("DST")  # Resolve runner callbacks before patching their modules.
+    source = dst_rows()
+    weekly = opponent_weekly_rows().assign(passing_tds=0.0, rushing_tds=0.0)
+    weekly = weekly.loc[weekly.recent_team.isin(["LV", "DEN"])]
+    schedules = fake_schedules()
+    schedules = schedules.loc[schedules.home_team.eq("LV")].assign(away_team="DEN")
+    # Both offenses have no TDs, so a missing schedule cannot be detected from
+    # touchdown counts. Exercise the production relocation mapping as well.
+    schedules["home_team"] = schedules["home_team"].replace({"LV": "OAK"})
+    selected = schedules.home_team.eq("OAK") & schedules.season.eq(2022) & schedules.week.eq(1)
+    schedules.loc[selected, ["home_score", "away_score"]] = 0.0
+    if score_state == "missing_row":
+        schedules = schedules.loc[~selected]
+    elif score_state == "null_score":
+        schedules.loc[selected, "home_score"] = np.nan
+    caches = {
+        name: tmp_path / f"{name}_2012_2025.parquet"
+        for name in ("weekly", "schedules", "team_stats")
+    }
+    weekly.to_parquet(caches["weekly"])
+    schedules.to_parquet(caches["schedules"])
+    pd.DataFrame({"_team_stats_schema_v2": [True]}).to_parquet(caches["team_stats"])
+    before = {name: path.read_bytes() for name, path in caches.items()}
+    monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: caches)
+    monkeypatch.setattr("src.dst.data.build_data", lambda **kwargs: source.copy())
+    monkeypatch.setattr("src.dst.targets.compute_targets", lambda frame: frame)
+    monkeypatch.setattr("src.dst.features.compute_features", lambda frame: None)
+    monkeypatch.setattr(
+        sources,
+        "_prepare_position_data",
+        lambda *args: SimpleNamespace(
+            train=source, feature_columns=SCHEMA.feature_columns, data_id="dst-score-coverage"
+        ),
+    )
+    monkeypatch.setattr(
+        "src.shared.weather_features._load_schedules",
+        lambda: pd.read_parquet(caches["schedules"]),
+    )
+    output = tmp_path / "export"
+    if score_state == "observed_zero":
+        sources.write_sources("DST", output)
+        per_game = pd.read_parquet(output / "dst_opponent_per_game.parquet")
+        observed = per_game.loc[
+            per_game.opponent_team.eq("LV") & per_game.season.eq(2022) & per_game.week.eq(1)
+        ]
+        assert len(observed) == 1 and observed.off_pts_scored.iloc[0] == 0.0
+    else:
+        with pytest.raises(ValueError, match="opponent weekly games lack observed schedule scores"):
+            sources.write_sources("DST", output)
+        assert not output.exists()
+    assert {name: path.read_bytes() for name, path in caches.items()} == before
 
 
 def test_forecast_opponents_missing_from_the_frame_fail_loudly():
@@ -515,7 +573,9 @@ def test_dst_export_publishes_the_stream_inputs(monkeypatch, tmp_path, dst_sched
         sources.write_sources("DST", tmp_path / "dst")
     assert calls == []  # refused before build_data could fetch anything
     pd.DataFrame({"_team_stats_schema_v2": [True]}).to_parquet(missing)
-    caches = {"weekly": weekly_path, "team_stats": missing}
+    schedules_path = tmp_path / "schedules_2012_2025.parquet"
+    fake_schedules().to_parquet(schedules_path)
+    caches = {"weekly": weekly_path, "team_stats": missing, "schedules": schedules_path}
     monkeypatch.setattr(sources, "dst_raw_cache_files", lambda: caches)
     output = sources.write_sources("DST", tmp_path / "dst")
     manifest = json.loads((output / "sources.json").read_text())
