@@ -2,15 +2,15 @@
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.14.0+cu130
 numpy==2.5.3
-pandas==3.0.5
+pandas==3.0.6
 pyarrow==25.0.1
 nflreadpy==0.1.5
 polars==1.44.2
-scikit-learn==1.9.0
+scikit-learn==1.9.1
 scipy==1.18.1
 matplotlib==3.11.2
 joblib==1.6.0
 lightgbm==4.7.0
 mord==0.7
-boto3==1.43.93
+boto3==1.43.98
 optuna==5.0.0
