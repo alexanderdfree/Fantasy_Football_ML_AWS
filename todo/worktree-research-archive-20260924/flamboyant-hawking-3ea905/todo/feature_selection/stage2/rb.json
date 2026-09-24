@@ -1,0 +1,2860 @@
+{
+  "position": "RB",
+  "stage": 2,
+  "noise_floor": 0.02,
+  "families": {
+    "defense": {
+      "run_id": "subscreen-rb-defense-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "opp_def_ints_L5": [
+          "opp_def_ints_L5"
+        ],
+        "opp_def_pass_td_allowed_L5": [
+          "opp_def_pass_td_allowed_L5"
+        ],
+        "opp_def_pass_yds_allowed_L5": [
+          "opp_def_pass_yds_allowed_L5"
+        ],
+        "opp_def_pts_allowed_L5": [
+          "opp_def_pts_allowed_L5"
+        ],
+        "opp_def_rush_yds_allowed_L5": [
+          "opp_def_rush_yds_allowed_L5"
+        ],
+        "opp_def_sacks_L5": [
+          "opp_def_sacks_L5"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "opp_def_ints_L5": {
+              "mean_effect": 0.012187480981779686,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": 0.010205151417093106,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": -0.011549556152867346,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": -0.005158318385892535,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": 0.007673974311593668,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.0037218457149021944,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_def_ints_L5": {
+              "mean_effect": 0.02294248297070567,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": 0.015745559351167948,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": 0.005072211848154318,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": -0.010819870636512796,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": 0.007613593418937192,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.00858868184296746,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "opp_def_ints_L5": {
+              "mean_effect": -0.0062043902380493066,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": -0.001528720661630345,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": 0.00021927959388268192,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": 0.004356452923254039,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": 0.008800904737765514,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.007081756602272726,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_def_ints_L5": {
+              "mean_effect": -0.006668341150843915,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": -0.00042828296708119495,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": 0.012313063463918361,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": -0.0009611163562492919,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": 0.021429679880603736,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.008379232630107758,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "opp_def_ints_L5": {
+              "mean_effect": 0.04874966421252758,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": -0.01622640705011058,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": 0.043979587364152195,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": -0.023652207351011256,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": -0.028181408236424232,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.0023470433073118357,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_def_ints_L5": {
+              "mean_effect": 0.008978558691382865,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": -0.014878074419571341,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": -0.03146394331210889,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": -0.036244291296493536,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": -0.014482494558632375,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.0202970554275419,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "opp_def_ints_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_def_ints_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_td_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pass_yds_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_pts_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_rush_yds_allowed_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_def_sacks_L5": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "opp_def_pass_td_allowed_L5",
+        "opp_def_pts_allowed_L5",
+        "opp_def_rush_yds_allowed_L5",
+        "opp_def_sacks_L5"
+      ],
+      "suggested_drop_cols": [
+        "opp_def_pass_td_allowed_L5",
+        "opp_def_pts_allowed_L5",
+        "opp_def_rush_yds_allowed_L5",
+        "opp_def_sacks_L5"
+      ]
+    },
+    "trend": {
+      "run_id": "subscreen-rb-trend-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "trend_carries": [
+          "trend_carries"
+        ],
+        "trend_fantasy_points": [
+          "trend_fantasy_points"
+        ],
+        "trend_snap_pct": [
+          "trend_snap_pct"
+        ],
+        "trend_targets": [
+          "trend_targets"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "trend_carries": {
+              "mean_effect": 0.0038578638457309467,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": 0.0022085938775235903,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.0018629687232456504,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": 0.00249404340815218,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "trend_carries": {
+              "mean_effect": 0.005535170621849161,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": 0.008443493389021839,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.008141661721317917,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": 0.003444825944407981,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "trend_carries": {
+              "mean_effect": -0.001880936083620277,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": -0.004968414237948693,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.004691657769005708,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": 0.0019782552864642255,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "trend_carries": {
+              "mean_effect": -0.005228680854671097,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": -0.007447515307526409,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.007356250156655086,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": 0.0035228708359893446,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "trend_carries": {
+              "mean_effect": 0.006743378509773912,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": -0.025733368596342565,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": -0.021651738633896578,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": -0.023346728555907248,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "trend_carries": {
+              "mean_effect": -0.0038642158583384045,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": -0.047508406512272394,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.03860030987426555,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": -0.10855630595161436,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "trend_carries": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "trend_carries": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_fantasy_points": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_snap_pct": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "trend_targets": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "trend_carries",
+        "trend_fantasy_points",
+        "trend_snap_pct",
+        "trend_targets"
+      ],
+      "suggested_drop_cols": [
+        "trend_carries",
+        "trend_fantasy_points",
+        "trend_snap_pct",
+        "trend_targets"
+      ]
+    },
+    "share": {
+      "run_id": "subscreen-rb-share-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "air_yards_share": [
+          "air_yards_share"
+        ],
+        "snap_pct": [
+          "snap_pct"
+        ],
+        "target_share_L3": [
+          "target_share_L3"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "air_yards_share": {
+              "mean_effect": 0.0028091998024919462,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.006327802731300736,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": 0.005818500745360389,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_share": {
+              "mean_effect": -7.378029915816597e-05,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.010251299849015183,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": 0.006433443229859392,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "air_yards_share": {
+              "mean_effect": -0.01736074533303622,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.00719148097610578,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": 0.010917775177039957,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_share": {
+              "mean_effect": -0.022773574175803724,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.01907452627454287,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": 0.00049416588954454,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "air_yards_share": {
+              "mean_effect": 0.012321051235059777,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.005762912469776005,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": -0.00032934451052657465,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_share": {
+              "mean_effect": 0.03599277311886251,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.019562463622729176,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": -0.06058879756838298,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "air_yards_share": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_share": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "target_share_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "air_yards_share",
+        "snap_pct",
+        "target_share_L3"
+      ],
+      "suggested_drop_cols": [
+        "air_yards_share",
+        "snap_pct",
+        "target_share_L3"
+      ]
+    },
+    "matchup": {
+      "run_id": "subscreen-rb-matchup-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "opp_recv_pts_allowed_to_pos": [
+          "opp_recv_pts_allowed_to_pos"
+        ],
+        "opp_rush_pts_allowed_to_pos": [
+          "opp_rush_pts_allowed_to_pos"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": -0.0016682845674313995,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": 0.0016682845674313995,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": -0.0019329259760141326,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": 0.0019329259760141326,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": 0.009627591645932299,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": -0.009627591645932299,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": 0.004258445915906961,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": -0.004258445915906961,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": 0.028713797471795033,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": -0.028713797471795033,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": 0.061738173386178374,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": -0.061738173386178374,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": 0.014908722661488683,
+              "std_effect": 0.019988301345120068,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": -0.014908722661488683,
+              "std_effect": 0.019988301345120068,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "opp_recv_pts_allowed_to_pos": {
+              "mean_effect": -0.01827084237789482,
+              "std_effect": 0.06826552733609136,
+              "n_seeds": 24
+            },
+            "opp_rush_pts_allowed_to_pos": {
+              "mean_effect": 0.01827084237789482,
+              "std_effect": 0.06826552733609136,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "opp_rush_pts_allowed_to_pos"
+      ],
+      "suggested_drop_cols": [
+        "opp_rush_pts_allowed_to_pos"
+      ]
+    },
+    "prior_season": {
+      "run_id": "subscreen-rb-prior_season-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "games_played": [
+          "prior_season_games_played"
+        ],
+        "carries": [
+          "prior_season_max_carries",
+          "prior_season_mean_carries",
+          "prior_season_std_carries"
+        ],
+        "receiving_yards": [
+          "prior_season_max_receiving_yards",
+          "prior_season_mean_receiving_yards"
+        ],
+        "snap_pct": [
+          "prior_season_max_snap_pct",
+          "prior_season_mean_snap_pct",
+          "prior_season_std_snap_pct"
+        ],
+        "targets": [
+          "prior_season_max_targets",
+          "prior_season_mean_targets",
+          "prior_season_std_targets"
+        ],
+        "catch_rate": [
+          "prior_season_mean_catch_rate"
+        ],
+        "fumbles_lost": [
+          "prior_season_mean_fumbles_lost"
+        ],
+        "receptions_exp": [
+          "prior_season_mean_receptions_exp"
+        ],
+        "redzone_touches_per_game": [
+          "prior_season_mean_redzone_touches_per_game"
+        ],
+        "rush_yards_gained_exp": [
+          "prior_season_mean_rush_yards_gained_exp"
+        ],
+        "total_fantasy_points_exp": [
+          "prior_season_mean_total_fantasy_points_exp"
+        ],
+        "yards_per_carry": [
+          "prior_season_mean_yards_per_carry"
+        ],
+        "redzone_touches": [
+          "prior_season_total_redzone_touches"
+        ],
+        "touchdowns": [
+          "prior_season_total_touchdowns"
+        ],
+        "yards": [
+          "prior_season_total_yards"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "games_played": {
+              "mean_effect": 0.011076430996853404,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": -0.006495348609686147,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.011677752412677656,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.006287501209707891,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.0075855550972256935,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": 0.010616343664473504,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": 0.02423230666323306,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": -0.0074347385785946685,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": -0.009421560231279713,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": -0.004326737048022444,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": -0.01127361144117689,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": -0.008844020341376435,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": -0.0002109184337690806,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": 0.012271885937754412,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": -0.02316583887860535,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "games_played": {
+              "mean_effect": 0.007405840769870942,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": -0.008607216518669247,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.006748109838604854,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.012413431958218979,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.01651732689941543,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": 0.012283486131518195,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": 0.024600299995746866,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": -0.00844685318076177,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": -0.012214497303197014,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": -0.003882163974174624,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": -0.009676815976958686,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": -0.008331015552701437,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": -0.001526084744548406,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": 0.02538206667179921,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": -0.02783905109772622,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "games_played": {
+              "mean_effect": 0.002195762696284298,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": 0.006923982080871305,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.0006423561991182325,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.00448257032492716,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.010650362039991812,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": 0.0006258252281163834,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": -0.00565773499284461,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": -0.0037347201489055237,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": 0.004131137074518065,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": 0.019308436045483823,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": -0.012863574128711974,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": -0.009647309220151001,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": 0.004296593423107176,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": 0.013474984281196534,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": -0.013527946823017167,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "games_played": {
+              "mean_effect": 0.009312826040704714,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": -0.0034021324848136913,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": -0.0014783835960843206,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.01341872821784218,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 2.632593213647283e-05,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": -0.002735994471826153,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": -0.004236000266188533,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": 0.0006859308648552442,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": -0.006272654441534797,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": 0.01094265417531659,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": -0.007724062282105315,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": -0.021107226436350324,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": 0.006553687511624773,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": 0.01335668488995534,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": -0.007340383653532179,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "games_played": {
+              "mean_effect": -0.009286474248924925,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": 0.000920579390790266,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.03058062798724226,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.0368491191765532,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.04600124550873641,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": -0.019071168479013245,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": -0.012491567141397653,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": 0.04664580051339673,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": 0.025687012532561226,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": -0.000936692403530337,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": 0.021851562909793287,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": 0.0016874543629228356,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": 0.01390785596272881,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": -0.015074763080488829,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": -0.0015698636207899241,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "games_played": {
+              "mean_effect": -0.05087840717262537,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": -0.048972462608636746,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.01241162872060464,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.007155717176130061,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.026310105990122956,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": -0.05621002068292569,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": -0.05646335369950073,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": 0.32448644946745997,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": 0.25655097378940983,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": -0.00892824907308043,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": -0.023953177677563886,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": -0.11559488820211694,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": -0.10190871640241461,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": -0.031050067921420066,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": -0.06602388537093606,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "games_played": {
+              "mean_effect": 0.004598658901727855,
+              "std_effect": 0.015971882059089355,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": -0.00010967340113055002,
+              "std_effect": 0.025555795918586473,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.029227222004261238,
+              "std_effect": 0.10055081806170421,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.01733162525382013,
+              "std_effect": 0.02428297516402976,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.0018494517955479628,
+              "std_effect": 0.025889499669534147,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": 0.0010372082221376349,
+              "std_effect": 0.01571270117240072,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": -0.01821787075550459,
+              "std_effect": 0.015629164517746996,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": -0.0038658001601660588,
+              "std_effect": 0.01783755471505259,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": -0.0011945548666017307,
+              "std_effect": 0.016843966371046192,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": -0.0009136682953196548,
+              "std_effect": 0.01577534367808588,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": 0.0010440699851510526,
+              "std_effect": 0.01639306397286568,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": 0.0020194201071640863,
+              "std_effect": 0.018780836312560608,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": -0.0046589250276098575,
+              "std_effect": 0.01948766507182574,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": -0.0052975542411302645,
+              "std_effect": 0.024024149641324204,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": 0.01551254457638912,
+              "std_effect": 0.11674217996359743,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "games_played": {
+              "mean_effect": -0.004858101565867116,
+              "std_effect": 0.06140071448168083,
+              "n_seeds": 24
+            },
+            "carries": {
+              "mean_effect": -0.0006687806890555518,
+              "std_effect": 0.053613848134603494,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.06329136044107549,
+              "std_effect": 0.28108426973608136,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.009408988229660261,
+              "std_effect": 0.0437776479570151,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.0004140402510035557,
+              "std_effect": 0.051850420199692514,
+              "n_seeds": 24
+            },
+            "catch_rate": {
+              "mean_effect": -0.02129958606261262,
+              "std_effect": 0.03418247545952063,
+              "n_seeds": 24
+            },
+            "fumbles_lost": {
+              "mean_effect": -0.018484925713787348,
+              "std_effect": 0.058791937230290116,
+              "n_seeds": 24
+            },
+            "receptions_exp": {
+              "mean_effect": -0.0013461456315031113,
+              "std_effect": 0.05794654368819544,
+              "n_seeds": 24
+            },
+            "redzone_touches_per_game": {
+              "mean_effect": -0.004225798788180857,
+              "std_effect": 0.049369345440303206,
+              "n_seeds": 24
+            },
+            "rush_yards_gained_exp": {
+              "mean_effect": -0.01786358488045403,
+              "std_effect": 0.0350382571524204,
+              "n_seeds": 24
+            },
+            "total_fantasy_points_exp": {
+              "mean_effect": -0.011716363597384483,
+              "std_effect": 0.03418816560838495,
+              "n_seeds": 24
+            },
+            "yards_per_carry": {
+              "mean_effect": -0.014781349390805406,
+              "std_effect": 0.033998660374187445,
+              "n_seeds": 24
+            },
+            "redzone_touches": {
+              "mean_effect": -0.016654517641566297,
+              "std_effect": 0.029852081464363064,
+              "n_seeds": 24
+            },
+            "touchdowns": {
+              "mean_effect": -0.01313798379393564,
+              "std_effect": 0.04606166936298475,
+              "n_seeds": 24
+            },
+            "yards": {
+              "mean_effect": 0.07156880579474041,
+              "std_effect": 0.30313849601294024,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "games_played",
+        "carries",
+        "snap_pct",
+        "targets",
+        "catch_rate",
+        "rush_yards_gained_exp",
+        "yards_per_carry",
+        "redzone_touches",
+        "touchdowns",
+        "yards"
+      ],
+      "suggested_drop_cols": [
+        "prior_season_games_played",
+        "prior_season_max_carries",
+        "prior_season_max_snap_pct",
+        "prior_season_max_targets",
+        "prior_season_mean_carries",
+        "prior_season_mean_catch_rate",
+        "prior_season_mean_rush_yards_gained_exp",
+        "prior_season_mean_snap_pct",
+        "prior_season_mean_targets",
+        "prior_season_mean_yards_per_carry",
+        "prior_season_std_carries",
+        "prior_season_std_snap_pct",
+        "prior_season_std_targets",
+        "prior_season_total_redzone_touches",
+        "prior_season_total_touchdowns",
+        "prior_season_total_yards"
+      ]
+    },
+    "specific": {
+      "run_id": "subscreen-rb-specific-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "air_yards_per_target_L3": [
+          "air_yards_per_target_L3"
+        ],
+        "career_carries": [
+          "career_carries"
+        ],
+        "opportunity_index_L3": [
+          "opportunity_index_L3"
+        ],
+        "receiving_epa_per_target_L3": [
+          "receiving_epa_per_target_L3"
+        ],
+        "receiving_first_down_rate_L3": [
+          "receiving_first_down_rate_L3"
+        ],
+        "reception_rate_L3": [
+          "reception_rate_L3"
+        ],
+        "rushing_epa_per_attempt_L3": [
+          "rushing_epa_per_attempt_L3"
+        ],
+        "rushing_first_down_rate_L3": [
+          "rushing_first_down_rate_L3"
+        ],
+        "team_rb_carry_hhi_L3": [
+          "team_rb_carry_hhi_L3"
+        ],
+        "team_rb_carry_share_L3": [
+          "team_rb_carry_share_L3"
+        ],
+        "team_rb_target_hhi_L3": [
+          "team_rb_target_hhi_L3"
+        ],
+        "team_rb_target_share_L3": [
+          "team_rb_target_share_L3"
+        ],
+        "yac_per_reception_L3": [
+          "yac_per_reception_L3"
+        ],
+        "yards_per_carry_L3": [
+          "yards_per_carry_L3"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "air_yards_per_target_L3": {
+              "mean_effect": -0.0035211674115789293,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": 0.0018582610357702478,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": 0.009337409735183044,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": -0.006128291603620717,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": -0.0028070292758961557,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": -0.003981968390855073,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": 0.006642164996414124,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": -0.004566319608963809,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.009243587459253355,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": 0.0016323198509322623,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": 0.008423546398167225,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": -0.0037195397383644746,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": -0.009083095898298588,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": -0.0033298775481425125,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_per_target_L3": {
+              "mean_effect": -0.0009982696417454306,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": 0.028506573142669467,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": -0.0036983871432454407,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": -0.007440419442092505,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": -0.005464836026909836,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": -0.007749737307849003,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": 0.006249339690419298,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": -0.010686271730744323,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.011947890208584333,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": 0.008349129059054938,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": 0.004995679638163608,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": -0.007722043639853737,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": -0.010056326791319847,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": -0.006232320015132409,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "air_yards_per_target_L3": {
+              "mean_effect": 0.008051500116566856,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": -0.01396161571401855,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": 0.0022214304069931856,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": -0.01890649755178142,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": -0.004502220084828146,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": 0.025851783742488976,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": -0.007967272937225545,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": 0.009475164120447133,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.021257720029988825,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": -0.02181118071357524,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": -0.005557473502503463,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": 0.010513596592899077,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": -0.014487841007640334,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": 0.00982290650219042,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_per_target_L3": {
+              "mean_effect": 0.004484730382799285,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": -0.022517253056532738,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": 0.0020951577758046014,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": -0.01641099207007901,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": -0.0053347212266583455,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": 0.0027675522245234063,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": -0.0016175598176779715,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": 0.009283111517264686,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.022976247507386915,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": -0.008290289885398039,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": -0.00013124146969190065,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": 0.014851527178320723,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": -0.009857330817953702,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": 0.007701061757890315,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "air_yards_per_target_L3": {
+              "mean_effect": -0.017447049736712295,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": 0.002327916235576488,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": -0.0092624566003634,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": -0.009321788134252884,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": 0.02938218782592017,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": -0.0037782188553334706,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": -0.025264461195370735,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": -0.018260644451737917,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.057852591239519136,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": -0.0189248845418879,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": -0.008563077453574763,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": 0.007664604745983183,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": 0.04656218457238026,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": -0.03296690365014676,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_per_target_L3": {
+              "mean_effect": -0.007053478176606731,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": -0.04056345053338095,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": -0.03501830675771611,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": -0.03135495606462424,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": 0.031507849868183335,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": 0.0075328850144202875,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": -0.0343822651541581,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": -0.03770903747681231,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.08340446281830438,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": -0.033303336997327015,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": -0.06442143135473977,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": 0.05524096894241026,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": 0.07437749872337562,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": 0.031742597148671337,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "air_yards_per_target_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "air_yards_per_target_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "career_carries": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "opportunity_index_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_epa_per_target_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_first_down_rate_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "reception_rate_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_epa_per_attempt_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_first_down_rate_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_hhi_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_carry_share_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_hhi_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "team_rb_target_share_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yac_per_reception_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "yards_per_carry_L3": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "air_yards_per_target_L3",
+        "career_carries",
+        "opportunity_index_L3",
+        "receiving_epa_per_target_L3",
+        "rushing_epa_per_attempt_L3",
+        "rushing_first_down_rate_L3",
+        "team_rb_carry_share_L3",
+        "team_rb_target_hhi_L3",
+        "team_rb_target_share_L3",
+        "yards_per_carry_L3"
+      ],
+      "suggested_drop_cols": [
+        "air_yards_per_target_L3",
+        "career_carries",
+        "opportunity_index_L3",
+        "receiving_epa_per_target_L3",
+        "rushing_epa_per_attempt_L3",
+        "rushing_first_down_rate_L3",
+        "team_rb_carry_share_L3",
+        "team_rb_target_hhi_L3",
+        "team_rb_target_share_L3",
+        "yards_per_carry_L3"
+      ]
+    },
+    "rolling": {
+      "run_id": "subscreen-rb-rolling-20260620T080604Z-503d31f",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65
+      ],
+      "spec": "src.tuning.ab_feature_subscreen",
+      "group_cols": {
+        "carries": [
+          "rolling_max_carries_L3",
+          "rolling_max_carries_L8",
+          "rolling_mean_carries_L3",
+          "rolling_mean_carries_L8",
+          "rolling_std_carries_L3",
+          "rolling_std_carries_L8"
+        ],
+        "fantasy_points": [
+          "rolling_max_fantasy_points_L3",
+          "rolling_max_fantasy_points_L8",
+          "rolling_mean_fantasy_points_L3",
+          "rolling_mean_fantasy_points_L8",
+          "rolling_min_fantasy_points_L3",
+          "rolling_min_fantasy_points_L5",
+          "rolling_min_fantasy_points_L8",
+          "rolling_std_fantasy_points_L3",
+          "rolling_std_fantasy_points_L8"
+        ],
+        "receiving_yards": [
+          "rolling_max_receiving_yards_L3",
+          "rolling_max_receiving_yards_L8",
+          "rolling_mean_receiving_yards_L3",
+          "rolling_mean_receiving_yards_L8",
+          "rolling_std_receiving_yards_L3",
+          "rolling_std_receiving_yards_L8"
+        ],
+        "receptions": [
+          "rolling_max_receptions_L3",
+          "rolling_max_receptions_L8",
+          "rolling_mean_receptions_L3",
+          "rolling_mean_receptions_L8",
+          "rolling_std_receptions_L3",
+          "rolling_std_receptions_L8"
+        ],
+        "rushing_yards": [
+          "rolling_max_rushing_yards_L3",
+          "rolling_max_rushing_yards_L8",
+          "rolling_mean_rushing_yards_L3",
+          "rolling_mean_rushing_yards_L8",
+          "rolling_std_rushing_yards_L3",
+          "rolling_std_rushing_yards_L8"
+        ],
+        "snap_pct": [
+          "rolling_max_snap_pct_L3",
+          "rolling_max_snap_pct_L8",
+          "rolling_mean_snap_pct_L3",
+          "rolling_mean_snap_pct_L8",
+          "rolling_std_snap_pct_L3",
+          "rolling_std_snap_pct_L8"
+        ],
+        "targets": [
+          "rolling_max_targets_L3",
+          "rolling_max_targets_L8",
+          "rolling_mean_targets_L3",
+          "rolling_mean_targets_L8",
+          "rolling_std_targets_L3",
+          "rolling_std_targets_L8"
+        ]
+      },
+      "effects": {
+        "Ridge": {
+          "mae": {
+            "carries": {
+              "mean_effect": 0.0052321406029127715,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.00026294401010229507,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": -0.0016975153634026796,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.007306719903440673,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": 0.004188544218145296,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.010949110922973126,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.006957098688314289,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "carries": {
+              "mean_effect": 0.0038655751598408727,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.00045823603756467435,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.0025692409661433047,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.011265140186443645,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": 0.014932142824477523,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.0007809195536081504,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.002914892573445016,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "LightGBM": {
+          "mae": {
+            "carries": {
+              "mean_effect": 0.017305637282559516,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.008067152804370537,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.015957017197694157,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.025004480829414533,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": -0.0008152017321272353,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.006175241205694348,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.005682056021622195,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "carries": {
+              "mean_effect": 0.01467645374478277,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.014181549994114029,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.008555773962501512,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.02634159737341335,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": -0.010117772556725413,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.014082984535608745,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.009001367666319204,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "NN": {
+          "mae": {
+            "carries": {
+              "mean_effect": 0.008903172576103735,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.017840720730987414,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.007392318953588273,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.0033707460064897887,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": 0.007407156287555949,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.024969225262391426,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.026726676133100646,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "carries": {
+              "mean_effect": -0.0488411297157203,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.08780740659194919,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": -0.08620956126419266,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": -0.08929595996890605,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": 0.06349661866463485,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": -0.013645574362342039,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": -0.06506677667617033,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        },
+        "Attention NN": {
+          "mae": {
+            "carries": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          },
+          "rmse": {
+            "carries": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "fantasy_points": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receiving_yards": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "receptions": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "rushing_yards": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "snap_pct": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            },
+            "targets": {
+              "mean_effect": 0.0,
+              "std_effect": 0.0,
+              "n_seeds": 24
+            }
+          }
+        }
+      },
+      "suggested_subcut": [
+        "carries",
+        "fantasy_points",
+        "receiving_yards",
+        "rushing_yards",
+        "targets"
+      ],
+      "suggested_drop_cols": [
+        "rolling_max_carries_L3",
+        "rolling_max_carries_L8",
+        "rolling_max_fantasy_points_L3",
+        "rolling_max_fantasy_points_L8",
+        "rolling_max_receiving_yards_L3",
+        "rolling_max_receiving_yards_L8",
+        "rolling_max_rushing_yards_L3",
+        "rolling_max_rushing_yards_L8",
+        "rolling_max_targets_L3",
+        "rolling_max_targets_L8",
+        "rolling_mean_carries_L3",
+        "rolling_mean_carries_L8",
+        "rolling_mean_fantasy_points_L3",
+        "rolling_mean_fantasy_points_L8",
+        "rolling_mean_receiving_yards_L3",
+        "rolling_mean_receiving_yards_L8",
+        "rolling_mean_rushing_yards_L3",
+        "rolling_mean_rushing_yards_L8",
+        "rolling_mean_targets_L3",
+        "rolling_mean_targets_L8",
+        "rolling_min_fantasy_points_L3",
+        "rolling_min_fantasy_points_L5",
+        "rolling_min_fantasy_points_L8",
+        "rolling_std_carries_L3",
+        "rolling_std_carries_L8",
+        "rolling_std_fantasy_points_L3",
+        "rolling_std_fantasy_points_L8",
+        "rolling_std_receiving_yards_L3",
+        "rolling_std_receiving_yards_L8",
+        "rolling_std_rushing_yards_L3",
+        "rolling_std_rushing_yards_L8",
+        "rolling_std_targets_L3",
+        "rolling_std_targets_L8"
+      ]
+    }
+  },
+  "combined_suggested_drop_cols": [
+    "air_yards_per_target_L3",
+    "air_yards_share",
+    "career_carries",
+    "opp_def_pass_td_allowed_L5",
+    "opp_def_pts_allowed_L5",
+    "opp_def_rush_yds_allowed_L5",
+    "opp_def_sacks_L5",
+    "opp_rush_pts_allowed_to_pos",
+    "opportunity_index_L3",
+    "prior_season_games_played",
+    "prior_season_max_carries",
+    "prior_season_max_snap_pct",
+    "prior_season_max_targets",
+    "prior_season_mean_carries",
+    "prior_season_mean_catch_rate",
+    "prior_season_mean_rush_yards_gained_exp",
+    "prior_season_mean_snap_pct",
+    "prior_season_mean_targets",
+    "prior_season_mean_yards_per_carry",
+    "prior_season_std_carries",
+    "prior_season_std_snap_pct",
+    "prior_season_std_targets",
+    "prior_season_total_redzone_touches",
+    "prior_season_total_touchdowns",
+    "prior_season_total_yards",
+    "receiving_epa_per_target_L3",
+    "rolling_max_carries_L3",
+    "rolling_max_carries_L8",
+    "rolling_max_fantasy_points_L3",
+    "rolling_max_fantasy_points_L8",
+    "rolling_max_receiving_yards_L3",
+    "rolling_max_receiving_yards_L8",
+    "rolling_max_rushing_yards_L3",
+    "rolling_max_rushing_yards_L8",
+    "rolling_max_targets_L3",
+    "rolling_max_targets_L8",
+    "rolling_mean_carries_L3",
+    "rolling_mean_carries_L8",
+    "rolling_mean_fantasy_points_L3",
+    "rolling_mean_fantasy_points_L8",
+    "rolling_mean_receiving_yards_L3",
+    "rolling_mean_receiving_yards_L8",
+    "rolling_mean_rushing_yards_L3",
+    "rolling_mean_rushing_yards_L8",
+    "rolling_mean_targets_L3",
+    "rolling_mean_targets_L8",
+    "rolling_min_fantasy_points_L3",
+    "rolling_min_fantasy_points_L5",
+    "rolling_min_fantasy_points_L8",
+    "rolling_std_carries_L3",
+    "rolling_std_carries_L8",
+    "rolling_std_fantasy_points_L3",
+    "rolling_std_fantasy_points_L8",
+    "rolling_std_receiving_yards_L3",
+    "rolling_std_receiving_yards_L8",
+    "rolling_std_rushing_yards_L3",
+    "rolling_std_rushing_yards_L8",
+    "rolling_std_targets_L3",
+    "rolling_std_targets_L8",
+    "rushing_epa_per_attempt_L3",
+    "rushing_first_down_rate_L3",
+    "snap_pct",
+    "target_share_L3",
+    "team_rb_carry_share_L3",
+    "team_rb_target_hhi_L3",
+    "team_rb_target_share_L3",
+    "trend_carries",
+    "trend_fantasy_points",
+    "trend_snap_pct",
+    "trend_targets",
+    "yards_per_carry_L3"
+  ]
+}

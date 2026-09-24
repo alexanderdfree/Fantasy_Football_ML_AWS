@@ -1,0 +1,452 @@
+"""Unit tests for the rank-ordering-gap cohort decomposition."""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from src.analysis import rank_gap_cohorts as mod
+
+pytestmark = pytest.mark.unit
+
+
+def _cohort(name: str, mask: pd.Series, *, family: str = "test", kind: str = "pre_kickoff"):
+    return mod.CohortDef(family=family, name=name, kind=kind, mask=mask, source_cols=("week",))
+
+
+def _slate_from(df: pd.DataFrame, *, model: str = "lgbm", expert: str = "rotowire"):
+    """Build a PairSlate the way build_pair_slates does, for a hand-built frame."""
+    base = df.copy()
+    if "position" not in base.columns:
+        base["position"] = "RB"
+    base[f"pred_{model}"] = base["model_pred"]
+    base[f"expert_{expert}"] = base["expert_pred"]
+    base["player_id"] = base["player_id"].astype(str)
+    slates, _ = mod.build_pair_slates(base, models=(model,), experts=(expert,), min_week_rows=2)
+    assert len(slates) == 1
+    return slates[0]
+
+
+def _hand_slate() -> pd.DataFrame:
+    """Week 1: five players, one adjacent model swap at the top, perfect expert."""
+    return pd.DataFrame(
+        {
+            "player_id": ["P1", "P2", "P3", "P4", "P5"],
+            "season": [2025] * 5,
+            "week": [1] * 5,
+            "actual": [50.0, 40.0, 30.0, 20.0, 10.0],
+            "model_pred": [45.0, 48.0, 30.0, 20.0, 10.0],  # swaps P1/P2 only
+            "expert_pred": [50.0, 40.0, 30.0, 20.0, 10.0],  # perfect ordering
+        }
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Slate construction
+# --------------------------------------------------------------------------- #
+def test_pair_slate_pct_ranks_and_average_ties():
+    df = pd.DataFrame(
+        {
+            "player_id": ["A", "B", "C", "D", "E"],
+            "season": [2025] * 5,
+            "week": [1] * 5,
+            "actual": [10.0, 8.0, 8.0, 4.0, 2.0],  # B/C tie -> average rank 2.5
+            "model_pred": [5.0, 4.0, 3.0, 2.0, 1.0],
+            "expert_pred": [5.0, 4.0, 3.0, 2.0, 1.0],
+        }
+    )
+    slate = _slate_from(df)
+    ranks = slate.df.set_index("player_id")["actual_rank"]
+    assert ranks["A"] == 1.0
+    assert ranks["B"] == ranks["C"] == 2.5
+    pct = slate.df.set_index("player_id")["actual_pct"]
+    assert pct["A"] == 0.0
+    assert pct["E"] == 1.0
+    assert pct["B"] == pytest.approx(1.5 / 4.0)
+
+
+def test_pair_slate_drops_thin_weeks_and_nan_rows():
+    df = pd.concat(
+        [
+            _hand_slate(),
+            pd.DataFrame(
+                {
+                    "player_id": ["Q1"],
+                    "season": [2025],
+                    "week": [2],  # 1-row week: below min_week_rows
+                    "actual": [9.0],
+                    "model_pred": [9.0],
+                    "expert_pred": [9.0],
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+    df.loc[0, "expert_pred"] = np.nan  # P1 drops from the shared slate
+    slate = _slate_from(df)
+    assert set(slate.df["player_id"]) == {"P2", "P3", "P4", "P5"}
+    assert (slate.df["week"] == 1).all()
+
+
+# --------------------------------------------------------------------------- #
+# Metric 1: displacement
+# --------------------------------------------------------------------------- #
+def test_displacement_pinned_on_hand_slate():
+    slate = _slate_from(_hand_slate())
+    top2 = _cohort("swapped", slate.df["player_id"].isin(["P1", "P2"]))
+    rows = mod.displacement_rows(slate, [top2], n_boot=50, seed=0)
+    by = {r["cohort"]: r for r in rows}
+
+    # Model swaps ranks 1<->2 in a 5-player week: pct displacement +/-0.25 on
+    # the swapped pair, 0 elsewhere; expert is perfect.
+    assert by["all"]["model_abs"] == pytest.approx(0.5 / 5)
+    assert by["all"]["expert_abs"] == 0.0
+    assert by["all"]["abs_delta"] == pytest.approx(0.1)
+    assert by["all"]["signed_delta"] == pytest.approx(0.0)  # +0.25 and -0.25 cancel
+    assert by["swapped"]["model_abs"] == pytest.approx(0.25)
+    assert by["swapped"]["abs_delta"] == pytest.approx(0.25)
+    assert by["swapped"]["small_n"] is True  # n=2 < 40
+
+
+def test_displacement_partition_cohorts_reproduce_global_mean():
+    rng = np.random.default_rng(3)
+    n_weeks, n_players = 4, 12
+    rows = []
+    for w in range(1, n_weeks + 1):
+        actual = rng.gamma(2.0, 5.0, size=n_players)
+        rows.append(
+            pd.DataFrame(
+                {
+                    "player_id": [f"P{i}" for i in range(n_players)],
+                    "season": 2025,
+                    "week": w,
+                    "actual": actual,
+                    "model_pred": actual + rng.normal(0, 5, n_players),
+                    "expert_pred": actual + rng.normal(0, 3, n_players),
+                }
+            )
+        )
+    slate = _slate_from(pd.concat(rows, ignore_index=True))
+    half_a = _cohort("half_a", slate.df["player_id"].isin([f"P{i}" for i in range(6)]))
+    half_b = _cohort("half_b", ~slate.df["player_id"].isin([f"P{i}" for i in range(6)]))
+    out = {
+        r["cohort"]: r for r in mod.displacement_rows(slate, [half_a, half_b], n_boot=10, seed=0)
+    }
+    n_a, n_b = out["half_a"]["n_rows"], out["half_b"]["n_rows"]
+    weighted = (out["half_a"]["abs_delta"] * n_a + out["half_b"]["abs_delta"] * n_b) / (n_a + n_b)
+    assert weighted == pytest.approx(out["all"]["abs_delta"], abs=1e-12)
+
+
+# --------------------------------------------------------------------------- #
+# Metric 2: pair attribution
+# --------------------------------------------------------------------------- #
+def test_pair_attribution_pinned_and_additive():
+    slate = _slate_from(_hand_slate())
+    swapped = _cohort("swapped", slate.df["player_id"].isin(["P1", "P2"]))
+    rows = mod.pair_attribution_rows(slate, [swapped], n_boot=20, seed=0)
+    by = {r["cohort"]: r for r in rows}
+
+    # 10 valid pairs; the model mis-orders exactly (P1, P2); the expert none.
+    # Convention: positive = expert advantage.
+    assert by["all"]["contribution"] == pytest.approx(0.1)
+    assert by["swapped"]["cc_contribution"] == pytest.approx(0.1)
+    assert by["swapped"]["cr_contribution"] == pytest.approx(0.0)
+    assert by["swapped"]["share_of_gap"] == pytest.approx(1.0)
+    # Exact additivity: cohort buckets + rest == total.
+    rest = by["all"]["contribution"] - by["swapped"]["contribution"]
+    assert rest == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pair_attribution_tie_handling_and_week_pooling():
+    week1 = _hand_slate()
+    week2 = pd.DataFrame(
+        {
+            "player_id": ["Q1", "Q2", "Q3"],
+            "season": [2025] * 3,
+            "week": [2] * 3,
+            "actual": [10.0, 10.0, 5.0],  # Q1/Q2 actual tie -> that pair excluded
+            "model_pred": [7.0, 7.0, 6.0],  # concordant on both valid pairs
+            "expert_pred": [6.0, 6.0, 6.0],  # pred ties -> 0.5 each
+        }
+    )
+    slate = _slate_from(pd.concat([week1, week2], ignore_index=True))
+    rows = mod.pair_attribution_rows(slate, [], n_boot=20, seed=0)
+    total = rows[0]["contribution"]
+    # Week 1: numerator +1 over 10 pairs. Week 2: 2 valid pairs (the actual-tied
+    # pair is excluded), expert scores 0.5 each vs model 1.0 -> numerator -1.
+    # Pooled: (1 - 1) / 12 = 0.
+    assert total == pytest.approx(0.0, abs=1e-12)
+
+
+def test_pair_attribution_additivity_on_random_frame():
+    rng = np.random.default_rng(11)
+    rows = []
+    for w in range(1, 5):
+        n = 15
+        actual = rng.gamma(2.0, 5.0, size=n)
+        rows.append(
+            pd.DataFrame(
+                {
+                    "player_id": [f"P{i}" for i in range(n)],
+                    "season": 2025,
+                    "week": w,
+                    "actual": actual,
+                    "model_pred": np.round(actual + rng.normal(0, 5, n), 0),  # induce ties
+                    "expert_pred": np.round(actual + rng.normal(0, 3, n), 0),
+                }
+            )
+        )
+    slate = _slate_from(pd.concat(rows, ignore_index=True))
+    cohort = _cohort("evens", slate.df["player_id"].str[1:].astype(int).mod(2).eq(0))
+    by = {r["cohort"]: r for r in mod.pair_attribution_rows(slate, [cohort], n_boot=10, seed=0)}
+    # cc + cr + rest == total to machine precision, on a frame with pred ties.
+    rest = by["all"]["contribution"] - by["evens"]["contribution"]
+    reconstructed = by["evens"]["cc_contribution"] + by["evens"]["cr_contribution"] + rest
+    assert reconstructed == pytest.approx(by["all"]["contribution"], abs=1e-12)
+    assert by["evens"]["contribution"] == pytest.approx(
+        by["evens"]["cc_contribution"] + by["evens"]["cr_contribution"], abs=1e-12
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Metric 3: miss composition
+# --------------------------------------------------------------------------- #
+def test_miss_composition_counts():
+    slate = _slate_from(_hand_slate())
+    # Top-2 by actual = {P1, P2}; model top-2 = {P2, P1} (48, 45) -> both hit.
+    # Force a miss instead: use top_n=1 -> actual top {P1}, model top {P2}
+    # (false positive), expert top {P1} (hit).
+    cohort_p1 = _cohort("p1_only", slate.df["player_id"].eq("P1"))
+    cohort_p2 = _cohort("p2_only", slate.df["player_id"].eq("P2"))
+    rows = mod.miss_composition_rows(slate, [cohort_p1, cohort_p2], top_ns=(1,))
+    by = {r["cohort"]: r for r in rows}
+    assert by["p1_only"]["n_actual_topn_rows"] == 1
+    assert by["p1_only"]["model_hit_rate"] == 0.0
+    assert by["p1_only"]["expert_hit_rate"] == 1.0
+    assert by["p1_only"]["hit_rate_gap"] == pytest.approx(1.0)  # positive = expert advantage
+    assert by["p2_only"]["model_fp_share"] == pytest.approx(1.0)  # P2 is the model's only FP
+    assert np.isnan(by["p2_only"]["expert_fp_share"])  # expert has zero FPs
+
+
+# --------------------------------------------------------------------------- #
+# Metric 4: leave-cohort-out
+# --------------------------------------------------------------------------- #
+def _loo_frame() -> pd.DataFrame:
+    rng = np.random.default_rng(5)
+    frames = []
+    for w in range(1, 7):
+        n = 10
+        actual = rng.gamma(2.0, 5.0, size=n)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "player_id": [f"P{i}" for i in range(n)],
+                    "season": 2025,
+                    "week": w,
+                    "actual": actual,
+                    "model_pred": actual + rng.normal(0, 6, n),
+                    "expert_pred": actual + rng.normal(0, 2, n),
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_leave_cohort_out_deterministic_and_holds_n_fixed():
+    slate = _slate_from(_loo_frame())
+    cohort = _cohort("evens", slate.df["player_id"].str[1:].astype(int).mod(2).eq(0))
+    attribution = mod.pair_attribution_rows(slate, [cohort], n_boot=10, seed=0)
+    # Make the cohort selectable regardless of size flags.
+    for r in attribution:
+        r["small_n"] = False
+    kwargs = dict(top_n=3, n_perm=25, seed=7)
+    rows_a = mod.leave_cohort_out_rows(slate, [cohort], attribution, **kwargs)
+    rows_b = mod.leave_cohort_out_rows(slate, [cohort], attribution, **kwargs)
+    assert rows_a == rows_b  # deterministic under seed
+    row = rows_a[0]
+    assert row["top_n"] == 3  # N held fixed while the slate shrinks
+    assert row["n_rows_removed"] == int(cohort.mask.sum())
+    assert np.isfinite(row["spearman_gap_delta"])
+    assert np.isfinite(row["regret_gap_delta"])
+    assert 0.0 <= row["spearman_delta_perm_pctile"] <= 1.0
+
+
+# --------------------------------------------------------------------------- #
+# Leakage guard + cohort definitions
+# --------------------------------------------------------------------------- #
+def _synthetic_base(position: str = "RB") -> pd.DataFrame:
+    rng = np.random.default_rng(9)
+    n = 200
+    player_idx = np.array([i % 40 for i in range(n)])
+    # Prior-season expectation is a season-level feature: constant per player,
+    # NaN for players with no prior season (here: players 0-7).
+    prior_by_player = np.where(np.arange(40) < 8, np.nan, rng.gamma(2.0, 5.0, size=40))
+    df = pd.DataFrame(
+        {
+            "player_id": [f"P{i:03d}" for i in player_idx],
+            "season": 2025,
+            "week": rng.integers(1, 19, size=n),
+            "position": position,
+            "actual": rng.gamma(2.0, 5.0, size=n),
+            "inherited_opportunity": rng.random(n) < 0.05,
+            "is_returning_from_absence": (rng.random(n) < 0.1).astype(float),
+            "days_rest": rng.choice([7.0, 14.0, 21.0], size=n),
+            "game_status": rng.choice([0.5, 1.0], size=n),
+            "carry_share_L3": rng.random(n),
+            "target_share_L5": rng.random(n) * 0.3,
+            "implied_team_total": rng.normal(23, 3, size=n),
+            "prior_season_mean_fantasy_points": prior_by_player[player_idx],
+            "rookie_label": np.where(rng.random(n) < 0.15, "rookie_early", "veteran"),
+        }
+    )
+    finite = np.isfinite(df["actual"])
+    df["base_actual_rank"] = (
+        df.loc[finite].groupby(["season", "week"])["actual"].rank(ascending=False)
+    )
+    return df
+
+
+def test_pre_kickoff_cohorts_never_touch_forbidden_realized_columns():
+    for position in ("RB", "WR"):
+        for cohort in mod.cohort_defs(position, _synthetic_base(position)):
+            if cohort.kind != "pre_kickoff":
+                continue
+            assert cohort.source_cols, f"{cohort.family}/{cohort.name} must declare source cols"
+            leaked = set(cohort.source_cols) & mod.FORBIDDEN_PRE_KICKOFF_COLS
+            assert not leaked, (
+                f"pre-kickoff cohort {cohort.family}/{cohort.name} reads realized "
+                f"same-week columns {sorted(leaked)}"
+            )
+
+
+def test_cohort_defs_position_families():
+    rb = {(c.family, c.name) for c in mod.cohort_defs("RB", _synthetic_base("RB"))}
+    wr = {(c.family, c.name) for c in mod.cohort_defs("WR", _synthetic_base("WR"))}
+    assert ("rb_role", "bellcow") in rb and ("wr_role", "alpha") not in rb
+    assert ("wr_role", "alpha") in wr and ("rb_role", "bellcow") not in wr
+    assert ("expected_tier", "no_prior") in rb
+    assert ("finish_tier", "finish_top12") in rb
+
+
+# --------------------------------------------------------------------------- #
+# Substrate gates
+# --------------------------------------------------------------------------- #
+def _cache_frame(n_players: int = 30, weeks: int = 3) -> pd.DataFrame:
+    rng = np.random.default_rng(1)
+    rows = []
+    for w in range(1, weeks + 1):
+        for p in range(n_players):
+            actual = float(rng.gamma(2.0, 5.0))
+            row = {
+                "player_id": f"P{p:03d}",
+                "position": "RB",
+                "season": 2025,
+                "week": w,
+                "fantasy_points": actual,
+            }
+            for m in mod.MODEL_PREFIXES:
+                row[f"{m}_pred_ppr"] = actual + rng.normal(0, 4)
+            for e in mod.EXPERT_PREFIXES:
+                row[f"{e}_pred_ppr"] = round(actual + rng.normal(0, 3), 2)
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_load_cache_frame_validates_schema_and_season(tmp_path):
+    good = _cache_frame()
+    path = tmp_path / "predictions.parquet"
+    good.to_parquet(path)
+    out = mod.load_cache_frame(path)
+    assert {"actual", "pred_lgbm", "expert_rotowire"} <= set(out.columns)
+
+    bad = good.drop(columns=["rotowire_pred_ppr"])
+    bad_path = tmp_path / "bad.parquet"
+    bad.to_parquet(bad_path)
+    with pytest.raises(ValueError, match="missing required columns"):
+        mod.load_cache_frame(bad_path)
+
+    wrong_season = good.assign(season=2024)
+    ws_path = tmp_path / "season.parquet"
+    wrong_season.to_parquet(ws_path)
+    with pytest.raises(ValueError, match="expected exactly"):
+        mod.load_cache_frame(ws_path)
+
+
+def test_join_rate_gate_raises_on_split_vintage_drift(tmp_path):
+    cache = _cache_frame(n_players=20, weeks=2)
+    cache_path = tmp_path / "predictions.parquet"
+    cache.to_parquet(cache_path)
+    cache_df = mod.load_cache_frame(cache_path)
+
+    # Split covers only half the players -> join rate 0.5 << 0.98.
+    split = cache[["player_id", "season", "week"]].iloc[: len(cache) // 2].copy()
+    for col in mod.TEST_SPLIT_COHORT_COLS:
+        split[col] = 1.0
+    split_path = tmp_path / "test.parquet"
+    split.to_parquet(split_path)
+
+    min_season = pd.Series({f"P{p:03d}": 2020 for p in range(20)})
+    with pytest.raises(RuntimeError, match="join rate"):
+        mod.build_position_base(cache_df, "RB", test_split_path=split_path, min_season=min_season)
+
+
+def test_build_position_base_joins_and_reports(tmp_path):
+    cache = _cache_frame(n_players=20, weeks=2)
+    cache_path = tmp_path / "predictions.parquet"
+    cache.to_parquet(cache_path)
+    cache_df = mod.load_cache_frame(cache_path)
+
+    split = cache[["player_id", "season", "week"]].copy()
+    for col in mod.TEST_SPLIT_COHORT_COLS:
+        split[col] = 1.0
+    split_path = tmp_path / "test.parquet"
+    split.to_parquet(split_path)
+
+    min_season = pd.Series({f"P{p:03d}": (2025 if p < 3 else 2020) for p in range(20)})
+    base, report = mod.build_position_base(
+        cache_df, "RB", test_split_path=split_path, min_season=min_season
+    )
+    assert report["join_rate"] == pytest.approx(1.0)
+    assert report["n_rookie_rows"] == 6  # 3 rookie players x 2 weeks
+    assert "base_actual_rank" in base.columns
+    assert "inherited_opportunity" in base.columns
+
+
+# --------------------------------------------------------------------------- #
+# Statistics helpers
+# --------------------------------------------------------------------------- #
+def test_block_bootstrap_ci_covers_constructed_delta():
+    # Constant per-week statistic -> the CI must collapse onto it.
+    vals = {(2025, w): 0.4 for w in range(1, 10)}
+    wts = {(2025, w): 10.0 for w in range(1, 10)}
+    lo, hi = mod._block_bootstrap_ci(vals, wts, n_boot=200, seed=0)
+    assert lo == pytest.approx(0.4)
+    assert hi == pytest.approx(0.4)
+
+    # Heterogeneous weeks: CI must bracket the pooled point estimate.
+    rng = np.random.default_rng(2)
+    vals = {(2025, w): float(rng.normal(0.2, 0.05)) for w in range(1, 19)}
+    wts = {(2025, w): float(rng.integers(50, 150)) for w in range(1, 19)}
+    pooled = sum(vals[k] * wts[k] for k in vals) / sum(wts.values())
+    lo, hi = mod._block_bootstrap_ci(vals, wts, n_boot=500, seed=0)
+    assert lo <= pooled <= hi
+
+
+def test_benjamini_hochberg_known_example():
+    q = mod._benjamini_hochberg([0.01, 0.04, 0.03, 0.005])
+    assert q == pytest.approx([0.02, 0.04, 0.04, 0.02])
+    q_nan = mod._benjamini_hochberg([0.01, float("nan")])
+    assert q_nan[0] == pytest.approx(0.01)
+    assert np.isnan(q_nan[1])
+
+
+def test_calibration_check_pass_and_fail():
+    df = _hand_slate()
+    df["model_pred"] = df["actual"] + 0.217  # delta MAE exactly at the RB anchor
+    df["expert_pred"] = df["actual"]
+    slate = mod.PairSlate("RB", "attn_nn", "rotowire", df)
+    out = mod.calibration_check([slate], anchors={"RB": {"delta_mae": 0.217, "n": 5}})
+    assert out["passed"] is True
+    out = mod.calibration_check([slate], anchors={"RB": {"delta_mae": 0.5, "n": 5}})
+    assert out["passed"] is False

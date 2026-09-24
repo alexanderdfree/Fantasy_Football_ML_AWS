@@ -1,0 +1,1397 @@
+"""Model x player-subtype decomposition of the weekly rank-ordering gap vs experts.
+
+Answers, per position (RB/WR headline; TE rides along; QB is the negative
+control): is the expert ordering edge (expert-gap-investigation-2026-06)
+uniform, or concentrated in specific player subtypes / specific models?
+
+Substrate
+---------
+The production predictions cache parquet (``data/serving_cache/predictions.parquet``,
+schema v7, written by ``src/serving/core.py``), which carries all four model
+predictions AND both experts (``nflcom_pred_ppr``, ``rotowire_pred_ppr``)
+pre-joined on the served 2025 test rows -- so this diagnostic is pure
+pandas/numpy/scipy: no torch, no lightgbm, no artifact loads (those segfault
+locally on the macOS libomp triple-load; see fixed-archive). Fetch it with::
+
+    aws s3 cp s3://ff-predictor-training/models/predictions_cache/predictions.parquet \
+        data/serving_cache/predictions.parquet
+
+or pass ``--sync-cache`` (gated on ``FF_MODEL_S3_BUCKET``). Cohort feature
+columns are joined from ``data/splits/test.parquet`` on
+``(player_id, season, week)`` with a hard >=98% join-rate gate (below that is
+split-vintage drift -- the 2026-06 stale-QB-artifact bug class).
+
+Shared slate
+------------
+Every metric is computed PAIRED on the per-(model, expert) shared slate: rows
+where the actual, the model prediction, and that expert's prediction are all
+finite. Ranks are computed per week over the full shared slate
+(``method="average"``; expert values are 2dp float32 so ties are real), never
+within a cohort. Percentile ranks ``(rank-1)/(n-1)`` make weeks comparable.
+
+Metrics (per position x pair x cohort)
+--------------------------------------
+Sign convention, module-wide: **positive gap = expert advantage** (matches the
+published delta-MAE convention where +0.217 means the model trails). The one
+exception is SIGNED displacement, which is directional placement, not a loss.
+
+1. Signed + absolute percentile-rank displacement (``pred_pct - actual_pct``;
+   positive signed = the source ranked the player WORSE than they finished;
+   ``abs_delta`` positive = model worse). Signed before absolute -- the
+   "subgroup error = bias, not MAE" lesson in rank space. Week-block bootstrap
+   CI + Diebold-Mariano on |displacement|.
+2. Kendall pair-bucket attribution: concordance(expert) - concordance(model)
+   decomposes EXACTLY and additively into cohort-pair buckets (both-in-C /
+   one-in-C / rest), so "X% of the ordering gap involves cohort C" is an
+   accounting identity, not a vibe.
+3. Top-N miss / false-positive composition at N in (12, 24, 30).
+4. Leave-cohort-out gap deltas (N held fixed) calibrated against a
+   week-stratified random-row permutation baseline -- without the baseline
+   this method produces confident nonsense.
+5. Expert coverage per cohort (coverage selection bias is the biggest
+   interpretive trap here, and is itself signal).
+
+Cohorts
+-------
+Pre-kickoff families (headline) are built ONLY from before-kickoff-knowable
+columns; each ``CohortDef`` records its source columns and a unit test forbids
+realized same-week stats (``target_share``, ``air_yards_share``, ``wopr``,
+``carries``, ``targets``, ``receptions``, unsuffixed ``snap_pct``) in
+pre-kickoff masks. A WR deep-threat/possession cohort is deliberately ABSENT:
+the only air-yards columns in the splits are same-week realized (leakage; no
+lagged variant exists). Hindsight families (actual weekly finish tier, RB
+ascension) are reported in a separate, clearly-labeled section.
+
+Guardrails: pre-registered primary contrast = lgbm vs rotowire at RB/WR (the
+served NextWeek ranker vs the strongest expert); everything else exploratory
+with Benjamini-Hochberg q-values per family. Cohorts under 40 rows or 6 weeks
+are flagged ``small_n``. PPR only by default (all prior gap work is PPR).
+
+Run::
+
+    python -m src.analysis.rank_gap_cohorts --positions RB WR TE QB
+    python -m src.analysis.rank_gap_cohorts --cache-path /path/to/predictions.parquet
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from scipy.stats import rankdata
+
+from src.analysis.analysis_nflcom_baseline import _json_default
+from src.analysis.cohort_analysis import (
+    ROOKIE_EARLY,
+    ROOKIE_REST,
+    SMALL_N,
+    label_ascension_rows,
+    label_rookie_rows,
+    player_min_season,
+)
+from src.analysis.significance import diebold_mariano_test, paired_bootstrap_metric_ci
+from src.analysis.topn_expert_gap import (
+    _extreme_quantile_masks,
+    _normalise_keys,
+    _rounded_records,
+    _simple_table,
+    _spearman,
+)
+
+ACTUAL_BY_FORMAT = {
+    "ppr": "fantasy_points",
+    "half_ppr": "fantasy_points_half_ppr",
+    "standard": "fantasy_points_standard",
+}
+MODEL_PREFIXES = ("ridge", "nn", "attn_nn", "lgbm")
+EXPERT_PREFIXES = ("rotowire", "nflcom")
+PRIMARY_CONTRAST = ("lgbm", "rotowire")  # served NextWeek RB/WR ranker vs strongest expert
+DEFAULT_POSITIONS = ("RB", "WR", "TE", "QB")
+DEFAULT_TOP_NS = (12, 24, 30)
+DEFAULT_OUT = Path("analysis_output/rank_gap_cohorts")
+DEFAULT_CACHE = Path("data/serving_cache/predictions.parquet")
+DEFAULT_TEST_SPLIT = Path("data/splits/test.parquet")
+DEFAULT_SPLITS_DIR = Path("data/splits")
+
+JOIN_RATE_MIN = 0.98
+MIN_COHORT_ROWS = SMALL_N  # 40
+MIN_COHORT_WEEKS = 6
+MIN_WEEK_ROWS = 10  # weeks with a thinner shared slate are dropped from rank metrics
+COVERAGE_TOP_N = 24
+LOO_MAX_COHORTS = 6
+# Leave-cohort-out is the expensive metric; restrict to the decision-relevant pairs.
+LOO_MODELS = ("lgbm", "attn_nn")
+LOO_EXPERTS = ("rotowire",)
+
+# Realized same-week columns that must never feed a pre-kickoff cohort mask.
+FORBIDDEN_PRE_KICKOFF_COLS = frozenset(
+    {"target_share", "air_yards_share", "wopr", "carries", "targets", "receptions", "snap_pct"}
+)
+
+# Cohort feature columns joined from data/splits/test.parquet. The last four
+# exist only for the HINDSIGHT ascension label (label_ascension_rows needs
+# realized workload); they are forbidden in pre-kickoff masks.
+TEST_SPLIT_COHORT_COLS = (
+    "inherited_opportunity",
+    "is_returning_from_absence",
+    "days_rest",
+    "game_status",
+    "carry_share_L3",
+    "target_share_L5",
+    "implied_team_total",
+    "prior_season_mean_fantasy_points",
+    "rolling_mean_carries_L3",
+    "rolling_mean_targets_L3",
+    "carries",
+    "targets",
+)
+
+# Fixed role cutoffs (code constants, not knobs -- threshold p-hacking guard).
+RB_BELLCOW_MIN = 0.55
+RB_COMMITTEE_MIN = 0.30
+WR_ALPHA_MIN = 0.22
+WR_SECONDARY_MIN = 0.12
+ROLE_SENSITIVITY_DELTA = 0.05
+
+# Calibration anchors: attn_nn vs RotoWire shared-slate delta-MAE, PPR 2025,
+# from docs/expert_comparison.md "Model vs RotoWire" (regenerated 2026-07-13,
+# PR #1485, scored from the SAME 2026-07-05 predictions-cache snapshot this
+# tool reads). A miss means the cache/table vintages have diverged (a retrain
+# refreshed the cache, or a stale local cache copy) -- re-anchor before
+# trusting any cohort number. NOTE the pre-#1485 table (RB +0.217 / WR +0.132)
+# was the pre-regen model generation; on current artifacts MAE is parity and
+# the surviving expert edge is RMSE/ordering -- which is what this tool
+# decomposes.
+CALIBRATION_ANCHORS = {
+    "RB": {"delta_mae": 0.075, "n": 1447},
+    "WR": {"delta_mae": 0.011, "n": 2295},
+    "TE": {"delta_mae": -0.063, "n": 1165},
+    # QB carries a wider n tolerance: the docs table position-filters the
+    # Sleeper join, dropping Taysom Hill (labeled TE by Sleeper, QB by us; 13
+    # player-weeks), while the serving cache joins experts by player_id alone
+    # and keeps him. Verified 2026-07-13: the excess rows are exactly Hill's.
+    "QB": {"delta_mae": 0.139, "n": 545, "n_tol": 0.03},
+}
+CALIBRATION_DELTA_TOL = 0.02
+CALIBRATION_N_TOL = 0.02
+
+
+@dataclass(frozen=True)
+class CohortDef:
+    """One named row-subset. ``kind`` separates actionable pre-kickoff cohorts
+    from descriptive hindsight ones; ``source_cols`` feeds the leakage guard."""
+
+    family: str
+    name: str
+    kind: str  # "pre_kickoff" | "hindsight"
+    mask: pd.Series = field(compare=False)
+    source_cols: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PairSlate:
+    """Shared slate for one (model, expert) pair, with per-week full-slate ranks."""
+
+    position: str
+    model: str
+    expert: str
+    df: pd.DataFrame  # index preserved from the base frame
+
+
+def _nan() -> float:
+    return float("nan")
+
+
+# --------------------------------------------------------------------------- #
+# Loading + joining
+# --------------------------------------------------------------------------- #
+def load_cache_frame(
+    cache_path: Path,
+    *,
+    scoring_format: str = "ppr",
+    models: Sequence[str] = MODEL_PREFIXES,
+    experts: Sequence[str] = EXPERT_PREFIXES,
+) -> pd.DataFrame:
+    """Read the predictions-cache parquet and canonicalise the analysis columns.
+
+    Output columns: keys, ``actual``, ``pred_{model}`` per model,
+    ``expert_{name}`` per expert, plus passthrough metadata.
+    """
+    if scoring_format not in ACTUAL_BY_FORMAT:
+        raise ValueError(f"scoring_format must be one of {sorted(ACTUAL_BY_FORMAT)}")
+    df = pd.read_parquet(cache_path)
+    actual_col = ACTUAL_BY_FORMAT[scoring_format]
+    required = ["player_id", "position", "season", "week", actual_col]
+    required += [f"{m}_pred_{scoring_format}" for m in models]
+    required += [f"{e}_pred_{scoring_format}" for e in experts]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"predictions cache at {cache_path} is missing required columns {missing}; "
+            "expected the schema-v7 serving cache (see module docstring for the fetch command)"
+        )
+    out = _normalise_keys(df)
+    seasons = set(out["season"].unique().tolist())
+    if seasons != {2025}:
+        raise ValueError(
+            f"predictions cache covers seasons {sorted(seasons)}; expected exactly {{2025}} "
+            "(the served test season) -- refusing to mix substrates"
+        )
+    rename = {actual_col: "actual"}
+    for m in models:
+        rename[f"{m}_pred_{scoring_format}"] = f"pred_{m}"
+    for e in experts:
+        rename[f"{e}_pred_{scoring_format}"] = f"expert_{e}"
+    out = out.rename(columns=rename)
+    keep = ["player_id", "position", "season", "week", "actual"]
+    keep += [f"pred_{m}" for m in models]
+    keep += [f"expert_{e}" for e in experts]
+    for extra in ("player_display_name", "recent_team", "is_rookie", "age"):
+        if extra in out.columns:
+            keep.append(extra)
+    out = out[keep]
+    n_dup = int(out.duplicated(["player_id", "season", "week"]).sum())
+    if n_dup:
+        out = out.drop_duplicates(["player_id", "season", "week"], keep="last")
+    out.attrs["n_duplicate_keys_dropped"] = n_dup
+    return out
+
+
+def load_split_min_season(splits_dir: Path) -> pd.Series:
+    """player_id -> earliest observed season, from the split parquets (2-col reads)."""
+    frames = []
+    for name in ("train.parquet", "val.parquet", "test.parquet"):
+        path = splits_dir / name
+        if path.exists():
+            frames.append(pd.read_parquet(path, columns=["player_id", "season"]))
+    return player_min_season(frames)
+
+
+def build_position_base(
+    cache_df: pd.DataFrame,
+    position: str,
+    *,
+    test_split_path: Path,
+    min_season: pd.Series,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Filter the cache to one position and join cohort columns from the test split.
+
+    Raises when the join rate drops below ``JOIN_RATE_MIN`` -- the cache is built
+    FROM the test split, so unmatched rows mean split-vintage drift.
+    """
+    base = cache_df[cache_df["position"] == position].copy()
+    if base.empty:
+        raise ValueError(f"no {position} rows in the predictions cache")
+
+    split_cols = ["player_id", "season", "week", *TEST_SPLIT_COHORT_COLS]
+    split_df = pd.read_parquet(test_split_path)
+    have = [c for c in split_cols if c in split_df.columns]
+    missing_split_cols = sorted(set(split_cols) - set(have))
+    split_df = _normalise_keys(split_df[have])
+    split_df = split_df[split_df["player_id"].isin(base["player_id"])]
+    split_df = split_df.drop_duplicates(["player_id", "season", "week"], keep="last")
+
+    joined = base.merge(split_df, on=["player_id", "season", "week"], how="left", indicator=True)
+    joined.index = base.index
+    matched = joined["_merge"].eq("both")
+    join_rate = float(matched.mean())
+    unmatched = joined.loc[~matched, ["player_id", "season", "week"]].head(10)
+    if join_rate < JOIN_RATE_MIN:
+        raise RuntimeError(
+            f"{position}: cache->test-split join rate {join_rate:.3f} < {JOIN_RATE_MIN} "
+            f"({int((~matched).sum())} unmatched rows). This is split-vintage drift -- rebuild "
+            f"data/splits or refresh the cache before trusting any cohort number.\n"
+            f"First unmatched keys:\n{unmatched.to_string(index=False)}"
+        )
+    joined = joined.drop(columns=["_merge"])
+
+    rookie_label = label_rookie_rows(joined, min_season)
+    joined["rookie_label"] = rookie_label
+    canon_rookie = rookie_label.isin([ROOKIE_EARLY, ROOKIE_REST])
+    rookie_report: dict[str, Any] = {"n_rookie_rows": int(canon_rookie.sum())}
+    if "is_rookie" in joined.columns:
+        cache_rookie = pd.to_numeric(joined["is_rookie"], errors="coerce")
+        comparable = cache_rookie.notna()
+        disagree = comparable & (cache_rookie.eq(1.0) != canon_rookie)
+        rookie_report.update(
+            {
+                "cache_is_rookie_nan_rate": float(cache_rookie.isna().mean()),
+                "rookie_label_disagreement_rate": (
+                    float(disagree.sum() / comparable.sum()) if comparable.any() else None
+                ),
+            }
+        )
+
+    # Hindsight weekly finish rank over all rows with a finite actual (slate-
+    # independent; used by the finish-tier cohort and the coverage table).
+    finite = np.isfinite(pd.to_numeric(joined["actual"], errors="coerce"))
+    ranks = (
+        joined.loc[finite]
+        .groupby(["season", "week"])["actual"]
+        .rank(method="average", ascending=False)
+    )
+    joined["base_actual_rank"] = ranks.reindex(joined.index)
+
+    report = {
+        "position": position,
+        "n_cache_rows": int(len(base)),
+        "join_rate": join_rate,
+        "n_unmatched": int((~matched).sum()),
+        "missing_split_cols": missing_split_cols,
+        "n_finite_actual": int(finite.sum()),
+        **rookie_report,
+    }
+    return joined, report
+
+
+# --------------------------------------------------------------------------- #
+# Cohorts
+# --------------------------------------------------------------------------- #
+def _prior_season_rank(base: pd.DataFrame) -> pd.Series:
+    """Per-row a-priori rank of prior_season_mean_fantasy_points within
+    (season, position), ranked once per player-season (not per game)."""
+    col = "prior_season_mean_fantasy_points"
+    if col not in base.columns:
+        return pd.Series(np.nan, index=base.index)
+    proxy = pd.to_numeric(base[col], errors="coerce")
+    ps = base.loc[proxy.notna(), ["player_id", "season", "position"]].copy()
+    ps["_proxy"] = proxy[proxy.notna()]
+    ps = ps.drop_duplicates(["player_id", "season"])
+    ps["_rank"] = ps.groupby(["season", "position"])["_proxy"].rank(method="first", ascending=False)
+    rank_by_key = ps.set_index(["player_id", "season"])["_rank"]
+    keys = pd.MultiIndex.from_arrays([base["player_id"], base["season"]])
+    return pd.Series(rank_by_key.reindex(keys).to_numpy(), index=base.index)
+
+
+def cohort_defs(position: str, base: pd.DataFrame) -> list[CohortDef]:
+    """The capped cohort set. Empty masks are dropped by the metric functions."""
+    defs: list[CohortDef] = []
+    idx = base.index
+
+    def _num(col: str) -> pd.Series:
+        if col not in base.columns:
+            return pd.Series(np.nan, index=idx)
+        return pd.to_numeric(base[col], errors="coerce")
+
+    # -- expected_tier (a-priori, from the prior-season expectation proxy)
+    prior_rank = _prior_season_rank(base)
+    tier_src = ("prior_season_mean_fantasy_points",)
+    tiers = (
+        ("elite_top12", prior_rank <= 12),
+        ("elite_13_24", prior_rank.between(13, 24)),
+        ("mid_25_48", prior_rank.between(25, 48)),
+        ("deep_49plus", prior_rank >= 49),
+        ("no_prior", prior_rank.isna()),
+    )
+    for name, mask in tiers:
+        defs.append(CohortDef("expected_tier", name, "pre_kickoff", mask.fillna(False), tier_src))
+
+    # -- experience
+    rookie = base["rookie_label"].isin([ROOKIE_EARLY, ROOKIE_REST])
+    defs.append(CohortDef("experience", "rookie", "pre_kickoff", rookie, ("rookie_label",)))
+    defs.append(CohortDef("experience", "veteran", "pre_kickoff", ~rookie, ("rookie_label",)))
+
+    # -- role_change (overlapping binary flags)
+    inheritor = _num("inherited_opportunity") > 0
+    defs.append(
+        CohortDef("role_change", "inheritor", "pre_kickoff", inheritor, ("inherited_opportunity",))
+    )
+    returning = _num("is_returning_from_absence").eq(1)
+    rest = _num("days_rest")
+    defs.append(
+        CohortDef(
+            "role_change", "returning", "pre_kickoff", returning, ("is_returning_from_absence",)
+        )
+    )
+    defs.append(
+        CohortDef(
+            "role_change",
+            "returning_1wk",
+            "pre_kickoff",
+            returning & rest.eq(14),
+            ("is_returning_from_absence", "days_rest"),
+        )
+    )
+    defs.append(
+        CohortDef(
+            "role_change",
+            "returning_2plus",
+            "pre_kickoff",
+            returning & rest.gt(14),
+            ("is_returning_from_absence", "days_rest"),
+        )
+    )
+    defs.append(
+        CohortDef(
+            "role_change",
+            "questionable",
+            "pre_kickoff",
+            _num("game_status") < 1.0,
+            ("game_status",),
+        )
+    )
+
+    # -- position-specific lagged-role families
+    if position == "RB":
+        share = _num("carry_share_L3")
+        defs.extend(
+            [
+                CohortDef(
+                    "rb_role",
+                    "bellcow",
+                    "pre_kickoff",
+                    share >= RB_BELLCOW_MIN,
+                    ("carry_share_L3",),
+                ),
+                CohortDef(
+                    "rb_role",
+                    "committee",
+                    "pre_kickoff",
+                    share.between(RB_COMMITTEE_MIN, RB_BELLCOW_MIN, inclusive="left"),
+                    ("carry_share_L3",),
+                ),
+                CohortDef(
+                    "rb_role",
+                    "low_touch",
+                    "pre_kickoff",
+                    share < RB_COMMITTEE_MIN,
+                    ("carry_share_L3",),
+                ),
+            ]
+        )
+    if position == "WR":
+        share = _num("target_share_L5")
+        defs.extend(
+            [
+                CohortDef(
+                    "wr_role", "alpha", "pre_kickoff", share >= WR_ALPHA_MIN, ("target_share_L5",)
+                ),
+                CohortDef(
+                    "wr_role",
+                    "secondary",
+                    "pre_kickoff",
+                    share.between(WR_SECONDARY_MIN, WR_ALPHA_MIN, inclusive="left"),
+                    ("target_share_L5",),
+                ),
+                CohortDef(
+                    "wr_role",
+                    "tertiary",
+                    "pre_kickoff",
+                    share < WR_SECONDARY_MIN,
+                    ("target_share_L5",),
+                ),
+            ]
+        )
+
+    # -- market (implied team total extremes; no total_line column in the splits,
+    #    so favorite/underdog can't be built)
+    low, high = _extreme_quantile_masks(_num("implied_team_total"))
+    if low is not None and high is not None:
+        defs.append(
+            CohortDef("market", "implied_total_low_q1", "pre_kickoff", low, ("implied_team_total",))
+        )
+        defs.append(
+            CohortDef(
+                "market", "implied_total_high_q4", "pre_kickoff", high, ("implied_team_total",)
+            )
+        )
+
+    # -- schedule
+    week = _num("week")
+    defs.extend(
+        [
+            CohortDef("schedule", "weeks_1_4", "pre_kickoff", week <= 4, ("week",)),
+            CohortDef("schedule", "weeks_5_13", "pre_kickoff", week.between(5, 13), ("week",)),
+            CohortDef("schedule", "weeks_14_18", "pre_kickoff", week >= 14, ("week",)),
+        ]
+    )
+
+    # -- hindsight: actual weekly finish tier (the per-model k-shape) + RB ascension
+    finish = _num("base_actual_rank")
+    defs.extend(
+        [
+            CohortDef("finish_tier", "finish_top12", "hindsight", finish <= 12, ()),
+            CohortDef("finish_tier", "finish_13_24", "hindsight", finish.between(13, 24), ()),
+            CohortDef("finish_tier", "finish_25_36", "hindsight", finish.between(25, 36), ()),
+            CohortDef("finish_tier", "finish_37plus", "hindsight", finish > 36, ()),
+        ]
+    )
+    if position == "RB":
+        asc = label_ascension_rows(base).eq("ascension")
+        if asc.any():
+            defs.append(CohortDef("miss_type", "ascension", "hindsight", asc, ()))
+
+    return [d for d in defs if bool(d.mask.any())]
+
+
+# --------------------------------------------------------------------------- #
+# Slates
+# --------------------------------------------------------------------------- #
+def build_pair_slates(
+    base: pd.DataFrame,
+    *,
+    models: Sequence[str] = MODEL_PREFIXES,
+    experts: Sequence[str] = EXPERT_PREFIXES,
+    min_week_rows: int = MIN_WEEK_ROWS,
+) -> tuple[list[PairSlate], list[dict[str, Any]]]:
+    """Per (model, expert): finite-triple rows with per-week full-slate ranks."""
+    slates: list[PairSlate] = []
+    reports: list[dict[str, Any]] = []
+    position = str(base["position"].iloc[0])
+    actual = pd.to_numeric(base["actual"], errors="coerce")
+    for expert in experts:
+        e = pd.to_numeric(base[f"expert_{expert}"], errors="coerce")
+        for model in models:
+            m = pd.to_numeric(base[f"pred_{model}"], errors="coerce")
+            ok = np.isfinite(actual) & np.isfinite(m) & np.isfinite(e)
+            df = base.loc[ok].copy()
+            df["actual"] = actual[ok]
+            df["model_pred"] = m[ok]
+            df["expert_pred"] = e[ok]
+            week_sizes = df.groupby(["season", "week"])["player_id"].transform("size")
+            dropped_weeks = int(
+                df.loc[week_sizes < min_week_rows, ["season", "week"]].drop_duplicates().shape[0]
+            )
+            df = df[week_sizes >= min_week_rows]
+            grp = df.groupby(["season", "week"])
+            n = grp["player_id"].transform("size").astype(float)
+            for src, col in (
+                ("actual", "actual"),
+                ("model", "model_pred"),
+                ("expert", "expert_pred"),
+            ):
+                r = grp[col].rank(method="average", ascending=False)
+                df[f"{src}_rank"] = r
+                df[f"{src}_pct"] = (r - 1.0) / (n - 1.0)
+            tie = {
+                f"{src}_tie_density": float(
+                    df.duplicated(["season", "week", col], keep=False).mean()
+                )
+                for src, col in (("model", "model_pred"), ("expert", "expert_pred"))
+            }
+            slates.append(PairSlate(position=position, model=model, expert=expert, df=df))
+            reports.append(
+                {
+                    "position": position,
+                    "model": model,
+                    "expert": expert,
+                    "n_rows": int(len(df)),
+                    "n_weeks": int(df[["season", "week"]].drop_duplicates().shape[0]),
+                    "n_dropped_thin_weeks": dropped_weeks,
+                    **tie,
+                }
+            )
+    return slates, reports
+
+
+def _cohort_on_slate(cohort: CohortDef, slate: PairSlate) -> np.ndarray:
+    """Cohort membership for the slate rows (masks were built on the base index)."""
+    return cohort.mask.reindex(slate.df.index).fillna(False).to_numpy(dtype=bool)
+
+
+def _week_arrays(df: pd.DataFrame, cols: Sequence[str]):
+    """Yield (week_key, {col: np.ndarray}) per (season, week)."""
+    for key, wk in df.groupby(["season", "week"], sort=True):
+        yield key, {c: wk[c].to_numpy(dtype=float) for c in cols}, wk.index
+
+
+def _block_bootstrap_ci(
+    per_week_values: dict[tuple[int, int], float],
+    per_week_weights: dict[tuple[int, int], float],
+    *,
+    n_boot: int,
+    seed: int,
+    ci: float = 0.95,
+) -> tuple[float, float]:
+    """Percentile CI of a weight-pooled per-week statistic under week resampling."""
+    weeks = sorted(per_week_values)
+    if not weeks:
+        return _nan(), _nan()
+    vals = np.array([per_week_values[w] for w in weeks], dtype=float)
+    wts = np.array([per_week_weights[w] for w in weeks], dtype=float)
+    rng = np.random.default_rng(seed)
+    n = len(weeks)
+    stats = np.empty(n_boot, dtype=float)
+    for b in range(n_boot):
+        pick = rng.integers(0, n, size=n)
+        wsum = wts[pick].sum()
+        stats[b] = float((vals[pick] * wts[pick]).sum() / wsum) if wsum > 0 else np.nan
+    alpha = (1.0 - ci) / 2.0
+    finite = stats[np.isfinite(stats)]
+    if finite.size == 0:
+        return _nan(), _nan()
+    return float(np.quantile(finite, alpha)), float(np.quantile(finite, 1.0 - alpha))
+
+
+def _benjamini_hochberg(pvals: list[float]) -> list[float]:
+    """BH q-values (monotone step-up); NaNs pass through."""
+    arr = np.asarray(pvals, dtype=float)
+    q = np.full(arr.shape, np.nan)
+    ok = np.isfinite(arr)
+    p = arr[ok]
+    m = p.size
+    if m == 0:
+        return q.tolist()
+    order = np.argsort(p)
+    ranked = p[order] * m / (np.arange(m) + 1)
+    ranked = np.minimum.accumulate(ranked[::-1])[::-1]
+    out = np.empty(m)
+    out[order] = np.clip(ranked, 0.0, 1.0)
+    q[ok] = out
+    return q.tolist()
+
+
+# --------------------------------------------------------------------------- #
+# Metric 1: percentile-rank displacement per cohort
+# --------------------------------------------------------------------------- #
+def displacement_rows(
+    slate: PairSlate,
+    cohorts: Sequence[CohortDef],
+    *,
+    n_boot: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    df = slate.df
+    disp_m = (df["model_pct"] - df["actual_pct"]).to_numpy(dtype=float)
+    disp_x = (df["expert_pct"] - df["actual_pct"]).to_numpy(dtype=float)
+    weeks = df["week"].to_numpy()
+    rows: list[dict[str, Any]] = []
+    all_def = CohortDef("global", "all", "pre_kickoff", pd.Series(True, index=df.index))
+    for cohort in (all_def, *cohorts):
+        member = _cohort_on_slate(cohort, slate)
+        n = int(member.sum())
+        if n == 0:
+            continue
+        d_m, d_x, wk = disp_m[member], disp_x[member], weeks[member]
+        n_weeks = int(np.unique(wk).size)
+        small = n < MIN_COHORT_ROWS or n_weeks < MIN_COHORT_WEEKS
+        signed_m, signed_x = float(np.mean(d_m)), float(np.mean(d_x))
+        abs_m, abs_x = float(np.mean(np.abs(d_m))), float(np.mean(np.abs(d_x)))
+        # Signed delta simplifies: (model_pct - actual) - (expert_pct - actual)
+        # = model_pct - expert_pct (positive => model ranks the cohort worse).
+        signed_delta = d_m - d_x
+        per_week_vals = {}
+        per_week_wts = {}
+        for w in np.unique(wk):
+            sel = wk == w
+            per_week_vals[(2025, int(w))] = float(signed_delta[sel].mean())
+            per_week_wts[(2025, int(w))] = float(sel.sum())
+        s_lo, s_hi = _block_bootstrap_ci(per_week_vals, per_week_wts, n_boot=n_boot, seed=seed)
+        abs_ci = paired_bootstrap_metric_ci(
+            d_m, d_x, metric="mae", groups=wk, n_boot=n_boot, seed=seed
+        )
+        dm = diebold_mariano_test(d_m, d_x, power=1)
+        rows.append(
+            {
+                "metric_group": "displacement",
+                "position": slate.position,
+                "model": slate.model,
+                "expert": slate.expert,
+                "family": cohort.family,
+                "cohort": cohort.name,
+                "kind": cohort.kind,
+                "n_rows": n,
+                "n_weeks": n_weeks,
+                "small_n": small,
+                "model_signed": signed_m,
+                "expert_signed": signed_x,
+                "signed_delta": float(np.mean(signed_delta)),
+                "signed_delta_lo": s_lo,
+                "signed_delta_hi": s_hi,
+                "model_abs": abs_m,
+                "expert_abs": abs_x,
+                "abs_delta": float(abs_ci["delta"]),
+                "abs_delta_lo": float(abs_ci["lo"]),
+                "abs_delta_hi": float(abs_ci["hi"]),
+                "dm_p_value": float(dm["p_value"]),
+            }
+        )
+    # BH within this (position, pair) across cohort rows (skip the global row).
+    pvals = [r["dm_p_value"] if r["cohort"] != "all" else np.nan for r in rows]
+    qvals = _benjamini_hochberg(pvals)
+    for r, q in zip(rows, qvals, strict=True):
+        r["dm_q_value"] = None if (q is None or not np.isfinite(q)) else float(q)
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# Metric 2: Kendall pair-bucket attribution
+# --------------------------------------------------------------------------- #
+def _concordance_scores(actual: np.ndarray, pred: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(valid ordered-pair matrix, per-pair concordance score in {0, .5, 1}).
+
+    valid[i, j] is True when actual_i > actual_j strictly (each unordered pair
+    with distinct actuals appears exactly once, as (winner, loser)). Pairs tied
+    on actual carry no true ordering and are excluded; pairs tied on the
+    prediction score 0.5.
+    """
+    a_diff = actual[:, None] - actual[None, :]
+    valid = a_diff > 0
+    p_diff = pred[:, None] - pred[None, :]
+    scores = np.where(p_diff > 0, 1.0, np.where(p_diff == 0, 0.5, 0.0))
+    return valid, scores
+
+
+def pair_attribution_rows(
+    slate: PairSlate,
+    cohorts: Sequence[CohortDef],
+    *,
+    n_boot: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Exact additive decomposition of the pairwise-ordering gap by cohort buckets.
+
+    SIGN CONVENTION (module-wide): positive = expert advantage. Per week the
+    gap numerator is sum over valid pairs of ``score(expert) - score(model)``;
+    for a cohort C it splits exactly into both-in-C, one-in-C, and rest-rest
+    buckets. Pooled across weeks with pair-count weights. ``contribution``
+    columns are in gap units (share of all pairs), so
+    ``cc + c_rest + rest = total_gap`` holds to machine precision.
+    """
+    df = slate.df
+    cohort_members = {(c.family, c.name): _cohort_on_slate(c, slate) for c in cohorts}
+    per_week: dict[tuple[int, int], dict[str, float]] = {}
+    for key, arrs, idx in _week_arrays(df, ["actual", "model_pred", "expert_pred"]):
+        valid, s_m = _concordance_scores(arrs["actual"], arrs["model_pred"])
+        _, s_x = _concordance_scores(arrs["actual"], arrs["expert_pred"])
+        diff = (s_x - s_m) * valid
+        n_pairs = float(valid.sum())
+        if n_pairs == 0:
+            continue
+        wk_stats = {"gap_num": float(diff.sum()), "n_pairs": n_pairs}
+        for ckey, member_full in cohort_members.items():
+            member = pd.Series(member_full, index=df.index).reindex(idx).to_numpy(dtype=bool)
+            both = member[:, None] & member[None, :]
+            one = member[:, None] ^ member[None, :]
+            wk_stats[f"cc_num::{ckey[0]}::{ckey[1]}"] = float(diff[both].sum())
+            wk_stats[f"cr_num::{ckey[0]}::{ckey[1]}"] = float(diff[one].sum())
+            wk_stats[f"cc_pairs::{ckey[0]}::{ckey[1]}"] = float((valid & both).sum())
+            wk_stats[f"cr_pairs::{ckey[0]}::{ckey[1]}"] = float((valid & one).sum())
+        per_week[(int(key[0]), int(key[1]))] = wk_stats
+
+    total_pairs = sum(w["n_pairs"] for w in per_week.values())
+    if total_pairs == 0:
+        return []
+    total_gap = sum(w["gap_num"] for w in per_week.values()) / total_pairs
+    gap_vals = {k: w["gap_num"] / w["n_pairs"] for k, w in per_week.items()}
+    gap_wts = {k: w["n_pairs"] for k, w in per_week.items()}
+    g_lo, g_hi = _block_bootstrap_ci(gap_vals, gap_wts, n_boot=n_boot, seed=seed)
+
+    rows: list[dict[str, Any]] = [
+        {
+            "metric_group": "pair_attribution",
+            "position": slate.position,
+            "model": slate.model,
+            "expert": slate.expert,
+            "family": "global",
+            "cohort": "all",
+            "kind": "pre_kickoff",
+            "n_rows": int(len(df)),
+            "pair_share": 1.0,
+            "contribution": total_gap,
+            "contribution_lo": g_lo,
+            "contribution_hi": g_hi,
+            "share_of_gap": 1.0 if abs(total_gap) > 1e-12 else _nan(),
+            "cc_contribution": _nan(),
+            "cr_contribution": _nan(),
+            "small_n": False,
+        }
+    ]
+    for cohort in cohorts:
+        ckey = (cohort.family, cohort.name)
+        member = cohort_members[ckey]
+        n = int(member.sum())
+        if n == 0:
+            continue
+        cc = sum(w.get(f"cc_num::{ckey[0]}::{ckey[1]}", 0.0) for w in per_week.values())
+        cr = sum(w.get(f"cr_num::{ckey[0]}::{ckey[1]}", 0.0) for w in per_week.values())
+        cc_pairs = sum(w.get(f"cc_pairs::{ckey[0]}::{ckey[1]}", 0.0) for w in per_week.values())
+        cr_pairs = sum(w.get(f"cr_pairs::{ckey[0]}::{ckey[1]}", 0.0) for w in per_week.values())
+        contrib = (cc + cr) / total_pairs
+        vals = {
+            k: (
+                w.get(f"cc_num::{ckey[0]}::{ckey[1]}", 0.0)
+                + w.get(f"cr_num::{ckey[0]}::{ckey[1]}", 0.0)
+            )
+            / w["n_pairs"]
+            for k, w in per_week.items()
+        }
+        c_lo, c_hi = _block_bootstrap_ci(vals, gap_wts, n_boot=n_boot, seed=seed)
+        n_weeks = int(
+            pd.Series(member, index=df.index).groupby([df["season"], df["week"]]).any().sum()
+        )
+        rows.append(
+            {
+                "metric_group": "pair_attribution",
+                "position": slate.position,
+                "model": slate.model,
+                "expert": slate.expert,
+                "family": cohort.family,
+                "cohort": cohort.name,
+                "kind": cohort.kind,
+                "n_rows": n,
+                "pair_share": float((cc_pairs + cr_pairs) / total_pairs),
+                "contribution": float(contrib),
+                "contribution_lo": c_lo,
+                "contribution_hi": c_hi,
+                "share_of_gap": (float(contrib / total_gap) if abs(total_gap) > 1e-12 else _nan()),
+                "cc_contribution": float(cc / total_pairs),
+                "cr_contribution": float(cr / total_pairs),
+                "small_n": n < MIN_COHORT_ROWS or n_weeks < MIN_COHORT_WEEKS,
+            }
+        )
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# Metric 3: top-N miss / false-positive composition
+# --------------------------------------------------------------------------- #
+def miss_composition_rows(
+    slate: PairSlate,
+    cohorts: Sequence[CohortDef],
+    *,
+    top_ns: Sequence[int] = DEFAULT_TOP_NS,
+) -> list[dict[str, Any]]:
+    df = slate.df
+    cohort_members = {(c.family, c.name): _cohort_on_slate(c, slate) for c in cohorts}
+    acc: dict[tuple[str, str, int], dict[str, float]] = {}
+    for _key, wk in df.groupby(["season", "week"], sort=True):
+        for top_n in top_ns:
+            if len(wk) < top_n:
+                continue
+            actual_top = set(wk.nlargest(top_n, "actual", keep="first").index)
+            model_top = set(wk.nlargest(top_n, "model_pred", keep="first").index)
+            expert_top = set(wk.nlargest(top_n, "expert_pred", keep="first").index)
+            model_fp = model_top - actual_top
+            expert_fp = expert_top - actual_top
+            for ckey, member_full in cohort_members.items():
+                member_idx = set(df.index[member_full]) & set(wk.index)
+                a = actual_top & member_idx
+                key = (*ckey, top_n)
+                slot = acc.setdefault(
+                    key,
+                    {
+                        "actual_topn": 0.0,
+                        "model_hits": 0.0,
+                        "expert_hits": 0.0,
+                        "model_fp": 0.0,
+                        "expert_fp": 0.0,
+                        "model_fp_total": 0.0,
+                        "expert_fp_total": 0.0,
+                    },
+                )
+                slot["actual_topn"] += len(a)
+                slot["model_hits"] += len(a & model_top)
+                slot["expert_hits"] += len(a & expert_top)
+                slot["model_fp"] += len(model_fp & member_idx)
+                slot["expert_fp"] += len(expert_fp & member_idx)
+                slot["model_fp_total"] += len(model_fp)
+                slot["expert_fp_total"] += len(expert_fp)
+    rows: list[dict[str, Any]] = []
+    by_key = {(c.family, c.name): c for c in cohorts}
+    for (family, name, top_n), slot in sorted(acc.items()):
+        cohort = by_key[(family, name)]
+        n_actual = slot["actual_topn"]
+        rows.append(
+            {
+                "metric_group": "miss_composition",
+                "position": slate.position,
+                "model": slate.model,
+                "expert": slate.expert,
+                "family": family,
+                "cohort": name,
+                "kind": cohort.kind,
+                "top_n": int(top_n),
+                "n_actual_topn_rows": int(n_actual),
+                "model_hit_rate": float(slot["model_hits"] / n_actual) if n_actual else _nan(),
+                "expert_hit_rate": float(slot["expert_hits"] / n_actual) if n_actual else _nan(),
+                # Module sign convention: positive = expert advantage.
+                "hit_rate_gap": (
+                    float((slot["expert_hits"] - slot["model_hits"]) / n_actual)
+                    if n_actual
+                    else _nan()
+                ),
+                "model_fp_share": (
+                    float(slot["model_fp"] / slot["model_fp_total"])
+                    if slot["model_fp_total"]
+                    else _nan()
+                ),
+                "expert_fp_share": (
+                    float(slot["expert_fp"] / slot["expert_fp_total"])
+                    if slot["expert_fp_total"]
+                    else _nan()
+                ),
+                "small_n": n_actual < MIN_COHORT_ROWS,
+            }
+        )
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# Metric 4: leave-cohort-out with permutation baseline
+# --------------------------------------------------------------------------- #
+def _fast_spearman(pred: np.ndarray, actual: np.ndarray) -> float:
+    if pred.size < 3 or np.std(pred) < 1e-12 or np.std(actual) < 1e-12:
+        return _nan()
+    rp, ra = rankdata(pred), rankdata(actual)
+    rp = (rp - rp.mean()) / rp.std()
+    ra = (ra - ra.mean()) / ra.std()
+    return float(np.mean(rp * ra))
+
+
+def _slate_gaps(df: pd.DataFrame, keep: np.ndarray, *, top_n: int) -> tuple[float, float]:
+    """(mean weekly spearman gap, mean weekly regret@N gap), positive = expert
+    advantage (module-wide sign convention), over rows where ``keep`` is True.
+    Weeks with < top_n kept rows are skipped for regret; < 3 rows skipped for
+    spearman."""
+    sp_gaps: list[float] = []
+    rg_gaps: list[float] = []
+    sub = df.loc[keep]
+    for _, wk in sub.groupby(["season", "week"], sort=False):
+        a = wk["actual"].to_numpy(dtype=float)
+        m = wk["model_pred"].to_numpy(dtype=float)
+        x = wk["expert_pred"].to_numpy(dtype=float)
+        s_m, s_x = _fast_spearman(m, a), _fast_spearman(x, a)
+        if np.isfinite(s_m) and np.isfinite(s_x):
+            sp_gaps.append(s_x - s_m)
+        if len(wk) >= top_n:
+            opt = np.sort(a)[-top_n:].sum()
+            got_m = a[np.argsort(m)[-top_n:]].sum()
+            got_x = a[np.argsort(x)[-top_n:]].sum()
+            rg_gaps.append(float((opt - got_m) - (opt - got_x)))
+    return (
+        float(np.mean(sp_gaps)) if sp_gaps else _nan(),
+        float(np.mean(rg_gaps)) if rg_gaps else _nan(),
+    )
+
+
+def leave_cohort_out_rows(
+    slate: PairSlate,
+    cohorts: Sequence[CohortDef],
+    attribution: list[dict[str, Any]],
+    *,
+    top_n: int = 24,
+    n_perm: int = 200,
+    seed: int = 0,
+    max_cohorts: int = LOO_MAX_COHORTS,
+) -> list[dict[str, Any]]:
+    """Gap change when a cohort's rows are removed (N held fixed), vs a
+    week-stratified random-removal baseline of the same per-week size.
+
+    Gaps follow the module sign convention (positive = expert advantage), so a
+    NEGATIVE ``*_gap_delta`` means removing the cohort shrinks the expert's
+    edge -- i.e. the cohort was carrying part of the gap. ``*_perm_pctile`` is
+    the share of random same-size removals with a delta <= the observed one
+    (low percentile = the cohort matters more than random rows would).
+    """
+    df = slate.df
+    ranked = [
+        r
+        for r in attribution
+        if r["cohort"] != "all"
+        and not r["small_n"]
+        and r["model"] == slate.model
+        and r["expert"] == slate.expert
+        and np.isfinite(r.get("share_of_gap", np.nan))
+    ]
+    ranked.sort(key=lambda r: abs(r["contribution"]), reverse=True)
+    chosen = {(r["family"], r["cohort"]) for r in ranked[:max_cohorts]}
+    keep_all = np.ones(len(df), dtype=bool)
+    sp_full, rg_full = _slate_gaps(df, keep_all, top_n=top_n)
+    week_ids = df.groupby(["season", "week"], sort=False).ngroup().to_numpy()
+    rng = np.random.default_rng(seed)
+    rows: list[dict[str, Any]] = []
+    for cohort in cohorts:
+        if (cohort.family, cohort.name) not in chosen:
+            continue
+        member = _cohort_on_slate(cohort, slate)
+        sp_wo, rg_wo = _slate_gaps(df, ~member, top_n=top_n)
+        sp_delta = sp_wo - sp_full
+        rg_delta = rg_wo - rg_full
+        # Permutation baseline: remove random rows matched per-week in count.
+        per_week_removed = {w: int(member[week_ids == w].sum()) for w in np.unique(week_ids)}
+        sp_perm = np.empty(n_perm)
+        rg_perm = np.empty(n_perm)
+        for p in range(n_perm):
+            keep = np.ones(len(df), dtype=bool)
+            for w, k in per_week_removed.items():
+                if k == 0:
+                    continue
+                wk_rows = np.flatnonzero(week_ids == w)
+                keep[rng.choice(wk_rows, size=k, replace=False)] = False
+            s, g = _slate_gaps(df, keep, top_n=top_n)
+            sp_perm[p] = s - sp_full
+            rg_perm[p] = g - rg_full
+        sp_pct = float(np.mean(sp_perm <= sp_delta)) if np.isfinite(sp_delta) else _nan()
+        rg_pct = float(np.mean(rg_perm <= rg_delta)) if np.isfinite(rg_delta) else _nan()
+        rows.append(
+            {
+                "metric_group": "leave_cohort_out",
+                "position": slate.position,
+                "model": slate.model,
+                "expert": slate.expert,
+                "family": cohort.family,
+                "cohort": cohort.name,
+                "kind": cohort.kind,
+                "top_n": int(top_n),
+                "n_rows_removed": int(member.sum()),
+                "spearman_gap_full": sp_full,
+                "spearman_gap_without": sp_wo,
+                "spearman_gap_delta": sp_delta,
+                "spearman_delta_perm_pctile": sp_pct,
+                "regret_gap_full": rg_full,
+                "regret_gap_without": rg_wo,
+                "regret_gap_delta": rg_delta,
+                "regret_delta_perm_pctile": rg_pct,
+                "n_perm": int(n_perm),
+            }
+        )
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# Metric 5: expert coverage per cohort
+# --------------------------------------------------------------------------- #
+def coverage_rows(
+    base: pd.DataFrame,
+    cohorts: Sequence[CohortDef],
+    *,
+    experts: Sequence[str] = EXPERT_PREFIXES,
+    top_n: int = COVERAGE_TOP_N,
+) -> list[dict[str, Any]]:
+    finite = np.isfinite(pd.to_numeric(base["actual"], errors="coerce"))
+    topn = pd.to_numeric(base["base_actual_rank"], errors="coerce") <= top_n
+    rows: list[dict[str, Any]] = []
+    all_def = CohortDef("global", "all", "pre_kickoff", pd.Series(True, index=base.index))
+    for expert in experts:
+        covered = pd.to_numeric(base[f"expert_{expert}"], errors="coerce").notna()
+        for cohort in (all_def, *cohorts):
+            m = cohort.mask.reindex(base.index).fillna(False) & finite
+            n = int(m.sum())
+            if n == 0:
+                continue
+            n_top = int((m & topn).sum())
+            rows.append(
+                {
+                    "metric_group": "coverage",
+                    "position": str(base["position"].iloc[0]),
+                    "expert": expert,
+                    "family": cohort.family,
+                    "cohort": cohort.name,
+                    "kind": cohort.kind,
+                    "n_rows": n,
+                    "covered_share": float((m & covered).sum() / n),
+                    "n_actual_topn": n_top,
+                    "topn_covered_share": (
+                        float((m & topn & covered).sum() / n_top) if n_top else _nan()
+                    ),
+                    "topn_uncovered": int((m & topn & ~covered).sum()),
+                }
+            )
+    return rows
+
+
+# --------------------------------------------------------------------------- #
+# Global weekly gaps + calibration
+# --------------------------------------------------------------------------- #
+def weekly_gap_rows(
+    slate: PairSlate, *, top_ns: Sequence[int] = DEFAULT_TOP_NS
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for (season, week), wk in slate.df.groupby(["season", "week"], sort=True):
+        a = wk["actual"].to_numpy(dtype=float)
+        m = wk["model_pred"].to_numpy(dtype=float)
+        x = wk["expert_pred"].to_numpy(dtype=float)
+        row: dict[str, Any] = {
+            "metric_group": "weekly_gap",
+            "position": slate.position,
+            "model": slate.model,
+            "expert": slate.expert,
+            "season": int(season),
+            "week": int(week),
+            "n_rows": int(len(wk)),
+            "model_spearman": _spearman(m, a),
+            "expert_spearman": _spearman(x, a),
+        }
+        # Module sign convention: positive gap = expert advantage.
+        row["spearman_gap"] = row["expert_spearman"] - row["model_spearman"]
+        for top_n in top_ns:
+            if len(wk) < top_n:
+                row[f"model_regret_{top_n}"] = _nan()
+                row[f"expert_regret_{top_n}"] = _nan()
+                row[f"regret_gap_{top_n}"] = _nan()
+                row[f"model_hit_{top_n}"] = _nan()
+                row[f"expert_hit_{top_n}"] = _nan()
+                continue
+            actual_top = set(wk.nlargest(top_n, "actual", keep="first").index)
+            opt = wk.loc[list(actual_top), "actual"].sum()
+            for src, col in (("model", "model_pred"), ("expert", "expert_pred")):
+                pred_top = set(wk.nlargest(top_n, col, keep="first").index)
+                row[f"{src}_regret_{top_n}"] = float(opt - wk.loc[list(pred_top), "actual"].sum())
+                row[f"{src}_hit_{top_n}"] = float(len(actual_top & pred_top) / top_n)
+            row[f"regret_gap_{top_n}"] = (
+                row[f"model_regret_{top_n}"] - row[f"expert_regret_{top_n}"]
+            )
+        rows.append(row)
+    return rows
+
+
+def calibration_check(
+    slates: Sequence[PairSlate],
+    *,
+    anchors: dict[str, dict[str, float]] = CALIBRATION_ANCHORS,
+) -> dict[str, Any]:
+    """Reproduce the published attn_nn-vs-RotoWire shared-slate delta-MAE anchors.
+
+    A miss means split-vintage or artifact drift (the 2026-06 stale-QB bug
+    class): stop and investigate before trusting any cohort number.
+    """
+    out: dict[str, Any] = {"passed": True, "positions": {}}
+    for slate in slates:
+        if slate.model != "attn_nn" or slate.expert != "rotowire":
+            continue
+        anchor = anchors.get(slate.position)
+        if anchor is None:
+            continue
+        err_m = (slate.df["model_pred"] - slate.df["actual"]).to_numpy(dtype=float)
+        err_x = (slate.df["expert_pred"] - slate.df["actual"]).to_numpy(dtype=float)
+        delta = float(np.mean(np.abs(err_m)) - np.mean(np.abs(err_x)))
+        n = int(len(slate.df))
+        delta_ok = abs(delta - anchor["delta_mae"]) <= CALIBRATION_DELTA_TOL
+        n_tol = anchor.get("n_tol", CALIBRATION_N_TOL)
+        n_ok = abs(n - anchor["n"]) <= n_tol * anchor["n"]
+        out["positions"][slate.position] = {
+            "delta_mae": delta,
+            "anchor_delta_mae": anchor["delta_mae"],
+            "n": n,
+            "anchor_n": anchor["n"],
+            "delta_ok": delta_ok,
+            "n_ok": n_ok,
+        }
+        if not (delta_ok and n_ok):
+            out["passed"] = False
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Orchestration
+# --------------------------------------------------------------------------- #
+def run_analysis(
+    *,
+    cache_path: Path,
+    positions: Sequence[str],
+    models: Sequence[str],
+    experts: Sequence[str],
+    top_ns: Sequence[int],
+    n_boot: int,
+    n_perm: int,
+    seed: int,
+    out_dir: Path,
+    test_split_path: Path,
+    splits_dir: Path,
+    scoring_format: str = "ppr",
+) -> dict[str, Any]:
+    cache_df = load_cache_frame(
+        cache_path, scoring_format=scoring_format, models=models, experts=experts
+    )
+    min_season = load_split_min_season(splits_dir)
+
+    all_rows: dict[str, list[dict[str, Any]]] = {
+        "displacement": [],
+        "pair_attribution": [],
+        "miss_composition": [],
+        "leave_cohort_out": [],
+        "coverage": [],
+        "weekly_gaps": [],
+    }
+    join_reports: list[dict[str, Any]] = []
+    slate_reports: list[dict[str, Any]] = []
+    calibration_slates: list[PairSlate] = []
+
+    for position in positions:
+        base, join_report = build_position_base(
+            cache_df, position, test_split_path=test_split_path, min_season=min_season
+        )
+        join_reports.append(join_report)
+        cohorts = cohort_defs(position, base)
+        all_rows["coverage"].extend(coverage_rows(base, cohorts, experts=experts))
+        slates, s_reports = build_pair_slates(base, models=models, experts=experts)
+        slate_reports.extend(s_reports)
+        for slate in slates:
+            if slate.model == "attn_nn" and slate.expert == "rotowire":
+                calibration_slates.append(slate)
+            all_rows["weekly_gaps"].extend(weekly_gap_rows(slate, top_ns=top_ns))
+            all_rows["displacement"].extend(
+                displacement_rows(slate, cohorts, n_boot=n_boot, seed=seed)
+            )
+            attribution = pair_attribution_rows(slate, cohorts, n_boot=n_boot, seed=seed)
+            all_rows["pair_attribution"].extend(attribution)
+            all_rows["miss_composition"].extend(
+                miss_composition_rows(slate, cohorts, top_ns=top_ns)
+            )
+            if slate.model in LOO_MODELS and slate.expert in LOO_EXPERTS and n_perm > 0:
+                all_rows["leave_cohort_out"].extend(
+                    leave_cohort_out_rows(slate, cohorts, attribution, n_perm=n_perm, seed=seed)
+                )
+
+    calibration = calibration_check(calibration_slates)
+    report = {
+        "config": {
+            "cache_path": str(cache_path),
+            "positions": list(positions),
+            "models": list(models),
+            "experts": list(experts),
+            "top_ns": list(top_ns),
+            "n_boot": n_boot,
+            "n_perm": n_perm,
+            "seed": seed,
+            "scoring_format": scoring_format,
+            "primary_contrast": list(PRIMARY_CONTRAST),
+            "n_duplicate_cache_keys_dropped": cache_df.attrs.get("n_duplicate_keys_dropped", 0),
+        },
+        "join_reports": join_reports,
+        "slate_reports": slate_reports,
+        "calibration": calibration,
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    frames: dict[str, pd.DataFrame] = {}
+    for name, rows in all_rows.items():
+        frame = pd.DataFrame(rows)
+        frames[name] = frame
+        frame.to_csv(out_dir / f"{name}.csv", index=False)
+    (out_dir / "report.json").write_text(json.dumps(report, indent=2, default=_json_default) + "\n")
+    summary = render_summary(frames, report)
+    (out_dir / "summary.md").write_text(summary)
+    report["out_dir"] = str(out_dir)
+    return {"report": report, "frames": frames, "summary": summary}
+
+
+def _headline_frame(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    disp = frames["displacement"]
+    if disp.empty:
+        return disp
+    return disp[(disp["model"] == PRIMARY_CONTRAST[0]) & (disp["expert"] == PRIMARY_CONTRAST[1])]
+
+
+def render_summary(frames: dict[str, pd.DataFrame], report: dict[str, Any]) -> str:
+    lines: list[str] = ["# Rank-ordering gap x cohorts -- run summary", ""]
+    cal = report["calibration"]
+    lines.append(
+        f"Calibration gate: **{'PASSED' if cal['passed'] else 'FAILED -- do not trust cohort numbers'}**"
+    )
+    for pos, c in cal.get("positions", {}).items():
+        lines.append(
+            f"- {pos}: delta_mae {c['delta_mae']:+.3f} (anchor {c['anchor_delta_mae']:+.3f}), "
+            f"n {c['n']} (anchor {c['anchor_n']}) -> "
+            f"{'ok' if c['delta_ok'] and c['n_ok'] else 'MISS'}"
+        )
+    lines.append("")
+    for pos in report["config"]["positions"]:
+        lines.append(f"## {pos} -- primary contrast {' vs '.join(PRIMARY_CONTRAST)}")
+        disp = _headline_frame(frames)
+        disp = disp[(disp["position"] == pos)] if not disp.empty else disp
+        if not disp.empty:
+            cols = [
+                "family",
+                "cohort",
+                "kind",
+                "n_rows",
+                "signed_delta",
+                "signed_delta_lo",
+                "signed_delta_hi",
+                "abs_delta",
+                "abs_delta_lo",
+                "abs_delta_hi",
+                "dm_q_value",
+                "small_n",
+            ]
+            lines.append("### Displacement (pct-rank; positive delta = model worse)")
+            lines.append(_simple_table(_rounded_records(disp, cols)))
+        attr = frames["pair_attribution"]
+        if not attr.empty:
+            attr = attr[
+                (attr["position"] == pos)
+                & (attr["model"] == PRIMARY_CONTRAST[0])
+                & (attr["expert"] == PRIMARY_CONTRAST[1])
+            ].sort_values("contribution", ascending=False)
+            cols = [
+                "family",
+                "cohort",
+                "kind",
+                "n_rows",
+                "pair_share",
+                "contribution",
+                "contribution_lo",
+                "contribution_hi",
+                "share_of_gap",
+                "small_n",
+            ]
+            lines.append("")
+            lines.append(
+                "### Pair attribution (positive contribution = pairs involving the cohort "
+                "favor the expert)"
+            )
+            lines.append(_simple_table(_rounded_records(attr, cols)))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--cache-path", type=Path, default=DEFAULT_CACHE)
+    parser.add_argument("--sync-cache", action="store_true", help="pull the cache from S3 first")
+    parser.add_argument("--positions", nargs="+", default=list(DEFAULT_POSITIONS))
+    parser.add_argument("--models", nargs="+", default=list(MODEL_PREFIXES))
+    parser.add_argument("--experts", nargs="+", default=list(EXPERT_PREFIXES))
+    parser.add_argument("--top-ns", nargs="+", type=int, default=list(DEFAULT_TOP_NS))
+    parser.add_argument("--n-boot", type=int, default=1000)
+    parser.add_argument("--n-perm", type=int, default=200)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--test-split", type=Path, default=DEFAULT_TEST_SPLIT)
+    parser.add_argument("--splits-dir", type=Path, default=DEFAULT_SPLITS_DIR)
+    parser.add_argument("--scoring-format", default="ppr", choices=sorted(ACTUAL_BY_FORMAT))
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    if args.sync_cache:
+        from src.shared.model_sync import sync_predictions_cache_from_s3
+
+        sync_predictions_cache_from_s3()
+    result = run_analysis(
+        cache_path=args.cache_path,
+        positions=args.positions,
+        models=args.models,
+        experts=args.experts,
+        top_ns=args.top_ns,
+        n_boot=args.n_boot,
+        n_perm=args.n_perm,
+        seed=args.seed,
+        out_dir=args.out,
+        test_split_path=args.test_split,
+        splits_dir=args.splits_dir,
+        scoring_format=args.scoring_format,
+    )
+    print(result["summary"])
+    print(f"\nArtifacts written to {result['report']['out_dir']}")
+    if not result["report"]["calibration"]["passed"]:
+        print(
+            "\nCALIBRATION GATE FAILED -- the cache does not reproduce the published "
+            "expert-gap anchors; investigate split/artifact drift before using any "
+            "cohort finding."
+        )
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

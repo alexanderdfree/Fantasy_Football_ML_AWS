@@ -1,0 +1,262 @@
+"""One-off diagnostic for weather/temperature NaN coverage.
+
+Not committed — verifies the hypothesis that raw nfl_data_py weather is
+NaN for dome games, and surfaces three related concerns:
+  1. outdoor games with NaN weather silently mapped to 65F / 0 mph
+  2. kicker game_temp passing through to features without a fillna
+  3. seasonal coverage gaps
+
+Run from repo root: `python diagnose_weather_coverage.py`
+"""
+
+import os
+import sys
+import tempfile
+import warnings
+
+import nfl_data_py as nfl
+import pandas as pd
+
+warnings.filterwarnings("ignore")
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from src.config import CACHE_DIR, SEASONS  # noqa: E402
+
+
+def section(title: str) -> None:
+    print(f"\n{'=' * 72}\n{title}\n{'=' * 72}")
+
+
+def fmt_pct(num: int, denom: int) -> str:
+    if denom == 0:
+        return "0/0 (n/a)"
+    return f"{num}/{denom} ({100 * num / denom:.1f}%)"
+
+
+def main() -> None:
+    # ---- 1. Load schedules ----
+    section("1. Schedules via nfl_data_py")
+    sched = nfl.import_schedules(SEASONS)
+    sched_reg = sched[sched["game_type"] == "REG"].copy()
+    n = len(sched_reg)
+    print(f"Loaded {n} regular-season games, seasons {SEASONS[0]}-{SEASONS[-1]}")
+    print(
+        f"Columns relevant: {sorted(set(sched_reg.columns) & {'roof', 'surface', 'temp', 'wind', 'season', 'week', 'home_team', 'away_team'})}"
+    )
+
+    # ---- 2. Roof value distribution ----
+    section("2. Roof value distribution (game-level)")
+    roof_vc = sched_reg["roof"].value_counts(dropna=False).rename_axis("roof")
+    print(roof_vc.to_string())
+    dome_mask = sched_reg["roof"].isin(["dome", "closed"])
+    print(f"\nis_dome (dome+closed): {fmt_pct(int(dome_mask.sum()), n)}")
+    outdoor_mask = sched_reg["roof"].isin(["outdoors", "open"])
+    print(f"outdoor (outdoors+open): {fmt_pct(int(outdoor_mask.sum()), n)}")
+    roof_nan = sched_reg["roof"].isna().sum()
+    print(f"roof NaN: {fmt_pct(int(roof_nan), n)}")
+
+    # ---- 3. Raw temp/wind NaN overall ----
+    section("3. Raw temp/wind NaN — overall")
+    temp_nan = int(sched_reg["temp"].isna().sum())
+    wind_nan = int(sched_reg["wind"].isna().sum())
+    print(f"temp NaN: {fmt_pct(temp_nan, n)}")
+    print(f"wind NaN: {fmt_pct(wind_nan, n)}")
+
+    # ---- 4. NaN by roof category ----
+    section("4. NaN by roof category (the central hypothesis)")
+    grp = (
+        sched_reg.assign(_roof=sched_reg["roof"].fillna("__NaN__"))
+        .groupby("_roof")
+        .agg(
+            n_games=("temp", "size"),
+            temp_nan=("temp", lambda s: int(s.isna().sum())),
+            wind_nan=("wind", lambda s: int(s.isna().sum())),
+            temp_mean=("temp", "mean"),
+            wind_mean=("wind", "mean"),
+        )
+    )
+    grp["temp_nan_%"] = (grp["temp_nan"] / grp["n_games"] * 100).round(1)
+    grp["wind_nan_%"] = (grp["wind_nan"] / grp["n_games"] * 100).round(1)
+    cols = ["n_games", "temp_nan", "temp_nan_%", "wind_nan", "wind_nan_%", "temp_mean", "wind_mean"]
+    with pd.option_context("display.float_format", "{:.2f}".format):
+        print(grp[cols].to_string())
+
+    # ---- 5. Outdoor confounder ----
+    section("5. Outdoor games with NaN raw weather (silent-fake-dome confounder)")
+    n_outdoor = int(outdoor_mask.sum())
+    out_temp_nan = int(sched_reg.loc[outdoor_mask, "temp"].isna().sum())
+    out_wind_nan = int(sched_reg.loc[outdoor_mask, "wind"].isna().sum())
+    print(f"Outdoor games (roof∈{{outdoors,open}}): {n_outdoor}")
+    print(f"  with NaN temp → silently mapped to 65°F: {fmt_pct(out_temp_nan, n_outdoor)}")
+    print(f"  with NaN wind → silently mapped to 0 mph: {fmt_pct(out_wind_nan, n_outdoor)}")
+    if out_temp_nan > 0:
+        bad = sched_reg.loc[
+            outdoor_mask & sched_reg["temp"].isna(),
+            ["season", "week", "home_team", "away_team", "roof", "temp", "wind"],
+        ]
+        print(f"\nSample of outdoor-NaN-temp rows (first 12 of {len(bad)}):")
+        print(bad.head(12).to_string(index=False))
+
+    # Also: roof=NaN games (older games, ambiguous)
+    section("5b. roof=NaN games — what's the underlying data?")
+    roof_nan_mask = sched_reg["roof"].isna()
+    if roof_nan_mask.any():
+        rn_temp_nan = int(sched_reg.loc[roof_nan_mask, "temp"].isna().sum())
+        rn_wind_nan = int(sched_reg.loc[roof_nan_mask, "wind"].isna().sum())
+        rn_total = int(roof_nan_mask.sum())
+        print(f"roof=NaN games: {rn_total}")
+        print(f"  temp NaN: {fmt_pct(rn_temp_nan, rn_total)} (these become is_dome=0 by default)")
+        print(f"  wind NaN: {fmt_pct(rn_wind_nan, rn_total)}")
+        print(
+            f"  season range: {int(sched_reg.loc[roof_nan_mask, 'season'].min())}-{int(sched_reg.loc[roof_nan_mask, 'season'].max())}"
+        )
+    else:
+        print("None.")
+
+    # ---- 6. By season ----
+    section("6. NaN rates by season (overall)")
+    by_season = sched_reg.groupby("season").agg(
+        n=("temp", "size"),
+        n_dome=("roof", lambda s: int(s.isin(["dome", "closed"]).sum())),
+        n_outdoor=("roof", lambda s: int(s.isin(["outdoors", "open"]).sum())),
+        n_roof_nan=("roof", lambda s: int(s.isna().sum())),
+        temp_nan_pct=("temp", lambda s: round(100 * s.isna().mean(), 1)),
+        wind_nan_pct=("wind", lambda s: round(100 * s.isna().mean(), 1)),
+    )
+    print(by_season.to_string())
+
+    section("6b. Outdoor-only NaN rates by season (real signal)")
+    outdoor_df = sched_reg[outdoor_mask]
+    outdoor_by_season = outdoor_df.groupby("season").agg(
+        n_outdoor=("temp", "size"),
+        outdoor_temp_nan_pct=("temp", lambda s: round(100 * s.isna().mean(), 1)),
+        outdoor_wind_nan_pct=("wind", lambda s: round(100 * s.isna().mean(), 1)),
+    )
+    print(outdoor_by_season.to_string())
+
+    # ---- 7. Engineered features after merge_schedule_features ----
+    section("7. Engineered features after merge_schedule_features")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    sched_path = f"{CACHE_DIR}/schedules_{SEASONS[0]}_{SEASONS[-1]}.parquet"
+    wrote_cache = False
+    if not os.path.exists(sched_path):
+        sched.to_parquet(sched_path)
+        wrote_cache = True
+        print(f"  Wrote {sched_path} (needed by merge_schedule_features)")
+    else:
+        print(f"  Using existing {sched_path}")
+
+    from src.shared.weather_features import merge_schedule_features  # noqa: E402
+
+    home_keys = sched_reg[["season", "week", "home_team"]].rename(
+        columns={"home_team": "recent_team"}
+    )
+    away_keys = sched_reg[["season", "week", "away_team"]].rename(
+        columns={"away_team": "recent_team"}
+    )
+    team_keys = pd.concat([home_keys, away_keys], ignore_index=True)
+    team_keys = team_keys.drop_duplicates(subset=["season", "week", "recent_team"]).reset_index(
+        drop=True
+    )
+    team_keys["player_id"] = team_keys["recent_team"] + "_diag"
+    merged = merge_schedule_features(team_keys.copy(), label="diagnostic")
+
+    check_cols = [
+        "is_dome",
+        "is_grass",
+        "temp_adjusted",
+        "wind_adjusted",
+        "implied_team_total",
+        "implied_opp_total",
+        "implied_total_x_wind",
+    ]
+    print("\nPost-merge NaN / range:")
+    rows = []
+    for c in check_cols:
+        if c not in merged.columns:
+            rows.append({"col": c, "n_nan": "N/A", "pct": "N/A", "min": "N/A", "max": "N/A"})
+            continue
+        s = merged[c]
+        rows.append(
+            {
+                "col": c,
+                "n_nan": int(s.isna().sum()),
+                "pct": f"{100 * s.isna().mean():.1f}%",
+                "min": f"{s.min():.2f}" if s.notna().any() else "n/a",
+                "max": f"{s.max():.2f}" if s.notna().any() else "n/a",
+            }
+        )
+    print(pd.DataFrame(rows).to_string(index=False))
+
+    # 7b — silent-fake-dome detector: outdoor rows where temp_adjusted=65 exactly
+    if "temp_adjusted" in merged.columns and "is_dome" in merged.columns:
+        section("7b. Silent-fake-dome detector — outdoor rows where temp_adjusted=65.0")
+        outdoor_team_rows = merged[merged["is_dome"] == 0]
+        fake = outdoor_team_rows[outdoor_team_rows["temp_adjusted"] == 65.0]
+        print(
+            f"Outdoor team-week rows with temp_adjusted==65.0 exactly: "
+            f"{fmt_pct(len(fake), len(outdoor_team_rows))}"
+        )
+        if len(fake) > 0:
+            by_szn = fake.groupby("season").size().rename("n_fake_65F").to_frame()
+            print("\nBy season (rows where outdoor game got the 65°F dome default):")
+            print(by_szn.to_string())
+
+    # ---- 8. Kicker game_temp / game_wind path ----
+    section("8. Kicker game_temp / game_wind — recent window")
+    pbp_seasons = [2023, 2024]
+    print(f"Fetching PBP for {pbp_seasons} (~1-2 min)...")
+    try:
+        from src.k.data import reconstruct_kicker_weekly_from_pbp  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as td:
+            k_df = reconstruct_kicker_weekly_from_pbp(pbp_seasons, cache_dir=td)
+        if len(k_df) == 0:
+            print("  Kicker PBP returned 0 rows (likely fetch failure); skipping.")
+        else:
+            print(f"Loaded {len(k_df)} kicker-week rows for {pbp_seasons}\n")
+            for c in ["game_temp", "game_wind", "roof", "is_dome"]:
+                if c in k_df.columns:
+                    n_nan = int(k_df[c].isna().sum())
+                    print(f"  {c} NaN: {fmt_pct(n_nan, len(k_df))}")
+            print()
+
+            section("8b. Kicker game_temp / game_wind NaN by is_dome")
+            bd = k_df.groupby("is_dome").agg(
+                n=("game_temp", "size"),
+                game_temp_nan=("game_temp", lambda s: int(s.isna().sum())),
+                game_wind_nan=("game_wind", lambda s: int(s.isna().sum())),
+                game_temp_mean=("game_temp", "mean"),
+                game_wind_mean=("game_wind", "mean"),
+            )
+            bd["temp_nan_%"] = (bd["game_temp_nan"] / bd["n"] * 100).round(1)
+            bd["wind_nan_%"] = (bd["game_wind_nan"] / bd["n"] * 100).round(1)
+            with pd.option_context("display.float_format", "{:.2f}".format):
+                print(
+                    bd[
+                        [
+                            "n",
+                            "game_temp_nan",
+                            "temp_nan_%",
+                            "game_wind_nan",
+                            "wind_nan_%",
+                            "game_temp_mean",
+                            "game_wind_mean",
+                        ]
+                    ].to_string()
+                )
+    except Exception as e:
+        print(f"  Kicker PBP fetch failed: {e}")
+
+    print("\n" + "=" * 72)
+    print("Diagnostic complete.")
+    if wrote_cache:
+        print(f"(Wrote {sched_path} as a side-effect — delete if unwanted.)")
+    print("=" * 72)
+
+
+if __name__ == "__main__":
+    main()

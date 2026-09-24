@@ -1,0 +1,114 @@
+{
+  "position": "RB",
+  "stage": 3,
+  "spec": "src.tuning.ab_feature_confirm",
+  "run_id": "confirm-rb-20260620T163815Z-7edcbd2",
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65
+  ],
+  "drop_cols": [
+    "air_yards_share",
+    "opp_def_pass_td_allowed_L5",
+    "opp_def_pts_allowed_L5",
+    "opp_def_rush_yds_allowed_L5",
+    "opp_def_sacks_L5",
+    "opp_rush_pts_allowed_to_pos",
+    "snap_pct",
+    "target_share_L3",
+    "trend_carries",
+    "trend_fantasy_points",
+    "trend_snap_pct",
+    "trend_targets"
+  ],
+  "noise_floor": 0.02,
+  "verdict": "MIXED",
+  "effects": {
+    "Ridge": {
+      "mae": {
+        "confirmed_drop": {
+          "mean_effect": 0.02945375408541917,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "confirmed_drop": {
+          "mean_effect": 0.047064693683340764,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      }
+    },
+    "LightGBM": {
+      "mae": {
+        "confirmed_drop": {
+          "mean_effect": -0.022559041827284965,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "confirmed_drop": {
+          "mean_effect": -4.745741280132165e-05,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      }
+    },
+    "NN": {
+      "mae": {
+        "confirmed_drop": {
+          "mean_effect": -0.04437446948310875,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "confirmed_drop": {
+          "mean_effect": -0.05981499815917246,
+          "std_effect": 0.0,
+          "n_seeds": 24
+        }
+      }
+    },
+    "Attention NN": {
+      "mae": {
+        "confirmed_drop": {
+          "mean_effect": -0.0070081718304744745,
+          "std_effect": 0.025689129575165698,
+          "n_seeds": 24
+        }
+      },
+      "rmse": {
+        "confirmed_drop": {
+          "mean_effect": 0.032664419451708726,
+          "std_effect": 0.08882837613066293,
+          "n_seeds": 24
+        }
+      }
+    }
+  }
+}

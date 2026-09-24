@@ -1,0 +1,141 @@
+{
+  "created_at": "2026-09-24T08:24:20.361923+00:00",
+  "purpose": "Byte-preserved historical uncommitted research; not active production code or current acceptance evidence",
+  "files": [
+    {
+      "worktree_name": "compassionate-brattain-39c230",
+      "head": "2791e59ba21169a4c6cc462f4972f6bfad26ead1",
+      "path": "benchmark_history/2026-05-31T10-37-54_ea7bd84.json",
+      "state": "??",
+      "bytes": 8000,
+      "sha256": "ce450633c2cb5435849d7aef26654c65b89419659f42bb3984399d13196730c3",
+      "destination": "todo/worktree-research-archive-20260924/compassionate-brattain-39c230/benchmark_history/2026-05-31T10-37-54_ea7bd84.json"
+    },
+    {
+      "worktree_name": "compassionate-brattain-39c230",
+      "head": "2791e59ba21169a4c6cc462f4972f6bfad26ead1",
+      "path": "benchmark_history/2026-05-31T10-45-38_b0fe599.json",
+      "state": "??",
+      "bytes": 7991,
+      "sha256": "725860eda833ed7a8cbc39ca03fdad627bab3822863bcf5da8aa2b1d93a023dd",
+      "destination": "todo/worktree-research-archive-20260924/compassionate-brattain-39c230/benchmark_history/2026-05-31T10-45-38_b0fe599.json"
+    },
+    {
+      "worktree_name": "compassionate-brattain-39c230",
+      "head": "2791e59ba21169a4c6cc462f4972f6bfad26ead1",
+      "path": "benchmark_history/ablations/2026-05-31T07-59-11_dd709c8_min_games_filter.json",
+      "state": "??",
+      "bytes": 22768,
+      "sha256": "e0784251a382d1b1518f8d9ec23d7d8732152eaf2ba3782cb00e6032155b8d94",
+      "destination": "todo/worktree-research-archive-20260924/compassionate-brattain-39c230/benchmark_history/ablations/2026-05-31T07-59-11_dd709c8_min_games_filter.json"
+    },
+    {
+      "worktree_name": "dazzling-bassi-1e00cc",
+      "head": "51e6347f131644485074387941e07c1382a9c57d",
+      "path": "benchmark_history/ablations/2026-05-31T00-38-57_b3ffff3_injury_features.json",
+      "state": "??",
+      "bytes": 58166,
+      "sha256": "63b5be74ce3e2e8aaa4875d488718a3f588fdf60b7673e01036a464a49ae8ab6",
+      "destination": "todo/worktree-research-archive-20260924/dazzling-bassi-1e00cc/benchmark_history/ablations/2026-05-31T00-38-57_b3ffff3_injury_features.json"
+    },
+    {
+      "worktree_name": "dazzling-bassi-1e00cc",
+      "head": "51e6347f131644485074387941e07c1382a9c57d",
+      "path": "benchmark_history/analysis/2026-05-31T00-25-32_b3ffff3_injury_subgroup_error.json",
+      "state": "??",
+      "bytes": 28760,
+      "sha256": "be28538ceb33f06202924718f44785ac69ef4c4b039bfc4f5899d8d045dc909f",
+      "destination": "todo/worktree-research-archive-20260924/dazzling-bassi-1e00cc/benchmark_history/analysis/2026-05-31T00-25-32_b3ffff3_injury_subgroup_error.json"
+    },
+    {
+      "worktree_name": "flamboyant-hawking-3ea905",
+      "head": "d4f6f13822a2d25e0672ef40b3234026adabaffc",
+      "path": "todo/feature_selection/stage2/confirm_plan.json",
+      "state": "??",
+      "bytes": 860,
+      "sha256": "5ab74aae22427b94dac8d6b42f29b6be70c1a8b2b95f30fa6bbfd8c8a3d9d8af",
+      "destination": "todo/worktree-research-archive-20260924/flamboyant-hawking-3ea905/todo/feature_selection/stage2/confirm_plan.json"
+    },
+    {
+      "worktree_name": "flamboyant-hawking-3ea905",
+      "head": "d4f6f13822a2d25e0672ef40b3234026adabaffc",
+      "path": "todo/feature_selection/stage2/plan.json",
+      "state": "??",
+      "bytes": 11717,
+      "sha256": "ec98bd2a087f9c05ac8fd862c10ec6d3a112af42d323e42988f1fefc90f0feda",
+      "destination": "todo/worktree-research-archive-20260924/flamboyant-hawking-3ea905/todo/feature_selection/stage2/plan.json"
+    },
+    {
+      "worktree_name": "flamboyant-hawking-3ea905",
+      "head": "d4f6f13822a2d25e0672ef40b3234026adabaffc",
+      "path": "todo/feature_selection/stage2/rb.confirm.json",
+      "state": "??",
+      "bytes": 2164,
+      "sha256": "6034830dc05436ca067163cbdddd012f8476f8bcc5a60c775721c7b40f45dcf3",
+      "destination": "todo/worktree-research-archive-20260924/flamboyant-hawking-3ea905/todo/feature_selection/stage2/rb.confirm.json"
+    },
+    {
+      "worktree_name": "flamboyant-hawking-3ea905",
+      "head": "d4f6f13822a2d25e0672ef40b3234026adabaffc",
+      "path": "todo/feature_selection/stage2/rb.confirm.md",
+      "state": "??",
+      "bytes": 1284,
+      "sha256": "9adb119fab6fe3d5a3c6069a24afbd4e8903cff645124502ddb6e1fc1c9ff884",
+      "destination": "todo/worktree-research-archive-20260924/flamboyant-hawking-3ea905/todo/feature_selection/stage2/rb.confirm.md"
+    },
+    {
+      "worktree_name": "flamboyant-hawking-3ea905",
+      "head": "d4f6f13822a2d25e0672ef40b3234026adabaffc",
+      "path": "todo/feature_selection/stage2/rb.json",
+      "state": "??",
+      "bytes": 84262,
+      "sha256": "5b787e5314633e4701994305e1b7f99477c65d9def878e7057265458079f8657",
+      "destination": "todo/worktree-research-archive-20260924/flamboyant-hawking-3ea905/todo/feature_selection/stage2/rb.json"
+    },
+    {
+      "worktree_name": "flamboyant-hawking-3ea905",
+      "head": "d4f6f13822a2d25e0672ef40b3234026adabaffc",
+      "path": "todo/feature_selection/stage2/rb.md",
+      "state": "??",
+      "bytes": 19196,
+      "sha256": "5ef880d1899ea6b73a58f95b1bfdad4a7fbbc536371b7cee7123436deaf8b815",
+      "destination": "todo/worktree-research-archive-20260924/flamboyant-hawking-3ea905/todo/feature_selection/stage2/rb.md"
+    },
+    {
+      "worktree_name": "modest-williamson-a1f64d",
+      "head": "1f5cd6855d35f28f78b93c5feccd41d16ac5853a",
+      "path": "diagnose_weather_coverage.py",
+      "state": "??",
+      "bytes": 10873,
+      "sha256": "5dd544fde1266aedc06520599f1bc4a33387689a9cbca0afe5d3508c2dfd40a2",
+      "destination": "todo/worktree-research-archive-20260924/modest-williamson-a1f64d/diagnose_weather_coverage.py.txt"
+    },
+    {
+      "worktree_name": "rank-ordering-gap-rb-wr-f58ff9",
+      "head": "575a6e0bd2e61528fe3d615a27b711f6dec44f56",
+      "path": "src/analysis/rank_gap_cohort_findings.md",
+      "state": "A ",
+      "bytes": 13133,
+      "sha256": "28e346c26c01b73ae82c3de789ec85b1214fd093e2468ccb92ce6c7daa0b9644",
+      "destination": "todo/worktree-research-archive-20260924/rank-ordering-gap-rb-wr-f58ff9/src/analysis/rank_gap_cohort_findings.md"
+    },
+    {
+      "worktree_name": "rank-ordering-gap-rb-wr-f58ff9",
+      "head": "575a6e0bd2e61528fe3d615a27b711f6dec44f56",
+      "path": "src/analysis/rank_gap_cohorts.py",
+      "state": "A ",
+      "bytes": 57700,
+      "sha256": "6d5dbd9a5ce7e554732e9909705e82e89492ceb0c22539c439a2c5eec4ea7eba",
+      "destination": "todo/worktree-research-archive-20260924/rank-ordering-gap-rb-wr-f58ff9/src/analysis/rank_gap_cohorts.py.txt"
+    },
+    {
+      "worktree_name": "rank-ordering-gap-rb-wr-f58ff9",
+      "head": "575a6e0bd2e61528fe3d615a27b711f6dec44f56",
+      "path": "tests/analysis/test_rank_gap_cohorts.py",
+      "state": "A ",
+      "bytes": 19227,
+      "sha256": "05c34ac668c709d0bf098c72af52551d7f1dc2f2b7d4b9c6c6a0f00c47e07876",
+      "destination": "todo/worktree-research-archive-20260924/rank-ordering-gap-rb-wr-f58ff9/tests/analysis/test_rank_gap_cohorts.py.txt"
+    }
+  ]
+}

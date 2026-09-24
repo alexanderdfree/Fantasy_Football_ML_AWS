@@ -1,0 +1,50 @@
+{
+  "RB": {
+    "position": "RB",
+    "spec": "src.tuning.ab_feature_confirm",
+    "run_id": "confirm-rb-20260620T163815Z-7edcbd2",
+    "drop_cols": [
+      "air_yards_share",
+      "opp_def_pass_td_allowed_L5",
+      "opp_def_pts_allowed_L5",
+      "opp_def_rush_yds_allowed_L5",
+      "opp_def_sacks_L5",
+      "opp_rush_pts_allowed_to_pos",
+      "snap_pct",
+      "target_share_L3",
+      "trend_carries",
+      "trend_fantasy_points",
+      "trend_snap_pct",
+      "trend_targets"
+    ],
+    "seeds": [
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65
+    ],
+    "stacked": true,
+    "eager": false,
+    "image_sha": "7edcbd28787bfdfda60a4db1beb22972274197ab"
+  }
+}
