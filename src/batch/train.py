@@ -1249,7 +1249,7 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["train", "tune"],
+        choices=["train", "tune", "campaign"],
         default="train",
         help=(
             "Dispatch mode. 'train' (default) is the existing per-position "
@@ -1303,6 +1303,13 @@ def main():
     args = parser.parse_args()
 
     pos = args.position
+    if args.mode == "campaign":
+        if args.branch != "full" or args.ablation or args.sweep or args.dry_run:
+            parser.error("campaign mode cannot be combined with training/ablation overrides")
+        from src.tuning.campaign import run_batch_entry
+
+        run_batch_entry(pos)
+        return
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()] if args.seeds else [args.seed]
     if args.branch != "full":
         if args.mode == "tune":

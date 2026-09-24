@@ -145,8 +145,42 @@ class Journal:
                 sha = hashlib.file_digest(stream, "sha256").hexdigest()
             records[relative] = {"sha256": sha, "bytes": path.stat().st_size}
             if self.s3 is not None:
-                self.s3.upload_file(str(path), self.bucket, f"{self.prefix}/{prefix}/{relative}")
+                self.s3.upload_file(
+                    str(path),
+                    self.bucket,
+                    f"{self.prefix}/{prefix}/{relative}",
+                    ExtraArgs={"Metadata": {"sha256": sha}},
+                )
         return records
+
+    def outputs_valid(self, directory, prefix, records):
+        if not records:
+            return False
+        for name, expected in records.items():
+            if self.s3 is None:
+                path = Path(directory) / name
+                if not path.is_file() or path.stat().st_size != expected["bytes"]:
+                    return False
+                with path.open("rb") as stream:
+                    if hashlib.file_digest(stream, "sha256").hexdigest() != expected["sha256"]:
+                        return False
+            else:
+                from botocore.exceptions import ClientError
+
+                try:
+                    head = self.s3.head_object(
+                        Bucket=self.bucket, Key=f"{self.prefix}/{prefix}/{name}"
+                    )
+                except ClientError as exc:
+                    if exc.response["Error"]["Code"] in {"404", "NoSuchKey", "NotFound"}:
+                        return False
+                    raise
+                if (
+                    head["ContentLength"] != expected["bytes"]
+                    or head.get("Metadata", {}).get("sha256") != expected["sha256"]
+                ):
+                    return False
+        return True
 
 
 def verify_snapshot(root, manifest):

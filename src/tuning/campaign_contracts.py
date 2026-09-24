@@ -14,7 +14,16 @@ KINDS = ("ab", "nn_tune", "lgbm_tune", "benchmark")
 ROOT = Path(__file__).resolve().parents[2]
 PREFIX = "campaign_runs"
 OPTIONS = {
-    "ab": {"seeds", "only", "jobs", "stacked_seeds", "stacked_epochs", "feature_cache", "device"},
+    "ab": {
+        "seeds",
+        "only",
+        "jobs",
+        "stacked_seeds",
+        "stacked_epochs",
+        "feature_cache",
+        "device",
+        "max_cells",
+    },
     "nn_tune": {
         "seed",
         "n_trials",
@@ -112,6 +121,8 @@ def validate(document):
     prefix = result.get("data_prefix", "data").strip("/")
     if not prefix or any(p in {".", ".."} for p in prefix.split("/")):
         raise ValueError("Invalid data prefix")
+    if prefix != "data":
+        raise ValueError("Campaigns use the canonical immutable data registry")
     result["data_prefix"] = prefix
     steps = result.get("steps")
     if not isinstance(steps, list) or not steps:
@@ -139,19 +150,22 @@ def validate(document):
                 raise ValueError("A/B steps require an importable src.tuning spec")
         elif "spec" in step:
             raise ValueError("spec is only valid for A/B steps")
-        positions = step.get("positions", list(POSITIONS))
-        if (
+        positions = step.get("positions", None if kind == "ab" else list(POSITIONS))
+        if positions is not None and (
             not isinstance(positions, list)
             or not positions
+            or not all(isinstance(pos, str) for pos in positions)
             or len(positions) != len(set(positions))
             or set(positions) - set(POSITIONS)
         ):
             raise ValueError("positions must be a nonempty unique subset of the six positions")
         step["positions"] = positions
         options = step.setdefault("options", {})
-        if not isinstance(options, dict) or set(options) - OPTIONS[kind]:
+        if not isinstance(options, dict):
+            raise ValueError("Step options must be a mapping")
+        if set(options) - OPTIONS[kind]:
             raise ValueError(f"Unsupported {kind} options: {set(options) - OPTIONS[kind]}")
-        for key in ("jobs", "n_trials", "timeout", "stacked_epochs"):
+        for key in ("jobs", "n_trials", "timeout", "stacked_epochs", "max_cells"):
             if key in options:
                 _positive(options[key], key)
         if "n_jobs" in options and options["n_jobs"] != "auto":
@@ -162,8 +176,8 @@ def validate(document):
         if (
             not isinstance(seeds, list)
             or not seeds
-            or len(seeds) != len(set(seeds))
             or any(type(seed) is not int or not 0 <= seed < 2**32 for seed in seeds)
+            or len(seeds) != len(set(seeds))
         ):
             raise ValueError("Seeds must be unique integers in [0, 2**32)")
         if "only" in options and (

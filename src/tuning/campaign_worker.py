@@ -31,11 +31,18 @@ def clean(value):
 
 
 def verify_runtime(manifest, data_dir):
+    if (
+        identity({k: v for k, v in manifest.items() if k != "manifest_id"})
+        != manifest["manifest_id"]
+    ):
+        raise RuntimeError("Campaign manifest checksum mismatch")
     if manifest["backend"] == "local":
         if source_fingerprint() != manifest["source_fingerprint"]:
             raise RuntimeError("Campaign source changed; create a new campaign")
     else:
-        stamp = (ROOT / ".training-source-sha").read_text().strip()
+        from src.artifacts.source import image_source_sha
+
+        stamp = image_source_sha()
         if stamp != manifest["code_sha"]:
             raise RuntimeError("Container source differs from the frozen campaign image")
     data_dir = Path(data_dir)
@@ -59,7 +66,9 @@ def child_environment(manifest, step, unit, output, data_dir):
             env.pop(key, None)
     env.update(manifest["execution_environment"])
     env.update(step["env"])
-    device = step["options"].get("device")
+    device = step["options"].get("device", step["env"].get("FF_DEVICE"))
+    if device == "auto":
+        device = manifest["execution_environment"].get("FF_DEVICE", "auto")
     if manifest["backend"] == "batch":
         device = "cpu" if unit["resource"] == "cpu" else "cuda"
         env.update(S3_BUCKET=manifest["bucket"], FF_CAMPAIGN_BUCKET=manifest["bucket"])
@@ -251,7 +260,7 @@ def execute_step(manifest, step, data_dir, output):
                     step["spec"],
                     positions=step["positions"],
                     fresh=manifest["fresh"],
-                    **{k: v for k, v in options.items() if k != "device"},
+                    **{k: v for k, v in options.items() if k not in {"device", "max_cells"}},
                 )
             if result.get("failed") or any(
                 row.get("status") != "ok" for row in result.get("sentinel", [])
@@ -286,6 +295,7 @@ def execute_step(manifest, step, data_dir, output):
 def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
+    verify_runtime(manifest, data_dir)
     name = f"units/{unit['id']}/progress.json"
     progress, etag = journal.read(name)
     if progress is None:
@@ -298,7 +308,7 @@ def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
     manifest_file = directory / "manifest.json"
     atomic_json(manifest_file, manifest)
     failed = False
-    for original in manifest["spec"]["steps"]:
+    for original in manifest.get("execution_steps", manifest["spec"]["steps"]):
         if original["id"] not in unit["steps"]:
             continue
         step = {
@@ -306,11 +316,15 @@ def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
             "positions": [unit["position"]] if unit["position"] else original["positions"],
         }
         previous = progress["steps"].get(step["id"], {})
-        if previous.get("state") == "SUCCEEDED":
+        output = directory / "steps" / step["id"]
+        prefix = f"units/{unit['id']}/steps/{step['id']}"
+        if previous.get("state") == "SUCCEEDED" and journal.outputs_valid(
+            output, prefix, previous.get("outputs", {})
+        ):
             continue
         verify_runtime(manifest, data_dir)
-        output = directory / "steps" / step["id"]
         output.mkdir(parents=True, exist_ok=True)
+        (output / "result.json").unlink(missing_ok=True)
         progress["steps"][step["id"]] = {"state": "RUNNING", "started_at": time.time()}
         etag = journal.write(name, progress, etag)
         argv = [
@@ -337,7 +351,7 @@ def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
             )
             old_handler = signal.getsignal(signal.SIGTERM)
 
-            def terminate(signum, frame):
+            def terminate(signum, frame, child=child):
                 child.terminate()
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     child.wait(timeout=60)
@@ -368,15 +382,65 @@ def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
     return 1 if failed else 0
 
 
+def resolve_step(step, backend):
+    """Resolve a spec in a fresh interpreter, including env-built variant lists."""
+    options = dict(step["options"])
+    os.environ.update(step["env"])
+    if options.get("device"):
+        os.environ["FF_DEVICE"] = options["device"]
+    if step["kind"] == "ab":
+        from src.shared.utils import cuda_enabled
+        from src.tuning.ab_ensemble_seeds import stacked_default_seed_list
+        from src.tuning.ab_harness import build_cells, resolve_spec
+
+        stacked = options.get("stacked_seeds", backend == "local" and cuda_enabled())
+        spec = resolve_spec(
+            step["spec"],
+            positions=step["positions"],
+            seeds=options.get("seeds"),
+            only=options.get("only"),
+            default_seeds=stacked_default_seed_list() if stacked else None,
+        )
+        if stacked and not spec.supports_stacked:
+            if options.get("stacked_seeds"):
+                raise ValueError("This A/B spec does not support stacked execution")
+            stacked = False
+            spec = resolve_spec(
+                step["spec"],
+                positions=step["positions"],
+                seeds=options.get("seeds"),
+                only=options.get("only"),
+            )
+        if backend == "batch" and len(build_cells(spec)) > options.get("max_cells", 120):
+            raise ValueError("A/B grid exceeds max_cells; raise the explicit budget if intended")
+        options.update(seeds=list(spec.seeds), only=list(spec.variants), stacked_seeds=stacked)
+        step = {**step, "positions": list(spec.positions)}
+    return {**step, "options": options}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--execute", required=True)
-    parser.add_argument("--step", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--execute")
+    mode.add_argument("--resolve")
+    parser.add_argument("--backend", choices=("local", "batch"), default="local")
+    parser.add_argument("--step")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--positions", nargs="+", required=True)
+    parser.add_argument("--positions", nargs="+")
     args = parser.parse_args()
+    if args.resolve:
+        atomic_json(
+            args.output, resolve_step(json.loads(Path(args.resolve).read_text()), args.backend)
+        )
+        return
+    if not args.step or not args.positions:
+        parser.error("--execute requires --step and --positions")
     manifest = json.loads(Path(args.execute).read_text())
-    step = next(step for step in manifest["spec"]["steps"] if step["id"] == args.step)
+    step = next(
+        step
+        for step in manifest.get("execution_steps", manifest["spec"]["steps"])
+        if step["id"] == args.step
+    )
     if not set(args.positions) <= set(step["positions"]):
         raise ValueError("Worker positions differ from campaign")
     step = {**step, "positions": args.positions}
