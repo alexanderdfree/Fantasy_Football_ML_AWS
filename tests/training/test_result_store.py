@@ -101,6 +101,19 @@ def test_remote_archive_cannot_escape_cache(tmp_path):
     assert not (tmp_path / "outside").exists()
 
 
+def test_remote_hit_only_workload_obeys_local_budget(tmp_path):
+    s3 = MemoryS3()
+    source = ResultStore(tmp_path / "source", s3=s3, bucket="training")
+    for key in ("a" * 64, "b" * 64, "c" * 64):
+        publish(source, key, "x" * 1000)
+    destination = ResultStore(tmp_path / "destination", s3=s3, bucket="training", max_bytes=2500)
+    for key in ("a" * 64, "b" * 64, "c" * 64):
+        assert destination.lookup(key) is not None
+    entries = list(destination.root.glob("*/manifest.json"))
+    assert sum(json.loads(path.read_text())["bytes"] for path in entries) <= 2500
+    assert destination.path("c" * 64).is_dir()
+
+
 def test_key_cannot_select_an_arbitrary_path(tmp_path):
     with pytest.raises(ValueError, match="SHA-256"):
         ResultStore(tmp_path).lookup("../other")

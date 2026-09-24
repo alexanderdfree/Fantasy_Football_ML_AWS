@@ -155,3 +155,25 @@ def test_unavailable_cache_does_not_hide_real_fit_failures(environment):
 
     with pytest.raises(RuntimeError, match="real fit failure"):
         fail("RB", get_config("RB"), context=environment)
+
+
+def test_functools_wraps_cannot_hide_active_trainer_changes(environment, monkeypatch):
+    from functools import wraps
+
+    from src.shared import pipeline as production
+
+    cfg = get_config("RB")
+    df = frames(cfg)
+    calls = []
+    run = pipeline(calls)
+    run("RB", cfg, df, df, df, context=environment)
+    original = production._train_nn
+
+    @wraps(original)
+    def changed(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(production, "_train_nn", changed)
+    result = run("RB", cfg, df, df, df, context=environment)
+    assert calls == [42, 42]
+    assert not result["reuse"]["cache_hit"]

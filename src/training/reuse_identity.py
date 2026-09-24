@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import hashlib
@@ -87,6 +88,8 @@ def stable(value):
         return stable(value.item())
     if isinstance(value, Path):
         return str(value.resolve())
+    if isinstance(value, inspect.Signature):
+        return {"signature": str(value)}
     if isinstance(value, bytes):
         return {"bytes": value.hex()}
     if value is Ellipsis:
@@ -121,12 +124,7 @@ def stable(value):
             "kwargs": stable(value.keywords),
         }
     if inspect.isfunction(value):
-        if "<lambda>" in value.__qualname__ or "<locals>" in value.__qualname__:
-            # K's builder binds concrete frames; it can be identified, unlike a
-            # callback that captures an arbitrary mutable service or model.
-            closure = [stable(cell.cell_contents) for cell in (value.__closure__ or ())]
-        else:
-            closure = []
+        closure = [stable(cell.cell_contents) for cell in (value.__closure__ or ())]
         source = inspect.getsourcefile(value)
         if source is None:
             raise Uncacheable("Callback has no source file")
@@ -181,8 +179,30 @@ def source_manifest(position):
                 if isinstance(function, (classmethod, staticmethod)):
                     function = function.__func__
                 if inspect.isfunction(function):
-                    code = inspect.unwrap(function).__code__
-                    runtime[f"{name}.{label}.{member}"] = code_identity(code)
+                    if member in {"__repr__", "__str__"}:
+                        continue
+                    code = function.__code__
+                    if hasattr(function, "__wrapped__"):
+                        known = {
+                            (
+                                str(ROOT / "src/training/context.py"),
+                                "training_entrypoint.<locals>.run",
+                            ),
+                            (str(ROOT / "src/training/context.py"), "runner_context.<locals>.run"),
+                            (
+                                str(ROOT / "src/prediction/bundle.py"),
+                                "record_constructor.<locals>.initialize",
+                            ),
+                            (
+                                str(Path(contextlib.__file__).resolve()),
+                                "contextmanager.<locals>.helper",
+                            ),
+                        }
+                        if (str(Path(code.co_filename).resolve()), code.co_qualname) not in known:
+                            raise Uncacheable(
+                                f"Active wrapper must execute: {name}.{label}.{member}"
+                            )
+                    runtime[f"{name}.{label}.{member}"] = stable(function)
     return {
         "files": {str(path.relative_to(ROOT)): fingerprint_file(path) for path in sorted(files)},
         "runtime": runtime,

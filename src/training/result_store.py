@@ -88,6 +88,7 @@ class ResultStore:
                 self._download(key)
             manifest = self._manifest(path, key)
             os.utime(path, None)
+            self.prune(protect=key)
             return path, manifest
         except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile) as exc:
             if path.exists():
