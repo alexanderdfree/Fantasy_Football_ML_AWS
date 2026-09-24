@@ -1,5 +1,7 @@
 import copy
 import json
+import subprocess
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -152,3 +154,19 @@ def test_dry_run_does_not_create_aws_clients(tmp_path, monkeypatch, capsys):
     assert campaign.main(["--file", str(path), "--backend", "batch", "--dry-run"]) == 0
     assert not json.loads(capsys.readouterr().out)["resolved_image_and_dataset"]
     client.assert_not_called()
+
+
+def test_campaign_workflow_is_dispatch_only_and_uses_the_shared_runner():
+    import yaml
+
+    path = Path(__file__).resolve().parents[2] / ".github/workflows/experiment-campaign.yml"
+    workflow = yaml.safe_load(path.read_text())
+    assert set(workflow.get("on", workflow.get(True))) == {"workflow_dispatch"}
+    assert workflow["permissions"] == {"contents": "read"}
+    commands = [step["run"] for step in workflow["jobs"]["campaign"]["steps"] if "run" in step]
+    assert any(
+        "python -m src.tuning.campaign" in command and "--wait" in command for command in commands
+    )
+    for command in commands:
+        checked = subprocess.run(["bash", "-n"], input=command, text=True, capture_output=True)
+        assert checked.returncode == 0, checked.stderr
