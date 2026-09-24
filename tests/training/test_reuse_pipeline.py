@@ -61,3 +61,44 @@ def test_real_pipeline_cache_hit_preserves_predictions_models_and_metrics(
     for path in original.rglob("*"):
         if path.is_file():
             assert (replay / path.relative_to(original)).read_bytes() == path.read_bytes()
+
+
+@pytest.fixture
+def rb_reuse_setup(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[2]
+    require_splits(root / "data/splits")
+    monkeypatch.setenv("FF_RESULT_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("FF_RESULT_CACHE_BUCKET", "")
+    monkeypatch.delenv("FF_FRESH", raising=False)
+    return (
+        build_tiny_config("RB"),
+        load_tiny_splits("RB"),
+        RunContext(tmp_path / "outputs", root / "data", reuse_results=True, report_sink=None),
+    )
+
+
+def test_replay_preserves_elasticnet_public_columns(rb_reuse_setup):
+    from src.evaluation.metrics import pred_columns_from_test_df
+
+    cfg, splits, context = rb_reuse_setup
+    cfg.update(train_elasticnet=True, enet_l1_ratios=[0.5])
+    first = run_pipeline("RB", cfg, *splits, context=context)
+    second = run_pipeline("RB", cfg, *splits, context=replace(context, run_id="second"))
+    assert second["reuse"]["cache_hit"]
+    assert "ElasticNet" in pred_columns_from_test_df(first["test_df"])
+    assert "ElasticNet" in pred_columns_from_test_df(second["test_df"])
+    for target in ["total", *cfg["targets"]]:
+        np.testing.assert_array_equal(
+            first["test_df"][f"pred_enet_{target}"], second["test_df"][f"pred_enet_{target}"]
+        )
+
+
+@pytest.mark.parametrize("sink", [None, lambda effect: None])
+def test_disabled_artifact_sink_cannot_publish_preexisting_models(rb_reuse_setup, sink):
+    cfg, splits, context = rb_reuse_setup
+    run_pipeline("RB", cfg, *splits, context=replace(context, reuse_results=False, seed=42))
+    disabled = replace(context, artifact_sink=sink, seed=7, run_id="seed-seven")
+    first = run_pipeline("RB", cfg, *splits, context=disabled)
+    second = run_pipeline("RB", cfg, *splits, context=disabled)
+    assert not first["reuse"]["cache_hit"]
+    assert not second["reuse"]["cache_hit"]

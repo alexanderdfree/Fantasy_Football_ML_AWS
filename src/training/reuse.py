@@ -62,10 +62,11 @@ def _replay(payload, directory, recipe, context, manifest, lookup_seconds):
         values[f"{family}_metrics"] = compute_target_metrics(
             prepared.y_test, predictions, recipe["targets"], gate_info=gate_info
         )
-        column = f"pred_{family}_total"
+        prefix = "enet" if family == "elasticnet" else family
+        column = f"pred_{prefix}_total"
         frame[column] = recipe["aggregate_fn"](predictions)
         for target in recipe["targets"]:
-            frame[f"pred_{family}_{target}"] = predictions[target]
+            frame[f"pred_{prefix}_{target}"] = predictions[target]
         values[f"{family}_ranking"] = _reporting_ranking(frame, recipe.position, column)
         columns[labels[family]] = column
     if "test_df" in values:
@@ -171,11 +172,20 @@ def reuse_training(function, bound, context):
         if after != identity:
             raise Uncacheable("Inputs changed during fitting: " + _changed_fields(identity, after))
         output = context.output_dir(position)
-        if (
-            any(model is not None for model in result.models.values())
-            and not (output / "models").is_dir()
-        ):
-            raise Uncacheable("Fitted model artifacts were not emitted")
+        from src.prediction.bundle import read_bundle
+
+        def verify_current_models(directory):
+            emitted = result.get("model_bundle_ids", {})
+            for family, model in result.models.items():
+                if model is None:
+                    continue
+                if family not in emitted:
+                    raise Uncacheable(f"This fit did not emit its {family} artifacts")
+                bundle = read_bundle(directory, family)
+                if bundle is None or bundle.bundle_id != emitted[family]:
+                    raise Uncacheable(f"Artifacts do not belong to this fit: {family}")
+
+        verify_current_models(output / "models")
 
         def write(directory):
             payload = {
@@ -187,6 +197,7 @@ def reuse_training(function, bound, context):
                 pickle.dump(payload, stream, protocol=5)
             if output.is_dir():
                 shutil.copytree(output, directory / "outputs")
+            verify_current_models(directory / "outputs/models")
 
         store.publish(key, write, source_run_id=result.run_id, identity=identity)
         print(f"[result_cache] stored {position}/{key[:12]}")
