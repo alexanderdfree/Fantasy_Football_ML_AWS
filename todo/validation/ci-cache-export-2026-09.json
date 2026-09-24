@@ -1,0 +1,423 @@
+{
+  "run_id": "35968269140",
+  "run_url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140",
+  "method": "One shared cold cache seed per image after verifying identical Docker inputs; three interleaved warm samples per variant on fresh native workers. The miss path is unchanged and separately covered by workflow tests. Timings sum build/cache steps, including archive restore and export/save where applicable; local OCI exports exclude production ECR push and deployment.",
+  "summary": {
+    "serving": {
+      "shared_cold_control_s": 21.0,
+      "baseline": {
+        "warm_s": [
+          18.0,
+          15.0,
+          15.0
+        ],
+        "median_s": 15.0
+      },
+      "candidate": {
+        "warm_s": [
+          16.0,
+          17.0,
+          14.0
+        ],
+        "median_s": 16.0
+      },
+      "median_saved_s": -1.0,
+      "median_change_percent": 6.7,
+      "identical_source_and_dependencies": true
+    },
+    "training": {
+      "shared_cold_control_s": 542.0,
+      "baseline": {
+        "warm_s": [
+          167.0,
+          128.0,
+          193.0
+        ],
+        "median_s": 167.0
+      },
+      "candidate": {
+        "warm_s": [
+          131.0,
+          119.0,
+          130.0
+        ],
+        "median_s": 130.0
+      },
+      "median_saved_s": 37.0,
+      "median_change_percent": -22.2,
+      "identical_source_and_dependencies": true
+    }
+  },
+  "samples": [
+    {
+      "image": "serving",
+      "variant": "baseline",
+      "sample": 0,
+      "job_id": 107531789955,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107531789955",
+      "source_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "ARM64",
+      "build_cache_s": 21.0,
+      "steps_s": {
+        "Restore local image cache": 0.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 19.0,
+        "Complete local cache export": 0.0,
+        "Post Restore local image cache": 2.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "serving",
+      "variant": "baseline",
+      "sample": 1,
+      "job_id": 107532000624,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532000624",
+      "source_sha": "aaf557a11f093543a47152106f0b43ee9aab4eb6",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "ARM64",
+      "build_cache_s": 18.0,
+      "steps_s": {
+        "Restore local image cache": 3.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 15.0,
+        "Complete local cache export": 0.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "serving",
+      "variant": "candidate",
+      "sample": 1,
+      "job_id": 107532000694,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532000694",
+      "source_sha": "5e188298e6b7d89f108807bc2a9b1c52c53a950e",
+      "parent_sha": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+      "runner_arch": "ARM64",
+      "build_cache_s": 16.0,
+      "steps_s": {
+        "Restore local image cache": 3.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 13.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "serving",
+      "variant": "candidate",
+      "sample": 2,
+      "job_id": 107532206130,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532206130",
+      "source_sha": "03436add62eb290d83b66f27a8724894244a8582",
+      "parent_sha": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+      "runner_arch": "ARM64",
+      "build_cache_s": 17.0,
+      "steps_s": {
+        "Restore local image cache": 3.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 14.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "serving",
+      "variant": "baseline",
+      "sample": 2,
+      "job_id": 107532212174,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532212174",
+      "source_sha": "1c00ba5f727e896d113136365316d6c5b140c186",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "ARM64",
+      "build_cache_s": 15.0,
+      "steps_s": {
+        "Restore local image cache": 2.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 13.0,
+        "Complete local cache export": 0.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "serving",
+      "variant": "baseline",
+      "sample": 3,
+      "job_id": 107532378837,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532378837",
+      "source_sha": "1abbbfdc6561a4d2b5906bd4acc92a82f76c7627",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "ARM64",
+      "build_cache_s": 15.0,
+      "steps_s": {
+        "Restore local image cache": 1.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 14.0,
+        "Complete local cache export": 0.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "serving",
+      "variant": "candidate",
+      "sample": 3,
+      "job_id": 107532430090,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532430090",
+      "source_sha": "c021f6c402d01b56a460c7584c4ebe914dd7ed67",
+      "parent_sha": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+      "runner_arch": "ARM64",
+      "build_cache_s": 14.0,
+      "steps_s": {
+        "Restore local image cache": 2.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 12.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "e66158acf0517946a63b7b5f84e6cb6b99682940054c5051540a355407ce8c59"
+    },
+    {
+      "image": "training",
+      "variant": "baseline",
+      "sample": 0,
+      "job_id": 107532617882,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107532617882",
+      "source_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "X64",
+      "build_cache_s": 542.0,
+      "steps_s": {
+        "Restore local image cache": 0.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 530.0,
+        "Complete local cache export": 0.0,
+        "Post Restore local image cache": 12.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    },
+    {
+      "image": "training",
+      "variant": "candidate",
+      "sample": 1,
+      "job_id": 107535370721,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107535370721",
+      "source_sha": "2deb25f040450389c7780e5729dae7a66542d97d",
+      "parent_sha": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+      "runner_arch": "X64",
+      "build_cache_s": 131.0,
+      "steps_s": {
+        "Restore local image cache": 43.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 88.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    },
+    {
+      "image": "training",
+      "variant": "baseline",
+      "sample": 1,
+      "job_id": 107535370828,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107535370828",
+      "source_sha": "de9e28a7fa78fa09d471b692e54725b9cef332b2",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "X64",
+      "build_cache_s": 167.0,
+      "steps_s": {
+        "Restore local image cache": 45.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 122.0,
+        "Complete local cache export": 0.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    },
+    {
+      "image": "training",
+      "variant": "candidate",
+      "sample": 2,
+      "job_id": 107536289092,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107536289092",
+      "source_sha": "0ca07db15044e958d454ce099cb4fded02ec7a9f",
+      "parent_sha": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+      "runner_arch": "X64",
+      "build_cache_s": 119.0,
+      "steps_s": {
+        "Restore local image cache": 40.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 79.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    },
+    {
+      "image": "training",
+      "variant": "baseline",
+      "sample": 2,
+      "job_id": 107536425695,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107536425695",
+      "source_sha": "baa69430654121975d319dcf611ca73adec3e7d7",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "X64",
+      "build_cache_s": 128.0,
+      "steps_s": {
+        "Restore local image cache": 20.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 107.0,
+        "Complete local cache export": 1.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    },
+    {
+      "image": "training",
+      "variant": "baseline",
+      "sample": 3,
+      "job_id": 107537119698,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107537119698",
+      "source_sha": "74b10769b78c46e6da22239b7d10a4347baf5b64",
+      "parent_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+      "runner_arch": "X64",
+      "build_cache_s": 193.0,
+      "steps_s": {
+        "Restore local image cache": 54.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 138.0,
+        "Complete local cache export": 1.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    },
+    {
+      "image": "training",
+      "variant": "candidate",
+      "sample": 3,
+      "job_id": 107537237850,
+      "url": "https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/actions/runs/35968269140/job/107537237850",
+      "source_sha": "4a13b2758993cca24a35444a0ae383b6a608e79a",
+      "parent_sha": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+      "runner_arch": "X64",
+      "build_cache_s": 130.0,
+      "steps_s": {
+        "Restore local image cache": 49.0,
+        "Verify local cache regime": 0.0,
+        "Build comparison image": 81.0,
+        "Post Restore local image cache": 0.0
+      },
+      "dependency_digest": "7bbbd663c98ec07e6a539b0581a21c67d1ac123f821fe1e048eb7e75356626df"
+    }
+  ],
+  "schema_version": 1,
+  "measured_date": "2026-09-24",
+  "baseline_commit": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+  "candidate_commit": "d20ad3abfb7930e57ad0c41f2c8ff705e48bb9a8",
+  "rejected_trials": [
+    {
+      "run_id": 35303372669,
+      "decision": "rejected: large cold-upload regression and serving slowdown",
+      "summary": {
+        "serving": {
+          "baseline": {
+            "cold_s": 24.0,
+            "warm_s": [
+              15.0,
+              15.0,
+              15.0
+            ],
+            "warm_median_s": 15.0
+          },
+          "candidate": {
+            "cold_s": 43.0,
+            "warm_s": [
+              20.0,
+              16.0,
+              17.0
+            ],
+            "warm_median_s": 17.0
+          },
+          "warm_change_percent": 13.3,
+          "cold_change_percent": 79.2,
+          "matching_dependency_inventories": true
+        },
+        "training": {
+          "baseline": {
+            "cold_s": 288.0,
+            "warm_s": [
+              125.0,
+              177.0,
+              136.0
+            ],
+            "warm_median_s": 136.0
+          },
+          "candidate": {
+            "cold_s": 420.0,
+            "warm_s": [
+              236.0,
+              116.0,
+              128.0
+            ],
+            "warm_median_s": 128.0
+          },
+          "warm_change_percent": -5.9,
+          "cold_change_percent": 45.8,
+          "matching_dependency_inventories": true
+        }
+      }
+    },
+    {
+      "run_id": 35305366835,
+      "decision": "rejected: training warm median did not improve",
+      "summary": {
+        "serving": {
+          "baseline": {
+            "cold_s": 23.0,
+            "warm_s": [
+              17.0,
+              15.0,
+              17.0
+            ],
+            "warm_median_s": 17.0
+          },
+          "candidate": {
+            "cold_s": 23.0,
+            "warm_s": [
+              17.0,
+              14.0,
+              15.0
+            ],
+            "warm_median_s": 15.0
+          },
+          "warm_change_percent": -11.8,
+          "cold_change_percent": 0.0,
+          "matching_dependency_inventories": true
+        },
+        "training": {
+          "baseline": {
+            "cold_s": 288.0,
+            "warm_s": [
+              125.0,
+              177.0,
+              136.0
+            ],
+            "warm_median_s": 136.0
+          },
+          "candidate": {
+            "cold_s": 276.0,
+            "warm_s": [
+              219.0,
+              128.0,
+              142.0
+            ],
+            "warm_median_s": 142.0
+          },
+          "warm_change_percent": 4.4,
+          "cold_change_percent": -4.2,
+          "matching_dependency_inventories": true
+        }
+      }
+    }
+  ]
+}
