@@ -7,7 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 from src.analysis import correctness_batch_gates as gates
+
+pytestmark = pytest.mark.unit
 
 
 class CorrectnessGatesTests(unittest.TestCase):
