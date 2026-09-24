@@ -21,6 +21,11 @@ on:
         description: One RB cold/warm pair on L4 before the full canary; cannot activate
         type: boolean
         default: false
+      smoke_instance:
+        description: GPU family for the one-pair smoke (full canary always tests both)
+        type: choice
+        options: [g6.xlarge, g5.xlarge]
+        default: g6.xlarge
 
 permissions:
   contents: read
@@ -36,6 +41,7 @@ jobs:
       IMAGE_URI: ${{ inputs.image_uri }}
       DATA_RELEASE: ${{ inputs.data_release }}
       SMOKE: ${{ inputs.smoke }}
+      SMOKE_INSTANCE: ${{ inputs.smoke_instance }}
       CONTROL_PREFIX: experiments/warm-ami/control/${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v7
@@ -86,7 +92,7 @@ jobs:
             flags=()
             if [ "$ACTION" = canary ]; then
               flags+=(--output "$RUNNER_TEMP/warm-ami/canary.json")
-              if [ "$SMOKE" = true ]; then flags+=(--smoke); fi
+              if [ "$SMOKE" = true ]; then flags+=(--smoke --smoke-instance "$SMOKE_INSTANCE"); fi
               if [ -n "$DATA_RELEASE" ]; then flags+=(--data-release "$DATA_RELEASE"); fi
             elif [ "$ACTION" = activate ] || [ "$ACTION" = rollback ]; then
               flags+=(--output "$RUNNER_TEMP/warm-ami/$ACTION.json")

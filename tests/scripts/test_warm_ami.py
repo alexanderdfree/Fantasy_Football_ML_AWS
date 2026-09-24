@@ -146,6 +146,126 @@ def test_operator_workflow_is_manual_and_its_shell_blocks_parse():
     assert "--checkpoint-prefix" in (ROOT / ".github/workflows/warm-ami.yml").read_text()
 
 
+def test_cleanup_deletes_invalid_disabled_environment(tmp_path):
+    from infra.batch.warm_ami import cleanup
+
+    batch, ec2 = Mock(), Mock()
+    invalid = {"status": "INVALID", "state": "DISABLED", "tags": {"ff-warm-ami-run": "ours"}}
+    batch.describe_compute_environments.side_effect = [
+        {"computeEnvironments": [invalid]},
+        {"computeEnvironments": [invalid]},
+        {"computeEnvironments": []},
+    ]
+    batch.describe_job_queues.return_value = {"jobQueues": []}
+    ec2.describe_launch_templates.return_value = {"LaunchTemplates": []}
+    state = {"id": "ours", "resources": [{"name": "our-ce", "jobs": {}}]}
+    cleanup({"batch": batch, "ec2": ec2}, state, tmp_path / "state.json")
+    batch.delete_compute_environment.assert_called_once_with(computeEnvironment="our-ce")
+    assert state["resources"][0]["cleaned"]
+
+
+def test_cleanup_already_deleted_template_does_not_block_other_resources(tmp_path):
+    from botocore.exceptions import ClientError
+
+    from infra.batch.warm_ami import cleanup
+
+    batch, ec2 = Mock(), Mock()
+    batch.describe_compute_environments.return_value = {"computeEnvironments": []}
+    batch.describe_job_queues.return_value = {"jobQueues": []}
+    ec2.describe_launch_templates.side_effect = [
+        ClientError(
+            {"Error": {"Code": "InvalidLaunchTemplateId.NotFoundException"}},
+            "DescribeLaunchTemplates",
+        ),
+        {
+            "LaunchTemplates": [
+                {
+                    "LaunchTemplateId": "lt-two",
+                    "Tags": [{"Key": "ff-warm-ami-run", "Value": "ours"}],
+                }
+            ]
+        },
+    ]
+    ec2.delete_launch_template.side_effect = ClientError(
+        {"Error": {"Code": "InvalidLaunchTemplateId.NotFoundException"}}, "DeleteLaunchTemplate"
+    )
+    state = {
+        "id": "ours",
+        "resources": [
+            {"name": name, "jobs": {}, "launch_template": template}
+            for name, template in [("one", "lt-one"), ("two", "lt-two")]
+        ],
+    }
+    cleanup({"batch": batch, "ec2": ec2}, state, tmp_path / "state.json")
+    assert all(row["cleaned"] for row in state["resources"])
+    ec2.delete_launch_template.assert_called_once_with(LaunchTemplateId="lt-two")
+
+
+def test_cleanup_verifies_even_a_recorded_templates_live_ownership(tmp_path):
+    from infra.batch.warm_ami import cleanup
+
+    batch, ec2 = Mock(), Mock()
+    batch.describe_compute_environments.return_value = {"computeEnvironments": []}
+    batch.describe_job_queues.return_value = {"jobQueues": []}
+    ec2.describe_launch_templates.return_value = {
+        "LaunchTemplates": [{"LaunchTemplateId": "lt-other", "Tags": []}]
+    }
+    state = {
+        "id": "ours",
+        "resources": [{"name": "gone", "jobs": {}, "launch_template": "lt-other"}],
+    }
+    with pytest.raises(ValueError, match="unowned launch template"):
+        cleanup({"batch": batch, "ec2": ec2}, state, tmp_path / "state.json")
+    ec2.delete_launch_template.assert_not_called()
+
+
+def test_stock_rollback_explicitly_removes_template_and_refreshes_ami(tmp_path, monkeypatch):
+    from infra.batch import warm_ami
+
+    selected = {"launchTemplateId": "lt-current", "version": "4"}
+    resources = {
+        "type": "SPOT",
+        "minvCpus": 0,
+        "maxvCpus": 64,
+        "desiredvCpus": 0,
+        "instanceTypes": ["g6.xlarge", "g5.xlarge"],
+        "subnets": ["subnet-one"],
+        "securityGroupIds": ["sg-one"],
+    }
+    current = {"status": "VALID", "ecsClusterArn": "cluster", "computeResources": resources}
+    batch, ec2, ecs = Mock(), Mock(), Mock()
+    batch.describe_compute_environments.return_value = {"computeEnvironments": [current]}
+    ecs.list_tasks.return_value = {"taskArns": []}
+    monkeypatch.setattr(warm_ami, "template", Mock(side_effect=[(selected, {}), ({}, {})]))
+    monkeypatch.setattr(warm_ami, "wait_until", lambda *args, **kwargs: current)
+    evidence = {"selected_template": selected, "previous_template": {}, "candidate_ami": "ami-warm"}
+    warm_ami.activate(
+        {"batch": batch, "ec2": ec2, "ecs": ecs},
+        evidence,
+        tmp_path / "rollback.json",
+        rollback=True,
+    )
+    assert batch.update_compute_environment.call_args.kwargs["computeResources"] == {
+        "launchTemplate": {"launchTemplateId": ""},
+        "updateToLatestImageVersion": True,
+    }
+
+
+def test_one_pair_smoke_requires_metric_parity_but_cannot_pass_full_gate():
+    from infra.batch.warm_ami import assess, smoke_assessment
+
+    state = paired_evidence()
+    state["resources"] = [
+        r for r in state["resources"] if r["instance_type"] == "g5.xlarge" and r["pair"] == 0
+    ]
+    for resource in state["resources"]:
+        resource["jobs"] = {"RB": resource["jobs"]["RB"]}
+    assert smoke_assessment(state, "g5.xlarge")["passed"]
+    assert not assess(state)["passed"]
+    state["resources"][1]["jobs"]["RB"]["metrics"]["nn_metrics"]["total"]["mae"] += 0.2
+    assert not smoke_assessment(state, "g5.xlarge")["passed"]
+
+
 def test_builder_preserves_ssm_newlines_pins_inputs_and_cleans_up(tmp_path):
     shim = tmp_path / "aws"
     shim.write_text(

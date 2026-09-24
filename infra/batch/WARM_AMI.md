@@ -46,8 +46,9 @@ Activation requires all of the following on each GPU family:
   median total turnaround.
 - Matching current dependency recipe and ECR dependency-layer digests.
 
-The one-pair smoke validates infrastructure and RB execution; it can never
-authorize activation. A missing dataset, insufficient Spot capacity, missing
+The one-pair smoke validates infrastructure and RB metric parity; it can never
+authorize activation. `--smoke-instance g5.xlarge` selects A10G for this bounded
+check; the full gate still requires both GPU families. A missing dataset, insufficient Spot capacity, missing
 timing evidence or failed metric comparison leaves the current fleet unchanged.
 Use `--data-release` for an explicit compatible private release when current
 main has no published matching producer snapshot. Never relabel old inputs.

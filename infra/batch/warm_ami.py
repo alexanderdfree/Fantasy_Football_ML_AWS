@@ -94,8 +94,9 @@ def clients(region):
     from botocore.config import Config
 
     cfg = Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 3})
+    batch_cfg = Config(connect_timeout=10, read_timeout=30, retries={"total_max_attempts": 1})
     return {
-        name: boto3.client(name, region_name=region, config=cfg)
+        name: boto3.client(name, region_name=region, config=batch_cfg if name == "batch" else cfg)
         for name in ("ec2", "ecs", "batch", "ecr", "s3")
     }
 
@@ -139,13 +140,13 @@ def validate_bake(bake, aws):
         raise ValueError("The control must be the baked AL2023 ECS GPU source")
 
 
-def wait_until(read, ready, timeout, label):
+def wait_until(read, ready, timeout, label, *, allow_invalid=False):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = read()
         if ready(value):
             return value
-        if isinstance(value, dict) and value.get("status") == "INVALID":
+        if not allow_invalid and isinstance(value, dict) and value.get("status") == "INVALID":
             raise RuntimeError(f"{label}: {value.get('statusReason', 'INVALID')}")
         time.sleep(10)
     raise TimeoutError(f"Timed out waiting for {label}")
@@ -500,6 +501,8 @@ def assess(state):
 
 
 def cleanup(aws, state, path):
+    from botocore.exceptions import ClientError
+
     batch, ec2 = aws["batch"], aws["ec2"]
     for owned in state["resources"]:
         if owned.get("cleaned"):
@@ -510,6 +513,25 @@ def cleanup(aws, state, path):
         for resource in [ce, *queues]:
             if resource and resource.get("tags", {}).get("ff-warm-ami-run") != state["id"]:
                 raise ValueError(f"Refusing to clean resources not owned by this canary: {name}")
+        try:
+            templates = ec2.describe_launch_templates(
+                **(
+                    {"LaunchTemplateIds": [owned["launch_template"]]}
+                    if owned.get("launch_template")
+                    else {"Filters": [{"Name": "launch-template-name", "Values": [name]}]}
+                )
+            )["LaunchTemplates"]
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] not in {
+                "InvalidLaunchTemplateId.NotFound",
+                "InvalidLaunchTemplateId.NotFoundException",
+            }:
+                raise
+            templates = []
+        for launch in templates:
+            tags = {tag["Key"]: tag["Value"] for tag in launch.get("Tags", [])}
+            if tags.get("ff-warm-ami-run") != state["id"]:
+                raise ValueError("Refusing to delete an unowned launch template")
         if queues:
             for row in owned["jobs"].values():
                 if not row.get("job_id"):
@@ -531,14 +553,18 @@ def cleanup(aws, state, path):
                     jobs = batch.describe_jobs(jobs=[row["job_id"]])["jobs"]
                     if jobs and jobs[0]["status"] not in {"SUCCEEDED", "FAILED"}:
                         batch.terminate_job(jobId=row["job_id"], reason="Owned AMI canary cleanup")
-            batch.update_job_queue(jobQueue=name, state="DISABLED")
-            wait_until(
-                lambda name=name: batch.describe_job_queues(jobQueues=[name])["jobQueues"],
-                lambda q: not q or q[0]["status"] == "VALID",
-                300,
-                name + " disable",
-            )
-            batch.delete_job_queue(jobQueue=name)
+            if queues[0]["status"] != "DELETING":
+                batch.update_job_queue(jobQueue=name, state="DISABLED")
+                wait_until(
+                    lambda name=name: batch.describe_job_queues(jobQueues=[name])["jobQueues"],
+                    lambda q: (
+                        not q
+                        or (q[0]["state"] == "DISABLED" and q[0]["status"] in {"VALID", "INVALID"})
+                    ),
+                    300,
+                    name + " disable",
+                )
+                batch.delete_job_queue(jobQueue=name)
             wait_until(
                 lambda name=name: batch.describe_job_queues(jobQueues=[name])["jobQueues"],
                 lambda q: not q,
@@ -546,36 +572,61 @@ def cleanup(aws, state, path):
                 name + " delete",
             )
         if ce:
-            batch.update_compute_environment(computeEnvironment=name, state="DISABLED")
-            wait_until(
-                lambda name=name: compute_environment(batch, name),
-                lambda c: not c or c["status"] == "VALID",
-                300,
-                name + " disable",
-            )
-            batch.delete_compute_environment(computeEnvironment=name)
+            if ce["status"] != "DELETING":
+                batch.update_compute_environment(computeEnvironment=name, state="DISABLED")
+                wait_until(
+                    lambda name=name: compute_environment(batch, name),
+                    lambda c: (
+                        not c or (c["state"] == "DISABLED" and c["status"] in {"VALID", "INVALID"})
+                    ),
+                    300,
+                    name + " disable",
+                    allow_invalid=True,
+                )
+                batch.delete_compute_environment(computeEnvironment=name)
             wait_until(
                 lambda name=name: compute_environment(batch, name),
                 lambda c: not c,
                 600,
                 name + " delete",
+                allow_invalid=True,
             )
-        if not owned.get("launch_template"):
-            recovered = ec2.describe_launch_templates(
-                Filters=[{"Name": "launch-template-name", "Values": [name]}]
-            )["LaunchTemplates"]
-            if recovered:
-                tags = {tag["Key"]: tag["Value"] for tag in recovered[0].get("Tags", [])}
-                if tags.get("ff-warm-ami-run") != state["id"]:
-                    raise ValueError("Refusing to delete an unowned launch template")
-                owned["launch_template"] = recovered[0]["LaunchTemplateId"]
-        if owned.get("launch_template"):
-            ec2.delete_launch_template(LaunchTemplateId=owned["launch_template"])
+        for launch in templates:
+            try:
+                ec2.delete_launch_template(LaunchTemplateId=launch["LaunchTemplateId"])
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] not in {
+                    "InvalidLaunchTemplateId.NotFound",
+                    "InvalidLaunchTemplateId.NotFoundException",
+                }:
+                    raise
         owned["cleaned"] = True
         save(path, state, strict=False)
 
 
-def canary(aws, bake, path, bucket, dataset_id, timeout, smoke=False):
+def smoke_assessment(state, instance_type):
+    full = assess(state)
+    errors = [
+        error
+        for error in full["errors"]
+        if error.startswith((f"{instance_type}/0:", f"{instance_type}/0/"))
+    ]
+    rows = [r for r in state["resources"] if r["instance_type"] == instance_type and r["pair"] == 0]
+    if len(rows) != 2:
+        errors.append("Smoke requires exactly one cold/warm pair")
+    for row in rows:
+        timing = row["jobs"].get("RB", {}).get("lifecycle", {})
+        if any(
+            not isinstance(timing.get(field), (int, float))
+            or not math.isfinite(timing[field])
+            or timing[field] < 0
+            for field in ("pull_seconds", "total_seconds")
+        ):
+            errors.append("Smoke has incomplete pull/turnaround measurements")
+    return {"passed": not errors, "errors": errors}
+
+
+def canary(aws, bake, path, bucket, dataset_id, timeout, smoke=False, smoke_instance=TYPES[0]):
     from src.data.release import resolve_compatible_release, resolve_release
     from src.scripts.wait_data_release import producer_hashes_at_revision
 
@@ -606,7 +657,7 @@ def canary(aws, bake, path, bucket, dataset_id, timeout, smoke=False):
     save(path, state)
     try:
         binding = job_definition(aws, bake, state, path)
-        for kind in TYPES[:1] if smoke else TYPES:
+        for kind in (smoke_instance,) if smoke else TYPES:
             for pair in range(1 if smoke else 3):
                 arms = []
                 for arm in ("cold", "warm"):
@@ -624,13 +675,16 @@ def canary(aws, bake, path, bucket, dataset_id, timeout, smoke=False):
                     wait_jobs(aws, state, path, arms, timeout)
                 cleanup(aws, state, path)
         state["assessment"] = assess(state)
+        if smoke:
+            state["smoke_assessment"] = smoke_assessment(state, smoke_instance)
         save(path, state)
         print(json.dumps(state["assessment"], indent=2))
     finally:
         cleanup(aws, state, path)
         if state.get("job_definition"):
             aws["batch"].deregister_job_definition(jobDefinition=state["job_definition"])
-    return 0 if smoke or state["assessment"]["passed"] else 1
+    passed = state["smoke_assessment"]["passed"] if smoke else state["assessment"]["passed"]
+    return 0 if passed else 1
 
 
 def activate(aws, evidence, output, rollback=False):
@@ -693,7 +747,10 @@ def activate(aws, evidence, output, rollback=False):
     save(output, receipt)
     batch.update_compute_environment(
         computeEnvironment="ff-gpu-spot",
-        computeResources={"launchTemplate": target},
+        computeResources={
+            "launchTemplate": target or {"launchTemplateId": ""},
+            "updateToLatestImageVersion": True,
+        },
         updatePolicy={"terminateJobsOnUpdate": False, "jobExecutionTimeoutMinutes": 180},
     )
     final = wait_until(
@@ -726,6 +783,7 @@ def main(argv=None):
     parser.add_argument("--image-sha", default="")
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke-instance", choices=TYPES, default=TYPES[0])
     parser.add_argument(
         "--checkpoint-prefix",
         help="Optional experiments/warm-ami/ S3 prefix for controller recovery",
@@ -763,7 +821,14 @@ def main(argv=None):
         return 0 if result["fresh"] else 1
     if args.action == "canary":
         return canary(
-            aws, value, args.output, args.bucket, args.data_release, args.timeout, args.smoke
+            aws,
+            value,
+            args.output,
+            args.bucket,
+            args.data_release,
+            args.timeout,
+            args.smoke,
+            args.smoke_instance,
         )
     if args.action == "cleanup":
         cleanup(aws, value, args.input)
