@@ -57,6 +57,93 @@ def test_official_source_fills_partial_primary_by_team(roster):
     assert result.metadata["source_result"]["status"] == "partial"
     assert result.metadata["source_result"]["coverage"]["known_players"] == 3
     assert result.metadata["source_result"]["effective_period"] == {"season": 2026, "week": 1}
+    records = {row["player_id"]: row for row in result.observations}
+    assert records["a"]["injury_descriptions"] == ["hamstring"]
+    assert records["a"]["source"] == "NFL.com"
+    assert records["a"]["reported_at"] is None
+    assert records["a"]["observed_at"] == result.metadata["fetched_at"]
+    assert records["b"]["coverage"] == "published_absence"
+    assert records["d"]["coverage"] == "unknown"
+
+
+def test_reason_changes_invalidate_content_but_polls_do_not(roster, monkeypatch):
+    first = pr.fetch_practice_report(2026, 1, roster)
+    same = pr.fetch_practice_report(2026, 1, roster)
+    assert (
+        first.metadata["source_result"]["content_id"]
+        == same.metadata["source_result"]["content_id"]
+    )
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html().replace("Hamstring", "Illness"), s, w),
+    )
+    changed = pr.fetch_practice_report(2026, 1, roster)
+    assert changed.values == first.values
+    assert (
+        changed.metadata["source_result"]["content_id"]
+        != first.metadata["source_result"]["content_id"]
+    )
+
+
+def test_fallback_preserves_descriptions_and_source_report_time(roster, monkeypatch):
+    monkeypatch.setattr(
+        pr.nfl_source,
+        "injuries",
+        lambda _: pd.DataFrame(
+            [
+                {
+                    "gsis_id": "c",
+                    "season": 2026,
+                    "week": 1,
+                    "team": "NE",
+                    "practice_status": "Limited Participation in Practice",
+                    "practice_primary_injury": "Knee",
+                    "practice_secondary_injury": "Rest",
+                    "date_modified": "2026-09-09T20:00:00Z",
+                }
+            ]
+        ),
+    )
+    result = pr.fetch_practice_report(2026, 1, roster)
+    row = next(row for row in result.observations if row["player_id"] == "c")
+    assert row["injury_descriptions"] == ["knee", "rest"]
+    assert row["reported_at"] == "2026-09-09T20:00:00+00:00"
+    assert row["source"] == "nflverse"
+
+
+def test_unknown_fallback_status_keeps_its_reason_without_becoming_healthy(roster, monkeypatch):
+    def unavailable(*args):
+        raise OSError("offline")
+
+    monkeypatch.setattr(pr, "_fetch_official", unavailable)
+    monkeypatch.setattr(
+        pr.nfl_source,
+        "injuries",
+        lambda _: pd.DataFrame(
+            [
+                {
+                    "gsis_id": "a",
+                    "season": 2026,
+                    "week": 1,
+                    "team": "BAL",
+                    "practice_status": "Note",
+                    "practice_primary_injury": "Knee",
+                },
+                {
+                    "gsis_id": "b",
+                    "season": 2026,
+                    "week": 1,
+                    "team": "BAL",
+                    "practice_status": "Full Participation in Practice",
+                    "practice_primary_injury": "Rest",
+                },
+            ]
+        ),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster)
+    assert "a" not in report.values
+    assert report.observations[0]["injury_descriptions"] == ["knee"]
 
 
 def test_wrong_week_is_rejected():
@@ -78,6 +165,9 @@ def test_unknown_participation_is_not_full(roster, monkeypatch):
     result = pr.fetch_practice_report(2026, 1, roster)
     assert "a" not in result.values
     assert result.values["b"] == 2.0
+    observation = next(row for row in result.observations if row["player_id"] == "a")
+    assert observation["injury_descriptions"] == ["hamstring"]
+    assert observation["practice_status"] is None
 
 
 def test_new_official_full_report_overrides_old_limited(roster, monkeypatch):

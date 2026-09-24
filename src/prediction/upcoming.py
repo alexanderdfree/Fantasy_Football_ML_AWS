@@ -35,6 +35,7 @@ import pandas as pd
 import src.data.roster_meta as roster_meta
 from src.artifacts import snapshot_state as app_pkg
 from src.artifacts import upcoming_transfer as upcoming_artifact
+from src.artifacts.practice_archive import archive_refresh
 from src.config import CACHE_DIR, SEASONS
 from src.contracts import upcoming_status
 from src.contracts.serialization import (
@@ -62,6 +63,7 @@ from src.data.preprocessing import preprocess
 from src.data.release import live_source_cache
 from src.data.source_result import SourceResult, content_identity
 from src.features.engineer import _OUT_SET_TEAM_NORMALIZATION, build_features
+from src.features.practice_context import attach_observation_features
 from src.features.roster_availability import weekly_roster_status
 from src.prediction import historical as core
 from src.prediction import upcoming_special_teams
@@ -388,6 +390,7 @@ def build_upcoming_week_frame(
     practice_status_map: dict[str, float] | None = None,
     contract_features: pd.DataFrame | None = None,
     schedules: pd.DataFrame | None = None,
+    practice_observations: list[dict] | None = None,
 ):
     """Featurize the upcoming (season, week) via the real offline pipeline.
 
@@ -444,6 +447,7 @@ def build_upcoming_week_frame(
     sl = _fill_current_week_context(
         sl, history, depth_chart_ranks, game_status_map, practice_status_map, contract_features
     )
+    sl = attach_observation_features(sl, practice_observations or [])
     # Season-to-date context is REG-only already: preprocess() filters history to
     # REG and _build_skeleton stamps REG on the synthetic rows.
     ctx = featurized[featurized["_is_upcoming"].eq(False)]
@@ -1059,7 +1063,12 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     )
     with _state_lock:
         if not force and sig == _last_signature and read_cached_artifact() is not None:
-            return read_cached_artifact()
+            cached = read_cached_artifact()
+        else:
+            cached = None
+    if cached is not None:
+        _archive_practice_refresh(practice_report, cached, slate)
+        return cached
 
     featurized = build_upcoming_week_frame(
         season,
@@ -1071,6 +1080,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
         depth_chart_ranks=depth_chart_ranks,
         game_status_map=game_status_map,
         practice_status_map=practice_status_map,
+        practice_observations=practice_report.observations,
         contract_features=contract_features,
         schedules=schedule_context,
     )
@@ -1128,8 +1138,20 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     payload["input_signature"] = sig
     payload["data_quality"] = upcoming_status.data_quality(payload["sources"])
     _publish_artifact(payload, sig)
+    _archive_practice_refresh(practice_report, payload, slate)
     print(f"[upcoming_week] refreshed {season} W{week}: {len(results)} players")
     return payload
+
+
+def _archive_practice_refresh(report, payload, slate) -> None:
+    archive_refresh(
+        report,
+        payload,
+        slate,
+        directory=core._PREDICTIONS_CACHE_DIR,
+        bucket=os.environ.get(_ENV_BUCKET, "").strip(),
+        prefix=os.environ.get(_ENV_PREFIX, "models"),
+    )
 
 
 def _publish_artifact(payload: dict, sig: str) -> None:
