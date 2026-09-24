@@ -2,7 +2,7 @@
   "schema": "correctness-source-bridge/v1",
   "baseline_sha": "a69a813df42e10f655c1f0b9105365c48a2d64cb",
   "precision_pr_sha": "e5bf73853aa8e027f1522b899fd3b6a7d72f30b0",
-  "combined_pr_sha": "7a641b5254dc87145ef3383fa6338bf4452a0f98",
+  "combined_pr_sha": "6e036376f938abb154cd5f40f3c013ce8c576f6e",
   "all_existing_python_sources_match_combined_pr": true,
   "python_files": {
     "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -433,5 +433,7 @@
     "cells": 108,
     "smoke_before_expansion": true
   },
-  "gate": "Numerical, compatibility, restoration, saved-inference and unchanged-control integrity; forecastregressionsreported, notveto"
+  "gate": "Numerical, compatibility, restoration, saved-inference and unchanged-control integrity; forecastregressionsreported, notveto",
+  "pipeline_image_source": "bf79a5953e83bc63c9b3aeed47f8b82524828335",
+  "post_image_change": "Only ensemble test fixture and independently reviewed report collector changed; all336 pre-existing Python runtime files remain byte-identical."
 }
