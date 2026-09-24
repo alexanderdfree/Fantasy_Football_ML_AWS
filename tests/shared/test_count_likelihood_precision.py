@@ -257,8 +257,6 @@ def test_native_mps_probability_and_gradients_match_decimal(family):
 @pytest.mark.parametrize("family", ["nb", "poisson"])
 def test_native_cuda_capture_replays_count_loss_and_gradients(family):
     y = torch.tensor([0.0, 1.0, 2.0], device="cuda")
-    mu = torch.tensor([1e-6, 2e-6, 0.2], device="cuda", requires_grad=True)
-    log_alpha = torch.tensor([-5.0, -5.0, 0.0], device="cuda", requires_grad=True)
 
     def forward():
         preds = {"count_value_mu": mu, "count_value_log_alpha": log_alpha}
@@ -272,22 +270,24 @@ def test_native_cuda_capture_replays_count_loss_and_gradients(family):
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
+        mu = torch.tensor([1e-6, 2e-6, 0.2], device="cuda", requires_grad=True)
+        log_alpha = torch.tensor([-5.0, -5.0, 0.0], device="cuda", requires_grad=True)
         for _ in range(3):
             mu.grad = log_alpha.grad = None
             forward().backward()
+        mu.grad = log_alpha.grad = None
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            loss = forward()
+            loss.backward()
+        mu.grad.zero_()
+        if family == "nb":
+            log_alpha.grad.zero_()
+        graph.replay()
     torch.cuda.current_stream().wait_stream(stream)
-    mu.grad = log_alpha.grad = None
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph):
-        loss = forward()
-        loss.backward()
-    mu.grad.zero_()
-    if family == "nb":
-        log_alpha.grad.zero_()
-    graph.replay()
     expected = [
-        _reference(1, float(mu[1]), -5.0 if family == "nb" else None),
-        _reference(2, float(mu[2]), 0.0 if family == "nb" else None),
+        _reference(1, float(mu.detach()[1]), -5.0 if family == "nb" else None),
+        _reference(2, float(mu.detach()[2]), 0.0 if family == "nb" else None),
     ]
     assert loss.item() == pytest.approx(-sum(row[0] for row in expected) / 3, rel=1e-5)
     gradients = (mu.grad, log_alpha.grad) if family == "nb" else (mu.grad,)

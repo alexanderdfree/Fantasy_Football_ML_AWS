@@ -41,6 +41,32 @@ def _reference(count, mu, log_alpha=None):
         )
 
 
+def _capture_count_gradients(log_probability, mu, log_alpha):
+    """Own fresh capture leaves and keep warmup/capture on one explicit stream.
+
+    Eager reference outputs can retain their leaves' AccumulateGrad nodes on
+    the default stream even after autograd.grad frees saved intermediates.
+    Reusing those leaves would make capture wait on the default stream. Return
+    the fresh inputs as well so their storage stays live through both replays.
+    """
+    import torch
+
+    stream = torch.cuda.Stream(device=mu.device)
+    stream.wait_stream(torch.cuda.current_stream(mu.device))
+    with torch.cuda.stream(stream):
+        inputs = tuple(value.detach().clone().requires_grad_(True) for value in (mu, log_alpha))
+        for _ in range(3):
+            warm = log_probability(*inputs)
+            warm_gradients = torch.autograd.grad(warm.sum(), inputs)
+            del warm, warm_gradients
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            captured = log_probability(*inputs)
+            gradients = torch.autograd.grad(captured.sum(), inputs)
+    torch.cuda.current_stream(mu.device).wait_stream(stream)
+    return graph, stream, inputs, captured, gradients
+
+
 def verify_count_likelihoods(seed=42):
     """Require real sm80+ CUDA; exercise eager, vmap and two graph replays."""
     import torch
@@ -99,27 +125,22 @@ def verify_count_likelihoods(seed=42):
                         raise RuntimeError("A count probability exceeded one")
 
                 value = log_probability(mu, log_alpha)
-                check(value, torch.autograd.grad(value.sum(), (mu, log_alpha)))
+                gradients = torch.autograd.grad(value.sum(), (mu, log_alpha))
+                value = value.detach()
+                check(value, gradients)
                 vmapped = torch.vmap(
                     torch.func.grad(lambda m, a: log_probability(m, a).sum(), argnums=(0, 1))
                 )(mu.detach().repeat(2, 1), log_alpha.detach().repeat(2, 1))
                 for member in range(2):
                     check(value, tuple(gradient[member] for gradient in vmapped))
-                stream = torch.cuda.Stream(device=device)
-                stream.wait_stream(torch.cuda.current_stream(device))
-                with torch.cuda.stream(stream):
-                    for _ in range(3):
-                        warm = log_probability(mu, log_alpha)
-                        torch.autograd.grad(warm.sum(), (mu, log_alpha))
-                torch.cuda.current_stream(device).wait_stream(stream)
-                graph = torch.cuda.CUDAGraph()
-                with torch.cuda.graph(graph):
-                    captured = log_probability(mu, log_alpha)
-                    captured_gradients = torch.autograd.grad(captured.sum(), (mu, log_alpha))
+                graph, stream, _capture_inputs, captured, captured_gradients = (
+                    _capture_count_gradients(log_probability, mu, log_alpha)
+                )
                 for _ in range(2):
-                    graph.replay()
+                    with torch.cuda.stream(stream):
+                        graph.replay()
                     torch.cuda.synchronize(device)
-                    check(captured, captured_gradients)
+                    check(captured.detach(), captured_gradients)
                 cases += 1
     return {
         "cuda_available": 1.0,
