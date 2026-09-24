@@ -21,7 +21,19 @@
 
 ## Changelog
 
-- **2026-09-18 — Corrected ZTNB reception expectation (proposed, HELD: regresses).**
+- **2026-09-24 — Deliver the ZTNB expectation correction after technical checks (#1608).**
+  The owner superseded the prior accuracy-only hold: an objectively incorrect
+  expectation should be repaired even when historical forecast errors worsen.
+  New `hurdle_negbin` fits use the corrected mean by default; saved legacy
+  checkpoints retain their original interpretation, including after re-save.
+  Numerical/gradient checks, factory compatibility, restored-weight and saved
+  inference parity remain delivery gates. Stable probability arithmetic is
+  shared with the count-likelihood correction in #1613. The historical
+  regressions below remain disclosed; they are not an accuracy-improvement or
+  combined-change validation claim. This decision does not activate optional
+  feature/scaler changes or alter frozen evaluation protocols/results.
+
+- **2026-09-18 — Corrected ZTNB reception expectation (historical proposal and hold; policy superseded above).**
   Isolated from #1575 (component 2 of 3) as a draft PR. For `hurdle_negbin`
   reception heads, the loss fits an **untruncated** NB-2 mean `mu`, so the
   reported expectation is `sigmoid(gate) * mu / (1-P_NB(0))`. The former
@@ -37,8 +49,9 @@
   of metric neutrality: with the gate and rate co-trained under the legacy
   reporting it **regresses** the attention forecast (WR attention MAE
   +0.070 ± 0.017 and bias +0.20 ± 0.08 over 3 GPU seeds; RB/TE CPU attention
-  MAE +0.037/+0.039), so `nn_correct_ztnb_mean` must not ship enabled until it
-  passes the dual-metric + protected-cohort gate. See the
+  MAE +0.037/+0.039). At the time, delivery was held for the
+  dual-metric + protected-cohort gate; the 2026-09-24 decision supersedes that
+  requirement for this proven correctness bug. See the
   [incident record](../../todo/fixed-archive/ztnb-reception-expectation-2026-09.md)
   and the [validation record](../../todo/inheritance-reception-fix-validation.md).
 

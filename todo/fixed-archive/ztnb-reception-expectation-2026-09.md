@@ -1,10 +1,13 @@
 ### [FIXED] Gated hurdle head reported the untruncated NB mean as the reception expectation
 
-**Status: HELD.** Isolated from #1575 (component 2 of 3) as a draft PR. The
-correction is mathematically right and it **regresses** the attention forecast,
-so it must not change a production default until it passes the dual-metric +
-protected-cohort gate (`todo/model-default-repair/README.md`). If it ever
-merges, ship it default-off (`nn_correct_ztnb_mean=False`).
+**Status, 2026-09-24: correctness delivery, technical checks required.**
+Isolated from #1575 as #1608. The owner explicitly superseded the former
+metrics-only hold: repair the mathematically incorrect expectation even when
+historical forecast errors worsen. New fits default to
+`nn_correct_ztnb_mean=True`; old checkpoints preserve their saved meaning.
+Numerical/gradient checks, checkpoint/warm-start compatibility, saved inference
+parity, integrated #1613 checks and current CI/review remain required. The
+measured regressions below remain historical evidence, not an accuracy claim.
 
 **File(s):** `src/shared/neural_net.py` (`ztnb2_conditional_mean`, `GatedHead`
 version buffer + legacy-compatible load, corrected forward expectation,
@@ -36,7 +39,7 @@ rebuilds from the same `head_losses` / `correct_ztnb_mean` served kwargs. Other
 loss families, gated TD outputs and target/loss-weight definitions are
 unchanged; the base NN has no gated head and is byte-identical.
 
-**Measured regression (why it is held):**
+**Measured regression (dated evidence underlying the former hold):**
 
 - WR, 3 seeds (42/123/7), NVIDIA L4 FP32/TF32, CUDA graphs, 2025 test season,
   `expectation_only` arm (Δ = variant − legacy, mean ± sd; negative is
@@ -56,7 +59,8 @@ unchanged; the base NN has no gated head and is byte-identical.
   kept this correction enabled across its 36 WR weight-screen cells and 18
   numerical-correction cells; none passed the gate.
 
-**Validation:** unit tests compare the conditional mean against SciPy's NB
+**Original validation (2026-09-18 source, not the rebased/integrated head):**
+unit tests compare the conditional mean against SciPy's NB
 survival function across `(mu, alpha)` pairs down to `mu=1e-5` with finite,
 positive gradients; FP16/BF16 inputs are promoted to FP32; the reported
 expectation equals the fitted probability mass; a saved corrected head reloads
@@ -80,5 +84,6 @@ MAE 0.913 → 0.942 (single seed, CPU, not evidence; direction matches the
 verify output expectations against probability mass and preserve semantics in
 the model artifact. Correctness and metric improvement are separate claims:
 the gate and rate were co-trained under the legacy reporting, so the corrected
-expectation shifts the attention forecast upward (positive bias) and needs
-retuning evidence before it can ship.
+expectation shifts the attention forecast upward (positive bias). Disclose that
+effect while validating the correction's technical integrity; optional tuning
+and accuracy promotion retain their own gates.

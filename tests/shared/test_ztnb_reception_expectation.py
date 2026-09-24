@@ -9,6 +9,7 @@ fit's requested mode.
 
 import copy
 import math
+from decimal import Decimal, localcontext
 
 import pytest
 import torch
@@ -17,7 +18,9 @@ from scipy.stats import nbinom
 from src.shared.neural_net import (
     GatedHead,
     MultiHeadNetWithHistory,
+    MultiHeadNetWithNestedHistory,
     build_multihead_net_with_history,
+    build_multihead_net_with_nested_history,
     load_warm_start_state,
     ztnb2_conditional_mean,
 )
@@ -47,6 +50,52 @@ def test_probability_arithmetic_uses_fp32_under_autocast_dtypes(dtype):
     )
     assert result.dtype == torch.float32
     torch.testing.assert_close(result, torch.tensor([1.00001, 2.0]), atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("mu,log_alpha", [(1e-6, -8), (1, 90), (1e-6, 70)])
+def test_extreme_mean_and_gradients_match_decimal_reference(mu, log_alpha):
+    # Decimal evaluates the distribution directly, independently of the tensor
+    # implementation's series/log-domain identities. No model is fitted.
+    with localcontext() as context:
+        context.prec = 120
+        rate, dispersion = Decimal(str(mu)), Decimal(str(log_alpha))
+
+        def expectation(m, a):
+            alpha = a.exp()
+            zero_mass = (-(1 + alpha * m).ln() / alpha).exp()
+            return m / (1 - zero_mass)
+
+        eps = Decimal("1e-25")
+        expected = expectation(rate, dispersion)
+        d_rate = (
+            expectation(rate * (1 + eps), dispersion) - expectation(rate * (1 - eps), dispersion)
+        ) / (2 * eps * rate)
+        d_dispersion = (
+            expectation(rate, dispersion + eps) - expectation(rate, dispersion - eps)
+        ) / (2 * eps)
+
+    rate_tensor = torch.tensor([mu], dtype=torch.float32, requires_grad=True)
+    dispersion_tensor = torch.tensor([log_alpha], dtype=torch.float32, requires_grad=True)
+    actual = ztnb2_conditional_mean(rate_tensor, dispersion_tensor)
+    gradients = torch.autograd.grad(actual.sum(), (rate_tensor, dispersion_tensor))
+    for value, reference in zip(
+        (actual, *gradients), (expected, d_rate, d_dispersion), strict=True
+    ):
+        assert torch.isfinite(value).all()
+        assert value.item() == pytest.approx(float(reference), rel=3e-5, abs=1e-14)
+
+
+@pytest.mark.parametrize(
+    "mu_dtype,alpha_dtype", [(torch.float16, torch.float64), (torch.float32, torch.float16)]
+)
+def test_probability_arithmetic_preserves_widest_input_dtype(mu_dtype, alpha_dtype):
+    result = ztnb2_conditional_mean(
+        torch.ones(1, dtype=mu_dtype), torch.tensor([50.0], dtype=alpha_dtype)
+    )
+    expected_dtype = torch.promote_types(torch.float32, torch.promote_types(mu_dtype, alpha_dtype))
+    assert result.dtype == expected_dtype
+    assert torch.isfinite(result).all()
+    assert result.item() == pytest.approx(math.exp(50) / 50, rel=1e-5)
 
 
 def _controlled_head(correct):
@@ -86,16 +135,25 @@ def test_checkpoint_controls_new_and_legacy_expectation(tmp_path):
     assert not restored.correct_ztnb_mean
     assert restored(inputs)[0].item() == pytest.approx(0.75)
     assert restored.state_dict()["_ztnb_mean_version"].item() == 0
+    torch.save(restored.state_dict(), path)
+    legacy_resaved = _controlled_head(True)
+    legacy_resaved.load_state_dict(torch.load(path, weights_only=True))
+    assert not legacy_resaved.correct_ztnb_mean
+    torch.testing.assert_close(legacy_resaved(inputs)[0], restored(inputs)[0], rtol=0, atol=0)
     for version in (99, 0.5):
         invalid = dict(new.state_dict(), _ztnb_mean_version=torch.tensor(version))
         with pytest.raises(RuntimeError, match="Unsupported gated-head"):
             restored.load_state_dict(invalid)
 
 
-def test_warm_start_keeps_new_training_recipe_while_reusing_legacy_weights():
+@pytest.mark.parametrize("legacy_has_version", [False, True])
+def test_warm_start_keeps_new_training_recipe_while_reusing_legacy_weights(legacy_has_version):
     legacy = _controlled_head(False)
     fresh = _controlled_head(True)
-    load_warm_start_state(fresh, legacy.state_dict())
+    state = legacy.state_dict()
+    if not legacy_has_version:
+        state.pop("_ztnb_mean_version")
+    load_warm_start_state(fresh, state)
     assert fresh.correct_ztnb_mean
     assert fresh._ztnb_mean_version.item() == 1
     assert fresh(torch.zeros((1, 2), dtype=torch.float64))[0].item() == pytest.approx(1.5)
@@ -106,11 +164,34 @@ def test_warm_start_keeps_new_training_recipe_while_reusing_legacy_weights():
 
 
 @pytest.mark.parametrize("position", ALL_POSITIONS)
-def test_all_six_factory_and_serving_configs_agree(position):
+def test_all_six_factory_and_serving_configs_agree(position, tmp_path):
     cfg = get_config(position)
     reg = INFERENCE_REGISTRY[position]
     if reg.get("attn_history_structure") == "nested":
         assert position == "K"
+        trained = build_multihead_net_with_nested_history(
+            cfg,
+            static_dim=2,
+            kick_dim=2,
+            max_games=cfg["attn_max_games"],
+            game_dim=len(cfg["attn_history_stats"]),
+            targets=list(cfg["targets"]),
+        )
+        served = MultiHeadNetWithNestedHistory(
+            static_dim=2,
+            kick_dim=2,
+            target_names=list(cfg["targets"]),
+            **reg["attn_nn_kwargs_static"],
+        )
+        assert not any(isinstance(head, GatedHead) for head in trained.modules())
+        inputs = (
+            torch.zeros(2, 2),
+            torch.ones(2, 3, 2, 2),
+            torch.ones(2, 3, dtype=torch.bool),
+            torch.ones(2, 3, 2, dtype=torch.bool),
+            torch.ones(2, 3, len(cfg["attn_history_stats"])),
+        )
+        _assert_saved_forward_parity(trained, served, inputs, tmp_path)
         return
     trained = build_multihead_net_with_history(
         cfg, static_dim=2, game_dim=2, targets=list(cfg["targets"])
@@ -132,7 +213,21 @@ def test_all_six_factory_and_serving_configs_agree(position):
     assert {name for name, mode in trained_modes.items() if mode} == (
         {"receptions"} if position in {"RB", "WR", "TE"} else set()
     )
-    served.load_state_dict(trained.state_dict())
+    inputs = (torch.zeros(2, 2), torch.ones(2, 3, 2), torch.ones(2, 3, dtype=torch.bool))
+    _assert_saved_forward_parity(trained, served, inputs, tmp_path)
+
+
+def _assert_saved_forward_parity(trained, served, inputs, tmp_path):
+    trained.eval()
+    path = tmp_path / "attention.pt"
+    torch.save(trained.state_dict(), path)
+    served.load_state_dict(torch.load(path, weights_only=True))
+    served.eval()
+    with torch.no_grad():
+        before, after = trained(*inputs), served(*inputs)
+    assert before.keys() == after.keys()
+    for name in before:
+        torch.testing.assert_close(after[name], before[name], atol=0, rtol=0)
 
 
 def test_corrected_head_supports_stacked_forward_and_gradients():
