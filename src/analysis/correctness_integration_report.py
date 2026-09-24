@@ -7,6 +7,7 @@ checkpoint rescoring and paired-control verifier. No fitting or publication.
 from __future__ import annotations
 
 import argparse
+import importlib
 import io
 import json
 import re
@@ -103,6 +104,26 @@ def verify_record(record, truth, read_receipt):
     )
     require(record.get("candidate_prs") == [1608, 1613], "Wrong candidate PRs")
     require(
+        record.get("position") in POSITIONS and record.get("variant") in arms(record["position"]),
+        "Unexpected correctness position/arm",
+    )
+    implementation = (
+        "src.shared.training.ztnb2_log_prob"
+        if record["variant"] in {"precision", "combined"}
+        else "src.tuning.correctness_legacy_count.ztnb2_log_prob"
+    )
+    require(
+        record.get("count_likelihood_implementation") == implementation,
+        "Wrong count likelihood implementation for arm",
+    )
+    require(
+        all(
+            trainer.get("checkpoint_selection", {}).get("metric") == "weighted_mae"
+            for trainer in record["trainers"]
+        ),
+        "Every trainer must retain weighted_mae checkpoint selection",
+    )
+    require(
         record.get("probability_mean")
         == ("corrected" if record["variant"] in {"mean", "combined"} else "legacy"),
         "Wrong expectation arm",
@@ -127,7 +148,42 @@ def verify_record(record, truth, read_receipt):
     view.update(schema="isolated-audit-development/v1", promotion_eligible=False)
     verified = audit.verify_record(view, truth, read_receipt)
     verified.record = record
+    verify_checkpoint_expectation(verified)
     return verified
+
+
+def verify_checkpoint_expectation(verified):
+    """Match persisted gated-head semantics to the exact production loss map."""
+    import torch
+
+    record = verified.record
+    config = importlib.import_module(f"src.{record['position'].lower()}.config").POSITION_CONFIG
+    gated = config.gated_targets if config.attn_gated else ()
+    corrected = record["variant"] in {"mean", "combined"}
+    expected = {
+        f"heads.{target}._ztnb_mean_version": int(
+            corrected and config.head_losses.get(target) == "hurdle_negbin"
+        )
+        for target in gated
+    }
+    actual = {
+        key: value
+        for key, value in verified.states["attn_nn"].items()
+        if key.endswith("_ztnb_mean_version")
+    }
+    require(
+        actual.keys() == expected.keys(),
+        "Attention checkpoint expectation target map differs from production",
+    )
+    for key, expected_version in expected.items():
+        version = actual[key]
+        require(
+            isinstance(version, torch.Tensor)
+            and version.shape == torch.Size([])
+            and version.dtype == torch.int64
+            and version.item() == expected_version,
+            f"Attention checkpoint expectation version disagrees with arm/loss: {key}",
+        )
 
 
 def summarize(cells, *, errors=()):

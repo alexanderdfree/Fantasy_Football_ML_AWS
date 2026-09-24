@@ -1,9 +1,11 @@
 """Synthetic records only; no model/scaler fitting or network calls."""
 
 import hashlib
+import io
 import json
 from copy import deepcopy
 
+import numpy as np
 import pandas as pd
 import pytest
 import torch
@@ -92,6 +94,77 @@ def complete_cells():
     return [cell(*identity) for identity in sorted(report.expected_cells())]
 
 
+def fixture_record(position="WR", arm="baseline"):
+    from tests.analysis.test_audit_development_report import fixture_record as old_fixture
+
+    record, truth, data = old_fixture(position, missing=position == "K")
+    record.update(
+        schema="count-correctness-integration/v1",
+        candidate_prs=[1608, 1613],
+        variant=arm,
+        probability_mean="corrected" if arm in {"mean", "combined"} else "legacy",
+        count_likelihood_implementation=(
+            "src.shared.training.ztnb2_log_prob"
+            if arm in {"precision", "combined"}
+            else "src.tuning.correctness_legacy_count.ztnb2_log_prob"
+        ),
+    )
+    record.pop("promotion_eligible")
+    gated = {
+        "RB": ("receptions", "rushing_tds", "receiving_tds"),
+        "WR": ("receptions", "receiving_tds"),
+        "TE": ("receptions", "receiving_tds"),
+    }.get(position, ())
+    state = {"weight": torch.tensor([1.0])}
+    state.update(
+        {
+            f"heads.{target}._ztnb_mean_version": torch.tensor(
+                int(target == "receptions" and arm in {"mean", "combined"})
+            )
+            for target in gated
+        }
+    )
+    buffer = io.BytesIO()
+    torch.save(state, buffer)
+    data["attn_state"] = buffer.getvalue()
+    for trainer in record["trainers"]:
+        trainer["checkpoint_selection"]["metric"] = "weighted_mae"
+        if trainer["family"] == "attn_nn":
+            trainer["checkpoint"] = "attn_state"
+            if position in report.AFFECTED:
+                with np.load(io.BytesIO(data["npz"])) as original:
+                    values = {name: original[name] for name in original.files}
+                n = len(values["truth__receptions"])
+                values.update(
+                    prediction__receptions_value_mu=np.ones(n),
+                    prediction__receptions_value_log_alpha=np.zeros(n),
+                )
+                buffer = io.BytesIO()
+                np.savez_compressed(buffer, **values)
+                data["attn_npz"] = buffer.getvalue()
+                trainer["validation_raw"] = "attn_npz"
+                trainer["count_numerics"] = {
+                    "n_positive": n,
+                    "active_numerical_defect": False,
+                    "production_device": "cuda:0",
+                    "reference_device": "cpu",
+                    "observed_ranges": {"mu": [1.0, 1.0], "log_alpha": [0.0, 0.0]},
+                    "errors": {
+                        name: {"n_outside_tolerance": 0, "max_scaled_error": 0.0}
+                        for name in ("log_probability", "d_mu", "d_log_alpha")
+                    },
+                }
+    return record, truth, data
+
+
+def mutate_attention_state(data, mutate):
+    state = torch.load(io.BytesIO(data["attn_state"]), weights_only=True)
+    mutate(state)
+    buffer = io.BytesIO()
+    torch.save(state, buffer)
+    data["attn_state"] = buffer.getvalue()
+
+
 def test_full_plan_requires_all_108_cells_without_overlap():
     assert len(report.expected_cells()) == 108
     assert report.validate_plan(plan()) == plan()
@@ -131,14 +204,10 @@ def test_changed_control_or_input_identity_fails(field):
 
 
 def test_corrected_observed_defect_fails_before_loading_weights():
-    record = {
-        "schema": "count-correctness-integration/v1",
-        "candidate_prs": [1608, 1613],
-        "position": "WR",
-        "variant": "combined",
-        "probability_mean": "corrected",
-        "trainers": [{"family": "attn_nn", "count_numerics": {"active_numerical_defect": True}}],
-    }
+    record, _, _ = fixture_record("WR", "combined")
+    next(t for t in record["trainers"] if t["family"] == "attn_nn")["count_numerics"][
+        "active_numerical_defect"
+    ] = True
     with pytest.raises(ValueError, match="observed numerical defect"):
         report.verify_record(record, None, lambda entry: pytest.fail("read unexpected artifact"))
 
@@ -155,21 +224,79 @@ def test_content_addressed_manifest_tampering_is_rejected(tmp_path):
         archive.read(key, digest=digest)
 
 
-@pytest.mark.parametrize("position", report.POSITIONS)
-def test_schema_adapter_reuses_full_verification_without_mutating_evidence(position):
-    from tests.analysis.test_audit_development_report import fixture_record
-
-    record, truth, data = fixture_record(position, missing=position == "K")
-    record.update(
-        schema="count-correctness-integration/v1",
-        candidate_prs=[1608, 1613],
-        probability_mean="legacy",
-    )
-    record.pop("promotion_eligible")
+@pytest.mark.parametrize("position,arm", [(p, a) for p in report.POSITIONS for a in report.arms(p)])
+def test_schema_adapter_reuses_full_verification_without_mutating_evidence(position, arm):
+    record, truth, data = fixture_record(position, arm)
     original = deepcopy(record)
     verified = report.verify_record(record, truth, data.__getitem__)
     assert verified.record == original == record
     assert verified.scores["all:nn"]["n"] == (1 if position == "K" else 2)
+
+
+@pytest.mark.parametrize("position", report.AFFECTED)
+@pytest.mark.parametrize("arm", report.ARMS)
+def test_checkpoint_cannot_claim_a_different_reception_mean_arm(position, arm):
+    record, truth, data = fixture_record(position, arm)
+    wrong = 0 if arm in {"mean", "combined"} else 1
+    mutate_attention_state(
+        data,
+        lambda state: state.update({"heads.receptions._ztnb_mean_version": torch.tensor(wrong)}),
+    )
+    with pytest.raises(ValueError, match="checkpoint.*expectation"):
+        report.verify_record(record, truth, data.__getitem__)
+
+
+@pytest.mark.parametrize("case", ["missing", "extra", "poisson", "nonscalar", "fractional"])
+def test_exact_checkpoint_target_loss_map_is_required(case):
+    record, truth, data = fixture_record("WR", "mean")
+
+    def change(state):
+        if case == "missing":
+            del state["heads.receptions._ztnb_mean_version"]
+        elif case == "extra":
+            state["heads.fumbles_lost._ztnb_mean_version"] = torch.tensor(0)
+        elif case == "poisson":
+            state["heads.receiving_tds._ztnb_mean_version"] = torch.tensor(1)
+        else:
+            state["heads.receptions._ztnb_mean_version"] = torch.tensor(
+                [1, 1] if case == "nonscalar" else 0.5
+            )
+
+    mutate_attention_state(data, change)
+    with pytest.raises(ValueError, match="checkpoint.*expectation"):
+        report.verify_record(record, truth, data.__getitem__)
+
+
+@pytest.mark.parametrize("position", ["QB", "K", "DST"])
+def test_control_checkpoint_cannot_add_a_corrected_count_head(position):
+    record, truth, data = fixture_record(position, "combined")
+    mutate_attention_state(
+        data, lambda state: state.update({"heads.receptions._ztnb_mean_version": torch.tensor(1)})
+    )
+    with pytest.raises(ValueError, match="checkpoint.*expectation"):
+        report.verify_record(record, truth, data.__getitem__)
+
+
+@pytest.mark.parametrize("arm", report.ARMS)
+def test_swapped_likelihood_implementation_is_rejected(arm):
+    record, truth, data = fixture_record("WR", arm)
+    record["count_likelihood_implementation"] = (
+        "src.tuning.correctness_legacy_count.ztnb2_log_prob"
+        if arm in {"precision", "combined"}
+        else "src.shared.training.ztnb2_log_prob"
+    )
+    with pytest.raises(ValueError, match="likelihood implementation"):
+        report.verify_record(record, truth, data.__getitem__)
+
+
+@pytest.mark.parametrize("family", ["nn", "attn_nn"])
+def test_changed_checkpoint_selection_policy_is_rejected(family):
+    record, truth, data = fixture_record()
+    next(t for t in record["trainers"] if t["family"] == family)["checkpoint_selection"][
+        "metric"
+    ] = "fantasy_rmse"
+    with pytest.raises(ValueError, match="weighted_mae"):
+        report.verify_record(record, truth, data.__getitem__)
 
 
 def test_missing_cells_and_mixed_source_fail():
