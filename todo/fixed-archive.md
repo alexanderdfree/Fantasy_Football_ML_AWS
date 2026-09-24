@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Serving image cache shared restore prefixes across image families
+[Read the incident record](fixed-archive/serving-image-cache-scope-2026-09.md).
+
 ### [FIXED] Nested (K) served-kwargs builder dropped `nn_head_hidden_overrides` the training factory consumes
 [Read the incident record](fixed-archive/audit-1499-nested-served-kwargs-head-overrides.md).
 
