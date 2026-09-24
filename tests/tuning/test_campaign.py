@@ -119,6 +119,7 @@ def test_batch_resume_attaches_active_jobs_and_reuses_pinned_definition(tmp_path
     assert definition.call_count == 2
     assert campaign.submit_units(manifest(), journal, batch, resume=True) == original
     assert batch.submit_job.call_count == 3
+    monkeypatch.setattr(campaign, "_unit_complete", lambda unit, journal: True)
     batch.describe_jobs.side_effect = lambda jobs: {
         "jobs": [{"jobId": jobs[0], "status": "FAILED" if jobs[0] == "job-0" else "SUCCEEDED"}]
     }

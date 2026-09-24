@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -14,6 +15,18 @@ from pathlib import Path, PurePosixPath
 from src.tuning.campaign_contracts import PREFIX, canonical, identity
 
 MAX_JSON_BYTES = 1024 * 1024
+
+
+def clean(value):
+    if isinstance(value, dict):
+        return {str(k): clean(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [clean(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if hasattr(value, "item"):
+        return clean(value.item())
+    return value
 
 
 def atomic_json(path, value):
@@ -181,6 +194,67 @@ class Journal:
                 ):
                     return False
         return True
+
+    def restore_outputs(self, directory, prefix, records):
+        """Restore verified completed cells after a Spot worker loses its disk."""
+        directory = Path(directory)
+        for name, expected in records.items():
+            relative = PurePosixPath(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("Unsafe output checkpoint path")
+            path = directory / relative
+            if self.s3 is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self.s3.download_file(self.bucket, f"{self.prefix}/{prefix}/{name}", str(path))
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != expected["sha256"] or path.stat().st_size != expected["bytes"]:
+                raise ValueError(f"Output checkpoint checksum mismatch: {name}")
+
+
+class CellCheckpoint:
+    """A frozen campaign owns each completed A/B unit or benchmark fold."""
+
+    def __init__(self, journal, prefix, manifest_id):
+        self.journal, self.prefix, self.manifest_id = journal, prefix, manifest_id
+
+    def _name(self, key):
+        return f"{self.prefix}/{identity(key)}.json"
+
+    def load(self, key, output=None):
+        value, _ = self.journal.read(self._name(key))
+        if value is None:
+            return None
+        if value["manifest_id"] != self.manifest_id or value["key"] != key:
+            raise ValueError("Cell checkpoint belongs to a different campaign")
+        if identity(value["result"]) != value["sha256"]:
+            raise ValueError("Cell checkpoint checksum mismatch")
+        if output is not None:
+            prefix = f"{self.prefix}/artifacts/{identity(key)}"
+            if not self.journal.outputs_valid(output, prefix, value["outputs"]):
+                return None
+            self.journal.restore_outputs(output, prefix, value["outputs"])
+        return value["result"]
+
+    def save(self, key, result, output=None):
+        result = clean(result)
+        _, token = self.journal.read(self._name(key))
+        files = (
+            self.journal.upload_outputs(output, f"{self.prefix}/artifacts/{identity(key)}")
+            if output is not None
+            else {}
+        )
+        self.journal.write(
+            self._name(key),
+            {
+                "manifest_id": self.manifest_id,
+                "key": key,
+                "result": result,
+                "sha256": identity(result),
+                "outputs": files,
+            },
+            token,
+        )
 
 
 def verify_snapshot(root, manifest):

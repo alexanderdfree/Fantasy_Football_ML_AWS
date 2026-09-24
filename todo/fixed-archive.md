@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Experiment campaigns retain completed work across allocation retries
+[Read the incident record](fixed-archive/experiment-campaign-resume-2026-09.md).
+
 ### [FIXED] CI test scope missed unknown paths mixed with recognized changes
 [Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
 

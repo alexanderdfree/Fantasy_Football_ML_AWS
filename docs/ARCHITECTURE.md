@@ -132,6 +132,7 @@ Each decision below follows the same structure: what was decided, the forces at 
 | D28 | [Scheduled data maintenance and inference](adr/0028-scheduled-data-maintenance.md) | Accepted; opt-in |
 | D29 | [Synthetic player-history diagnostics](adr/0029-synthetic-player-history-diagnostics.md) | Accepted |
 | D30 | [Exact experiment result reuse](adr/0030-exact-experiment-result-reuse.md) | Accepted |
+| D31 | [Experiment campaign allocation reuse](adr/0031-experiment-campaign-allocation-reuse.md) | Accepted |
 
 ## 4. Cross-Cutting Consequences
 

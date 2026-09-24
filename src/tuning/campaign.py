@@ -206,6 +206,20 @@ def _find_submitted(batch, queue, job_name):
     return rows[0]["jobId"] if rows else None
 
 
+def _unit_complete(unit, journal):
+    progress, _ = journal.read(f"units/{unit['id']}/progress.json")
+    steps = (progress or {}).get("steps", {})
+    return all(
+        steps.get(name, {}).get("state") == "SUCCEEDED"
+        and journal.outputs_valid(
+            journal.root / "units" / unit["id"] / "steps" / name,
+            f"units/{unit['id']}/steps/{name}",
+            steps[name].get("outputs", {}),
+        )
+        for name in unit["steps"]
+    )
+
+
 def submit_units(
     manifest,
     journal,
@@ -226,7 +240,12 @@ def submit_units(
             raise ValueError("Submission belongs to another campaign identity")
         if prior:
             job_id = prior.get("job_id")
-            if not job_id:
+            if not job_id and prior.get("submit_error"):
+                if not resume:
+                    raise RuntimeError(
+                        "Previous submission was rejected; correct the cause and use --resume"
+                    )
+            elif not job_id:
                 job_id = _find_submitted(batch, queue, prior["job_name"])
                 if not job_id:
                     raise RuntimeError(
@@ -234,13 +253,19 @@ def submit_units(
                     )
                 prior["job_id"] = job_id
                 etag = journal.write(key, prior, etag)
-            described = batch.describe_jobs(jobs=[job_id])["jobs"]
-            if not described:
-                raise RuntimeError("Recorded Batch job is unavailable; refusing a blind duplicate")
-            state = described[0]["status"]
-            if state != "FAILED" or not resume:
-                jobs[unit["id"]] = job_id
-                continue
+            if job_id:
+                described = batch.describe_jobs(jobs=[job_id])["jobs"]
+                if not described:
+                    raise RuntimeError(
+                        "Recorded Batch job is unavailable; refusing a blind duplicate"
+                    )
+                state = described[0]["status"]
+                retryable = state == "FAILED" or (
+                    state == "SUCCEEDED" and not _unit_complete(unit, journal)
+                )
+                if not retryable or not resume:
+                    jobs[unit["id"]] = job_id
+                    continue
         attempt = (prior or {}).get("attempt", 0) + 1
         resource = unit["resource"]
         if prior and prior.get("job_definition"):
@@ -260,7 +285,7 @@ def submit_units(
         # This conditional intent is the submission lock: concurrent launchers
         # cannot both call submit_job for the same attempt.
         etag = journal.write(key, intent, etag)
-        response = batch.submit_job(
+        request = dict(
             jobName=job_name,
             jobQueue=queue,
             jobDefinition=definition,
@@ -276,6 +301,24 @@ def submit_units(
             },
             timeout={"attemptDurationSeconds": attempt_timeout},
         )
+        from botocore.exceptions import ClientError
+
+        try:
+            response = batch.submit_job(**request)
+        except ClientError as exc:
+            # A definitive rejection can be retried after fixing its cause.
+            # Transport errors and 5xx outcomes remain uncertain and must be
+            # reconciled by the stable job name, never blindly duplicated.
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") in {
+                400,
+                401,
+                403,
+                404,
+                413,
+            }:
+                intent["submit_error"] = exc.response["Error"]["Code"]
+                journal.write(key, intent, etag)
+            raise
         intent["job_id"] = response["jobId"]
         journal.write(key, intent, etag)
         jobs[unit["id"]] = intent["job_id"]
@@ -286,6 +329,7 @@ def status(manifest, journal, batch=None):
     result = {"id": manifest["id"], "manifest_id": manifest["manifest_id"], "units": {}}
     complete = True
     failed = False
+    active = False
     for unit in manifest["units"]:
         progress, _ = journal.read(f"units/{unit['id']}/progress.json")
         steps = (progress or {}).get("steps", {})
@@ -296,10 +340,19 @@ def status(manifest, journal, batch=None):
             jobs = batch.describe_jobs(jobs=[submitted["job_id"]])["jobs"]
             entry["job_state"] = jobs[0]["status"] if jobs else "UNKNOWN"
             failed |= entry["job_state"] == "FAILED"
-        complete &= all(state == "SUCCEEDED" for state in states.values())
+            active |= entry["job_state"] not in {"FAILED", "SUCCEEDED", "UNKNOWN"}
+            if entry["job_state"] == "SUCCEEDED" and not _unit_complete(unit, journal):
+                entry["error"] = "Job ended without verified complete outputs"
+                failed = True
+            complete &= entry["job_state"] == "SUCCEEDED"
+        complete &= all(state == "SUCCEEDED" for state in states.values()) and _unit_complete(
+            unit, journal
+        )
         failed |= any(state == "FAILED" for state in states.values())
         result["units"][unit["id"]] = entry
-    result["state"] = "SUCCEEDED" if complete else "FAILED" if failed else "RUNNING"
+    result["state"] = (
+        "SUCCEEDED" if complete else "RUNNING" if active else "FAILED" if failed else "RUNNING"
+    )
     return result
 
 
@@ -359,6 +412,10 @@ def main(argv=None):
     parser.add_argument("--wait-timeout", type=int, default=10800)
     parser.add_argument("--attempt-timeout", type=int, default=10800)
     args = parser.parse_args(argv)
+    if args.wait_timeout < 1 or args.attempt_timeout < 60:
+        parser.error(
+            "--wait-timeout must be positive; --attempt-timeout must be at least 60 seconds"
+        )
     spec = validate(json.loads(args.file.read_text()))
     root = args.output_dir.resolve() / spec["id"]
     if args.dry_run:
@@ -420,12 +477,14 @@ def main(argv=None):
         if args.backend == "local":
             from src.tuning.campaign_worker import run_unit
 
+            previous, _ = journal.read("units/local/progress.json")
             return run_unit(
                 manifest,
                 manifest["units"][0],
                 journal,
                 data_dir=root / "inputs",
                 directory=root / "units/local",
+                attempt=(previous or {}).get("attempt", 0) + 1,
             )
         jobs = submit_units(
             manifest,

@@ -1,0 +1,99 @@
+name: Experiment campaign (isolated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      campaign_file:
+        description: Repository JSON campaign file
+        default: examples/campaigns/smoke.json
+        required: true
+      campaign_id:
+        description: Unique campaign ID; use the original ID when resuming
+        required: true
+      image_sha:
+        description: Full built image SHA; blank selects this checkout
+        default: ""
+      data_release:
+        description: Optional immutable data release; blank resolves matching producer
+        default: ""
+      resume:
+        description: Reattach jobs and resume completed checkpoints
+        type: boolean
+        default: false
+      fresh:
+        description: Force new fits in A/B steps; completed campaign work still resumes
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  campaign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      CAMPAIGN_FILE: ${{ inputs.campaign_file }}
+      CAMPAIGN_ID: ${{ inputs.campaign_id }}
+      IMAGE_SHA: ${{ inputs.image_sha || github.sha }}
+      DATA_RELEASE: ${{ inputs.data_release }}
+      RESUME: ${{ inputs.resume }}
+      FRESH: ${{ inputs.fresh }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements*.txt
+      - name: Install campaign launcher
+        run: uv pip install --system --index-strategy unsafe-best-match -r requirements-dev.txt
+      - name: Freeze operator inputs
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from src.tuning.campaign_contracts import safe_id, validate
+          root = Path.cwd().resolve()
+          source = (root / os.environ['CAMPAIGN_FILE']).resolve()
+          if not source.is_relative_to(root) or not source.is_file():
+              raise SystemExit('campaign_file must be a repository JSON file')
+          if not re.fullmatch(r'[0-9a-f]{40}', os.environ['IMAGE_SHA']):
+              raise SystemExit('image_sha must be a full lowercase commit SHA')
+          spec = json.loads(source.read_text())
+          spec['id'] = safe_id(os.environ['CAMPAIGN_ID'])
+          if os.environ['DATA_RELEASE']:
+              spec['dataset_id'] = os.environ['DATA_RELEASE']
+          target = Path(os.environ['RUNNER_TEMP']) / 'campaign.json'
+          target.write_text(json.dumps(validate(spec), indent=2))
+          PY
+          python -m src.tuning.campaign --file "$RUNNER_TEMP/campaign.json" --backend batch --dry-run
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Run or resume campaign
+        run: |
+          flags=()
+          if [ "$RESUME" = true ]; then flags+=(--resume); fi
+          if [ "$FRESH" = true ]; then flags+=(--fresh); fi
+          python -m src.tuning.campaign --file "$RUNNER_TEMP/campaign.json" \
+            --backend batch --region "$AWS_REGION" --image-sha "$IMAGE_SHA" \
+            --wait "${flags[@]}"
+      - name: Save controller evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: campaign-controller-${{ github.run_id }}
+          path: |
+            .cache/campaigns/**/manifest.json
+            .cache/campaigns/**/submission.json
+          if-no-files-found: ignore

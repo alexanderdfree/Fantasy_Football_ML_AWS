@@ -65,7 +65,16 @@ EXECUTION_ENV = (
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
     "LGBM_N_JOBS",
+    "LOKY_MAX_CPU_COUNT",
+    "NUMEXPR_NUM_THREADS",
+    "CUBLAS_WORKSPACE_CONFIG",
 )
+DISPATCH_ENV = {
+    "FF_TUNE_AB_SPEC",
+    "FF_TUNE_ABLATE_MOD",
+    "FF_TUNE_ENSEMBLE_AB",
+    "FF_TUNE_ENSEMBLE_COMPARE",
+}
 
 
 def canonical(value):
@@ -116,9 +125,15 @@ def validate(document):
     if set(result) - {"version", "id", "steps", "dataset_id", "data_prefix"}:
         raise ValueError("Unknown campaign fields")
     safe_id(result.get("id"))
-    if "dataset_id" in result and not re.fullmatch(r"[0-9a-f]{64}", result["dataset_id"]):
+    if "dataset_id" in result and (
+        not isinstance(result["dataset_id"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", result["dataset_id"])
+    ):
         raise ValueError("dataset_id must be an immutable SHA-256 identity")
-    prefix = result.get("data_prefix", "data").strip("/")
+    prefix = result.get("data_prefix", "data")
+    if not isinstance(prefix, str):
+        raise ValueError("Invalid data prefix")
+    prefix = prefix.strip("/")
     if not prefix or any(p in {".", ".."} for p in prefix.split("/")):
         raise ValueError("Invalid data prefix")
     if prefix != "data":
@@ -146,7 +161,9 @@ def validate(document):
         if kind not in KINDS:
             raise ValueError(f"Unsupported workload: {kind}")
         if kind == "ab":
-            if not re.fullmatch(r"src\.tuning\.[A-Za-z_][A-Za-z_0-9.]*", step.get("spec", "")):
+            if not isinstance(step.get("spec"), str) or not re.fullmatch(
+                r"src\.tuning\.[A-Za-z_][A-Za-z_0-9.]*", step["spec"]
+            ):
                 raise ValueError("A/B steps require an importable src.tuning spec")
         elif "spec" in step:
             raise ValueError("spec is only valid for A/B steps")
@@ -200,7 +217,9 @@ def validate(document):
             ("scope", {"full", "history"}),
             ("parallel_backend", {"auto", "thread", "mps"}),
         ):
-            if key in options and options[key] not in choices:
+            if key in options and (
+                not isinstance(options[key], str) or options[key] not in choices
+            ):
                 raise ValueError(f"Unsupported {key}: {options[key]}")
         if (
             kind == "nn_tune"
@@ -213,9 +232,10 @@ def validate(document):
             raise ValueError("env must be a mapping")
         for key, value in env.items():
             if (
-                not re.fullmatch(r"FF_[A-Z0-9_]+", key)
+                not isinstance(key, str)
+                or not re.fullmatch(r"FF_[A-Z0-9_]+", key)
                 or key.startswith(PROTECTED_ENV)
-                or key in {"FF_FRESH", "FF_TUNE_AB_SPEC"}
+                or key in {"FF_FRESH", *DISPATCH_ENV}
                 or re.search(r"TOKEN|PASSWORD|SECRET|CREDENTIAL|API_KEY", key)
             ):
                 raise ValueError(f"Environment key is managed or unsupported: {key}")
@@ -256,4 +276,14 @@ def work_units(spec, backend):
 
 
 def execution_environment():
-    return {key: os.environ[key] for key in EXECUTION_ENV if key in os.environ}
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key in EXECUTION_ENV
+        or (
+            key.startswith("FF_")
+            and not key.startswith(PROTECTED_ENV)
+            and key not in {"FF_FRESH", *DISPATCH_ENV}
+            and not re.search(r"TOKEN|PASSWORD|SECRET|CREDENTIAL|API_KEY", key)
+        )
+    }

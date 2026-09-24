@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-import math
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -14,20 +14,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.tuning.campaign_contracts import ROOT, identity, source_fingerprint
-from src.tuning.campaign_io import atomic_json, verify_snapshot
-
-
-def clean(value):
-    if isinstance(value, dict):
-        return {str(k): clean(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [clean(v) for v in value]
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if hasattr(value, "item"):
-        return clean(value.item())
-    return value
+from src.tuning.campaign_contracts import EXECUTION_ENV, ROOT, identity, source_fingerprint
+from src.tuning.campaign_io import CellCheckpoint, Journal, atomic_json, clean, verify_snapshot
 
 
 def verify_runtime(manifest, data_dir):
@@ -55,14 +43,7 @@ def verify_runtime(manifest, data_dir):
 def child_environment(manifest, step, unit, output, data_dir):
     env = dict(os.environ)
     for key in tuple(env):
-        if key.startswith(("FF_CAMPAIGN_", "FF_AB_", "FF_CORE_POOL_")) or key in {
-            "FF_TUNE_AB_SPEC",
-            "FF_DATA_RELEASE",
-            "FF_DATASET_ID",
-            "FF_DATA_FORMAT",
-            "FF_BUILD_PLAN_ID",
-            "FF_LEGACY_RUN_ID",
-        }:
+        if (key.startswith("FF_") and not key.startswith("FF_RESULT_")) or key in EXECUTION_ENV:
             env.pop(key, None)
     env.update(manifest["execution_environment"])
     env.update(step["env"])
@@ -81,6 +62,7 @@ def child_environment(manifest, step, unit, output, data_dir):
         {
             "PYTHONPATH": str(ROOT) + os.pathsep + env.get("PYTHONPATH", ""),
             "FF_CAMPAIGN_ID": manifest["id"],
+            "FF_CAMPAIGN_MANIFEST_ID": manifest["manifest_id"],
             "FF_CAMPAIGN_STEP": step["id"],
             "FF_CAMPAIGN_UNIT": unit["id"],
             "FF_CAMPAIGN_DATA_DIR": str(data_dir),
@@ -133,7 +115,12 @@ def _flags(options, *, skip=()):
 
 
 def _benchmark_cell(task):
-    from src.benchmarking.benchmark import run_one, score_one_origin
+    from src.benchmarking.benchmark import (
+        _cohorts_block,
+        _significance_block,
+        run_one,
+        score_one_origin,
+    )
     from src.shared.benchmark_utils import summarize_pipeline_result
     from src.training.context import RunContext, use_context
 
@@ -141,20 +128,27 @@ def _benchmark_cell(task):
     context = RunContext(
         Path(task["output"]), Path(task["data"]), seed=task["seed"], reuse_results=False
     )
+    start = time.monotonic()
     with use_context(context):
         if origin is not None:
             _, summary = score_one_origin(pos, origin, seed=context.seed)
         else:
             result = run_one(pos, context=context)
             summary = summarize_pipeline_result(pos, result)
-    return {"position": pos, "origin": origin, "summary": clean(summary)}
+            summary["cohorts"] = _cohorts_block(pos, result)
+            if task.get("significance"):
+                summary["significance"] = _significance_block(pos, result)
+    summary["elapsed_sec"] = round(time.monotonic() - start, 3)
+    row = {"position": pos, "origin": origin, "summary": clean(summary)}
+    atomic_json(Path(task["output"]) / "cell_result.json", row)
+    return row
 
 
 def _benchmark_failure(task, exc):
     return {"position": task["position"], "origin": task["origin"], "error": str(exc)[:1000]}
 
 
-def benchmark_step(step, data_dir, output):
+def benchmark_step(step, data_dir, output, checkpoint):
     from src.benchmarking.benchmark import finalize_rolling_origin
     from src.benchmarking.parallel_train import _default_jobs, physical_cores
     from src.config import ROLLING_ORIGIN_TEST_SEASONS
@@ -170,23 +164,41 @@ def benchmark_step(step, data_dir, output):
             "seed": step["options"].get("seed", 42),
             "data": str(data_dir),
             "output": str(output / f"{pos}-{origin or 'holdout'}"),
+            "key": f"{pos}-{origin or 'holdout'}",
+            "significance": step["options"].get("significance", False),
         }
         for pos in step["positions"]
         for origin in origins
     ]
-    jobs = min(step["options"].get("jobs", _default_jobs(min(len(tasks), 6))), len(tasks))
+    rows, pending = [], []
+    for task in tasks:
+        previous = checkpoint.load(task["key"], Path(task["output"]))
+        if previous is None:
+            pending.append(task)
+        else:
+            rows.append(previous)
+    jobs = max(1, min(step["options"].get("jobs", _default_jobs(min(len(tasks), 6))), len(pending)))
     cores = physical_cores()
     with tempfile.TemporaryDirectory(prefix="ff-campaign-pool-") as directory:
         address, active, stop = start_coordinator(cores, directory)
         try:
             active(jobs)
-            rows = run_tasks(
-                tasks,
-                _benchmark_cell,
-                max_workers=jobs,
-                on_error=_benchmark_failure,
-                initializer=_init_spec_worker,
-                initargs=(cores, 5, address),
+
+            def save(index, row):
+                if "error" not in row:
+                    task = pending[index]
+                    checkpoint.save(task["key"], row, Path(task["output"]))
+
+            rows.extend(
+                run_tasks(
+                    pending,
+                    _benchmark_cell,
+                    max_workers=jobs,
+                    on_error=_benchmark_failure,
+                    on_result=save,
+                    initializer=_init_spec_worker,
+                    initargs=(cores, 5, address),
+                )
             )
         finally:
             stop()
@@ -194,6 +206,7 @@ def benchmark_step(step, data_dir, output):
     if errors:
         atomic_json(output / "benchmark_errors.json", errors)
         raise RuntimeError(f"{len(errors)} benchmark cells failed")
+    rows.sort(key=lambda row: (step["positions"].index(row["position"]), row["origin"] or 0))
     if not step["options"].get("rolling_origin"):
         return {"results": [row["summary"] for row in rows], "fresh_training": True}
     return {
@@ -213,11 +226,36 @@ def execute_step(manifest, step, data_dir, output):
     verify_runtime(manifest, data_dir)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    import torch
+
+    device = os.environ.get("FF_DEVICE", "auto")
+    if (device == "cuda" and not torch.cuda.is_available()) or (
+        device == "mps" and not torch.backends.mps.is_available()
+    ):
+        raise RuntimeError(f"Requested campaign device is unavailable: {device}")
     link = output / "data"
     if not link.exists():
-        link.symlink_to(data_dir, target_is_directory=True)
+        try:
+            link.symlink_to(data_dir, target_is_directory=True)
+        except OSError:
+            if os.name != "nt":
+                raise
+            shutil.copytree(data_dir, link)
     os.chdir(output)  # This function runs only in a dedicated child.
     options = step["options"]
+    s3 = None
+    if manifest["backend"] == "batch":
+        import boto3
+
+        s3 = boto3.client("s3", region_name=manifest["region"])
+    journal = Journal(
+        output / ".checkpoints", s3=s3, bucket=manifest["bucket"], campaign_id=manifest["id"]
+    )
+    checkpoint = CellCheckpoint(
+        journal,
+        f"units/{os.environ['FF_CAMPAIGN_UNIT']}/steps/{step['id']}/cells",
+        manifest["manifest_id"],
+    )
     with use_context(RunContext(output, Path(data_dir), seed=options.get("seed", 42))):
         if step["kind"] == "ab":
             from src.tuning.ab_harness import aggregate, resolve_spec, run_ab
@@ -260,6 +298,7 @@ def execute_step(manifest, step, data_dir, output):
                     step["spec"],
                     positions=step["positions"],
                     fresh=manifest["fresh"],
+                    checkpoint=checkpoint,
                     **{k: v for k, v in options.items() if k not in {"device", "max_cells"}},
                 )
             if result.get("failed") or any(
@@ -267,9 +306,13 @@ def execute_step(manifest, step, data_dir, output):
             ):
                 raise RuntimeError("A/B campaign step contains failed cells or sentinel violations")
         elif step["kind"] == "benchmark":
-            result = benchmark_step(step, data_dir, output)
+            result = benchmark_step(step, data_dir, output, checkpoint)
         else:
             opts = dict(options)
+            # A successful exit must produce this attempt's result; leave study
+            # checkpoints in place while removing stale report files.
+            for stale in output.glob("tune_*results*.json"):
+                stale.unlink()
             if step["kind"] == "nn_tune":
                 if manifest["backend"] == "batch":
                     opts.setdefault("parallel_backend", "auto")
@@ -348,20 +391,20 @@ def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
                 env=child_environment(manifest, step, unit, output, data_dir),
                 stdout=log,
                 stderr=subprocess.STDOUT,
+                start_new_session=os.name != "nt",
             )
             old_handler = signal.getsignal(signal.SIGTERM)
 
             def terminate(signum, frame, child=child):
-                child.terminate()
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    child.wait(timeout=60)
-                if child.poll() is None:
-                    child.kill()
+                _stop_child(child)
                 raise SystemExit(143)
 
             signal.signal(signal.SIGTERM, terminate)
             try:
                 code = child.wait()
+            except BaseException:
+                _stop_child(child)
+                raise
             finally:
                 signal.signal(signal.SIGTERM, old_handler)
         verify_runtime(manifest, data_dir)
@@ -380,6 +423,27 @@ def run_unit(manifest, unit, journal, *, data_dir, directory, attempt=1):
             flush=True,
         )
     return 1 if failed else 0
+
+
+def _stop_child(child):
+    if child.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(child.pid), "/T", "/F"], check=False, capture_output=True
+        )
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(child.pid, signal.SIGTERM)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        child.wait(timeout=55)
+    if child.poll() is None:
+        if os.name == "nt":
+            child.kill()
+        else:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
+        child.wait(timeout=5)
 
 
 def resolve_step(step, backend):
