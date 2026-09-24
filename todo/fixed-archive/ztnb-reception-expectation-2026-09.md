@@ -25,8 +25,9 @@ but the reported expectation was `sigmoid(gate) * mu`, omitting the truncation
 normalisation `1 / (1 - P_NB(0))`. With `mu=1`, `alpha=1` and `gate=0.75` the
 fitted distribution's expectation is 1.50; the head reported 0.75.
 
-**Fix:** Report `sigmoid(gate) * mu / (1 - P_NB(0))` using torch `log1p` /
-`expm1` arithmetic in at least FP32 (`ztnb2_conditional_mean`), gated by
+**Fix:** Report `sigmoid(gate) * mu / (1 - P_NB(0))` using the shared count
+probability primitives and log-domain arithmetic in at least FP32
+(`ztnb2_conditional_mean`), gated by
 `GatedHead(correct_ztnb_mean=...)`. Each gated head persists a
 `_ztnb_mean_version` buffer: absent/0 keeps the legacy law on load (old
 artifacts are not reinterpreted, and re-save as version 0), 1 enables the
@@ -38,6 +39,28 @@ the correction only where `head_losses[name] == "hurdle_negbin"`; serving
 rebuilds from the same `head_losses` / `correct_ztnb_mean` served kwargs. Other
 loss families, gated TD outputs and target/loss-weight definitions are
 unchanged; the base NN has no gated head and is byte-identical.
+
+**Technical recheck, 2026-09-24:** The rebased implementation depends on #1613's
+shared `count_math` primitives. It avoids both `exp(log_alpha)` overflow and
+cancellation of the small-product dispersion gradient. The corrected forward
+adds `logsigmoid(gate)` before exponentiating, so an unrepresentable conditional
+mean cannot overflow a representable gate-weighted forecast. The legacy forward
+path remains unchanged. Five new independent numerical/dtype regressions failed
+against the original helper; a separate gate-weighted overflow regression
+failed before the final forward change. The updated checks compare means and
+gradients with a 120-digit Decimal reference, preserve the widest floating
+input dtype, and exercise large-dispersion/small-rate cases.
+
+The focused no-fit suite passed 249 checks: expectation math, model primitives,
+factory/serving configuration, and feature-manifest contracts. All six actual
+factory architectures have per-output disk-save/load parity with serving
+constructors, including nested K. Legacy checkpoints without a version reload
+and re-save as legacy; warm starts with and without a stored legacy marker keep
+the new fit's requested mode. This is unfitted numerical/compatibility evidence,
+not a current production-fit or forecast-accuracy result. Trainer calls,
+estimator/scaler fitting, optimizer steps and network I/O were blocked locally.
+Full Ruff lint/format and diff checks passed. Integrated Batch and current PR
+CI/review remain separate delivery gates.
 
 **Measured regression (dated evidence underlying the former hold):**
 
