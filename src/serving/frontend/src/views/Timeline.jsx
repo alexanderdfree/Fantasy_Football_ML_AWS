@@ -100,7 +100,10 @@ export function TimelineView({ scoring, theme }) {
     const releases = (payload && payload.releases) || [];
     const summary = (payload && payload.summary) || null;
     const sources = payload?.sources || [];
-    const expertNames = (payload?.experts || []).map((key) => labels[key]).join(" and ");
+    const expertLabels = (payload?.experts || []).map((key) => labels[key] || key);
+    const expertNames = expertLabels.length > 1
+        ? `${expertLabels.slice(0, -1).join(", ")} and ${expertLabels[expertLabels.length - 1]}`
+        : expertLabels.join("");
 
     const families = useMemo(
         () => ["ALL", ...Array.from(new Set(releases.map((r) => r.family)))],
@@ -174,7 +177,7 @@ export function TimelineView({ scoring, theme }) {
                                 <div className="stat-block" key={model}>
                                     <span className="stat-block-label">{labels[model]} · MAE</span>
                                     <span className="stat-block-value neutral">{fmt(summary.models[model].mae, 2)}</span>
-                                    <span>Beat {payload.experts.length > 1 ? "both experts" : expertNames}: {summary.models[model].beat_experts} / {summary.models[model].evaluated_weeks} weeks</span>
+                                    <span>Beat {payload.experts.length > 1 ? "every expert" : expertNames}: {summary.models[model].beat_experts} / {summary.models[model].evaluated_weeks} weeks</span>
                                 </div>
                             ))}
                         </div>
@@ -186,7 +189,7 @@ export function TimelineView({ scoring, theme }) {
                     <details className="results-info">
                         <summary>Scoring and coverage</summary>
                         <p>Common rows / eligible rows: {summary.n} / {summary.cohort_n}. Matching observed stats: {summary.actual_n}.</p>
-                        <p>Forecast coverage with matching actuals: {sources.map((source) => `${labels[source]} ${summary.source_n[source]}`).join(" · ")}.</p>
+                        <p>Forecast coverage with matching actuals: {sources.map((source) => `${labels[source] || source} ${summary.source_n[source]}`).join(" · ")}.</p>
                         {Object.entries(payload.scoring_components).map(([position, components]) => (
                             <p key={position}>{position}: {components.map((name) => name.replaceAll("_", " ")).join(", ")}.</p>
                         ))}

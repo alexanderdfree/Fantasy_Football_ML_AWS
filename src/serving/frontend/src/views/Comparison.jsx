@@ -243,7 +243,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
             <ComparisonSubsetBlock
                 header="Expected starters · weekly top 24"
                 bodyId="comparison-weekly-top24"
-                posMap={data?.subsets?.weekly_reference_top24}
+                posMap={data ? (subsets.weekly_reference_top24 || {}) : null}
                 coverage={data?.coverage?.weekly_reference_top24}
                 definition={data?.cohort_definitions?.weekly_reference_top24}
                 metric={metric}
@@ -280,7 +280,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
             <ComparisonSubsetBlock
                 header="Weekly top-24 leader capture · higher is better"
                 bodyId="comparison-weekly-capture"
-                posMap={data?.weekly_ranking}
+                posMap={data ? (data.weekly_ranking || {}) : null}
                 metric="hit_rate"
                 error={error}
             />
