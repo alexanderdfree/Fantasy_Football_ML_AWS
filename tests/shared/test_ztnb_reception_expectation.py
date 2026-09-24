@@ -315,30 +315,38 @@ def test_native_cuda_corrected_mean_head_capture_replay_and_vmap():
         assert actual.is_cuda and torch.isfinite(actual).all()
         torch.testing.assert_close(actual.double().cpu(), expected, rtol=3e-5, atol=1e-14)
 
-    head = _controlled_head(True).float().cuda()
-    inputs = torch.zeros(2, 2, device="cuda")
+    # Keep the independent eager oracle's leaves out of the captured workload.
+    del rates, dispersions, means, derivatives
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
+        # Fresh leaves first enter autograd on the stream used for capture.
+        # Torch 2.14 retains AccumulateGrad stream state between backward calls;
+        # warming one stream then implicitly capturing another can invalidate
+        # capture even though the model arithmetic itself is capturable.
+        head = _controlled_head(True).float().cuda()
+        inputs = torch.zeros(2, 2, device="cuda")
         for _ in range(3):
             head.zero_grad(set_to_none=True)
             head(inputs)[0].sum().backward()
+        head.zero_grad(set_to_none=True)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, stream=stream):
+            captured = head(inputs)[0]
+            captured.sum().backward()
     torch.cuda.current_stream().wait_stream(stream)
-    head.zero_grad(set_to_none=True)
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph):
-        captured = head(inputs)[0]
-        captured.sum().backward()
 
     # Replay the same graph with ordinary and overflowing-conditional-mean
     # parameters. Only the correctly gated mean must fit the output dtype.
     for gate_logit, log_alpha in [(math.log(3), 0), (-10, 100)]:
-        with torch.no_grad():
-            head.gate[-1].bias.fill_(gate_logit)
-            head.value_log_alpha.bias.fill_(log_alpha)
-            for parameter in head.parameters():
-                parameter.grad.zero_()
-        graph.replay()
+        with torch.cuda.stream(stream):
+            with torch.no_grad():
+                head.gate[-1].bias.fill_(gate_logit)
+                head.value_log_alpha.bias.fill_(log_alpha)
+                for parameter in head.parameters():
+                    parameter.grad.zero_()
+            graph.replay()
+        torch.cuda.current_stream().wait_stream(stream)
         conditional, _, derivative = _decimal_mean_and_gradients(1, log_alpha)
         probability = 1 / (1 + math.exp(-gate_logit))
         expected = probability * conditional
