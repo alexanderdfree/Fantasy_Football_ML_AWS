@@ -27,15 +27,16 @@ import torch
 
 from src.analysis.artifact_eval import build_test_df_from_artifacts
 from src.shared.artifact_integrity import unwrap_state_dict
-from src.shared.comparison_scoring import score_actual_components
+from src.shared.comparison_scoring import comparison_actuals
 from src.shared.evaluation_cohorts import load_reference, reference_selection, regular_season_rows
-from src.shared.registry import INFERENCE_REGISTRY
+from src.shared.registry import INFERENCE_REGISTRY, get_config
 from src.training.context import RunContext, current_context
 from src.tuning.ab_harness import Variant, ab_main, default_metric_fn, run_ab
 
 POSITIONS = ["RB", "WR", "TE"]
 SEEDS = [42, 123, 7]
 BASELINE = "legacy"
+SUPPORTS_STACKED = False  # The observer requires per-head saved attention artifacts.
 _ARM = "unset"
 
 
@@ -70,10 +71,28 @@ def _metrics(frame, col):
     }
 
 
+def _check_mean_versions(state_dict, config, arm):
+    """Require the requested law on each saved gate, including unchanged TDs."""
+    if arm not in {"legacy", "expectation_only"}:
+        raise AssertionError(f"Unknown expectation arm: {arm}")
+    expected = {
+        f"heads.{target}._ztnb_mean_version": int(
+            arm == "expectation_only" and config["head_losses"].get(target) == "hurdle_negbin"
+        )
+        for target in config["gated_targets"]
+    }
+    versions = {
+        key: value.item() for key, value in state_dict.items() if key.endswith("_ztnb_mean_version")
+    }
+    if not expected or versions != expected:
+        raise AssertionError(f"{arm}: gated-head expectation versions {versions} != {expected}")
+    return versions
+
+
 def metric_fn(result, position):
     context = current_context() or RunContext.defaults()
     frame = regular_season_rows(result["test_df"]).copy()
-    frame["fantasy_points"] = score_actual_components(frame, position)
+    frame["fantasy_points"] = comparison_actuals(frame, position)
     if frame.fantasy_points.isna().any():
         raise ValueError("Shared actual components unavailable")
     out = default_metric_fn({**result, "test_df": frame}, position)
@@ -103,16 +122,7 @@ def metric_fn(result, position):
         weights_only=True,
     )
     state_dict, _ = unwrap_state_dict(checkpoint)
-    versions = {
-        key: int(value.item())
-        for key, value in state_dict.items()
-        if key.endswith("_ztnb_mean_version")
-    }
-    expected_version = int(_ARM == "expectation_only")
-    if not versions or any(version != expected_version for version in versions.values()):
-        raise AssertionError(
-            f"{position} {_ARM}: gated-head expectation versions {versions} != {expected_version}"
-        )
+    versions = _check_mean_versions(state_dict, get_config(position), _ARM)
     out["ztnb_mean_versions"] = versions
 
     # Reconstruct the just-saved artifacts with the same loaders/factories

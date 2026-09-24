@@ -45,13 +45,13 @@ shared `count_math` primitives. It avoids both `exp(log_alpha)` overflow and
 cancellation of the small-product dispersion gradient. The corrected forward
 adds `logsigmoid(gate)` before exponentiating, so an unrepresentable conditional
 mean cannot overflow a representable gate-weighted forecast. The legacy forward
-path remains unchanged. Five new independent numerical/dtype regressions failed
+path remains unchanged. Six new independent numerical/dtype regressions failed
 against the original helper; a separate gate-weighted overflow regression
 failed before the final forward change. The updated checks compare means and
 gradients with a 120-digit Decimal reference, preserve the widest floating
 input dtype, and exercise large-dispersion/small-rate cases.
 
-The focused no-fit suite passed 249 checks: expectation math, model primitives,
+The focused no-fit suite passed 259 checks: expectation math, model primitives,
 factory/serving configuration, and feature-manifest contracts. All six actual
 factory architectures have per-output disk-save/load parity with serving
 constructors, including nested K. Legacy checkpoints without a version reload
@@ -59,8 +59,19 @@ and re-save as legacy; warm starts with and without a stored legacy marker keep
 the new fit's requested mode. This is unfitted numerical/compatibility evidence,
 not a current production-fit or forecast-accuracy result. Trainer calls,
 estimator/scaler fitting, optimizer steps and network I/O were blocked locally.
-Full Ruff lint/format and diff checks passed. Integrated Batch and current PR
-CI/review remain separate delivery gates.
+The one native-CUDA check was skipped locally: it explicitly places inputs and
+heads on CUDA and checks independent mean/gradient references, CUDA-graph replay
+under changed parameters, and stacked `vmap` gradients. It must execute without
+a skip on AWS before claiming GPU validation. Full Ruff lint/format and diff
+checks passed. Integrated Batch and current PR CI/review remain separate gates.
+
+The included eager A/B observer now checks each saved marker against its
+target's loss family (corrected receptions and unchanged TD gates), preserves
+certified pre-imputation actuals/missingness through `comparison_actuals`, and
+declares `SUPPORTS_STACKED=False` because it needs the saved per-head attention
+artifacts that stacked execution does not produce. Focused no-fit tests exercise
+real production gate maps, reject missing/wrong markers, keep missing actuals
+fail-closed, and verify CUDA auto-mode selects the eager harness path.
 
 **Measured regression (dated evidence underlying the former hold):**
 
