@@ -127,6 +127,12 @@ def install_observer():
                 predictions["receptions_value_mu"],
                 predictions["receptions_value_log_alpha"],
             )
+            if (
+                STATE["arm"] in {"precision", "combined"}
+                and report["count_numerics"]["active_numerical_defect"]
+            ):
+                receipt = evidence("failed-count-check.json", canonical_json(report).encode())
+                raise ValueError(f"Corrected count likelihood fails observed reference: {receipt}")
         payload = io.BytesIO()
         np.savez_compressed(
             payload,

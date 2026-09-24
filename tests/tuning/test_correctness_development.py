@@ -175,3 +175,45 @@ def test_saved_inference_parity_rejects_changed_values(monkeypatch):
     result = Result(test_df=frame, per_target_preds={})
     with pytest.raises(AssertionError):
         audit.inference_parity(result, "WR")
+
+
+def test_observer_rejects_numerical_defect_in_corrected_arm_without_fitting(monkeypatch):
+    from src.analysis import correctness_count_diagnostics
+    from src.shared import training
+
+    class FakeTrainer:
+        device = torch.device("cpu")
+        _use_amp = False
+        _graphed_step = None
+
+        def train(self, train_loader, val_loader, n_epochs):
+            return {
+                "checkpoint_selection": {"epoch": 1},
+                "val_fantasy_mae_ppr": [1.0],
+                "val_fantasy_rmse_ppr": [1.0],
+                "val_selection_metric": [1.0],
+            }
+
+    predictions = {
+        "receptions": np.array([1.0, 2.0]),
+        "receptions_value_mu": np.array([0.1, 0.2]),
+        "receptions_value_log_alpha": np.array([0.0, 0.0]),
+        "receptions_gate_logit": np.array([0.0, 0.0]),
+    }
+    monkeypatch.setattr(training, "MultiHeadTrainer", FakeTrainer)
+    monkeypatch.setattr(
+        audit, "_validation_predictions", lambda *args: (predictions, {"receptions": np.ones(2)})
+    )
+    monkeypatch.setattr(audit, "_checkpoint_metrics", lambda *args: {"mae": 1.0, "rmse": 1.0})
+    monkeypatch.setattr(
+        correctness_count_diagnostics,
+        "observed_likelihood_check",
+        lambda *args: {"active_numerical_defect": True},
+    )
+    saved = []
+    monkeypatch.setattr(audit, "evidence", lambda name, payload: saved.append(name))
+    audit.STATE.update(arm="combined", position="WR", trainers=[])
+    audit.install_observer()
+    with pytest.raises(ValueError, match="fails observed reference"):
+        FakeTrainer().train(None, None, 1)
+    assert saved == ["failed-count-check.json"]
