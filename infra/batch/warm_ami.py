@@ -67,9 +67,12 @@ def layers(ecr, image):
     rows = ecr.batch_get_image(repositoryName=repository, imageIds=[{"imageDigest": digest}])[
         "images"
     ]
-    if len(rows) != 1:
-        raise ValueError("Image digest is unavailable")
-    manifest = json.loads(rows[0]["imageManifest"])
+    # ECR can return one identical manifest per tag when a digest has both
+    # the source-SHA tag and :latest. Identity is the digest, not tag count.
+    manifests = {row["imageManifest"] for row in rows if row["imageId"]["imageDigest"] == digest}
+    if len(manifests) != 1:
+        raise ValueError("Image digest is unavailable or has inconsistent manifests")
+    manifest = json.loads(manifests.pop())
     if "layers" not in manifest:
         raise ValueError("Expected a single linux/amd64 training image")
     return [layer["digest"] for layer in manifest["layers"]]

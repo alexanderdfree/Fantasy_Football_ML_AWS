@@ -292,6 +292,24 @@ def test_freshness_catches_base_ami_updates_even_when_dependency_layers_match(mo
     assert not result["base_ami_current"] and not result["fresh"]
 
 
+def test_ecr_digest_can_have_multiple_tags_but_one_manifest():
+    from infra.batch.warm_ami import layers
+
+    digest = "sha256:" + "a" * 64
+    manifest = json.dumps({"layers": [{"digest": "dependency"}, {"digest": "code"}]})
+    client = Mock()
+    client.batch_get_image.return_value = {
+        "images": [
+            {"imageId": {"imageDigest": digest, "imageTag": tag}, "imageManifest": manifest}
+            for tag in ["latest", "b" * 40]
+        ]
+    }
+    assert layers(client, "registry/repository@" + digest) == ["dependency", "code"]
+    client.batch_get_image.return_value["images"][1]["imageManifest"] = json.dumps({"layers": []})
+    with pytest.raises(ValueError, match="inconsistent"):
+        layers(client, "registry/repository@" + digest)
+
+
 def test_builder_preserves_ssm_newlines_pins_inputs_and_cleans_up(tmp_path):
     shim = tmp_path / "aws"
     shim.write_text(
