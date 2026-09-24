@@ -43,8 +43,13 @@ def verify_runtime(manifest, data_dir):
 def child_environment(manifest, step, unit, output, data_dir):
     env = dict(os.environ)
     for key in tuple(env):
-        if (key.startswith("FF_") and not key.startswith("FF_RESULT_")) or key in EXECUTION_ENV:
+        if (key.startswith("FF_") and not key.startswith("FF_RESULT_")) or (
+            manifest["backend"] == "local" and key in EXECUTION_ENV
+        ):
             env.pop(key, None)
+    # Batch's immutable job definition/image supply native-library defaults
+    # such as OPENBLAS_NUM_THREADS=1. Preserve them unless the frozen manifest
+    # explicitly overrides them; dropping the caps oversubscribes Ridge CV.
     env.update(manifest["execution_environment"])
     env.update(step["env"])
     device = step["options"].get("device", step["env"].get("FF_DEVICE"))

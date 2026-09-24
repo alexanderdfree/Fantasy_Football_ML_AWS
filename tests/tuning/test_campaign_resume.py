@@ -218,6 +218,33 @@ def test_child_cannot_inherit_unfrozen_model_or_dispatch_overrides(tmp_path, mon
     assert env["FF_CACHE_DIR"] == str(tmp_path / "raw")
 
 
+def test_batch_preserves_pinned_native_thread_defaults_and_applies_explicit_overrides(
+    tmp_path, monkeypatch
+):
+    manifest = minimal_manifest()
+    manifest.update(backend="batch", bucket="bucket")
+    manifest["execution_environment"] = {"OMP_NUM_THREADS": "2"}
+    for name in [
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ]:
+        monkeypatch.setenv(name, "1")
+    env = worker.child_environment(
+        manifest,
+        manifest["spec"]["steps"][0],
+        {"id": "RB-gpu", "resource": "gpu"},
+        tmp_path,
+        tmp_path,
+    )
+    assert (
+        env["OPENBLAS_NUM_THREADS"] == env["MKL_NUM_THREADS"] == env["NUMEXPR_NUM_THREADS"] == "1"
+    )
+    assert env["OMP_NUM_THREADS"] == "2"
+    assert env["FF_DEVICE"] == "cuda"
+
+
 def _reserve_trial_worker(db_path, limit):
     from src.tuning.study_checkpoint import claim_trial, run_claimed_trial
 
