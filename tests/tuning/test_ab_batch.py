@@ -9,6 +9,7 @@ the tune_nn env-flag dispatch route.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from unittest.mock import MagicMock
 
@@ -44,6 +45,11 @@ def _ok_result(cell, variant, metric_fn, *, data_dir):
 
 @pytest.fixture
 def batch_env(monkeypatch):
+    # run_batch_entry intentionally installs its process default. Register an
+    # undo even when the key starts absent, so that default cannot leak into
+    # unrelated tests sharing an xdist worker.
+    monkeypatch.setenv("FF_FEATURE_CACHE_DISABLE", "")
+    monkeypatch.delenv("FF_FEATURE_CACHE_DISABLE")
     monkeypatch.setenv("FF_TUNE_AB_SPEC", SPEC)
     monkeypatch.setenv("FF_AB_RUN_ID", "test-run")
     monkeypatch.setenv("S3_BUCKET", "test-bucket")
@@ -95,6 +101,26 @@ def test_run_batch_entry_runs_grid_and_uploads(batch_env, monkeypatch):
     assert body["ok"] is True
     assert body["provenance"] == {"git_sha": "abc"}
     assert "elapsed_sec" in body
+
+
+def test_batch_fixture_restores_cache_default_before_other_diagnostics(monkeypatch):
+    from src.tuning import attn_knob_experiments as knobs
+
+    monkeypatch.setenv("FF_FEATURE_CACHE_DISABLE", "")
+    monkeypatch.delenv("FF_FEATURE_CACHE_DISABLE")
+    with pytest.MonkeyPatch.context() as scoped:
+        batch_env.__wrapped__(scoped)
+        scoped.setattr(ab_batch, "run_cell", _ok_result)
+        scoped.setattr("boto3.client", lambda *a, **k: _fake_s3())
+        ab_batch.run_batch_entry("TE")
+        assert os.environ["FF_FEATURE_CACHE_DISABLE"] == "1"
+    assert "FF_FEATURE_CACHE_DISABLE" not in os.environ
+    seen = []
+    monkeypatch.setattr(
+        knobs, "_load_position", lambda position: ({}, lambda **kw: seen.append(kw))
+    )
+    knobs._prime_feature_cache("RB")
+    assert len(seen) == 1 and seen[0]["config"]["train_attention_nn"] is False
 
 
 def test_run_batch_entry_resume_skips_completed_cells(batch_env, monkeypatch):

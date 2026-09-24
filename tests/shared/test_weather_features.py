@@ -26,8 +26,53 @@ def _clear_schedule_cache():
     wf._schedule_cache_source = None
 
 
+def _control_ctime(monkeypatch, path, ctime):
+    """Control only ctime_ns, retaining genuine path/inode/size/mtime fields."""
+    from src.shared import weather_features as wf
+
+    real_stat = wf.Path.stat
+
+    class StatWithCtime:
+        def __init__(self, stat):
+            self.stat = stat
+
+        def __getattr__(self, name):
+            return ctime[0] if name == "st_ctime_ns" else getattr(self.stat, name)
+
+    def controlled_stat(self, *args, **kwargs):
+        stat = real_stat(self, *args, **kwargs)
+        return StatWithCtime(stat) if self == path else stat
+
+    monkeypatch.setattr(wf.Path, "stat", controlled_stat)
+
+
 @pytest.mark.unit
 def test_schedule_loader_reloads_same_size_rewrite_with_preserved_mtime(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from src.data.cache_io import atomic_write_parquet
+    from src.shared import weather_features as wf
+
+    monkeypatch.setattr(wf, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(wf, "SEASONS", [2025])
+    path = tmp_path / "schedules_2025_2025.parquet"
+    pd.DataFrame({"game_type": ["REG"], "total_line": [40.0]}).to_parquet(path)
+    before_stat = path.stat()
+    _control_ctime(monkeypatch, path, [before_stat.st_ctime_ns])
+    first = _load_schedules()
+    assert first["total_line"].tolist() == [40.0]
+    assert _load_schedules() is first
+    # Match the production schedule writer: atomic publication changes inode
+    # even when the filesystem clock has not ticked since the previous read.
+    atomic_write_parquet(pd.DataFrame({"game_type": ["REG"], "total_line": [50.0]}), str(path))
+    os.utime(path, ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns))
+    assert path.stat().st_size == before_stat.st_size
+    assert path.stat().st_mtime_ns == before_stat.st_mtime_ns
+    assert _load_schedules()["total_line"].tolist() == [50.0]
+
+
+@pytest.mark.unit
+def test_schedule_loader_reloads_when_only_ctime_changes(tmp_path, monkeypatch):
     import pandas as pd
 
     from src.shared import weather_features as wf
@@ -36,13 +81,17 @@ def test_schedule_loader_reloads_same_size_rewrite_with_preserved_mtime(tmp_path
     monkeypatch.setattr(wf, "SEASONS", [2025])
     path = tmp_path / "schedules_2025_2025.parquet"
     pd.DataFrame({"game_type": ["REG"], "total_line": [40.0]}).to_parquet(path)
-    before_stat = path.stat()
+    original = path.stat()
+    ctime = [original.st_ctime_ns]
+    _control_ctime(monkeypatch, path, ctime)
     first = _load_schedules()
     assert first["total_line"].tolist() == [40.0]
-    assert _load_schedules() is first
     pd.DataFrame({"game_type": ["REG"], "total_line": [50.0]}).to_parquet(path)
-    os.utime(path, ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns))
-    assert path.stat().st_size == before_stat.st_size
+    os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert path.stat().st_size == original.st_size
+    assert path.stat().st_mtime_ns == original.st_mtime_ns
+    assert path.stat().st_ino == original.st_ino
+    ctime[0] += 1  # explicit activation; independent of filesystem resolution
     assert _load_schedules()["total_line"].tolist() == [50.0]
 
 
