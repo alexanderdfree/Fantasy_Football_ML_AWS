@@ -89,7 +89,9 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _list_done_cells(s3, bucket: str, s3_prefix: str, run_id: str) -> set[str]:
+def _list_done_cells(
+    s3, bucket: str, s3_prefix: str, run_id: str, *, successful_only=False
+) -> set[str]:
     """Cell keys whose result JSON already exists under the run prefix —
     completed by a prior Spot attempt; the retry skips them."""
     prefix = f"{s3_prefix.strip('/')}/{run_id}/cells/"
@@ -99,6 +101,10 @@ def _list_done_cells(s3, bucket: str, s3_prefix: str, run_id: str) -> set[str]:
         for obj in page.get("Contents", []):
             name = obj["Key"][len(prefix) :]
             if name.endswith(".json"):
+                if successful_only:
+                    row = json.loads(s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read())
+                    if row.get("ok") is not True:
+                        continue
                 done.add(name[: -len(".json")])
     return done
 
@@ -148,7 +154,9 @@ def run_batch_entry(position: str) -> None:
 
     spec = resolve_spec(spec_dotted, positions=[position], seeds=seeds, only=only)
     s3 = boto3.client("s3")
-    done = _list_done_cells(s3, bucket, s3_prefix, run_id)
+    done = _list_done_cells(
+        s3, bucket, s3_prefix, run_id, successful_only=bool(os.environ.get("FF_CAMPAIGN_ID"))
+    )
     provenance = _provenance()
     data_dir = os.path.abspath("data")
 

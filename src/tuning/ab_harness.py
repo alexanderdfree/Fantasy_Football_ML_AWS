@@ -730,7 +730,7 @@ def _execute_spec_task(task) -> list[dict]:
     return results
 
 
-def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs) -> list[dict]:
+def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs, checkpoint=None) -> list[dict]:
     if not spec.dotted:
         raise ValueError(
             "parallel mode needs an importable spec (a dotted module path); pass the spec "
@@ -739,6 +739,18 @@ def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs) -> list[dic
     from src.benchmarking.parallel_train import physical_cores
     from src.shared.core_pool import start_coordinator
 
+    completed_rows = []
+    if checkpoint is not None:
+        pending = []
+        for kind, work in units:
+            saved = checkpoint.load(work.key)
+            if saved is not None:
+                completed_rows.extend(saved)
+            else:
+                pending.append((kind, work))
+        units = pending
+        if not units:
+            return completed_rows
     phys = physical_cores()
     nice = int(os.environ.get(_ENV_NICE, _DEFAULT_NICE))
     logdir = os.path.abspath("logs")
@@ -767,6 +779,8 @@ def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs) -> list[dic
             completed += 1
             set_active_count(min(jobs, len(tasks) - completed))
             status = "ok" if all(r.get("ok") for r in rows) else "FAILED"
+            if checkpoint is not None and status == "ok":
+                checkpoint.save(units[index][1].key, rows)
             print(f"[ab] {units[index][1].key} {status} (log: {tasks[index][-1]})", flush=True)
 
         try:
@@ -798,7 +812,7 @@ def _run_parallel_units(spec, units, jobs, data_dir, stacked_epochs) -> list[dic
             )
         finally:
             pool_stop()
-    return [row for batch in batches for row in batch]
+    return completed_rows + [row for batch in batches for row in batch]
 
 
 def run_parallel(spec: Spec, cells: list[Cell], jobs: int, data_dir: str) -> list[dict]:
@@ -1006,6 +1020,7 @@ def run_ab(
     stacked_seeds: bool | None = None,
     stacked_epochs: int = DEFAULT_STACKED_EPOCHS,
     fresh: bool = False,
+    checkpoint=None,
 ) -> dict:
     """Resolve the spec, run the grid (parallel or sequential), aggregate, print.
 
@@ -1069,7 +1084,16 @@ def run_ab(
         os.environ["FF_FRESH"] = "1"
     os.environ[_ENV_CACHE_DISABLE] = "0" if feature_cache else "1"
     try:
-        if stacked_seeds:
+        if checkpoint is not None:
+            units = (
+                ([("group", group) for group in groups] + [("cell", cell) for cell in leftover])
+                if stacked_seeds
+                else [("cell", cell) for cell in cells]
+            )
+            results = _run_parallel_units(
+                resolved, units, jobs, data_dir, stacked_epochs, checkpoint
+            )
+        elif stacked_seeds:
             if jobs <= 1:
                 results = run_sequential_stacked(
                     resolved, groups, leftover, data_dir, stacked_epochs

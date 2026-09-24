@@ -126,7 +126,9 @@ def study_name(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:
 
 
 def study_db_path(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:
-    return f"tune_nn_{version}_{pos.lower()}.db"
+    from src.tuning.study_checkpoint import campaign_study_path
+
+    return campaign_study_path(f"tune_nn_{version}_{pos.lower()}.db")
 
 
 def s3_key_prefix(pos: str, version: str = SEARCH_SPACE_VERSION) -> str:
