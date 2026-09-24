@@ -146,3 +146,19 @@ def test_cli_writes_json_and_markdown_and_never_overwrites(tmp_path, capsys):
         main(argv)
     assert exit_info.value.code == 2
     assert main(argv[:-2]) == 0
+
+
+def test_pairing_refuses_different_opponent_stream_inputs():
+    from src.analysis.synthetic_response import pair_replays
+
+    frame = pd.DataFrame(
+        {"case_index": [0], "donor_player_id": ["KC"], "donor_season": [2022], "forecast_week": [5]}
+    )
+    base = {
+        "source_values_sha256": "s",
+        "sampling_identity_sha256": "i",
+        "opponent_per_game_values_sha256": "a",
+    }
+    treat = {**base, "opponent_per_game_values_sha256": "b"}
+    with pytest.raises(ValueError, match="opponent stream inputs"):
+        pair_replays((base, frame), (treat, frame))

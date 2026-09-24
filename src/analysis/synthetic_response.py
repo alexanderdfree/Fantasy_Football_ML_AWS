@@ -60,6 +60,12 @@ def pair_replays(
     (base_manifest, base), (treat_manifest, treat) = baseline, treatment
     if base_manifest["source_values_sha256"] != treat_manifest["source_values_sha256"]:
         raise ValueError("baseline and treatment were not generated from the same source values")
+    if base_manifest.get("opponent_per_game_values_sha256") != treat_manifest.get(
+        "opponent_per_game_values_sha256"
+    ):
+        raise ValueError(
+            "baseline and treatment were not generated from the same opponent stream inputs"
+        )
     if base_manifest["sampling_identity_sha256"] != treat_manifest["sampling_identity_sha256"]:
         raise ValueError(
             "baseline and treatment were not sampled from the same donors: their sampling "
