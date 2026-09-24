@@ -108,6 +108,25 @@ def _controlled_head(correct):
     return head
 
 
+def test_gate_weighted_mean_stays_finite_when_conditional_mean_exceeds_fp32():
+    head = _controlled_head(True).float()
+    with torch.no_grad():
+        head.gate[-1].bias.fill_(-10)
+        head.value_log_alpha.bias.fill_(100)
+    prediction = head(torch.zeros(1, 2))[0]
+    # Here 1-exp(-z) equals z to much more than FP64 precision. The
+    # conditional mean exceeds FP32, but the gated mean and gradients fit.
+    gate_probability = 1 / (1 + math.exp(10))
+    expected = gate_probability * math.exp(100) / math.log1p(math.exp(100))
+    assert torch.isfinite(prediction).all()
+    assert prediction.item() == pytest.approx(expected, rel=3e-5)
+    gate_gradient, dispersion_gradient = torch.autograd.grad(
+        prediction.sum(), (head.gate[-1].bias, head.value_log_alpha.bias)
+    )
+    assert gate_gradient.item() == pytest.approx(expected * (1 - gate_probability), rel=3e-5)
+    assert dispersion_gradient.item() == pytest.approx(expected * 0.99, rel=3e-5)
+
+
 def test_reported_expectation_agrees_with_fitted_probability_mass():
     head = _controlled_head(True)
     prediction, gate, mu, dispersion = head(torch.zeros((1, 2), dtype=torch.float64))

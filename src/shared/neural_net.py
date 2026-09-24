@@ -246,6 +246,11 @@ def ztnb2_conditional_mean(mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.T
     positive mass can overflow even when the mean and gradients are finite.
     Probability arithmetic uses at least FP32, preserving FP64 callers.
     """
+    return _ztnb2_log_conditional_mean(mu, log_alpha).exp()
+
+
+def _ztnb2_log_conditional_mean(mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.Tensor:
+    """Log conditional mean, also usable before multiplying a small hurdle gate."""
     mu, log_alpha = _count_loss_inputs(mu, log_alpha)
     mu, log_alpha, r, z = _nb2_zero_mass_terms(mu, log_alpha)
     log_product = mu.log() + log_alpha
@@ -260,7 +265,7 @@ def ztnb2_conditional_mean(mu: torch.Tensor, log_alpha: torch.Tensor) -> torch.T
         -torch.log1p(_log1p_div_minus_one(product)),
         log_product - r.log(),
     )
-    return torch.exp(log_mu_over_z - _log_exprel(-z))
+    return log_mu_over_z - _log_exprel(-z)
 
 
 class GatedHead(nn.Module):
@@ -336,8 +341,8 @@ class GatedHead(nn.Module):
         mu = self.value_mu(trunk).squeeze(-1) + 1e-6
         log_alpha = self.value_log_alpha(trunk).squeeze(-1)
         if self.correct_ztnb_mean:
-            conditional_mean = ztnb2_conditional_mean(mu, log_alpha)
-            expected = torch.sigmoid(gate_logit.to(conditional_mean.dtype)) * conditional_mean
+            log_mean = _ztnb2_log_conditional_mean(mu, log_alpha)
+            expected = (F.logsigmoid(gate_logit.to(log_mean.dtype)) + log_mean).exp()
         else:
             expected = torch.sigmoid(gate_logit) * mu
         return expected, gate_logit, mu, log_alpha
