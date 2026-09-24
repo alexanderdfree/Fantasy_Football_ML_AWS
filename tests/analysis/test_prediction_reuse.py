@@ -24,6 +24,11 @@ def test_prediction_hit_rescores_raw_values_without_inference(position, tmp_path
         "src.analysis.prediction_reuse.data_identity", lambda context: "immutable-data"
     )
     monkeypatch.setattr("src.prediction.bundle.bundled_families", lambda directory: ("ridge",))
+    # The spy mutates its call counter; numerical code identity is covered
+    # separately, so this storage/re-scoring fixture has a stable implementation.
+    monkeypatch.setattr(
+        "src.analysis.prediction_reuse.source_identity", lambda position: "prediction-code"
+    )
     model_dir = tmp_path / "models"
     model_dir.mkdir()
     model_file = model_dir / "weights"

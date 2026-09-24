@@ -29,16 +29,21 @@ def _replay(payload, directory, recipe, context, manifest, lookup_seconds):
     from src.shared.backtest import run_weekly_simulation
     from src.shared.evaluation import (
         build_gate_info,
-        compute_ranking_metrics,
         compute_target_metrics,
     )
-    from src.shared.evaluation_cohorts import build_cohorts
+    from src.shared.pipeline import (
+        _reporting_baseline,
+        _reporting_cohorts,
+        _reporting_frame,
+        _reporting_ranking,
+        _reporting_scored,
+    )
     from src.training.contracts import TrainingResult
 
     values, prepared = payload["values"], payload["prepared"]
     original_seconds = values.pop("phase_seconds", {})
     start = time.monotonic()
-    frame = values.get("test_df", prepared.test).copy()
+    frame = _reporting_frame(prepared.test, recipe, prepared.y_test, position=recipe.position)
     columns = {}
     labels = {
         "ridge": "Ridge",
@@ -61,14 +66,19 @@ def _replay(payload, directory, recipe, context, manifest, lookup_seconds):
         frame[column] = recipe["aggregate_fn"](predictions)
         for target in recipe["targets"]:
             frame[f"pred_{family}_{target}"] = predictions[target]
-        values[f"{family}_ranking"] = compute_ranking_metrics(frame, pred_col=column)
+        values[f"{family}_ranking"] = _reporting_ranking(frame, recipe.position, column)
         columns[labels[family]] = column
     if "test_df" in values:
         values["test_df"] = frame
-        if "pred_baseline" in frame:
+        if "sim_results" in values:
+            frame["pred_baseline"], _ = _reporting_baseline(frame)
             columns["Season Avg"] = "pred_baseline"
-        values["sim_results"] = run_weekly_simulation(frame, pred_columns=columns)
-    values["cohorts"] = build_cohorts(
+            values["sim_results"] = run_weekly_simulation(
+                _reporting_scored(frame, recipe.position),
+                pred_columns=columns,
+                true_col="actual_projected_total",
+            )
+    values["cohorts"] = _reporting_cohorts(
         recipe.position, frame, prior_frames=(prepared.train, prepared.val)
     )
     models = {

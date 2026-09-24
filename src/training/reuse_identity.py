@@ -90,6 +90,20 @@ def stable(value):
         return str(value.resolve())
     if isinstance(value, inspect.Signature):
         return {"signature": str(value)}
+    if inspect.isclass(value):
+        try:
+            source = inspect.getsourcefile(value)
+        except TypeError:
+            source = None
+        return {
+            "class": f"{value.__module__}.{value.__qualname__}",
+            "source": fingerprint_file(source) if source else None,
+            "constants": {
+                key: stable(item)
+                for key, item in vars(value).items()
+                if key.isupper() and not callable(item)
+            },
+        }
     if isinstance(value, bytes):
         return {"bytes": value.hex()}
     if value is Ellipsis:
@@ -149,6 +163,7 @@ def source_manifest(position):
             "prediction",
             "training",
             "contracts",
+            "evaluation",
             position.lower(),
         )
         for path in (ROOT / "src" / name).rglob("*.py")
