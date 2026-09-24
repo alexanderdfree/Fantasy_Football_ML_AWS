@@ -75,18 +75,29 @@ def layers(ecr, image):
     return [layer["digest"] for layer in manifest["layers"]]
 
 
-def freshness(bake, ecr, image_sha=""):
+def freshness(bake, ecr, image_sha="", *, ssm):
     from src.scripts.resolve_training_image import resolve_ec2
 
     current = resolve_ec2(ecr, image_sha)
     baked_layers = layers(ecr, bake["image_uri"])
     selected_layers = layers(ecr, current["image_uri"])
-    fresh = (
+    recommended = ssm.get_parameter(
+        Name="/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id"
+    )["Parameter"]["Value"]
+    base_current = bake["source_ami"] == recommended
+    dependencies_current = (
         bake.get("eligible") is True
         and bake["dependency_recipe"] == recipe(current["image_sha"])
         and baked_layers[:-2] == selected_layers[:-2]
     )
-    return {"fresh": fresh, "current_image": current, "baked_dependency_layers": baked_layers[:-2]}
+    return {
+        "fresh": base_current and dependencies_current,
+        "base_ami_current": base_current,
+        "recommended_base_ami": recommended,
+        "dependencies_current": dependencies_current,
+        "current_image": current,
+        "baked_dependency_layers": baked_layers[:-2],
+    }
 
 
 def clients(region):
@@ -97,7 +108,7 @@ def clients(region):
     batch_cfg = Config(connect_timeout=10, read_timeout=30, retries={"total_max_attempts": 1})
     return {
         name: boto3.client(name, region_name=region, config=batch_cfg if name == "batch" else cfg)
-        for name in ("ec2", "ecs", "batch", "ecr", "s3")
+        for name in ("ec2", "ecs", "batch", "ecr", "s3", "ssm")
     }
 
 
@@ -709,8 +720,8 @@ def activate(aws, evidence, output, rollback=False):
         if evidence.get("smoke") or not assess(evidence)["passed"]:
             raise ValueError("Full paired canary gates have not passed")
         validate_bake(evidence["bake"], aws)
-        if not freshness(evidence["bake"], aws["ecr"])["fresh"]:
-            raise ValueError("Current training dependencies differ; rebuild and canary first")
+        if not freshness(evidence["bake"], aws["ecr"], ssm=aws["ssm"])["fresh"]:
+            raise ValueError("Base AMI or training dependencies changed; rebuild and canary first")
         if any(
             row.get("imageIdOverride")
             for row in current["computeResources"].get("ec2Configuration", [])
@@ -816,7 +827,7 @@ def main(argv=None):
 
         _UPLOAD_STATE = upload
     if args.action == "check":
-        result = freshness(value, aws["ecr"], args.image_sha)
+        result = freshness(value, aws["ecr"], args.image_sha, ssm=aws["ssm"])
         print(json.dumps(result, indent=2))
         return 0 if result["fresh"] else 1
     if args.action == "canary":

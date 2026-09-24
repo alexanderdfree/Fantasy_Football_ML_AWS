@@ -266,6 +266,32 @@ def test_one_pair_smoke_requires_metric_parity_but_cannot_pass_full_gate():
     assert not smoke_assessment(state, "g5.xlarge")["passed"]
 
 
+def test_freshness_catches_base_ami_updates_even_when_dependency_layers_match(monkeypatch):
+    from infra.batch import warm_ami
+    from src.scripts import resolve_training_image
+
+    monkeypatch.setattr(
+        resolve_training_image,
+        "resolve_ec2",
+        lambda *args: {"image_uri": "image", "image_sha": "sha"},
+    )
+    monkeypatch.setattr(warm_ami, "recipe", lambda sha: "recipe")
+    monkeypatch.setattr(warm_ami, "layers", lambda *args: ["base", "deps", "application", "stamp"])
+    bake = {
+        "eligible": True,
+        "source_ami": "ami-old",
+        "dependency_recipe": "recipe",
+        "image_uri": "image",
+    }
+    ssm = Mock()
+    ssm.get_parameter.return_value = {"Parameter": {"Value": "ami-old"}}
+    assert warm_ami.freshness(bake, Mock(), ssm=ssm)["fresh"]
+    ssm.get_parameter.return_value = {"Parameter": {"Value": "ami-new"}}
+    result = warm_ami.freshness(bake, Mock(), ssm=ssm)
+    assert result["dependencies_current"]
+    assert not result["base_ami_current"] and not result["fresh"]
+
+
 def test_builder_preserves_ssm_newlines_pins_inputs_and_cleans_up(tmp_path):
     shim = tmp_path / "aws"
     shim.write_text(

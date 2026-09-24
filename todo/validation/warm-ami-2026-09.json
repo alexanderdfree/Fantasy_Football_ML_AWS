@@ -1,0 +1,43 @@
+{
+  "eligible_for_activation": false,
+  "reason": "Warm Spot host reclaimed; full paired trial/position coverage is incomplete",
+  "reported_model_and_cohort_metrics_equal": true,
+  "pull_seconds": {
+    "cold": 85.68999981880188,
+    "warm": 0.39800000190734863
+  },
+  "pipeline_seconds": {
+    "cold": 56.1,
+    "warm": 128.9
+  },
+  "training_total_seconds": {
+    "cold": 64.2,
+    "warm": 186.6
+  },
+  "warm_spot_status": "instance-terminated-no-capacity",
+  "source_sha": "66514437c5940d88dcfd1090e07592ad5c8b99c3",
+  "dataset_id": "695cfb138086bdd271b82b3e86df2e0efb3f2e5cb57957309b196e521ee6f95c",
+  "candidate_ami": "ami-0c70d08c7884b51ff",
+  "l4_trial": "No allocation in 30 minutes; ASG repeatedly reported UnfulfillableCapacity. Owned canary jobs/resources were cleaned up.",
+  "rollback": {
+    "numeric_template_verified": true,
+    "stock_template_verified": true,
+    "test_environment": "ff-ami-rollback-9305276068",
+    "test_resources_cleaned": true
+  },
+  "production_after_validation": {
+    "type": "SPOT",
+    "minvCpus": 0,
+    "maxvCpus": 64,
+    "instanceTypes": [
+      "g6.xlarge",
+      "g5.xlarge"
+    ],
+    "launchTemplate": {
+      "launchTemplateName": "ff-batch-lt",
+      "version": "$Latest",
+      "overrides": []
+    }
+  },
+  "activation": "Not performed; full paired timing and six-position gates did not pass"
+}
