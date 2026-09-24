@@ -1,8 +1,8 @@
 {
-  "run_id": "2026-09-24T09:21:45_a69a813d",
-  "timestamp": "2026-09-24T09:21:45",
-  "git_hash": "a69a813d",
-  "note": "Practice context implementation; production features remain disabled",
+  "run_id": "2026-09-24T09:38:25_b8911241",
+  "timestamp": "2026-09-24T09:38:25",
+  "git_hash": "b8911241",
+  "note": "Practice context final implementation; production feature allowlists unchanged",
   "positions": [
     "RB"
   ],
@@ -320,13 +320,13 @@
       },
       "lgbm_top12": 0.495,
       "phase_seconds": {
-        "prepare_data": 24.6,
-        "ridge_tune": 5.3,
-        "ridge_fit": 1.7,
-        "lgbm_train": 4.2,
-        "nn_train": 27.6,
-        "attn_nn_train": 20.6,
-        "train_models_total": 48.2,
+        "prepare_data": 0.4,
+        "ridge_tune": 2.2,
+        "ridge_fit": 0.8,
+        "lgbm_train": 2.3,
+        "nn_train": 16.1,
+        "attn_nn_train": 18.8,
+        "train_models_total": 34.9,
         "backtest": 0.2,
         "save_artifacts": 0.1,
         "figures": 2.1
@@ -831,21 +831,21 @@
         "training_data_id": "a659e6d18397df9bf52f3a8bcea44253541a12fc9c793f7949bdc5e3156bff15",
         "dataset_id": null,
         "model_bundle_ids": {
-          "attn_nn": "a8a971a1302479fcf4a71ac06a948a268cb08859399c31346f210d91801fd438",
-          "lgbm": "ba8f64e6df2a1d7bbc7981e2bb4babb0a671615abc5e176d5a6307eb557ee748",
-          "nn": "312941c8a4c7e4fb6a86e981f588df61288eeac4f7e6491316731086c972d92b",
-          "ridge": "b64f55cc42d20ef2356c7b329205e31732f166f3de10c14b529d6b13bfac7f92"
+          "attn_nn": "0a92fa8fb212f38b6123641543b8e2790392e96be0a0238f12ba6d69390df154",
+          "lgbm": "e7b870a015d79060f552f86a5ce69119ed588ea53b641c94874b7cbaa9a84a65",
+          "nn": "6c002705264440c174a06816d962c4f92d8e5a26866f62c6543b8bd37da736c9",
+          "ridge": "23593b9925c3ff42e9a1fda3aa22cee5d23ab6b67541410af3053785a0f08e3a"
         },
         "execution_regime": "eager",
-        "run_id": "eeb6055eb04144eda42ec34729f11f01",
+        "run_id": "9bc0e56578c4432580d79b2536266e7f",
         "build_plan_id": null,
         "code_id": null,
         "schema_version": 1
       },
-      "elapsed_sec": 77.4
+      "elapsed_sec": 40.1
     }
   ],
   "code_fingerprints": {
-    "RB": "a8134113578bd7721219ef2553dd1284fd73835152f0e39dd4a6af506699df3b"
+    "RB": "ca27b2222ddb88557dc4d1727ee9106e79502b18cf3eb22c6184392643cc385e"
   }
 }

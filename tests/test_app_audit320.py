@@ -106,6 +106,9 @@ def _stub_base_data_loaders(monkeypatch, app_mod, n_skill=4, n_k=3, n_dst=3):
     ``fantasy_points`` (mirroring the real splits) so we exercise the F37 mirror
     branch.
     """
+    # These tests cover base model columns, not expert ingestion. Leaving this
+    # boundary real reads thousands of cached/source-dependent expert records.
+    monkeypatch.setattr(core, "_apply_expert_predictions", lambda results: None)
 
     def _skill_frame(_path):
         return pd.DataFrame(
