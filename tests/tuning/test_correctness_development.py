@@ -58,6 +58,18 @@ def test_switch_reset_without_fit():
     assert training.ztnb2_log_prob is correctness_legacy_count.ztnb2_log_prob
 
 
+def test_nonfinite_independent_oracle_cannot_pass(monkeypatch):
+    from src.analysis import correctness_count_diagnostics as diagnostics
+
+    monkeypatch.setattr(
+        diagnostics,
+        "stable_ztnb_reference",
+        lambda y, mu, log_alpha: (mu + log_alpha) * float("nan"),
+    )
+    with pytest.raises(ValueError, match="Independent count oracle returned nonfinite"):
+        diagnostics.observed_likelihood_check([1.0], [1.0], [0.0], device="cpu")
+
+
 @pytest.mark.parametrize("position,floor", [("skill", 2013), ("K", 2015), ("DST", 2013)])
 @pytest.mark.parametrize("origin", [2022, 2023])
 def test_split_boundaries(position, floor, origin):

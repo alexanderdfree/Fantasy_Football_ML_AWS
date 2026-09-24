@@ -59,8 +59,10 @@ def observed_likelihood_check(actuals, mu, log_alpha, *, device=None):
     for name, actual, expected in zip(
         ("log_probability", "d_mu", "d_log_alpha"), *outputs, strict=True
     ):
+        if not np.isfinite(expected).all():
+            raise ValueError(f"Independent count oracle returned nonfinite {name}")
         scaled = np.abs(actual - expected) / (1 + np.abs(expected))
-        failed = ~np.isfinite(actual) | (scaled > 1e-4)
+        failed = ~np.isfinite(actual) | ~np.isfinite(scaled) | (scaled > 1e-4)
         report["errors"][name] = {
             "max_scaled_error": float(scaled.max()) if np.isfinite(scaled).all() else None,
             "n_outside_tolerance": int(failed.sum()),
