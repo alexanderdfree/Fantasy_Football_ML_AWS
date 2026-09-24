@@ -235,7 +235,7 @@ def validate(document):
                 not isinstance(key, str)
                 or not re.fullmatch(r"FF_[A-Z0-9_]+", key)
                 or key.startswith(PROTECTED_ENV)
-                or key in {"FF_FRESH", *DISPATCH_ENV}
+                or key in {"FF_FRESH", "FF_CACHE_DIR", *DISPATCH_ENV}
                 or re.search(r"TOKEN|PASSWORD|SECRET|CREDENTIAL|API_KEY", key)
             ):
                 raise ValueError(f"Environment key is managed or unsupported: {key}")
@@ -283,7 +283,7 @@ def execution_environment():
         or (
             key.startswith("FF_")
             and not key.startswith(PROTECTED_ENV)
-            and key not in {"FF_FRESH", *DISPATCH_ENV}
+            and key not in {"FF_FRESH", "FF_CACHE_DIR", *DISPATCH_ENV}
             and not re.search(r"TOKEN|PASSWORD|SECRET|CREDENTIAL|API_KEY", key)
         )
     }

@@ -73,6 +73,7 @@ def test_campaign_groups_work_by_position_and_resource_without_extra_allocations
         lambda s: s.update(id="../escape"),
         lambda s: s["steps"][0].update(options={"command": "anything"}),
         lambda s: s["steps"][0].update(env={"FF_MODEL_S3_PREFIX": "models"}),
+        lambda s: s["steps"][0].update(env={"FF_CACHE_DIR": "/unverified/raw"}),
         lambda s: s["steps"][1].update(options={"n_trials": 0}),
         lambda s: s["steps"][0].update(options={"seeds": [42, 42]}),
         lambda s: s["steps"].append(copy.deepcopy(s["steps"][0])),
@@ -170,3 +171,24 @@ def test_campaign_workflow_is_dispatch_only_and_uses_the_shared_runner():
     for command in commands:
         checked = subprocess.run(["bash", "-n"], input=command, text=True, capture_output=True)
         assert checked.returncode == 0, checked.stderr
+
+
+def test_batch_sdk_does_not_retry_non_idempotent_submit(monkeypatch):
+    import boto3
+
+    clients = {}
+
+    def build(name, **kwargs):
+        clients[name] = kwargs["config"]
+        return Mock()
+
+    monkeypatch.setattr(boto3, "client", build)
+    campaign._clients("us-east-1")
+    assert clients["batch"].retries["total_max_attempts"] == 1
+
+
+def test_raw_cache_override_is_not_frozen_from_the_controller(monkeypatch):
+    from src.tuning.campaign_contracts import execution_environment
+
+    monkeypatch.setenv("FF_CACHE_DIR", "/unverified/raw")
+    assert "FF_CACHE_DIR" not in execution_environment()

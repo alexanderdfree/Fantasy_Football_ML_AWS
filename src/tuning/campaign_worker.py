@@ -66,6 +66,7 @@ def child_environment(manifest, step, unit, output, data_dir):
             "FF_CAMPAIGN_STEP": step["id"],
             "FF_CAMPAIGN_UNIT": unit["id"],
             "FF_CAMPAIGN_DATA_DIR": str(data_dir),
+            "FF_CACHE_DIR": str(Path(data_dir) / "raw"),
             "FF_CAMPAIGN_STUDY_DIR": str(output / "studies"),
             "FF_CAMPAIGN_STEP_PREFIX": prefix,
             "FF_DATA_RELEASE": manifest["dataset_id"],
@@ -290,7 +291,11 @@ def execute_step(manifest, step, data_dir, output):
                 result = aggregate(
                     spec,
                     collect_results(
-                        spec, bucket=manifest["bucket"], s3_prefix=prefix, run_id=run_id
+                        spec,
+                        bucket=manifest["bucket"],
+                        s3_prefix=prefix,
+                        run_id=run_id,
+                        s3_client=s3,
                     ),
                 )
             else:

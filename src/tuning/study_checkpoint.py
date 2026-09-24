@@ -19,10 +19,12 @@ def sqlite_backup(path, timeout=120):
     os.close(fd)
     try:
         with (
-            sqlite3.connect(
-                f"file:{Path(path).resolve()}?mode=ro", uri=True, timeout=timeout
+            contextlib.closing(
+                sqlite3.connect(
+                    Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=timeout
+                )
             ) as source,
-            sqlite3.connect(destination) as target,
+            contextlib.closing(sqlite3.connect(destination)) as target,
         ):
             source.backup(target)
         return destination
@@ -73,7 +75,7 @@ class StudyCheckpoint:
                             target.write(chunk)
                     finally:
                         body.close()
-                with sqlite3.connect(temporary) as db:
+                with contextlib.closing(sqlite3.connect(temporary)) as db:
                     if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                         raise ValueError("Invalid remote study checkpoint")
             else:
@@ -137,6 +139,34 @@ def recover_trials(study):
 
 def remaining_attempts(study, target):
     return max(0, target - len(study.trials))
+
+
+def claim_trial(study, target, db_path):
+    """Reserve one MPS attempt atomically across the allocation's processes."""
+    from src.tuning.campaign_io import local_lock
+
+    path = Path(db_path)
+    with local_lock(path.parent / f".{path.name}.attempts", blocking=True):
+        if remaining_attempts(study, target) == 0:
+            return None
+        # ask() persists RUNNING before releasing the allocation lock, so a
+        # sibling cannot reserve the same last remaining budget slot.
+        return study.ask()
+
+
+def run_claimed_trial(study, trial, objective):
+    """Keep Optuna's COMPLETE/PRUNED/FAIL semantics for a reserved attempt."""
+    import optuna
+
+    try:
+        value = objective(trial)
+    except optuna.TrialPruned:
+        study.tell(trial, state=optuna.trial.TrialState.PRUNED)
+    except Exception:
+        study.tell(trial, state=optuna.trial.TrialState.FAIL)
+        raise
+    else:
+        study.tell(trial, value)
 
 
 class CampaignBudget:

@@ -55,8 +55,12 @@ def _clients(region):
     from botocore.config import Config
 
     cfg = Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 3})
+    # SubmitJob has no idempotency token. A lost successful response must reach
+    # the controller's reconciliation path before another request is sent.
+    batch_cfg = Config(connect_timeout=10, read_timeout=30, retries={"total_max_attempts": 1})
     return {
-        name: boto3.client(name, region_name=region, config=cfg) for name in ("s3", "batch", "ecr")
+        name: boto3.client(name, region_name=region, config=batch_cfg if name == "batch" else cfg)
+        for name in ("s3", "batch", "ecr")
     }
 
 

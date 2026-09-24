@@ -215,3 +215,112 @@ def test_child_cannot_inherit_unfrozen_model_or_dispatch_overrides(tmp_path, mon
     assert "FF_TUNE_ABLATE_MOD" not in env
     assert "FF_NEW_NUMERICAL_FLAG" not in env
     assert env["FF_FRESH"] == "1"
+    assert env["FF_CACHE_DIR"] == str(tmp_path / "raw")
+
+
+def _reserve_trial_worker(db_path, limit):
+    from src.tuning.study_checkpoint import claim_trial, run_claimed_trial
+
+    study = optuna.load_study(study_name="budget", storage=f"sqlite:///{db_path}")
+    while (trial := claim_trial(study, limit, db_path)) is not None:
+
+        def objective(trial):
+            if trial.number % 2:
+                raise optuna.TrialPruned()
+            return 1.0
+
+        run_claimed_trial(study, trial, objective)
+
+
+def test_parallel_mps_reservations_cannot_overrun_attempt_limit(tmp_path):
+    import multiprocessing
+
+    from src.tuning.study_checkpoint import claim_trial
+
+    path = tmp_path / "budget.db"
+    study = optuna.create_study(study_name="budget", storage=f"sqlite:///{path}")
+    complete = study.ask()
+    study.tell(complete, 1.0)
+    failed = study.ask()
+    study.tell(failed, state=optuna.trial.TrialState.FAIL)
+    assert claim_trial(study, 2, path) is None
+    processes = [
+        multiprocessing.get_context("spawn").Process(
+            target=_reserve_trial_worker, args=(str(path), 5)
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    try:
+        for process in processes:
+            process.join(timeout=30)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+    assert len(study.trials) == 5
+    assert any(trial.state == optuna.trial.TrialState.PRUNED for trial in study.trials)
+
+
+def test_sqlite_backup_closes_both_handles_before_returning(tmp_path, monkeypatch):
+    import src.tuning.study_checkpoint as checkpoint
+
+    path = tmp_path / "live.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE evidence (value INTEGER)")
+    original = sqlite3.connect
+    opened = []
+
+    def connect(*args, **kwargs):
+        conn = original(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(checkpoint.sqlite3, "connect", connect)
+    snapshot = Path(checkpoint.sqlite_backup(path))
+    try:
+        assert len(opened) == 2
+        for conn in opened:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                conn.execute("SELECT 1")
+    finally:
+        snapshot.unlink()
+
+
+def test_batch_ab_completion_uses_the_existing_s3_client(tmp_path, monkeypatch):
+    import boto3
+
+    from src.tuning import ab_batch, ab_harness, launch_ab
+
+    manifest = minimal_manifest()
+    manifest.update(backend="batch", bucket="bucket", region="us-east-1")
+    step = {
+        "id": "ab",
+        "kind": "ab",
+        "positions": ["RB"],
+        "options": {"seeds": [42]},
+        "spec": "src.tuning.ab_exact_reuse",
+        "env": {},
+    }
+    source = tmp_path / "inputs"
+    source.mkdir()
+    client = Mock()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("FF_CAMPAIGN_UNIT", "RB-gpu")
+    monkeypatch.setenv("FF_DEVICE", "cpu")
+    monkeypatch.setattr(worker, "verify_runtime", lambda *args: None)
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: client)
+    monkeypatch.setattr(ab_batch, "run_batch_entry", lambda pos: None)
+    monkeypatch.setattr(ab_harness, "aggregate", lambda spec, rows: {"ok": len(rows)})
+
+    def collect(spec, *, bucket, s3_prefix, run_id, s3_client):
+        assert s3_client is client
+        return [{"ok": True}]
+
+    monkeypatch.setattr(launch_ab, "collect_results", collect)
+    output = tmp_path / "output"
+    worker.execute_step(manifest, step, source, output)
+    assert json.loads((output / "result.json").read_text()) == {"ok": 1}

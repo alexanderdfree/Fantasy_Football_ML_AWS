@@ -1305,14 +1305,23 @@ def _mps_worker_entry(
             sampler_seed=_worker_sampler_seed(worker_idx, iteration),
             max_resource=stacked_epochs if stacked_n >= 2 else None,
         )
-        if _completed_trials(study) >= target_completed_trials:
+        campaign = bool(os.environ.get("FF_CAMPAIGN_STUDY_DIR"))
+        if not campaign and _completed_trials(study) >= target_completed_trials:
             return
         timeout = None
         if deadline_epoch is not None:
             timeout = max(0.0, deadline_epoch - time.time())
             if timeout <= 0:
                 return
-        study.optimize(objective, n_trials=1, timeout=timeout, show_progress_bar=False)
+        if campaign:
+            from src.tuning.study_checkpoint import claim_trial, run_claimed_trial
+
+            trial = claim_trial(study, target_completed_trials, db_path)
+            if trial is None:
+                return
+            run_claimed_trial(study, trial, objective)
+        else:
+            study.optimize(objective, n_trials=1, timeout=timeout, show_progress_bar=False)
         # Release the finished trial's CUDA-graph private pools + allocator
         # slack between trials — graph captures otherwise ratchet
         # reserved memory across a worker's sequential trials (gate-v
@@ -1401,9 +1410,10 @@ def _run_mps_optimize(
         for idx in range(n_jobs)
     ]
 
+    target_kind = "attempts" if os.environ.get("FF_CAMPAIGN_STUDY_DIR") else "complete trials"
     print(
         f"[mps] launching {n_jobs} Optuna worker processes for {pos} "
-        f"(target complete trials={n_trials})",
+        f"(target {target_kind}={n_trials})",
         flush=True,
     )
     last_checkpoint = time.monotonic()
@@ -1757,8 +1767,7 @@ def main():
             )
 
             recover_trials(study)
-            if parallel_backend != _MPS_BACKEND:
-                remaining = remaining_attempts(study, args.n_trials)
+            remaining = remaining_attempts(study, args.n_trials)
             campaign_budget = CampaignBudget(study, args.timeout, checkpoint)
         effective_timeout = campaign_budget.remaining if campaign_budget else args.timeout
 
@@ -1840,7 +1849,12 @@ def main():
                         callbacks=callbacks,
                     )
             else:
-                print(f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()")
+                if campaign_budget is not None:
+                    print(f"[{pos}] campaign attempt budget exhausted; skipping optimize()")
+                else:
+                    print(
+                        f"[{pos}] all {args.n_trials} trials already completed; skipping optimize()"
+                    )
 
         resources = probe.stop()
         elapsed = time.time() - t0

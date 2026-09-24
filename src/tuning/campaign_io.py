@@ -42,7 +42,7 @@ def atomic_json(path, value):
 
 
 @contextlib.contextmanager
-def local_lock(directory):
+def local_lock(directory, *, blocking=False):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ".running.lock").open("a+b") as stream:
@@ -55,11 +55,11 @@ def local_lock(directory):
             if os.name == "nt":
                 import msvcrt
 
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
 
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(stream, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         except OSError as exc:
             raise RuntimeError("This local campaign is already running") from exc
         try:
