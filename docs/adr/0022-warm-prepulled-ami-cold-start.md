@@ -7,7 +7,8 @@
 
 ## Context
 
-Production training runs on AWS Batch GPU Spot hosts (g6/L4, g5/A10G). The
+The June 2026 measurements below motivated this decision; they are not current
+canary results. Production training runs on AWS Batch GPU Spot hosts (g6/L4, g5/A10G). The
 attention NN is launch-bound, but the *production wall-clock* is
 orchestration-bound, not GPU-bound: the ~1-min GPU step sits inside a ~258 s
 cold-start — ~120 s Spot provisioning (a fixed G-family floor) + **~122 s
@@ -54,8 +55,9 @@ small app-delta pull, so this is a rare manual rebuild, not per-push.
 
 - Up to ~120 s/host off the cold-start; since the six fan-out hosts cold-start in
   parallel, ~120 s off the *critical path* (~20-25 % of the production wall).
-- Zero metric/accuracy risk: pure infra, no training-path or numerics change. The
-  AMI only adds pre-pulled layers to the same OS/driver/agent lineage.
+- The intended change adds cached layers without changing training code or
+  numerical settings. A new source AMI can still change driver/runtime behavior;
+  require the measured correctness gate before activation.
 - A new operational object (the AMI + `ff-warm-ami-lt` launch template) with a
   manual rebuild cadence and an explicit `launchTemplate={}` rollback. The AMI is
   GPU-CE-scoped; the c8a CPU fleet is untouched.
@@ -75,9 +77,16 @@ small app-delta pull, so this is a rare manual rebuild, not per-push.
   most of the win at zero idle cost.
 - **Bottlerocket GPU AMI.** Changes OS family (driver baking, agent
   customization, debugging surface); higher risk than baking layers onto the
-  existing AL2 ECS-GPU lineage.
+  existing AL2023 ECS-GPU lineage.
 
 ## Changelog
+
+- 2026-09-24 · Align baking with AL2023, pin source/image inputs, remove builder
+  state, record dependency identity, and add a measured canary/activation/rollback
+  controller. Require three paired cold starts per L4/A10G family, six-position
+  metric parity, 60-second median image-pull savings and no median total-time
+  regression. Pin the selected launch-template version and preserve fleet
+  capacity/network settings. Operational steps: [warm AMI guide](../../infra/batch/WARM_AMI.md).
 
 - 2026-06-22 · Initial decision: opt-in warm pre-pulled GPU AMI
   (`build-warm-ami.sh` + `FF_BATCH_AMI_ID` launch-template wiring in
