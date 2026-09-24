@@ -95,6 +95,7 @@ MANIFEST_FIELDS: frozenset[str] = frozenset(
         "poisson_targets",
         "gated_targets",
         "nn_non_negative_targets",
+        "nn_correct_ztnb_mean",
         # base-NN architecture (parameter shapes)
         "nn_backbone_layers",
         "nn_head_hidden",
@@ -296,6 +297,7 @@ def build_position_manifest(pos: str) -> dict[str, Any]:
             "head_hidden": pc.nn_head_hidden,
             "head_hidden_overrides": dict(sorted(pc.nn_head_hidden_overrides.items())),
             "dropout": pc.nn_dropout,
+            "correct_ztnb_mean": pc.nn_correct_ztnb_mean,
         },
         "loss_heads": {
             # target -> family (mse / huber / poisson_nll / ...). The *family* is

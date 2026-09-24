@@ -197,6 +197,7 @@ def build_pipeline_config(
         "nn_selection_metric": pc.nn_selection_metric,
         "nn_use_amp": pc.nn_use_amp,
         "nn_bounded_flag_range": pc.nn_bounded_flag_range,
+        "nn_correct_ztnb_mean": pc.nn_correct_ztnb_mean,
         # === Attention ===
         "train_attention_nn": pc.train_attention_nn,
         "attn_d_model": pc.attn_d_model,
