@@ -113,6 +113,65 @@ test("comparison displays shared components, cohorts, ESPN and partial reference
     await expect(page.locator("table").filter({ has: page.locator("#comparison-all-body") }).getByRole("columnheader", { name: "ESPN" })).toBeVisible();
 });
 
+test("loaded comparison omits unavailable optional tables without staying in loading state", async ({ page }) => {
+    await localAPI(page);
+    const response = structuredClone(comparison);
+    delete response.subsets.weekly_reference_top24;
+    delete response.weekly_ranking;
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    await page.route("**/api/comparison", async (route) => {
+        await pending;
+        await route.fulfill({
+            contentType: "application/json",
+            headers: { "X-FFP-Contract-Version": "1.0" },
+            body: JSON.stringify(response),
+        });
+    });
+    await page.goto("/#comparison");
+    for (const id of ["comparison-weekly-top24", "comparison-weekly-capture"]) {
+        await expect(page.locator(`#${id}`)).toContainText("Loading comparison");
+    }
+    release();
+    for (const id of ["comparison-weekly-top24", "comparison-weekly-capture"]) {
+        await expect(page.locator(`#${id} .arch-loading`)).toHaveCount(0);
+        await expect(page.locator(`#${id} tr`)).toHaveCount(6);
+        await expect(page.locator(`#${id} .comparison-empty`)).not.toHaveCount(0);
+    }
+    await expect(page.locator("#comparison-all-body tr")).toHaveCount(6);
+    await expect(page.locator("#comparison-weekly-consensus")).toHaveCount(0);
+});
+
+for (const [experts, names] of [
+    [["espn"], "ESPN"],
+    [["nflcom", "rotowire"], "NFL.com and RotoWire"],
+    [["nflcom", "rotowire", "custom"], "NFL.com, RotoWire and custom"],
+]) {
+    test(`timeline renders the supplied expert names: ${names}`, async ({ page }) => {
+        await localAPI(page);
+        const models = ["ridge", "nn", "attn_nn", "lgbm"];
+        const sources = [...models, ...experts];
+        await page.route("**/api/timeline?*", (route) => route.fulfill({
+            contentType: "application/json",
+            headers: { "X-FFP-Contract-Version": "1.0" },
+            body: JSON.stringify({
+                schema_version: 2, season: 2025, positions: ["QB"], experts, sources,
+                model_labels: { ridge: "Ridge", nn: "Neural Net", attn_nn: "Attention NN", lgbm: "LightGBM", nflcom: "NFL.com", rotowire: "RotoWire", espn: "ESPN" },
+                weekly: [], releases: [], scoring_components: { QB: ["passing_yards"] }, excluded_sources: {},
+                summary: {
+                    n: 24, cohort_n: 24, actual_n: 24, evaluated_weeks: 1, total_weeks: 1,
+                    source_n: Object.fromEntries(sources.map((source) => [source, 24])),
+                    models: Object.fromEntries(models.map((model) => [model, { mae: 2, beat_experts: 1, evaluated_weeks: 1 }])),
+                },
+            }),
+        }));
+        await page.goto("/#timeline");
+        await expect(page.locator("#view-timeline")).toContainText(`${names} · 24 common player-weeks`);
+        await expect(page.locator(".timeline-track-card")).toContainText(`Beat ${experts.length > 1 ? "every expert" : names}: 1 / 1 weeks`);
+        if (experts.includes("custom")) await expect(page.locator("#view-timeline")).toContainText("custom 24");
+    });
+}
+
 test("unsupported contract versions surface a failure instead of fabricated rows", async ({ page }) => {
     await localAPI(page, { version: "2.0" });
     await page.goto("/#predictions");
