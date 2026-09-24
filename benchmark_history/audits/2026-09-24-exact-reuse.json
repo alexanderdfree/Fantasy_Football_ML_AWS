@@ -1,0 +1,67 @@
+{
+  "date": "2026-09-24",
+  "source_sha": "b99c63952daa49ef88e8decec08dd221e5b8fbe7",
+  "dataset_id": "3cf3b7ea78f2a26c660e7d7e1da650aede74fc4235a6ddf817598da55af44af3",
+  "regime": "production recipes, eager, CUDA graphs where supported, FP32/TF32, seed 42",
+  "scope": "Measured cell execution; excludes Batch queue, provision and container startup. Cache hits are not fresh-training evidence.",
+  "cells": [
+    {
+      "position": "QB",
+      "fresh_seconds": 32.2,
+      "reused_seconds": 2.0,
+      "cell_speedup": 16.1,
+      "metrics_equal": true,
+      "gpu": "NVIDIA A10G"
+    },
+    {
+      "position": "RB",
+      "fresh_seconds": 61.7,
+      "reused_seconds": 2.2,
+      "cell_speedup": 28.05,
+      "metrics_equal": true,
+      "gpu": "NVIDIA A10G"
+    },
+    {
+      "position": "WR",
+      "fresh_seconds": 60.6,
+      "reused_seconds": 2.4,
+      "cell_speedup": 25.25,
+      "metrics_equal": true,
+      "gpu": "NVIDIA A10G"
+    },
+    {
+      "position": "TE",
+      "fresh_seconds": 52.9,
+      "reused_seconds": 2.2,
+      "cell_speedup": 24.05,
+      "metrics_equal": true,
+      "gpu": "NVIDIA A10G"
+    },
+    {
+      "position": "K",
+      "fresh_seconds": 27.5,
+      "reused_seconds": 3.3,
+      "cell_speedup": 8.33,
+      "metrics_equal": true,
+      "gpu": "NVIDIA A10G"
+    },
+    {
+      "position": "DST",
+      "fresh_seconds": 45.0,
+      "reused_seconds": 13.5,
+      "cell_speedup": 3.33,
+      "metrics_equal": true,
+      "gpu": "NVIDIA A10G"
+    }
+  ],
+  "cross_container_rb": {
+    "first_request_seconds": 7.2,
+    "both_requests_hit": true,
+    "same_original_run": true
+  },
+  "s3_run_prefixes": [
+    "experiments/training-speed/reuse/speed-reuse-rb-20260924-b99c6395",
+    "experiments/training-speed/reuse/speed-reuse-six-20260924-b99c6395",
+    "experiments/training-speed/reuse/speed-reuse-remote-20260924-b99c6395"
+  ]
+}
