@@ -1,0 +1,321 @@
+{
+  "evidence": [
+    {
+      "arm": "r0a0",
+      "gpu": "NVIDIA A10G",
+      "path": "r0a0-123.json",
+      "rows": {
+        "r0a0d0": {
+          "bytes": 407642,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/032ed49be8a5415ddeea7608dcdab907430ee5290d8466760d8ad235153f8908.parquet",
+          "sha256": "032ed49be8a5415ddeea7608dcdab907430ee5290d8466760d8ad235153f8908"
+        },
+        "r0a0d1": {
+          "bytes": 412381,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/50ad0984caf615ff52abc3551b5f147a270e75583c4c050fe724bbda9de64d1f.parquet",
+          "sha256": "50ad0984caf615ff52abc3551b5f147a270e75583c4c050fe724bbda9de64d1f"
+        }
+      },
+      "seed": 123,
+      "sha256": "e049016e13b7c1400db4967e326af644392e4da1f8fb3475705c8ba9889e0edf"
+    },
+    {
+      "arm": "r0a0",
+      "gpu": "NVIDIA A10G",
+      "path": "r0a0-42.json",
+      "rows": {
+        "r0a0d0": {
+          "bytes": 406960,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/d5254deb9349328d4f5c3002c8db1000a979b77d475502908ac7de6d7ee8e599.parquet",
+          "sha256": "d5254deb9349328d4f5c3002c8db1000a979b77d475502908ac7de6d7ee8e599"
+        },
+        "r0a0d1": {
+          "bytes": 412364,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/4b11b5913910df54c8f47f2c30dcc83da535fce4c33a1aeb0f8ec927012d6a7a.parquet",
+          "sha256": "4b11b5913910df54c8f47f2c30dcc83da535fce4c33a1aeb0f8ec927012d6a7a"
+        }
+      },
+      "seed": 42,
+      "sha256": "dd8b2d390dd15f52627197290473c5259cadd5e1e15c8ceec1944059329ea0d4"
+    },
+    {
+      "arm": "r0a0",
+      "gpu": "NVIDIA A10G",
+      "path": "r0a0-7.json",
+      "rows": {
+        "r0a0d0": {
+          "bytes": 408460,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/79cca1405fa1959c317f28b9750326cf487ead83d3a148ebf1af61498265a0d5.parquet",
+          "sha256": "79cca1405fa1959c317f28b9750326cf487ead83d3a148ebf1af61498265a0d5"
+        },
+        "r0a0d1": {
+          "bytes": 415012,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/c84979d6fd88d1104a1f8726a9c19c715631a261182208b1e459baeb09c9b6b5.parquet",
+          "sha256": "c84979d6fd88d1104a1f8726a9c19c715631a261182208b1e459baeb09c9b6b5"
+        }
+      },
+      "seed": 7,
+      "sha256": "c810f4441ccafeb174977fcc6e18d7e2eb5d3e2eafb71522975f357f1dc5b5c9"
+    },
+    {
+      "arm": "r0a1",
+      "gpu": "NVIDIA A10G",
+      "path": "r0a1-123.json",
+      "rows": {
+        "r0a1d0": {
+          "bytes": 405998,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/4acad0cf296a729b90b9407509377a8c3e6ebd04de5c33c1afeabab6dfab9ba6.parquet",
+          "sha256": "4acad0cf296a729b90b9407509377a8c3e6ebd04de5c33c1afeabab6dfab9ba6"
+        },
+        "r0a1d1": {
+          "bytes": 411259,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/dddb5d676ce601eefe3804a7b58e9450b1910eafbc4354f92aaaf82d38c3901b.parquet",
+          "sha256": "dddb5d676ce601eefe3804a7b58e9450b1910eafbc4354f92aaaf82d38c3901b"
+        }
+      },
+      "seed": 123,
+      "sha256": "3c72dbaaf50715fd2650494dd74ec56e0dd8b81b3bc5e794e395044dc665be62"
+    },
+    {
+      "arm": "r0a1",
+      "gpu": "NVIDIA A10G",
+      "path": "r0a1-42.json",
+      "rows": {
+        "r0a1d0": {
+          "bytes": 404736,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/111b34d038a5755a9da771c38191af9bdf23054ac3cc9f2b9216b316126f47b0.parquet",
+          "sha256": "111b34d038a5755a9da771c38191af9bdf23054ac3cc9f2b9216b316126f47b0"
+        },
+        "r0a1d1": {
+          "bytes": 409866,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/7b345f6833dfc506c68a645730e100985abdfd9693d4c1f07a27d9857cd58add.parquet",
+          "sha256": "7b345f6833dfc506c68a645730e100985abdfd9693d4c1f07a27d9857cd58add"
+        }
+      },
+      "seed": 42,
+      "sha256": "5fec6d4a9973e5b604debe1748a860e9c61f83e32a2717e40685b6494e33146d"
+    },
+    {
+      "arm": "r0a1",
+      "gpu": "NVIDIA A10G",
+      "path": "r0a1-7.json",
+      "rows": {
+        "r0a1d0": {
+          "bytes": 406365,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/d51ddbdaa769c478eb0c2f9a50e02e554797de3985e398b011cb48faa4319947.parquet",
+          "sha256": "d51ddbdaa769c478eb0c2f9a50e02e554797de3985e398b011cb48faa4319947"
+        },
+        "r0a1d1": {
+          "bytes": 412401,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/c46d116e8e2df648d1d501ad6214f1db77f9715368e02894e80f5ac7965161f4.parquet",
+          "sha256": "c46d116e8e2df648d1d501ad6214f1db77f9715368e02894e80f5ac7965161f4"
+        }
+      },
+      "seed": 7,
+      "sha256": "8bdb013f52c926335d9fda15167a0f132fb4ecea76fe87c07c943dfa4a82c88c"
+    },
+    {
+      "arm": "r1a0",
+      "gpu": "NVIDIA A10G",
+      "path": "r1a0-123.json",
+      "rows": {
+        "r1a0d0": {
+          "bytes": 408511,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/8b0473e8f3d458ea2849bc0b0171150ec823aba9fb403fb3f71dda0728d76238.parquet",
+          "sha256": "8b0473e8f3d458ea2849bc0b0171150ec823aba9fb403fb3f71dda0728d76238"
+        },
+        "r1a0d1": {
+          "bytes": 412869,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/a12a019cd6c99309335187d8868b22df6cd69f5699e24531619fbba5db740eba.parquet",
+          "sha256": "a12a019cd6c99309335187d8868b22df6cd69f5699e24531619fbba5db740eba"
+        }
+      },
+      "seed": 123,
+      "sha256": "4820bdab3b0c60303d7458a7151bd2ed4b40b9164f4b426afd5a6a183decc1f4"
+    },
+    {
+      "arm": "r1a0",
+      "gpu": "NVIDIA A10G",
+      "path": "r1a0-42.json",
+      "rows": {
+        "r1a0d0": {
+          "bytes": 406371,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/c826bc7b67540eb54130c0a2737017dd731090b8b94d6842457d26b45a42a2d2.parquet",
+          "sha256": "c826bc7b67540eb54130c0a2737017dd731090b8b94d6842457d26b45a42a2d2"
+        },
+        "r1a0d1": {
+          "bytes": 412044,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/01120a82cca3260c78b3d3714c6d0458a3b9ddfce634ff22455925c164544b0f.parquet",
+          "sha256": "01120a82cca3260c78b3d3714c6d0458a3b9ddfce634ff22455925c164544b0f"
+        }
+      },
+      "seed": 42,
+      "sha256": "88155968d4dea0224c4defef585c1e352d7f5a45c8d9c4ae0628df403677f45a"
+    },
+    {
+      "arm": "r1a0",
+      "gpu": "NVIDIA A10G",
+      "path": "r1a0-7.json",
+      "rows": {
+        "r1a0d0": {
+          "bytes": 408414,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/6266bdbbee356bac6fb8fa524383eff10f85ad82b4087df93a3ae9a904aefe29.parquet",
+          "sha256": "6266bdbbee356bac6fb8fa524383eff10f85ad82b4087df93a3ae9a904aefe29"
+        },
+        "r1a0d1": {
+          "bytes": 414489,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/cd67173d06a11c95929b628df611070e106f7756b96c2b1ee78d986b4bd2652b.parquet",
+          "sha256": "cd67173d06a11c95929b628df611070e106f7756b96c2b1ee78d986b4bd2652b"
+        }
+      },
+      "seed": 7,
+      "sha256": "331ca8a3fbdeffee19fabf0b70a9cb550137b45c1c3dafa257d381c8d56315be"
+    },
+    {
+      "arm": "r1a1",
+      "gpu": "NVIDIA A10G",
+      "path": "r1a1-123.json",
+      "rows": {
+        "r1a1d0": {
+          "bytes": 406242,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/6a21e2ddc92953582263a9cc10934f6f4cba99143371649d9d786e1e9f15193e.parquet",
+          "sha256": "6a21e2ddc92953582263a9cc10934f6f4cba99143371649d9d786e1e9f15193e"
+        },
+        "r1a1d1": {
+          "bytes": 411329,
+          "key": "ab_runs/wr-pr1564-full-seed123-20260918/rows/5318580653565a8651b6256dcbaa8e210975e159fdd6e6ce23f8acd7fb74ee52.parquet",
+          "sha256": "5318580653565a8651b6256dcbaa8e210975e159fdd6e6ce23f8acd7fb74ee52"
+        }
+      },
+      "seed": 123,
+      "sha256": "69e2aaf1cafee68a858985838620315ac4e18f1407389323f53b807aee744d0a"
+    },
+    {
+      "arm": "r1a1",
+      "gpu": "NVIDIA A10G",
+      "path": "r1a1-42.json",
+      "rows": {
+        "r1a1d0": {
+          "bytes": 406453,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/2f062c32c0b6d3ca4f24f2f93455f6f2e15c908452ae13a9548a0809ad52f298.parquet",
+          "sha256": "2f062c32c0b6d3ca4f24f2f93455f6f2e15c908452ae13a9548a0809ad52f298"
+        },
+        "r1a1d1": {
+          "bytes": 411824,
+          "key": "ab_runs/wr-pr1564-full-seed42-20260918/rows/b846ec8a882d0e8d498b12f0414045bec30751df7e7b5b7df78caf5209b29d3f.parquet",
+          "sha256": "b846ec8a882d0e8d498b12f0414045bec30751df7e7b5b7df78caf5209b29d3f"
+        }
+      },
+      "seed": 42,
+      "sha256": "a8c73b4b7ab742a24dea78988b10979f5271e2399f214f792e8222b71e6cae5a"
+    },
+    {
+      "arm": "r1a1",
+      "gpu": "NVIDIA A10G",
+      "path": "r1a1-7.json",
+      "rows": {
+        "r1a1d0": {
+          "bytes": 411433,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/937a9f2d8b87d6d8e3b154cf9535dc7430f472f4259040fa5eecf2e37ee13a88.parquet",
+          "sha256": "937a9f2d8b87d6d8e3b154cf9535dc7430f472f4259040fa5eecf2e37ee13a88"
+        },
+        "r1a1d1": {
+          "bytes": 417275,
+          "key": "ab_runs/wr-pr1564-full-seed7-20260918/rows/5cc2ca23ccc6924017bf885e2814418b65ac868551ce23b37fee69803bb740c1.parquet",
+          "sha256": "5cc2ca23ccc6924017bf885e2814418b65ac868551ce23b37fee69803bb740c1"
+        }
+      },
+      "seed": 7,
+      "sha256": "cb8149c54f7e348158d749362d9e74044d7111d7ff1a2b77342813afe7983245"
+    }
+  ],
+  "historical_recipe": "b9d24f9259c7fd261ab1a4e77d4212d821726420",
+  "image_digest": "sha256:561642ef7fea9061a5d4a776ccf62504f8ad520405fc6c6911cea19eac95344e",
+  "input_archive": {
+    "bytes": 216571446,
+    "manifest_sha256": "2fae99fea6ac4054cb7bf6323f27533cdc92b10f6c65aaf27257a7b1ae69ccdd",
+    "sha256": "4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa",
+    "uri": "s3://ff-predictor-training/ab_runs/wr-pr1564-20260918/inputs/4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa.tar.gz",
+    "worker_source": "9f4dae30ca55d79985176ab7e7f767d2c592cc43"
+  },
+  "jobs": [
+    {
+      "image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/ff-training:9f4dae30ca55d79985176ab7e7f767d2c592cc43@sha256:561642ef7fea9061a5d4a776ccf62504f8ad520405fc6c6911cea19eac95344e",
+      "job_id": "fa536e4f-b105-4a6e-85e3-9ccb2434d3c3",
+      "log_stream": "ff-training/default/615fc2af100e4fee81db6194f93dd5a3",
+      "settings": {
+        "FF_AB_RUN_ID": "wr-pr1564-full-seed7-20260918",
+        "FF_AB_S3_PREFIX": "ab_runs",
+        "FF_AB_SEEDS": "7",
+        "FF_AMP_DTYPE": "fp32",
+        "FF_COMPILE": "0",
+        "FF_CUDA_GRAPH": "0",
+        "FF_DATASET_ID": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+        "FF_DATA_FORMAT": "data-release-v1",
+        "FF_DATA_RELEASE": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+        "FF_DEVICE": "cuda",
+        "FF_TRAIN_GIT_SHA": "9f4dae30ca55d79985176ab7e7f767d2c592cc43",
+        "FF_TUNE_AB_SPEC": "src.tuning.ab_wr_pr1564",
+        "FF_WR1564_INPUT_SHA": "4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa",
+        "FF_WR1564_INPUT_URI": "s3://ff-predictor-training/ab_runs/wr-pr1564-20260918/inputs/4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa.tar.gz",
+        "S3_DATA_PREFIX": "data"
+      },
+      "started_at": 1789700037134,
+      "status": "SUCCEEDED",
+      "stopped_at": 1789700620434
+    },
+    {
+      "image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/ff-training:9f4dae30ca55d79985176ab7e7f767d2c592cc43@sha256:561642ef7fea9061a5d4a776ccf62504f8ad520405fc6c6911cea19eac95344e",
+      "job_id": "f4a6620e-6f23-46ae-bebf-e382154053f4",
+      "log_stream": "ff-training/default/7230be4939ba4c10aab4cf37eb5c97b6",
+      "settings": {
+        "FF_AB_RUN_ID": "wr-pr1564-full-seed42-20260918",
+        "FF_AB_S3_PREFIX": "ab_runs",
+        "FF_AB_SEEDS": "42",
+        "FF_AMP_DTYPE": "fp32",
+        "FF_COMPILE": "0",
+        "FF_CUDA_GRAPH": "0",
+        "FF_DATASET_ID": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+        "FF_DATA_FORMAT": "data-release-v1",
+        "FF_DATA_RELEASE": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+        "FF_DEVICE": "cuda",
+        "FF_TRAIN_GIT_SHA": "9f4dae30ca55d79985176ab7e7f767d2c592cc43",
+        "FF_TUNE_AB_SPEC": "src.tuning.ab_wr_pr1564",
+        "FF_WR1564_INPUT_SHA": "4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa",
+        "FF_WR1564_INPUT_URI": "s3://ff-predictor-training/ab_runs/wr-pr1564-20260918/inputs/4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa.tar.gz",
+        "S3_DATA_PREFIX": "data"
+      },
+      "started_at": 1789700007732,
+      "status": "SUCCEEDED",
+      "stopped_at": 1789700548165
+    },
+    {
+      "image": "432981645194.dkr.ecr.us-east-1.amazonaws.com/ff-training:9f4dae30ca55d79985176ab7e7f767d2c592cc43@sha256:561642ef7fea9061a5d4a776ccf62504f8ad520405fc6c6911cea19eac95344e",
+      "job_id": "e08fd66e-32d5-44d9-b0d0-c8862c450120",
+      "log_stream": "ff-training/default/e422e99381184d04822173c9876d5ace",
+      "settings": {
+        "FF_AB_RUN_ID": "wr-pr1564-full-seed123-20260918",
+        "FF_AB_S3_PREFIX": "ab_runs",
+        "FF_AB_SEEDS": "123",
+        "FF_AMP_DTYPE": "fp32",
+        "FF_COMPILE": "0",
+        "FF_CUDA_GRAPH": "0",
+        "FF_DATASET_ID": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+        "FF_DATA_FORMAT": "data-release-v1",
+        "FF_DATA_RELEASE": "556115711494d5f7c10af9fe3e97b94b200e97a661078a3a1e4a874ca4b20340",
+        "FF_DEVICE": "cuda",
+        "FF_TRAIN_GIT_SHA": "9f4dae30ca55d79985176ab7e7f767d2c592cc43",
+        "FF_TUNE_AB_SPEC": "src.tuning.ab_wr_pr1564",
+        "FF_WR1564_INPUT_SHA": "4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa",
+        "FF_WR1564_INPUT_URI": "s3://ff-predictor-training/ab_runs/wr-pr1564-20260918/inputs/4a914ff282b47472661abe063d8fd35720650cdd4b99fe4d2279c989eddaa2aa.tar.gz",
+        "S3_DATA_PREFIX": "data"
+      },
+      "started_at": 1789700011901,
+      "status": "SUCCEEDED",
+      "stopped_at": 1789700554532
+    }
+  ],
+  "smoke_gate": true,
+  "smoke_job": "275f9f4c-f606-4c73-a853-ece3b205c550",
+  "source": "9f4dae30ca55d79985176ab7e7f767d2c592cc43"
+}

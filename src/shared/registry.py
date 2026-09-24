@@ -118,7 +118,7 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
     ``game_dim`` flows from the length of ``attn_history_stats``: 0 = legacy
     nested-only path, >0 = per-game aggregates fed alongside the inner pool.
     """
-    return dict(
+    kwargs = dict(
         backbone_layers=list(pc.nn_backbone_layers),
         d_kick=pc.attn_kick_dim,
         d_model=pc.attn_d_model,
@@ -136,6 +136,17 @@ def _nested_attn_kwargs_static(pc: PositionConfig) -> dict:
         # served-kwargs requirement as the flat path (adds cond_proj when on).
         condition_queries_on_static=pc.attn_condition_queries_on_static,
     )
+    # Per-head hidden-dim overrides — mirror the flat builder's conditional
+    # forwarding (#1503). The training factory
+    # ``build_multihead_net_with_nested_history`` reads
+    # ``cfg["nn_head_hidden_overrides"]``, so an override K configured would
+    # train an overridden head shape while serving / smoke rebuilt the plain
+    # one and ``load_state_dict`` failed on the shape mismatch (the 2026-06-15
+    # architecture-staleness class). K sets no override today, so the served
+    # kwargs are byte-identical until one is configured.
+    if pc.nn_head_hidden_overrides:
+        kwargs["head_hidden_overrides"] = dict(pc.nn_head_hidden_overrides)
+    return kwargs
 
 
 def _position_modules(pos: str):
