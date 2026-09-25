@@ -39,7 +39,63 @@ Supplementary history sources report observed/expected completed player-game cov
 
 Age/rookie metadata uses the fetched current-season weekly roster and actual game schedule. Season-matched ESPN roster DOB/debut/experience fields fill remaining display-only gaps; team-unit DST rows remain null. Historical metadata callers retain their cached source path. NFL.com community-archive projections are enabled by default only through the verified 2025 archive; operators may set `FF_UPCOMING_NFLCOM=1` after verifying current coverage. This is an availability policy, not a claim that the third-party archive is permanently discontinued. ESPN and RotoWire remain independently labeled live comparisons.
 
+## Practice context experiment (default off)
+
+The practice adapter retains normalized injury descriptions, source, collection
+time, source report time when supplied, and per-player coverage alongside its
+compatible numeric status map. `src/features/practice_context.py` owns the shared
+historical/live transform: rest-only, illness, unknown information, and multi-hot
+lower-body, upper-body/back, head, and other reasons. A mixed injury/rest report
+is never rest-only. Missing coverage is unknown. Historical unlisted players use
+the existing nflverse team-week coverage inference, not a claim that a dated
+daily report exists. These are current-game static inputs, never history tokens.
+
+All production allowlists, including K/DST, exclude the candidates.
+`src.tuning.ab_practice_context` explicitly enables the two treatment sets in
+both flat and attention-static inputs; all three arms join the same pinned raw
+injury release for cohort labels. Its eager four-position, three-seed screen is
+**retrospective**. Weekly final reports (including the inspected 2025/2026 feeds
+without source timestamps) cannot establish Wednesday/Thursday availability.
+Both MAE and RMSE must improve without worsening important-player cohorts;
+missing pregame references and sparse cohorts remain explicit and inconclusive.
+
+After publishing a forecast, the existing offline refresh builder archives the
+paired report observations, exact published forecast, input identity, and slate
+kickoffs under `models/predictions_cache/practice_archive/season=Y/week=WW/`.
+Local records use the equivalent path under the prediction-cache directory.
+Content-addressed files and conditional S3 creation preserve earlier revisions.
+Unchanged-input refreshes also archive their new observation with the reused
+forecast's original generation time. Archive failures fail the builder visibly
+without removing an already published forecast. The serving container performs
+no archival or feature building. No new scheduler or automatic model promotion
+is introduced.
+
+The forecast artifact's additive `evaluation_context` metadata freezes returning
+status and protected cohort membership before kickoff, retaining these labels
+on unchanged-input refreshes. Elite membership uses mean component-matched
+points across the full previous regular season, before this week's bye/Out
+filter; weekly-reference membership uses the existing versioned pregame
+reference artifact. Missing historical components or references produce unknown
+membership. Injury reason coverage is distinct from participation coverage.
+
+`src.analysis.practice_cutoffs` selects the latest eligible archived forecast
+48 or 24 hours before **each game's** kickoff and compares two supplied archive
+directories on identical player-weeks and projected scoring components. Its
+actuals parquet must contain observed raw target components, not just full
+fantasy totals; unavailable actuals/forecasts are counted. Collection time and
+forecast availability are hard cutoffs even when a source claims an earlier
+report time. Missing timestamps are never backfilled from later snapshots.
+Hourly polls are observations, not additional practices; dated daily trajectories
+and a probability-of-playing model remain outside this experiment. Prospective
+accuracy acceptance still requires candidate shadow forecasts and protected
+cohort review; the evaluator includes injured/rest/illness/unknown/healthy,
+returning, and protected-cohort MAE/RMSE/bias comparisons, with missing or
+disagreeing protected membership explicitly unavailable. The collector/evaluator
+alone establishes no live improvement.
+
 ## Changelog
+
+- **2026-09-24** — Preserve practice reasons and timestamped observations, add a default-off three-arm screen and immutable live cutoff evidence. Candidate accuracy and production promotion remain gated.
 
 - **2026-09-18** — The shared `src/dst/data.py::build_data` now drops REG fixtures with NaN `home_score`/`away_score` by default (`include_unplayed=False`), so training/backtest frames can no longer fabricate team-week rows from the published fixture list (points_allowed=21 / yards_allowed=350 / zero counts). The live `build_defense_frame` opts back in with `include_unplayed=True` because it NaNs the target week's scores by design and needs that fixture context. (#1520; audit-1499 Tier B, PR #1602.)
 - **2026-09-10** — Mitigate refresh downtime with hourly off-peak scheduling, eligibility-aware concurrency, bounded transfer retries, validated atomic downloads, previous-version cold-start recovery and one-minute conditional S3 / visible-browser polling. Preserve stale warnings and the off-container build/data compatibility boundary. (PR #1572.)

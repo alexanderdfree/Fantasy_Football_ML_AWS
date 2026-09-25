@@ -8,7 +8,7 @@ training mean by serving, rather than advertised as full participation.
 from __future__ import annotations
 
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 
@@ -16,15 +16,12 @@ import pandas as pd
 
 from src.data import nfl_source
 from src.data.identity import schedule_team_code_normalization
-from src.data.source_result import SourceResult, SourceStatus
 from src.data.roster_identity import current_rosters, practice_alias_lookup
 from src.data.roster_identity import name_key as _name
+from src.data.source_result import SourceResult, SourceStatus
+from src.features.practice_context import PRACTICE_STATUSES, normalize_descriptions, reason_features
 
-_STATUS = {
-    "Full Participation in Practice": 2.0,
-    "Limited Participation in Practice": 1.0,
-    "Did Not Participate In Practice": 0.0,
-}
+_STATUS = PRACTICE_STATUSES
 _HEADERS = ["Player", "Position", "Injuries", "Practice Status", "Game Status"]
 
 
@@ -98,7 +95,9 @@ class _PracticeParser(HTMLParser):
                         "team_name": self.team,
                         "name": self.row[0],
                         "position": self.row[1],
+                        "injury_descriptions": normalize_descriptions(self.row[2]),
                         "practice_status": _STATUS.get(self.row[3]),
+                        "game_status": self.row[4] or None,
                     }
                 )
         if tag == "table":
@@ -125,6 +124,12 @@ def _fetch_official(season: int, week: int) -> _PracticeParser:
 class PracticeReport:
     values: dict[str, float]
     metadata: dict
+    observations: list[dict] = field(default_factory=list)
+
+
+def _reported_at(value) -> str | None:
+    timestamp = pd.to_datetime(value, utc=True, errors="coerce")
+    return timestamp.isoformat() if pd.notna(timestamp) else None
 
 
 def fetch_practice_report(
@@ -132,6 +137,8 @@ def fetch_practice_report(
 ) -> PracticeReport:
     """Combine per-team coverage; current official tables override older feeds."""
     values = {}
+    details = {}
+    fallback_unknown = set()
     covered = set()
     errors = []
     try:
@@ -140,9 +147,33 @@ def fetch_practice_report(
         for row in injuries.to_dict("records"):
             status = _STATUS.get(row.get("practice_status"))
             pid = row.get("gsis_id")
-            if pd.notna(pid) and status is not None:
-                values[str(pid)] = min(status, values.get(str(pid), 2.0))
-                covered.add(str(row["team"]))
+            if pd.notna(pid):
+                pid = str(pid)
+                if status is None:
+                    fallback_unknown.add(pid)
+                else:
+                    values[pid] = min(status, values.get(pid, 2.0))
+                detail = details.setdefault(
+                    pid,
+                    {"source": "nflverse", "coverage": "reported", "injury_descriptions": []},
+                )
+                detail["injury_descriptions"] = normalize_descriptions(
+                    [
+                        *detail["injury_descriptions"],
+                        row.get("practice_primary_injury"),
+                        row.get("practice_secondary_injury"),
+                    ]
+                )
+                detail["reported_at"] = max(
+                    filter(
+                        None, [detail.get("reported_at"), _reported_at(row.get("date_modified"))]
+                    ),
+                    default=None,
+                )
+                game_status = row.get("report_status")
+                detail["game_status"] = game_status if isinstance(game_status, str) else None
+                if status is not None:
+                    covered.add(str(row["team"]))
     except Exception as exc:  # real upstream boundary; preserve other source coverage
         errors.append(f"nflverse: {exc!r}")
 
@@ -163,6 +194,7 @@ def fetch_practice_report(
         official_teams = {names[name] for name in official.covered if name in names}
         lookup = practice_alias_lookup(roster, current_rosters(rosters_df, season, week))
         reported = {}
+        official_details = {}
         unknown = set()
         unresolved_groups = set()
         for row in official.records:
@@ -175,6 +207,19 @@ def fetch_practice_report(
                     unmatched.append(row["name"])
                 continue
             pid = next(iter(matches))
+            detail = official_details.setdefault(
+                pid,
+                {
+                    "source": "NFL.com",
+                    "coverage": "reported",
+                    "reported_at": None,  # the summary table supplies no report time
+                    "injury_descriptions": [],
+                    "game_status": row["game_status"],
+                },
+            )
+            detail["injury_descriptions"] = normalize_descriptions(
+                [*detail["injury_descriptions"], *row["injury_descriptions"]]
+            )
             if row["practice_status"] is None:
                 unknown.add(pid)  # an unknown status is not a healthy report
             else:
@@ -183,13 +228,25 @@ def fetch_practice_report(
             pid = str(row["player_id"])
             if pid in unknown:
                 values.pop(pid, None)
+                details.pop(pid, None)
+                if pid in official_details:
+                    # A resolved player can have a known injury description
+                    # even when the participation field is unrecognized.
+                    details[pid] = official_details[pid]
             elif pid in reported:
                 values[pid] = reported[pid]
+                details[pid] = official_details[pid]
             elif (
                 row["recent_team"] in official_teams
                 and (row["recent_team"], row["position"]) not in unresolved_groups
             ):
                 values[pid] = 2.0  # demonstrably absent from a published report
+                details[pid] = {
+                    "source": "NFL.com",
+                    "coverage": "published_absence",
+                    "reported_at": None,
+                    "injury_descriptions": [],
+                }
             # An unmatched name may be a roster alias (Andrew vs Drew). Keep
             # an ID-matched fallback, or unknown, until that group is resolved.
         covered.update(official_teams)
@@ -201,17 +258,57 @@ def fetch_practice_report(
     # with no report in either source gets no synthetic healthy values.
     for row in roster.to_dict("records"):
         if row["recent_team"] in covered - official_teams:
-            values.setdefault(str(row["player_id"]), 2.0)
+            pid = str(row["player_id"])
+            if pid not in fallback_unknown:
+                values.setdefault(pid, 2.0)
+            details.setdefault(
+                pid,
+                {
+                    "source": "nflverse",
+                    "coverage": "published_absence",
+                    "reported_at": None,
+                    "injury_descriptions": [],
+                },
+            )
     roster_ids = set(roster["player_id"].astype(str))
     values = {pid: value for pid, value in values.items() if pid in roster_ids}
+    observed_at = datetime.now(UTC).isoformat()
+    observations = [
+        {
+            "player_id": str(row["player_id"]),
+            "season": int(season),
+            "week": int(week),
+            "team": row["recent_team"],
+            "practice_status": values.get(str(row["player_id"])),
+            "observed_at": observed_at,
+            **details.get(
+                str(row["player_id"]),
+                {
+                    "source": None,
+                    "coverage": "unknown",
+                    "reported_at": None,
+                    "injury_descriptions": [],
+                },
+            ),
+        }
+        for row in roster.to_dict("records")
+    ]
     metadata = {
         "provider": "NFL.com official injury reports; nflverse fallback",
         "url": f"https://www.nfl.com/injuries/league/{season}/reg{week}",
-        "fetched_at": datetime.now(UTC).isoformat(),
+        "fetched_at": observed_at,
         "covered_teams": sorted(expected & covered),
         "missing_teams": sorted(expected - covered),
         "known_players": len(values),
         "unknown_players": len(roster_ids - set(values)),
+        "unknown_reason_players": sum(
+            int(
+                reason_features(row["injury_descriptions"], coverage=row["coverage"])[
+                    "practice_reason_unknown"
+                ]
+            )
+            for row in observations
+        ),
         "unmatched_report_names": sorted(set(unmatched)),
         "errors": errors,
     }
@@ -225,7 +322,14 @@ def fetch_practice_report(
         else SourceStatus.AVAILABLE
     )
     metadata["source_result"] = SourceResult.capture(
-        values,
+        {
+            "values": values,
+            # Poll time changes freshness, not the feature-input fingerprint.
+            "observations": [
+                {key: value for key, value in row.items() if key != "observed_at"}
+                for row in sorted(observations, key=lambda row: row["player_id"])
+            ],
+        },
         provider=metadata["provider"],
         status=state,
         retrieved_at=metadata["fetched_at"],
@@ -239,4 +343,4 @@ def fetch_practice_report(
         errors=errors,
         value_kind="reported_or_published_absence",
     ).metadata()
-    return PracticeReport(values, metadata)
+    return PracticeReport(values, metadata, observations)

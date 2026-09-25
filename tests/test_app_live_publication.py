@@ -54,6 +54,8 @@ def builder_boundary(monkeypatch, tmp_path):
     live._write_artifact(good)
     uploads = Mock(return_value=True)
     monkeypatch.setattr(live, "upload_artifact_to_s3", uploads)
+    archive = Mock()
+    monkeypatch.setattr(live, "archive_refresh", archive)
     monkeypatch.setattr(espn_live, "next_unplayed_week", lambda *args: (2026, 1))
     slate = pd.DataFrame(
         {
@@ -94,6 +96,7 @@ def builder_boundary(monkeypatch, tmp_path):
     return SimpleNamespace(
         good=good,
         uploads=uploads,
+        archive=archive,
         build=build,
         roster=roster,
         schedule=schedule,
@@ -286,7 +289,9 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
     monkeypatch.setattr(
         live.practice_reports,
         "fetch_practice_report",
-        lambda *args, **kwargs: SimpleNamespace(values={}, metadata={"unknown_players": 0}),
+        lambda *args, **kwargs: live.practice_reports.PracticeReport(
+            values={}, metadata={"unknown_players": 0, "fetched_at": "2026-09-09T12:00:00Z"}
+        ),
     )
     monkeypatch.setattr(
         live.live_sources,
@@ -311,6 +316,8 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
         seen["injuries"] = kwargs["injuries_df"].copy()
         seen["statuses"] = deepcopy(kwargs["game_status_map"])
         frame = roster.copy()
+        frame["season"] = season
+        frame["week"] = week
         frame.attrs["live_history_sources"] = {"completed_games": 0, "coverage": {}}
         return frame
 
@@ -349,6 +356,8 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
         lambda results, **kwargs: results.assign(age=25, is_rookie=False),
     )
     result = live.refresh_upcoming_week_cache(force=True)
+    builder_boundary.archive.assert_called_once()
+    assert builder_boundary.archive.call_args.args[1] == result
     assert "00-out" not in set(seen["roster"]["player_id"])
     assert "00-out" not in set(seen["inference_roster"]["player_id"])
     assert seen["injuries"].set_index("gsis_id").loc["00-out", "report_status"] == "Out"

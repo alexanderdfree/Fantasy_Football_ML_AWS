@@ -589,6 +589,12 @@ def load_raw_data(seasons: list[int] | None = None, cache_dir: str = CACHE_DIR) 
     weekly["practice_status"] = weekly["practice_status"].fillna(2.0)
     weekly["game_status"] = weekly["game_status"].fillna(1.0)
 
+    # Optional current-game practice reasons. Production allowlists exclude
+    # these columns until the retrospective and timestamped live A/Bs pass.
+    from src.features.practice_context import attach_historical_context
+
+    weekly = attach_historical_context(weekly, injuries)
+
     # 6. Depth charts (Offense formation, most recent entry per player-week)
     depth_off = depth[depth["formation"] == "Offense"].copy()
     depth_off["depth_team"] = pd.to_numeric(depth_off["depth_team"], errors="coerce")
