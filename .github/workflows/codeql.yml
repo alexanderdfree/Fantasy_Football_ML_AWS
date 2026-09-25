@@ -53,8 +53,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Pinned per CodeQL actions/unpinned-tag — bump SHA when upgrading the
-      # major version comment. SHA = github/codeql-action v4.36.3.
+      # Pinned to a commit SHA per CodeQL actions/unpinned-tag; the trailing
+      # `# vX.Y.Z` comment on each `uses:` line records the release. init and
+      # analyze must stay on the same SHA (Dependabot bumps them as one group).
       - name: Initialize CodeQL
         uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd  # v4.38.1
         with:
