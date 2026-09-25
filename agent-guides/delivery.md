@@ -65,10 +65,11 @@
   number from the current branch (`gh pr view --json number`), never from
   memory. `gh pr merge --auto` is not a way to wait: gh merges at once when the
   PR is already mergeable, even while non-required checks are still pending.
-- In worktrees, use `gh pr merge <N> --squash` without `--delete-branch`: older
-  gh fails trying to check out the parent's `main`, and gh 2.99+ run from
-  another checkout removes the clean worktree that holds the head branch. Finish
-  committing before you merge; #292's fix landed 27 s after its merge
+- In worktrees, use `gh pr merge <N> --squash --match-head-commit <sha>` without
+  `--delete-branch`: older gh fails trying to check out the parent's `main`, and
+  gh 2.99+ run from another checkout removes the clean worktree that holds the
+  head branch.
+  Finish committing before you merge; #292's fix landed 27 s after its merge
   ([record](../todo/fixed-archive/pr-292-merged-without-late-fix.md)). Verify
   **MERGED**, fetch, and inspect the final squash content for the latest fix
   before separately deleting the remote branch. The local feature branch can

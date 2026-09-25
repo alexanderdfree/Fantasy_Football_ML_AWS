@@ -62,6 +62,13 @@ _CREATE_MATCH = [
     "GH_TOKEN=x gh pr create",  # leading VAR=val assignment is skipped
     "/usr/bin/gh pr create",  # absolute path to gh
     "env GH_PAGER= gh pr create",  # env wrapper is unwrapped
+    # The pre-PR gate never trusts a help-looking word: it can be a flag value
+    # (`--title --help` opens a PR titled "--help"), so skipping it would open a
+    # gate bypass. Only the best-effort merge hooks skip help (see below).
+    # Claude's post-create injector shares this strict matcher, so it still
+    # fires on `gh pr create --help`.
+    "gh pr create --help",
+    "gh pr create --title --help",
 ]
 
 
@@ -90,17 +97,22 @@ def test_create_ignores_non_invocations(cmd: str) -> None:
     assert _invokes("create", cmd) == 1, f"expected NO-MATCH for: {cmd!r}"
 
 
-# --- The `merge` matcher is the same tokenizer with a different subcommand. --
+# --- The `merge` matcher is the same tokenizer with a different subcommand, --
+# --- except that a `--help`/`-h` segment prints usage and does not match. ----
 _MERGE_MATCH = [
     "gh pr merge",
     "gh pr merge 123 --squash",
     "gh pr checks 1 && gh pr merge 1 --squash",
+    "gh pr merge --help; gh pr merge 1 --squash",  # a later segment really merges
+    "gh pr merge 1 --squash && gh pr view --help",  # help belongs to another segment
 ]
 _MERGE_NO_MATCH = [
     'grep "gh pr merge" file',
     "# gh pr merge 123",
     "gh pr create",  # create is not merge
     "gh pr view 1",
+    "gh pr merge --help",  # prints usage; merges nothing
+    "gh pr merge 1 --squash -h",
 ]
 
 
@@ -122,6 +134,7 @@ def test_merge_ignores_non_invocations(cmd: str) -> None:
         ("claude_command_invokes_gh_pr_create", 'echo "gh pr create"', 1),
         ("claude_command_invokes_gh_pr_merge", "gh pr merge 1 --squash", 0),
         ("claude_command_invokes_gh_pr_merge", "gh pr create", 1),
+        ("claude_command_invokes_gh_pr_merge", "gh pr merge --help", 1),
     ],
 )
 def test_public_wrappers(fn: str, cmd: str, expected: int) -> None:
