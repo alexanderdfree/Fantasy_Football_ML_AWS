@@ -385,7 +385,11 @@ if [ -n "$candidates" ]; then
 fi
 
 if [ "$fail" -ne 0 ]; then
+  # A PreToolUse block cancels the whole tool call, not just `gh pr create`: on
+  # #1122 a chained `git add && git commit && git push && gh pr create` never
+  # committed, and a later bare `gh pr create` opened the PR without the commit.
   echo "----- pre-pr hook: blocking gh pr create (see errors above) -----" >&2
+  echo "pre-pr hook: the whole Bash command was cancelled, so any add/commit/push chained before gh pr create did not run (#1122). Fix the errors, redo those steps, then run gh pr create in its own call." >&2
   exit 2
 fi
 

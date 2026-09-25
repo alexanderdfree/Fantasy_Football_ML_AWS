@@ -3,8 +3,9 @@
 # (1) Post-PR-create review + auto-merge workflow — rebase onto latest
 #     origin/main, invoke /review on the PR, auto-apply every finding
 #     except architectural / design-level ones, push fixes, wait for green
-#     CI, squash-merge, and delete the remote branch. Surface to user only
-#     on architectural findings or CI failure.
+#     CI on the current head, squash-merge only that head, and delete the
+#     remote branch. Surface to user only on architectural findings or CI
+#     failure.
 # (2) post-session-critique nudge — captures *prompt* lessons (CLAUDE.md or
 #     memory edits) the way TODO.md's Fixed archive captures *code* lessons.
 # Both nudges are best-effort: the skills/workflow encode their own skip
@@ -58,13 +59,21 @@ ctx_head="PR opened. Run this post-create workflow now, in order:
 
 5. If any architectural findings were surfaced in step 3: stop here. Summarize each one in one line for the user and DO NOT merge. The user decides whether to address them."
 
+# Shared by both merge paths. Right after a push or reopen, `gh pr checks
+# --watch` can return at once on the previous run's green or with no checks
+# (#689), so merge only a head whose own checks were confirmed.
+stale_watch="A watch that returns at once after a push or reopen has not seen the new run: it shows the previous run's result or \"no checks reported\" (#689). If no checks run at all, follow the missing-checks triage in agent-guides/operations.md#ci-training (a \`DIRTY\` PR starts no runs until rebased, #1602)."
+confirm_head="confirm that \`gh pr view <N> --json headRefOid,mergeStateStatus\` shows \`headRefOid\` equal to \`git rev-parse HEAD\` and \`mergeStateStatus\` \`CLEAN\`"
+merge_cmd="\`gh pr merge <N> --squash --match-head-commit \"\$(git rev-parse HEAD)\"\`"
+no_delete_branch="Do NOT use \`--delete-branch\`; steps d-e delete only after verification (see agent-guides/delivery.md#pr-and-merge-gates)."
+
 if [[ "$branch" =~ ^audit-.*/tier- ]]; then
   step6="
 
 6. Do NOT auto-merge — this is a solve-issues autonomous-fix PR. After steps 1-5:
-   a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`.
+   a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`. ${stale_watch}
    b. Show the user the final diff (\`gh pr diff <N>\`) and any \`regress-risk-high\` benchmark deltas from the PR body, then ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
-   c. Only after the user approves: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see agent-guides/delivery.md#pr-and-merge-gates).
+   c. Only after the user approves, ${confirm_head} (if only the state is not yet \`CLEAN\`, wait for the current run and re-check). Then merge only that head: ${merge_cmd}. If the heads differ, or gh reports that the head moved, return to step a: a new head needs green CI and fresh sign-off. ${no_delete_branch}
    d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
    e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
 else
@@ -72,8 +81,8 @@ else
 
 6. Otherwise, auto-merge:
    a. Resolve the PR number with \`gh pr view --json number\` and the branch name with \`git branch --show-current\`. Hold onto both before the merge step in case the worktree HEAD changes.
-   b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. Exception: only for the documented \`Run Tests\` silent-stop anomaly in agent-guides/operations.md#ci-training, and only with user confirmation, run local \`pytest\` and require it to pass before continuing to the normal merge step. This does not authorize bypassing branch protection or a different failing/pending check.
-   c. Merge: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see agent-guides/delivery.md#pr-and-merge-gates).
+   b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. ${stale_watch} Exception: only for the documented \`Run Tests\` silent-stop anomaly in agent-guides/operations.md#ci-training, and only with user confirmation, run local \`pytest\` and require it to pass before continuing to the normal merge step. This does not authorize bypassing branch protection or a different failing/pending check.
+   c. Before merging, ${confirm_head}; if not, push any local commits or wait for the current run, then return to step b. Then merge only that head: ${merge_cmd}. If gh reports that the head moved, return to step b. ${no_delete_branch}
    d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
    e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
 fi
