@@ -154,6 +154,7 @@ final class DecodingTests: XCTestCase {
         // The fixture's exact ridge forecasts beat both experts under MAE and RMSE.
         let qb = try XCTUnwrap(comparison.coverage?["all"]?["QB"])
         XCTAssertEqual(qb.decidedWinner, "models")
+        XCTAssertEqual(comparison.cell(subset: "all", position: "QB", source: "ridge")?.bias, 0)
         XCTAssertTrue(qb.verdict(.mae)?.hasPrefix("Models ahead") ?? false)
         XCTAssertTrue(qb.verdict(.r2)?.hasSuffix("RMSE") ?? false)
         XCTAssertEqual(comparison.subsetTitle("top12"), "Season leaders · top 12")

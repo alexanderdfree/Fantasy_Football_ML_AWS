@@ -89,6 +89,8 @@ struct Comparison: Codable, Sendable {
         let mae: Double?
         let rmse: Double?
         let r2: Double?
+        /// Mean prediction − actual (positive over-predicts). Shown, never ranked.
+        let bias: Double?
         let n: Int?
 
         func value(_ metric: MetricKind) -> Double? {

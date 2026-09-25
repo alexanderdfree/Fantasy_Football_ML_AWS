@@ -69,9 +69,13 @@ _KEYS = ["player_id", "season", "week"]
 _NFLCOM_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 _ROTOWIRE_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "DST"})
 
+# Must match the committed comparison_experts.json note this script regenerates.
 _NFLCOM_NOTE = (
-    "NFL.com weekly projections from the hvpkod/NFL-Data archive, scored through "
-    "our PPR aggregator. Curated to likely-to-play players (no DST projections)."
+    "NFL.com weekly projections from the hvpkod/NFL-Data archive, shown for reference "
+    "but not graded. The archive reproduces RotoWire’s projection series (94% of "
+    "2025 passing-yard forecasts match within 0.01), and 10 of 18 weekly files were "
+    "captured before the final injury report. Rostered players without a projection "
+    "appear as all-zero rows and are missing forecasts, never zeros. No DST projections."
 )
 _ROTOWIRE_NOTE = (
     "RotoWire projections via Sleeper's unofficial API — a single provider, not a "

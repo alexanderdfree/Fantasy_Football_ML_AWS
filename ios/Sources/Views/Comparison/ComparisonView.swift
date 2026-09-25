@@ -182,6 +182,10 @@ struct ComparisonPositionGroup: View {
                     } else if let count = coverage?.sourceN?[source.key] {
                         Text("\(count) forecasts before shared filtering").font(.caption2).foregroundStyle(FFColor.textMuted)
                     }
+                    if let bias = comparison.cell(subset: subset, position: position.rawValue, source: source.key)?.bias {
+                        Text("bias " + String(format: "%+.2f", bias) + " (prediction − actual; not ranked)")
+                            .font(.caption2).foregroundStyle(FFColor.textMuted)
+                    }
                 }
             }
         } label: {
