@@ -195,7 +195,7 @@ function WeeklyChart({ weekly, theme }) {
             options: {
                 responsive: true,
                 plugins: {
-                    title: { display: true, text: "Weekly MAE Across the 2025 Test Season · development backtest (Lower is Better)", color: palette.heading },
+                    title: { display: true, text: "Weekly MAE Across the Test Season · development backtest (Lower is Better)", color: palette.heading },
                 },
                 scales: {
                     y: { beginAtZero: true, grid: { color: palette.grid }, title: { display: true, text: "MAE", color: palette.text } },

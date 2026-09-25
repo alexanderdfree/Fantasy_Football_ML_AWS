@@ -17,7 +17,7 @@ from src.shared.comparison_scoring import (
     EXCLUDED_SOURCES,
     scoring_components,
 )
-from src.shared.comparison_uncertainty import INFORMATION_SET_NOTE
+from src.shared.comparison_uncertainty import INFORMATION_SET_NOTE, VERDICT_POLICY
 from src.shared.comparison_uncertainty import METHOD as UNCERTAINTY_METHOD
 
 
@@ -83,7 +83,7 @@ def build_comparison_snapshot(results, *, reference=None) -> dict:
             if seasons and set(seasons) <= set(TEST_SEASONS)
             else None
         ),
-        "uncertainty_meta": UNCERTAINTY_METHOD,
+        "uncertainty_meta": {**UNCERTAINTY_METHOD, **VERDICT_POLICY},
         # The model the Next Week board ranks first per position (ADR-0003 head
         # selection); its interval is the row verdict, best-of-four is context.
         "served_model": dict(SERVED_MODEL),

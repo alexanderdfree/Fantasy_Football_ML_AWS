@@ -124,6 +124,13 @@ test("comparison displays shared components, cohorts, ESPN and partial reference
     const qbRow = page.locator("#comparison-all-body tr").first();
     await expect(qbRow.locator(".comparison-best")).toHaveCount(1);
     await expect(qbRow.locator("td").nth(3)).toHaveClass(/comparison-best/); // Attention NN column
+    // WR: Ridge (exact) wins best of four, but the served LightGBM loses to both
+    // experts, so the row is decided for the experts and RotoWire's cell is the one highlighted.
+    const wrRow = page.locator("#comparison-all-body tr").nth(2);
+    await expect(wrRow).toContainText("Experts ahead · LightGBM − best expert +4.00");
+    await expect(wrRow.locator(".comparison-gap-context")).toContainText("· models ahead");
+    await expect(wrRow.locator(".comparison-best")).toHaveCount(1);
+    await expect(wrRow.locator("td").nth(5)).toHaveClass(/comparison-best/); // RotoWire column
     // Hindsight cohorts (season leaders, expert reference) carry no verdict.
     await expect(page.locator("#comparison-top12-body .comparison-gap")).toHaveCount(0);
     await expect(page.locator("#comparison-top30-body .comparison-gap")).toHaveCount(0);
@@ -132,12 +139,16 @@ test("comparison displays shared components, cohorts, ESPN and partial reference
     await expect(page.locator("#comparison-notes")).toContainText("QB: Attention NN");
 });
 
-test("an older payload without a served-model block falls back to the best-of-four verdict", async ({ page }) => {
+test("a snapshot without a served-model block gets no verdict and no highlight", async ({ page }) => {
     await localAPI(page);
     const response = structuredClone(comparison);
     delete response.served_model;
     for (const cohort of Object.values(response.coverage)) {
-        for (const cell of Object.values(cohort)) delete cell.uncertainty?.served_model;
+        for (const cell of Object.values(cohort)) {
+            delete cell.uncertainty?.served_model;
+            // A pre-rule snapshot graded hindsight cohorts too; the client must still show no verdict there.
+            if (cell.uncertainty?.status === "not_applicable") cell.uncertainty = structuredClone(response.coverage.all.QB.uncertainty);
+        }
     }
     await page.route("**/api/comparison", (route) => route.fulfill({
         contentType: "application/json",
@@ -145,8 +156,29 @@ test("an older payload without a served-model block falls back to the best-of-fo
         body: JSON.stringify(response),
     }));
     await page.goto("/#comparison");
-    await expect(page.locator("#comparison-all-body")).toContainText("best model − best expert");
-    await expect(page.locator("#comparison-all-body .comparison-gap-context")).toHaveCount(0);
+    await expect(page.locator("#comparison-all-body")).toContainText("No served-model verdict in this snapshot");
+    await expect(page.locator("#comparison-all-body .comparison-gap-context").first()).toContainText("best of four − best expert");
+    await expect(page.locator("#comparison-all-body")).not.toContainText("Models ahead");
+    await expect(page.locator("#view-comparison .comparison-best")).toHaveCount(0);
+    await expect(page.locator("#comparison-top12-body .comparison-gap")).toHaveCount(0);
+    await expect(page.locator("#comparison-weekly-top24 .comparison-gap")).toHaveCount(0);
+    await expect(page.locator("#comparison-notes")).toContainText("predates the served-model verdict");
+});
+
+test("a served model with no graded forecasts yields no verdict rather than best of four", async ({ page }) => {
+    await localAPI(page);
+    const response = structuredClone(comparison);
+    response.coverage.all.QB.uncertainty.served_model = { status: "unavailable", reason: "served_model_not_graded", model: "attn_nn" };
+    await page.route("**/api/comparison", (route) => route.fulfill({
+        contentType: "application/json",
+        headers: { "X-FFP-Contract-Version": "1.0" },
+        body: JSON.stringify(response),
+    }));
+    await page.goto("/#comparison");
+    const qbRow = page.locator("#comparison-all-body tr").first();
+    await expect(qbRow).toContainText("No verdict · Attention NN not graded on these rows");
+    await expect(qbRow).not.toContainText("Models ahead");
+    await expect(qbRow.locator(".comparison-best")).toHaveCount(0);
 });
 
 test("loaded comparison omits unavailable optional tables without staying in loading state", async ({ page }) => {

@@ -13,7 +13,7 @@ import traceback
 import numpy as np
 import pandas as pd
 
-from src.contracts.api import SERVED_MODEL
+from src.contracts.api import SERVED_MODEL_CHAIN
 from src.contracts.serialization import (
     _EXPERT_PRED_PREFIXES,
     _MODEL_PRED_PREFIXES,
@@ -109,9 +109,10 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
     before coverage from the full pregame forecast pool. Seasonal cohorts are
     selected before coverage from regular-season actuals and are retrospective.
     Forecast-free cohorts carry paired bootstrap intervals; the verdict grades the
-    served model (``SERVED_MODEL``) against the best expert, and the best-of-four
-    gap is context. Cohorts selected on outcomes or by a graded expert's own
-    forecasts (``NOT_APPLICABLE_COHORTS``) report cells but no verdict.
+    served model (the first graded model in ``SERVED_MODEL_CHAIN``) against the
+    best expert, and the best-of-four gap is context. Cohorts selected on outcomes
+    or by a graded expert's own forecasts (``NOT_APPLICABLE_COHORTS``) report
+    cells but no verdict.
     """
     subsets = {name: {} for name in COMPARISON_SUBSETS}
     coverage = {name: {} for name in COMPARISON_SUBSETS}
@@ -209,7 +210,9 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                 uncertainty = group_gap_intervals(
                     common, actual, columns, _MODEL_PRED_PREFIXES, _EXPERT_PRED_PREFIXES
                 )
-                uncertainty["served_model"] = served_gap(uncertainty, SERVED_MODEL.get(pos))
+                uncertainty["served_model"] = served_gap(
+                    uncertainty, SERVED_MODEL_CHAIN.get(pos, ())
+                )
             coverage[name][pos] = {
                 "actual_basis": ACTUAL_BASIS,
                 "scoring_components": list(scoring_components(pos)),

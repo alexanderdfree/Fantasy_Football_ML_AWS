@@ -5,9 +5,8 @@ import pandas as pd
 import pytest
 
 from src.shared.comparison_uncertainty import (
-    INFORMATION_SET_NOTE,
     METHOD,
-    NOT_APPLICABLE_COHORTS,
+    VERDICT_POLICY,
     group_gap_intervals,
     served_gap,
 )
@@ -114,6 +113,7 @@ def test_served_model_verdict_does_not_inherit_the_best_of_four():
     assert gaps["winner"] == "models"
     served = served_gap(gaps, "attn_nn")
     assert served["status"] == "available" and served["model"] == "attn_nn"
+    assert served["requested"] == "attn_nn" and served["fallback"] is False
     assert served["winner"] == "experts"
     for metric in ("mae", "rmse"):
         assert served[metric]["verdict"] == "experts" and served[metric]["ci"][0] > 0
@@ -125,19 +125,31 @@ def test_served_model_verdict_does_not_inherit_the_best_of_four():
     assert served_gap(gaps, "ridge")["winner"] == "models"
 
 
-def test_served_model_gap_needs_a_graded_model_and_an_available_report():
+def test_served_gap_walks_the_ranking_chain_like_the_board():
+    # The board ranks by the first available forecast, so a chain whose first
+    # model is not graded falls through to the next one and says so.
     frame = slate({source: lambda rng, n: rng.normal(0, 3, n) for source in COLUMNS})
     gaps = run(frame)
-    assert served_gap(gaps, "tabpfn") == {
+    served = served_gap(gaps, ("tabpfn", "attn_nn", "nn"))
+    assert served["status"] == "available"
+    assert served["model"] == "attn_nn" and served["requested"] == "tabpfn"
+    assert served["fallback"] is True
+    assert served_gap(gaps, ("tabpfn", "enet")) == {
         "status": "unavailable",
         "reason": "served_model_not_graded",
         "model": "tabpfn",
     }
-    assert served_gap(gaps, None) == {
-        "status": "unavailable",
-        "reason": "served_model_unknown",
-        "model": None,
-    }
+
+
+def test_served_model_gap_needs_a_chain_and_an_available_report():
+    frame = slate({source: lambda rng, n: rng.normal(0, 3, n) for source in COLUMNS})
+    gaps = run(frame)
+    for chain in (None, (), ""):
+        assert served_gap(gaps, chain) == {
+            "status": "unavailable",
+            "reason": "served_model_unknown",
+            "model": None,
+        }
     unavailable = run(frame.iloc[:0])
     assert served_gap(unavailable, "ridge") == {
         "status": "unavailable",
@@ -146,12 +158,9 @@ def test_served_model_gap_needs_a_graded_model_and_an_available_report():
     }
 
 
-def test_no_verdict_cohorts_and_headline_rule_are_declared():
-    assert NOT_APPLICABLE_COHORTS == {
-        "weekly_reference_top24": "selected_by_graded_forecast",
-        "top30": "selected_on_outcomes",
-        "top12": "selected_on_outcomes",
-    }
-    assert METHOD["headline_gap"] == "served_model_minus_best_expert"
-    assert METHOD["no_verdict_cohorts"] == NOT_APPLICABLE_COHORTS
-    assert "closing betting lines" in INFORMATION_SET_NOTE
+def test_verdict_policy_is_separate_from_the_bootstrap_settings():
+    # The Timeline reuses METHOD for per-model MAE-only edges; the served-model
+    # rule and the no-verdict cohorts belong to the Comparison tab only.
+    assert not {"headline_gap", "winner_rule", "no_verdict_cohorts"} & set(METHOD)
+    assert VERDICT_POLICY["headline_gap"] == "served_model_minus_best_expert"
+    assert set(VERDICT_POLICY["no_verdict_cohorts"]) == {"weekly_reference_top24", "top30", "top12"}

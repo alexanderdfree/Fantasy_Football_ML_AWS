@@ -245,7 +245,18 @@ def compute_timeline(scoring: str, group: str = "offense", season: int | None = 
         "excluded_sources": config["excluded_sources"],
         "sample_basis": "shared_player_weeks",
         "edge_basis": "common_rows_per_model",
-        "edge_uncertainty": {**UNCERTAINTY_METHOD, "metrics": ["mae"]},
+        # Per-model MAE-only season edges; the Comparison tab's served-model
+        # verdict policy does not apply here.
+        "edge_uncertainty": {
+            **UNCERTAINTY_METHOD,
+            "metrics": ["mae"],
+            "gap": "best_expert_minus_model_minimum_within_replicate",
+            "winner_rule": (
+                "Each model's season edge is decided on MAE alone: 'model' when its 95% "
+                "interval is wholly positive, 'experts' when it is wholly negative, "
+                "otherwise a tie."
+            ),
+        },
         # The configured test season is the season A/B decisions are judged on.
         "evaluation_season_note": (
             f"Model changes were compared on the {season} season during development, so its "

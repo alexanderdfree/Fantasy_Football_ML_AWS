@@ -323,22 +323,20 @@ def test_headline_verdict_grades_the_served_model_not_the_best_of_four():
     # ...but the row verdict belongs to the model the site serves for WR.
     served = gaps["served_model"]
     assert served["status"] == "available" and served["model"] == "lgbm"
+    assert served["requested"] == "lgbm" and served["fallback"] is False
     assert served["winner"] == "experts"
     assert served["mae"]["minus_best_expert"] == 2 and served["mae"]["ci"] == [2, 2]
     assert served["mae"]["best_expert"] in {"rotowire", "espn"}
 
 
-def test_served_model_comes_from_the_api_contract():
-    from src.contracts.api import SERVED_MODEL, SERVED_MODEL_CHAIN
-
+def test_served_model_follows_the_contract_chain_and_its_board_fallback(monkeypatch):
+    data = records()
+    data["lgbm_pred_ppr"] = np.nan  # WR's first-ranked model has no forecasts
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    served = coverage["all"]["WR"]["uncertainty"]["served_model"]
+    assert served["model"] == "attn_nn" and served["requested"] == "lgbm"
+    assert served["fallback"] is True
+    # The chain is the contract's, not a local copy: swapping it moves the verdict.
+    monkeypatch.setitem(comparison.SERVED_MODEL_CHAIN, "WR", ("nn",))
     _, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
-    assert coverage["weekly_depth_starters"]["WR"]["uncertainty"]["served_model"]["model"] == "lgbm"
-    assert SERVED_MODEL == {
-        "QB": "attn_nn",
-        "RB": "lgbm",
-        "WR": "lgbm",
-        "TE": "attn_nn",
-        "K": "ridge",
-        "DST": "attn_nn",
-    }
-    assert all(chain[0] == SERVED_MODEL[pos] for pos, chain in SERVED_MODEL_CHAIN.items())
+    assert coverage["all"]["WR"]["uncertainty"]["served_model"]["model"] == "nn"

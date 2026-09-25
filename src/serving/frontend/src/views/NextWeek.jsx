@@ -53,12 +53,19 @@ const TOGGLEABLE_COLUMNS = COLUMNS.filter((c) => !c.always);
 // rolling-origin seasons vs RotoWire — todo/expert-gap-investigation-2026-06.md §3);
 // other positions keep the attention-first chain. Display columns are unaffected.
 // The chain lives in the API contract (served_model_chain) so the Comparison tab
-// headlines the same model this board ranks first.
-const DEFAULT_SERVED_CHAIN = ["attn_nn", "lgbm", "nn"];
+// headlines the same model this board ranks first. Field names are built once:
+// this runs inside the sort comparator, twice per comparison.
+const SERVED_PRED_FIELDS = Object.fromEntries(
+    Object.entries(contract.served_model_chain || {}).map(([pos, chain]) => [pos, chain.map((key) => `${key}_pred`)]),
+);
 function upcomingProjection(p) {
-    const chain = contract.served_model_chain?.[p.position] || DEFAULT_SERVED_CHAIN;
-    const best = chain.map((key) => p[`${key}_pred`]).find((v) => v != null);
-    return best != null ? best : null;
+    const fields = SERVED_PRED_FIELDS[p.position];
+    if (!fields) return null;
+    for (const field of fields) {
+        const v = p[field];
+        if (v != null) return v;
+    }
+    return null;
 }
 
 function sortValue(p, key) {

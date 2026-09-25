@@ -72,7 +72,6 @@ API_CONTRACT = {
     "comparison": {
         "sample_basis": "shared_player_weeks",
         "actual_basis": "shared_projected_components_v2",
-        "headline_gap": "served_model_minus_best_expert",
         "optional_metadata": [
             "coverage",
             "scoring_components",

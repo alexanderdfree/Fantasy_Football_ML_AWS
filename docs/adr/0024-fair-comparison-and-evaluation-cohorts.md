@@ -64,14 +64,13 @@ the cache as a display column. RotoWire and ESPN are the graded experts.
 
 ### Uncertainty and winner rule
 
-Every cohort cell carries a paired, player-clustered bootstrap interval
+Forecast-free cohort cells carry a paired, player-clustered bootstrap interval
 (`src/shared/comparison_uncertainty.py`: 2,000 seeded replicates). Each replicate
-resamples whole players and recomputes every source on that draw. The best of
-the four models and the best expert are chosen inside each replicate, so a
-post-hoc best-of-four pick is part of the interval. A row names a winning group,
-and highlights that group's best cell, only when the best-model-minus-best-expert
-interval excludes zero in the same direction under both MAE and RMSE. Otherwise
-it is a statistical tie. Both metrics are required because the points are
+resamples whole players and recomputes every source on that draw, and the best
+expert is chosen inside each replicate. A row names a winner, and highlights one
+cell, only when the served-model-minus-best-expert interval excludes zero in the
+same direction under both MAE and RMSE. Otherwise it is a statistical tie. The
+best-of-four gap is reported as context only. Both metrics are required because the points are
 right-skewed and MAE rewards median-like forecasts, while published projections
 estimate expected points (RMSE's target). Cells also report signed bias, which
 is never ranked. The graded season is the configured test season used for A/B
@@ -82,8 +81,15 @@ the Next Week board ranks first for the position (ADR-0003 head selection,
 `SERVED_MODEL` in `src/contracts/api.py`), with the best expert still chosen
 inside each replicate. The best-of-four gap is reported beneath it as context
 only: its minimum is taken inside each replicate, but it still gives the model
-family four draws, and it hid that the served model loses K on both metrics and
-trails on RMSE at RB/WR/TE. Cohorts selected on outcomes (`top12`, `top30`) or by
+family four draws. On the 2026-09-25 replay of generation `a475355f` it hid that
+the served LightGBM loses WR (all rows) on both metrics (+0.15 MAE [+0.07, +0.23],
++0.10 RMSE [+0.02, +0.19]) and that the served models trail on RMSE alone at RB
+(all rows) and TE, while the served K model, Ridge, is ahead on MAE alone (a
+tie). When the chain's first model has no graded forecasts the verdict falls
+through the chain, as the board does, and says so; a snapshot without a served
+block carries no verdict. The best expert is still the minimum inside each
+replicate, which favors the experts (simulated false "Experts ahead" 5.4% against
+2.5% nominal); a pairwise expert rule is an open follow-up. Cohorts selected on outcomes (`top12`, `top30`) or by
 a graded expert's own forecasts (`weekly_reference_top24`) report cells and bias
 but carry no interval and no verdict (`NOT_APPLICABLE_COHORTS`). Both surfaces
 also disclose the backtest information set (`INFORMATION_SET_NOTE`): realized QB

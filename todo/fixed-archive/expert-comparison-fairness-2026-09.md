@@ -6,10 +6,11 @@
   - `src/prediction/{historical,comparison,comparison_snapshot}.py`
   - `src/scripts/build_evaluation_reference.py`
   - `src/serving/timeline.py`
-  - `src/serving/frontend/src/views/{Comparison,Timeline}.jsx`
-  - `ios/Sources/{Models/Comparison,Views/Comparison/ComparisonView}.swift`
+  - `src/serving/frontend/src/views/{Comparison,Timeline,NextWeek}.jsx`
+  - `ios/Sources/{Models/Comparison,Models/UpcomingWeek,Views/Comparison/ComparisonView}.swift`
+  - `src/contracts/api.py` (follow-up)
 
-  PR #1595 (audits of 2026-09-18 and 2026-09-25); follow-up PR pending (served-model
+  PR #1595, merged as `935a6e2a` (audits of 2026-09-18 and 2026-09-25); follow-up PR pending (served-model
   verdicts, no verdict on hindsight cohorts, information-set disclosure; see the
   end of this record).
 - **What:** ADR-0024 made truth and components symmetric, but the served comparison
@@ -61,11 +62,13 @@
   four models against the best expert. The bootstrap took the minimum inside each
   draw, so the interval was honest, but the framing gave the model family four
   draws and hid that the served model (Attention NN at QB/TE/DST, LightGBM at
-  RB/WR, Ridge at K; the Next Week board's ranking chain) loses K on both metrics
-  and trails on RMSE at RB/WR/TE in 2025. The first out-of-sample record (2026
-  weeks 1–2, last archived `upcoming_week.json` version before each kickoff,
-  models and experts from the same fetch) has the served Attention NN behind
-  RotoWire by +0.26 MAE [+0.10, +0.43] pooled and +0.52 at WR. Season-leader and
+  RB/WR, Ridge at K; the Next Week board's ranking chain) loses WR (all rows) on
+  both metrics and trails on RMSE alone at RB and TE on the 2026-09-25 replay of
+  generation `a475355f`, while the served K model, Ridge, ties. The first
+  out-of-sample record (2026 weeks 1–2, last archived `upcoming_week.json` version
+  before each kickoff, models and experts from the same fetch) has the Attention
+  NN behind RotoWire by +0.26 MAE [+0.10, +0.43] pooled and +0.52 at WR, where the
+  served LightGBM is +0.49. Season-leader and
   expert-reference cohorts also carried verdict lines although their rows are
   selected on outcomes or on a graded expert's own forecasts. Now: the verdict
   grades `SERVED_MODEL` (shared with the Next Week board through the API

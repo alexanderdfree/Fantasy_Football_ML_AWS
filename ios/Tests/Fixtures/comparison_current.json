@@ -137,6 +137,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -147,6 +148,7 @@
               "verdict": "models"
             },
             "model": "attn_nn",
+            "requested": "attn_nn",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -286,6 +288,7 @@
             "verdict": "tie"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "espn",
               "ci": [
@@ -296,6 +299,7 @@
               "verdict": "tie"
             },
             "model": "ridge",
+            "requested": "ridge",
             "rmse": {
               "best_expert": "espn",
               "ci": [
@@ -437,6 +441,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -447,6 +452,7 @@
               "verdict": "models"
             },
             "model": "attn_nn",
+            "requested": "attn_nn",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -588,6 +594,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -598,6 +605,7 @@
               "verdict": "models"
             },
             "model": "lgbm",
+            "requested": "lgbm",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -677,11 +685,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -723,11 +731,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -749,27 +757,29 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
-                -2.0,
-                -2.0
+                4.0,
+                4.0
               ],
-              "minus_best_expert": -2.0,
-              "verdict": "models"
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
             },
             "model": "lgbm",
+            "requested": "lgbm",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
-                -2.0,
-                -2.0
+                4.0,
+                4.0
               ],
-              "minus_best_expert": -2.0,
-              "verdict": "models"
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
             },
             "status": "available",
-            "winner": "models"
+            "winner": "experts"
           },
           "status": "available",
           "winner": "models"
@@ -993,6 +1003,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -1003,6 +1014,7 @@
               "verdict": "models"
             },
             "model": "attn_nn",
+            "requested": "attn_nn",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -1146,6 +1158,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -1156,6 +1169,7 @@
               "verdict": "models"
             },
             "model": "lgbm",
+            "requested": "lgbm",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -1237,11 +1251,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -1283,11 +1297,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -1309,27 +1323,29 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
-                -2.0,
-                -2.0
+                4.0,
+                4.0
               ],
-              "minus_best_expert": -2.0,
-              "verdict": "models"
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
             },
             "model": "lgbm",
+            "requested": "lgbm",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
-                -2.0,
-                -2.0
+                4.0,
+                4.0
               ],
-              "minus_best_expert": -2.0,
-              "verdict": "models"
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
             },
             "status": "available",
-            "winner": "models"
+            "winner": "experts"
           },
           "status": "available",
           "winner": "models"
@@ -1872,6 +1888,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -1882,6 +1899,7 @@
               "verdict": "models"
             },
             "model": "attn_nn",
+            "requested": "attn_nn",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -2022,6 +2040,7 @@
             "verdict": "tie"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "espn",
               "ci": [
@@ -2032,6 +2051,7 @@
               "verdict": "tie"
             },
             "model": "ridge",
+            "requested": "ridge",
             "rmse": {
               "best_expert": "espn",
               "ci": [
@@ -2174,6 +2194,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -2184,6 +2205,7 @@
               "verdict": "models"
             },
             "model": "attn_nn",
+            "requested": "attn_nn",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -2326,6 +2348,7 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
@@ -2336,6 +2359,7 @@
               "verdict": "models"
             },
             "model": "lgbm",
+            "requested": "lgbm",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
@@ -2416,11 +2440,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -2462,11 +2486,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -2488,27 +2512,29 @@
             "verdict": "models"
           },
           "served_model": {
+            "fallback": false,
             "mae": {
               "best_expert": "rotowire",
               "ci": [
-                -2.0,
-                -2.0
+                4.0,
+                4.0
               ],
-              "minus_best_expert": -2.0,
-              "verdict": "models"
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
             },
             "model": "lgbm",
+            "requested": "lgbm",
             "rmse": {
               "best_expert": "rotowire",
               "ci": [
-                -2.0,
-                -2.0
+                4.0,
+                4.0
               ],
-              "minus_best_expert": -2.0,
-              "verdict": "models"
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
             },
             "status": "available",
-            "winner": "models"
+            "winner": "experts"
           },
           "status": "available",
           "winner": "models"
@@ -2771,7 +2797,7 @@
     }
   },
   "generated_at": "2026-09-10T00:00:00+00:00",
-  "information_set_note": "Backtest model inputs for the graded season include realized quarterback participation, closing betting lines, recorded game-time weather and game-day roster status (ADR-0004), and the graded population is players who recorded a snap. The expert archives were fetched after the season and carry no capture timestamp; both graded experts omit every player ruled Out, so their information time is the final injury report or later. Live forecasts use pregame inputs only.",
+  "information_set_note": "Backtest model inputs for the graded season include realized quarterback participation, closing betting lines, recorded game-time weather and game-day roster status (ADR-0004), and the graded population is players who recorded a snap. The expert archives were fetched after the season and carry no capture timestamp; the graded experts omit every player ruled Out, so their information time is the final injury report or later. Live forecasts use pregame inputs only.",
   "model_source": "live",
   "quartile_bias": {
     "DST": {
@@ -3308,8 +3334,8 @@
           "n": 2
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 2
         },
         "nflcom": null,
@@ -3341,8 +3367,8 @@
           "n": 1
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 1
         },
         "nflcom": null,
@@ -3374,8 +3400,8 @@
           "n": 1
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 1
         },
         "nflcom": null,
@@ -3407,8 +3433,8 @@
           "n": 2
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 2
         },
         "nflcom": null,
@@ -3702,11 +3728,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -3866,11 +3892,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -4096,11 +4122,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -4326,11 +4352,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -4556,11 +4582,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 4,
-          "r2": 0.308,
-          "rmse": 3.0
+          "r2": -5.2284,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -4750,11 +4776,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 3,
-          "r2": 0.481,
-          "rmse": 3.0
+          "r2": -3.6713,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {

@@ -102,10 +102,11 @@ struct ComparisonView: View {
             note("Actuals", comparison.actualBasisDescription)
             note("Coverage", comparison.sampleBasisDescription)
             note("Winners", "A row names a winner only when the 95% paired interval for the served model (the one the Next Week "
-                + "board ranks first for that position) minus the best expert excludes zero under both MAE and RMSE; otherwise it "
-                + "is a statistical tie (≈). Intervals resample whole players. The best-of-four line is context only: it gives the "
-                + "model family four draws. Season-leader and expert-reference tables carry no verdict because their rows are "
-                + "selected on outcomes or on a graded expert's own forecasts.")
+                + "board ranks first for that position, or the next on its chain when that model has no graded forecasts) minus "
+                + "the best expert excludes zero under both MAE and RMSE; otherwise it is a statistical tie (≈). Intervals "
+                + "resample whole players. The best-of-four line is context only: it gives the model family four draws. "
+                + "Season-leader and expert-reference tables carry no verdict because their rows are selected on outcomes or on "
+                + "a graded expert's own forecasts. A snapshot built before this rule carries no verdict.")
             if let served = comparison.servedModel, !served.isEmpty {
                 note("Served model", Position.displayOrder.compactMap { pos in
                     served[pos.rawValue].map { "\(pos.rawValue): \(CmpSource.resolve($0, comparison: comparison).label)" }
@@ -149,17 +150,19 @@ struct ComparisonPositionGroup: View {
         let coverage = comparison.coverage?[subset]?[position.rawValue]
         let components = coverage?.scoringComponents ?? comparison.scoringComponents?[position.rawValue]
         // Highlight only the served model's cell when the models win, or the best
-        // expert's cell when the experts win; a statistical tie highlights nothing.
-        let winner = coverage?.decidedWinner
-        let servedKey = coverage?.decidedModel
-        let values = sources.filter { source in
+        // expert's cell when the experts win; a statistical tie highlights nothing,
+        // and hindsight cohorts carry no verdict at all.
+        let noVerdict = Comparison.noVerdictSubsets.contains(subset)
+        let winner = noVerdict ? nil : coverage?.decidedWinner
+        let servedKey = noVerdict ? nil : coverage?.decidedModel
+        let eligible = sources.filter { source in
             if let servedKey { return source.key == servedKey }
-            return winner == "models" ? source.isModel : winner == "experts" ? !source.isModel : false
+            return winner == "experts" ? !source.isModel : false
         }
-        .compactMap { comparison.cell(subset: subset, position: position.rawValue, source: $0.key)?.value(metric) }
+        let eligibleKeys = Set(eligible.map(\.key))
+        let values = eligible.compactMap { comparison.cell(subset: subset, position: position.rawValue, source: $0.key)?.value(metric) }
         let best = metric.best(of: values)
-        let verdict = coverage?.verdict(metric) { CmpSource.resolve($0, comparison: comparison).label }
-        let family = coverage?.familyVerdict(metric)
+        let verdict = noVerdict ? nil : coverage?.verdict(metric) { key in sources.first { $0.key == key }?.label ?? key }
 
         DisclosureGroup {
             Text(coverage?.summary ?? "Coverage metadata unavailable")
@@ -168,7 +171,7 @@ struct ComparisonPositionGroup: View {
                 Text(verdict).font(.caption2.weight(winner == nil ? .regular : .semibold))
                     .foregroundStyle(FFColor.textSecondary)
             }
-            if let family {
+            if !noVerdict, let family = coverage?.familyVerdict(metric) {
                 Text(family).font(.caption2).foregroundStyle(FFColor.textMuted)
             }
             if let missing = coverage?.missingReferenceWeeks, missing > 0 {
@@ -186,6 +189,7 @@ struct ComparisonPositionGroup: View {
             }
             ForEach(sources) { source in
                 let value = comparison.cell(subset: subset, position: position.rawValue, source: source.key)?.value(metric)
+                let highlighted = eligibleKeys.contains(source.key) && valueIsBest(value, best)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
                         Circle().fill(source.color).frame(width: 8, height: 8)
@@ -193,8 +197,8 @@ struct ComparisonPositionGroup: View {
                         Spacer()
                         Text(value.map { metric.format($0) } ?? "—")
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(valueIsBest(value, best) ? FFColor.accent : FFColor.textPrimary)
-                            .fontWeight(valueIsBest(value, best) ? .bold : .regular)
+                            .foregroundStyle(highlighted ? FFColor.accent : FFColor.textPrimary)
+                            .fontWeight(highlighted ? .bold : .regular)
                     }
                     if let reason = comparison.exclusionReason(subset: subset, position: position.rawValue, source: source.key) {
                         Text("Excluded: " + reason).font(.caption2).foregroundStyle(FFColor.textMuted)

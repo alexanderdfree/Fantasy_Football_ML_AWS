@@ -57,9 +57,15 @@ struct UpcomingPlayer: Codable, Identifiable, Sendable {
         }
     }
 
-    /// Default sort key — best available projection (Attn NN preferred), mirrors
-    /// `upcomingProjection` in app.js.
-    var bestProjection: Double? { attnNNPred ?? lgbmPred ?? ridgePred ?? nnPred }
+    /// Default sort key: the first available projection in this position's
+    /// served-model chain, the same chain the web board ranks by and the
+    /// Comparison tab's verdict grades (`ServedModelChain`).
+    var bestProjection: Double? {
+        for model in ServedModelChain.chain(for: position) {
+            if let value = prediction(for: model) { return value }
+        }
+        return nil
+    }
 
     var matchupLabel: String {
         guard let opponent, !opponent.isEmpty else { return "—" }
@@ -77,5 +83,26 @@ struct UpcomingPlayer: Codable, Identifiable, Sendable {
         case nnPred = "nn_pred"
         case attnNNPred = "attn_nn_pred"
         case lgbmPred = "lgbm_pred"
+    }
+}
+
+/// Per-position head selection (ADR-0003): the model the Next Week board ranks
+/// first, then the fallbacks used when that forecast is missing. Mirrors
+/// `SERVED_MODEL_CHAIN` in `src/contracts/api.py`; the Comparison payload's
+/// `served_model` names each chain's first entry and `DecodingTests` pins the two
+/// in step, so a chain change lands on the web board, the tab and this board.
+enum ServedModelChain {
+    static let chains: [String: [PredictionModel]] = [
+        "QB": [.attnNN, .lgbm, .nn],
+        "RB": [.lgbm, .attnNN, .nn],
+        "WR": [.lgbm, .attnNN, .nn],
+        "TE": [.attnNN, .lgbm, .nn],
+        "K": [.ridge, .attnNN, .lgbm, .nn],
+        "DST": [.attnNN, .lgbm, .nn],
+    ]
+    private static let fallback: [PredictionModel] = [.attnNN, .lgbm, .nn]
+
+    static func chain(for position: String) -> [PredictionModel] {
+        chains[position.uppercased()] ?? fallback
     }
 }
