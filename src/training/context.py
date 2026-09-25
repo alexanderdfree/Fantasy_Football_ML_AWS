@@ -56,6 +56,8 @@ class RunContext:
     report_sink: Callable[[Callable[[], Any]], Any] | None = execute_effect
     # Mutable optimization state is an execution service, never recipe data.
     memo: dict | None = field(default=None, compare=False, repr=False)
+    # Only analysis/experiment callers opt in. Training/benchmark gates stay fresh.
+    reuse_results: bool = False
     execution_options: tuple[tuple[str, str], ...] = field(default_factory=_execution_options)
 
     @property
@@ -173,6 +175,10 @@ def training_entrypoint(function):
         bound.arguments["seed"] = seed
         bound.arguments["context"] = execution
         with use_context(execution):
+            if execution.reuse_results:
+                from src.training.reuse import reuse_training
+
+                return reuse_training(function, bound, execution)
             return function(*bound.args, **bound.kwargs)
 
     return run

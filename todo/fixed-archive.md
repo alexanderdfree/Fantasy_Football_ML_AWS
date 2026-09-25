@@ -45,6 +45,9 @@
 ### [FIXED] CI image-cache exports were discarded on exact hits
 [Read the incident record](fixed-archive/ci-roi-scoping-image-cache-2026-09.md).
 
+### [FIXED] Exact experiment reuse and prediction-cache identity
+[Read the incident record](fixed-archive/exact-experiment-reuse.md).
+
 ### [FIXED] A/B job revisions retained mutable image tags
 [Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
 

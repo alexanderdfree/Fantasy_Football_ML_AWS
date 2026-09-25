@@ -20,6 +20,8 @@
 
 - 2026-09-18 · Replay QB synthetic cohorts against saved checkpoints with exported forecast context, per-family readiness and recorded responses · (PR #1590) · → ADR-0029
 
+- 2026-09-17 · Exact experiment result reuse and fresh validation boundaries · (PR pending) · → ADR-0030
+
 - 2026-09-17 · Extract verified ECR digest pins for isolated A/B images while retaining source-SHA compatibility · (PR #1584) · → ADR-0020
 
 - 2026-09-11 · Preserve legacy task health during strict artifact-readiness migration with a 200-only query bridge · (PR #1577) · → ADR-0027
