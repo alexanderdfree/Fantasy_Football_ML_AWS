@@ -1,0 +1,116 @@
+name: Warm training AMI
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Build, measure, check freshness, activate or recover an AMI
+        type: choice
+        options: [build, canary, check, activate, rollback, cleanup]
+        default: check
+      evidence_uri:
+        description: Prior manifest/canary/activation JSON under s3://ff-predictor-training/experiments/warm-ami/control/ (unused for build)
+        default: ""
+      image_uri:
+        description: Image to bake; blank resolves current training image (build only)
+        default: ""
+      data_release:
+        description: Optional compatible immutable data release for canary
+        default: ""
+      smoke:
+        description: One RB cold/warm pair on L4 before the full canary; cannot activate
+        type: boolean
+        default: false
+      smoke_instance:
+        description: GPU family for the one-pair smoke (full canary always tests both)
+        type: choice
+        options: [g6.xlarge, g5.xlarge]
+        default: g6.xlarge
+
+permissions:
+  contents: read
+
+jobs:
+  warm-ami:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ACTION: ${{ inputs.action }}
+      INPUT_URI: ${{ inputs.evidence_uri }}
+      IMAGE_URI: ${{ inputs.image_uri }}
+      DATA_RELEASE: ${{ inputs.data_release }}
+      SMOKE: ${{ inputs.smoke }}
+      SMOKE_INSTANCE: ${{ inputs.smoke_instance }}
+      CONTROL_PREFIX: experiments/warm-ami/control/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements*.txt
+      - name: Install operator dependencies
+        run: uv pip install --system --index-strategy unsafe-best-match -r requirements-dev.txt
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve operator inputs
+        run: |
+          mkdir -p "$RUNNER_TEMP/warm-ami"
+          if [ "$ACTION" != build ]; then
+            python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          value = urlparse(os.environ['INPUT_URI'])
+          if (value.scheme != 's3' or value.netloc != 'ff-predictor-training'
+              or not value.path.startswith('/experiments/warm-ami/control/')
+              or '..' in value.path.split('/') or not value.path.endswith('.json')):
+              raise SystemExit('Select a prior warm-AMI controller JSON artifact')
+          PY
+            aws s3 cp "$INPUT_URI" "$RUNNER_TEMP/warm-ami/input.json" --only-show-errors
+          fi
+      - name: Execute selected operation
+        run: |
+          if [ "$ACTION" = build ]; then
+            if [ -z "$IMAGE_URI" ]; then
+              IMAGE_URI=$(python -c 'import boto3; from src.scripts.resolve_training_image import resolve_ec2; print(resolve_ec2(boto3.client("ecr"))["image_uri"])')
+            fi
+            # Pulling needs CPU, disk and ECR access; the canary verifies GPUs.
+            FF_WARM_AMI_BUILDER_TYPE=m7a.large \
+            FF_WARM_AMI_MANIFEST="$RUNNER_TEMP/warm-ami/manifest.json" \
+              bash infra/batch/build-warm-ami.sh "$IMAGE_URI"
+          else
+            flags=()
+            if [ "$ACTION" = canary ]; then
+              flags+=(--output "$RUNNER_TEMP/warm-ami/canary.json")
+              if [ "$SMOKE" = true ]; then flags+=(--smoke --smoke-instance "$SMOKE_INSTANCE"); fi
+              if [ -n "$DATA_RELEASE" ]; then flags+=(--data-release "$DATA_RELEASE"); fi
+            elif [ "$ACTION" = activate ] || [ "$ACTION" = rollback ]; then
+              flags+=(--output "$RUNNER_TEMP/warm-ami/$ACTION.json")
+            fi
+            python infra/batch/warm_ami.py "$ACTION" \
+              --input "$RUNNER_TEMP/warm-ami/input.json" --region "$AWS_REGION" \
+              --checkpoint-prefix "$CONTROL_PREFIX" "${flags[@]}"
+          fi
+      - name: Preserve evidence
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/warm-ami" ]; then
+            aws s3 sync "$RUNNER_TEMP/warm-ami/" \
+              "s3://ff-predictor-training/$CONTROL_PREFIX/" --only-show-errors
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: warm-ami-${{ github.run_id }}
+          path: ${{ runner.temp }}/warm-ami/*.json
+          if-no-files-found: ignore

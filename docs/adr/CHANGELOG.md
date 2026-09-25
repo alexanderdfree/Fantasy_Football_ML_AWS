@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-24 · Pin AL2023 warm AMI inputs and gate activation on paired timing and correctness evidence · (PR pending) · → ADR-0022
+
 - 2026-09-23 · Enforce DST synthetic-export cache compatibility before loading and preserve observed zero opponent counts · (PR #1599) · → ADR-0029
 
 - 2026-09-18 · DST `build_data` drops unplayed (NaN-score) REG fixtures by default; the live upcoming-week special-teams builder opts back in via `include_unplayed=True` (#1520) · (PR pending) · → ADR-0018

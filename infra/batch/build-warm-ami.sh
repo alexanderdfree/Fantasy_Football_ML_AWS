@@ -25,11 +25,9 @@
 #   infra/batch/build-warm-ami.sh <ecr-image-uri[:tag]>            # build
 #   infra/batch/build-warm-ami.sh <ecr-image-uri[:tag]> --dry-run  # print plan
 #
-# Prints the new AMI id as the last stdout line. Activate it with:
-#   FF_BATCH_AMI_ID=<ami-id> bash infra/batch/setup.sh
-# (setup.sh attaches it via the ff-warm-ami-lt launch template; default-unset =
-# no change. Roll back by re-running setup.sh with FF_BATCH_AMI_ID unset is NOT
-# enough — see the rollback note in infra/batch/README.md.)
+# Prints the new AMI id as the last stdout line and writes a bake manifest.
+# Run infra/batch/warm_ami.py canary, then activate with its passing evidence.
+# See infra/batch/WARM_AMI.md for the measured gate and recorded rollback.
 #
 # Prereqs:
 #   - AWS CLI v2 with credentials for the target account.
@@ -56,11 +54,12 @@ fi
 BUILDER_TYPE="${FF_WARM_AMI_BUILDER_TYPE:-g6.xlarge}"
 INSTANCE_PROFILE="${FF_WARM_AMI_INSTANCE_PROFILE:-ecsInstanceRole}"
 SG_NAME="${FF_WARM_AMI_SG_NAME:-ff-batch-sg}"
-# Latest ECS GPU-optimized Amazon Linux 2 AMI (matches the Batch default lineage:
+# Latest ECS GPU-optimized Amazon Linux 2023 AMI (matches the Batch lineage:
 # NVIDIA driver + ECS agent + Docker). Keeping the SAME OS family as the default
 # CE AMI is deliberate — a custom AMI only adds pre-pulled layers, nothing else.
-SSM_AMI_PARAM="/aws/service/ecs/optimized-ami/amazon-linux-2/gpu/recommended/image_id"
+SSM_AMI_PARAM="/aws/service/ecs/optimized-ami/amazon-linux-2023/gpu/recommended/image_id"
 AMI_NAME="ff-warm-$(date -u +%Y%m%d-%H%M%S)"
+MANIFEST_OUT="${FF_WARM_AMI_MANIFEST:-${TMPDIR:-/tmp}/${AMI_NAME}.json}"
 # AMI_NAME is unique per run (UTC timestamp) and doubles as the per-run instance
 # tag + run-instances client token, so the cleanup trap can recover a leaked
 # builder by tag without ever terminating a concurrent build's host.
@@ -70,15 +69,69 @@ log() { echo "[warm-ami] $*"; }
 
 # Resolve the source AMI (read-only; safe to run even in dry-run so the plan is
 # concrete).
-SOURCE_AMI="$(aws ssm get-parameters \
+SOURCE_AMI="${FF_WARM_AMI_SOURCE_AMI:-$(aws ssm get-parameters \
   --names "$SSM_AMI_PARAM" \
   --region "$REGION" \
   --query 'Parameters[0].Value' \
-  --output text)"
+  --output text)}"
 if [ -z "$SOURCE_AMI" ] || [ "$SOURCE_AMI" = "None" ]; then
   echo "ERROR: could not resolve ECS-GPU AMI from SSM ($SSM_AMI_PARAM)" >&2
   exit 1
 fi
+if [[ ! "$SOURCE_AMI" =~ ^ami-[0-9a-f]+$ ]]; then
+  echo "ERROR: source AMI must be a concrete AMI ID" >&2
+  exit 1
+fi
+SOURCE_NAME="$(aws ec2 describe-images --image-ids "$SOURCE_AMI" --region "$REGION" \
+  --filters Name=architecture,Values=x86_64 Name=state,Values=available \
+  --query 'Images[0].Name' --output text)"
+if [[ "$SOURCE_NAME" != *al2023*gpu* ]]; then
+  echo "ERROR: source AMI is not the AL2023 ECS GPU family: $SOURCE_NAME" >&2
+  exit 1
+fi
+if [[ ! "$IMAGE_URI" =~ ^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com(\.cn)?/[a-z0-9._/-]+(:[A-Za-z0-9_.-]+|@sha256:[0-9a-f]{64})$ ]]; then
+  echo "ERROR: supply a tagged or digest-qualified ECR image" >&2
+  exit 1
+fi
+REGISTRY="${IMAGE_URI%%/*}"
+IMAGE_PATH="${IMAGE_URI#*/}"
+if [[ "$IMAGE_PATH" == *@* ]]; then
+  ECR_REPOSITORY="${IMAGE_PATH%@*}"
+  IMAGE_SELECTOR="imageDigest=${IMAGE_PATH#*@}"
+else
+  ECR_REPOSITORY="${IMAGE_PATH%:*}"
+  IMAGE_SELECTOR="imageTag=${IMAGE_PATH##*:}"
+fi
+IMAGE_DIGEST="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+  --image-ids "$IMAGE_SELECTOR" --region "$REGION" --query 'imageDetails[0].imageDigest' --output text)"
+if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "ERROR: could not resolve the exact training image digest" >&2
+  exit 1
+fi
+IMAGE_URI="${REGISTRY}/${ECR_REPOSITORY}@${IMAGE_DIGEST}"
+SOURCE_SHA="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+  --image-ids "imageDigest=$IMAGE_DIGEST" --region "$REGION" \
+  --query 'imageDetails[0].imageTags' --output json | python3 -c '
+import json,re,sys
+tags=[v for v in json.load(sys.stdin) if re.fullmatch(r"[0-9a-f]{40}", v)]
+if len(tags) != 1: raise SystemExit("Image needs one unambiguous source-SHA tag")
+print(tags[0])')"
+# The final two filesystem layers are the application and source stamp. Fail
+# closed if the selected image recipe changes that layout; otherwise an old
+# dependency layer could be mislabeled as fresh.
+DEPENDENCY_RECIPE="$(python3 - "$SOURCE_SHA" <<'PY'
+import hashlib, subprocess, sys
+def read(path):
+    return subprocess.check_output(['git', 'show', sys.argv[1] + ':' + path])
+dockerfile = read('src/batch/Dockerfile.train')
+before, separator, after = dockerfile.partition(b'COPY src/ src/')
+instructions = [line.strip().split(b' ', 1)[0] for line in after.splitlines()
+                if line.strip() and not line.lstrip().startswith(b'#')]
+if not separator or instructions != [b'ARG', b'RUN', b'ENTRYPOINT']:
+    raise SystemExit('Training image layout changed; review the dependency boundary')
+print(hashlib.sha256(before + read('src/batch/requirements.txt')).hexdigest())
+PY
+)"
 log "source ECS-GPU AMI: $SOURCE_AMI"
 log "image to bake:      $IMAGE_URI"
 log "builder type:       $BUILDER_TYPE  (profile=$INSTANCE_PROFILE, sg=$SG_NAME)"
@@ -93,13 +146,14 @@ if [ "$DRY_RUN" = "1" ]; then
          | docker login --username AWS --password-stdin <registry>
        docker pull $IMAGE_URI
        docker image inspect $IMAGE_URI >/dev/null   # assert layers resident
+       docker logout <registry>; remove builder registration state
   4. stop-instances + wait instance-stopped
   5. create-image --name $AMI_NAME --no-reboot  (from the stopped builder)
   6. wait image-available; tag the AMI (Name, source-image, built-at)
   7. terminate the builder instance
-  8. print the new AMI id
+  8. write $MANIFEST_OUT and print the new AMI id
 
-Activate:  FF_BATCH_AMI_ID=<ami-id> bash infra/batch/setup.sh
+Next: python infra/batch/warm_ami.py canary --input $MANIFEST_OUT --output canary.json
 EOF
   exit 0
 fi
@@ -116,7 +170,11 @@ if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
 fi
 
 INSTANCE_ID=""
+PULL_OUTPUT=""
+COMMAND_PARAMS=""
 cleanup() {
+  [ -z "$PULL_OUTPUT" ] || rm -f "$PULL_OUTPUT"
+  [ -z "$COMMAND_PARAMS" ] || rm -f "$COMMAND_PARAMS"
   if [ -n "$INSTANCE_ID" ]; then
     log "cleanup: terminating builder $INSTANCE_ID"
     aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" >/dev/null 2>&1 || true
@@ -140,6 +198,9 @@ cleanup() {
 trap cleanup EXIT
 
 REGISTRY="${IMAGE_URI%%/*}"  # <acct>.dkr.ecr.<region>.amazonaws.com
+BUILDER_USER_DATA='#!/bin/bash
+systemctl mask --now ecs.service
+'
 
 log "launching builder instance..."
 INSTANCE_ID="$(aws ec2 run-instances \
@@ -149,6 +210,7 @@ INSTANCE_ID="$(aws ec2 run-instances \
   --security-group-ids "$SG_ID" \
   --tag-specifications "$TAG_SPEC" \
   --client-token "$AMI_NAME" \
+  --user-data "$BUILDER_USER_DATA" \
   --region "$REGION" \
   --query 'Instances[0].InstanceId' \
   --output text)"
@@ -174,13 +236,25 @@ fi
 log "pulling $IMAGE_URI on the builder via SSM..."
 PULL_CMDS="set -euo pipefail
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REGISTRY
-docker pull $IMAGE_URI
-docker image inspect $IMAGE_URI >/dev/null"
+docker pull --quiet $IMAGE_URI
+docker image inspect $IMAGE_URI >/dev/null
+docker image inspect --format '{{json .RootFS.Layers}}' $IMAGE_URI
+docker logout $REGISTRY
+systemctl stop ecs.service || true
+rm -f /var/lib/ecs/data/agent.db /var/lib/amazon/ssm/registration
+systemctl unmask ecs.service
+systemctl enable ecs.service
+cloud-init clean --logs
+printf 'uninitialized\\n' >/etc/machine-id
+rm -f /var/lib/dbus/machine-id"
+COMMAND_PARAMS="$(mktemp "${TMPDIR:-/tmp}/warm-ami-command.XXXXXX")"
+printf '%s' "$PULL_CMDS" | python3 -c \
+  'import json,sys; json.dump({"commands": [sys.stdin.read()]}, sys.stdout)' >"$COMMAND_PARAMS"
 CMD_ID="$(aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
   --comment "warm-ami pre-pull" \
-  --parameters "commands=[$(printf '%s' "$PULL_CMDS" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')]" \
+  --parameters "file://$COMMAND_PARAMS" \
   --timeout-seconds 1200 \
   --region "$REGION" \
   --query 'Command.CommandId' \
@@ -207,6 +281,9 @@ for _ in $(seq 1 120); do
 done
 [ "${CMD_STATUS:-}" = "Success" ] || { echo "ERROR: pull command did not complete" >&2; exit 1; }
 log "image layers resident on builder"
+PULL_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/warm-ami-pull.XXXXXX")"
+aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+  --region "$REGION" --query 'StandardOutputContent' --output text >"$PULL_OUTPUT"
 
 log "stopping builder for a clean snapshot..."
 aws ec2 stop-instances --instance-ids "$INSTANCE_ID" --region "$REGION" >/dev/null
@@ -221,6 +298,35 @@ AMI_ID="$(aws ec2 create-image \
   --region "$REGION" \
   --query 'ImageId' \
   --output text)"
+# Record the candidate even if layer validation fails, so it can be inspected
+# or removed without launching another builder.
+python3 - "$MANIFEST_OUT" "$SOURCE_AMI" "$IMAGE_URI" "$AMI_ID" "$REGION" "$PULL_OUTPUT" "$SOURCE_SHA" "$DEPENDENCY_RECIPE" <<'PY'
+import hashlib, json, pathlib, sys
+output, source, image, ami, region, log, sha, recipe = sys.argv[1:]
+manifest = {'version': 1, 'source_ami': source, 'image_uri': image,
+            'candidate_ami': ami, 'region': region, 'source_sha': sha,
+            'dependency_recipe': recipe, 'eligible': False}
+path = pathlib.Path(output)
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(manifest, indent=2) + '\n')
+layers = []
+for line in pathlib.Path(log).read_text().splitlines():
+    try:
+        candidate = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(candidate, list) and candidate and all(isinstance(v, str) and v.startswith('sha256:') for v in candidate):
+        layers = candidate
+if len(layers) < 3:
+    raise SystemExit('Missing image-layer evidence; candidate is not eligible for promotion')
+# Dockerfile.train ends with COPY src and the baked source-SHA layer.
+dependency_layers = layers[:-2]
+manifest.update(image_layers=layers, dependency_layers=dependency_layers,
+                dependency_fingerprint=hashlib.sha256(json.dumps(dependency_layers).encode()).hexdigest(),
+                eligible=True)
+path.write_text(json.dumps(manifest, indent=2) + '\n')
+PY
+rm -f "$PULL_OUTPUT"
 # `aws ec2 wait image-available` caps at 40 polls x 15s = 10 min, but a warm AMI
 # bakes the multi-GB training-image layers into an EBS snapshot that routinely
 # takes longer — the waiter would time out and `set -e` would kill the script
@@ -248,7 +354,9 @@ aws ec2 create-tags \
   --resources "$AMI_ID" \
   --tags "Key=Name,Value=$AMI_NAME" "Key=ff-source-ami,Value=$SOURCE_AMI" \
          "Key=ff-baked-image,Value=$IMAGE_URI" \
+         "Key=ff-purpose,Value=warm-ami" \
   --region "$REGION" >/dev/null
 
-log "done. AMI ready:"
+log "manifest: $MANIFEST_OUT"
+log "done. AMI ready (canary validation is required before activation):"
 echo "$AMI_ID"

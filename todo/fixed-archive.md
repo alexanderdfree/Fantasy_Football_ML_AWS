@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Warm AMI builder used an obsolete family and malformed SSM commands
+[Read the incident record](fixed-archive/warm-ami-bake-validation-2026-09.md).
+
 ### [FIXED] CI test scope missed unknown paths mixed with recognized changes
 [Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
 
