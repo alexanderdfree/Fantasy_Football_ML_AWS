@@ -49,10 +49,15 @@ updates:
     groups:
       # Dependabot treats github/codeql-action/init and .../analyze as separate
       # dependencies and opened one PR per half (#1456/#1459, #1487/#1489,
-      # #1620/#1621). CodeQL refuses mismatched init/analyze versions ("Loaded a
-      # configuration file for version X, but running version Y"), so neither
-      # single-half PR can pass the Analyze jobs alone; #1620/#1621 had to be
-      # combined by hand. The group bumps both halves together in ONE PR.
+      # #1620/#1621). CodeQL now refuses mismatched init/analyze versions: each
+      # half of #1620/#1621 failed every Analyze job ("Loaded a configuration
+      # file for version X, but running version Y") and the pair had to be
+      # combined by hand. These groups bump both halves together in ONE PR;
+      # groups default to version updates, so security updates need their own.
       codeql-action:
+        patterns:
+          - "github/codeql-action*"
+      codeql-action-security:
+        applies-to: security-updates
         patterns:
           - "github/codeql-action*"
