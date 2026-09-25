@@ -178,3 +178,50 @@ def test_rosters_coerces_numpy_int_seasons_for_strict_loader(monkeypatch):
     assert isinstance(out, pd.DataFrame)
     assert captured["seasons"] == [2023, 2024]
     assert all(type(s) is int for s in captured["seasons"])
+
+
+@pytest.mark.unit
+def test_pbp_data_retries_a_stalled_download_then_succeeds(monkeypatch):
+    """A stalled nflverse stream (nflreadpy raises ``ConnectionError``) is retried
+    after a pause; the 2026-09-25 refresh-splits runs died on one season each."""
+    pbp = pl.DataFrame({"season": [2012], "week": [1], "posteam": ["KC"], "epa": [0.1]})
+    calls: list[list[int]] = []
+    naps: list[float] = []
+
+    def flaky(seasons):
+        calls.append(list(seasons))
+        if len(calls) == 1:
+            raise ConnectionError("Failed to download play_by_play_2012.parquet: Read timed out")
+        return pbp
+
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_pbp", flaky)
+    monkeypatch.setattr(nfl_source, "_PBP_RETRY_BACKOFF_S", 0.0)
+    monkeypatch.setattr(nfl_source.time, "sleep", naps.append)
+    out = nfl_source.pbp_data([2012], ("season", "week", "posteam"))
+    assert list(out.columns) == ["season", "week", "posteam"] and len(out) == 1
+    assert calls == [[2012], [2012]]
+    assert naps == [0.0]
+
+
+@pytest.mark.unit
+def test_pbp_download_gives_up_after_the_configured_retries():
+    attempts = []
+
+    def always_stalls(seasons):
+        attempts.append(seasons)
+        raise TimeoutError("read timed out")
+
+    with pytest.raises(TimeoutError):
+        nfl_source._load_pbp_with_retry(
+            [2013], loader=always_stalls, max_retries=2, backoff_s=0.0, sleep=lambda s: None
+        )
+    assert len(attempts) == 3
+
+
+@pytest.mark.unit
+def test_pbp_download_does_not_retry_other_errors():
+    def bad_input(seasons):
+        raise ValueError("no such season")
+
+    with pytest.raises(ValueError):
+        nfl_source._load_pbp_with_retry([1999], loader=bad_input, sleep=lambda s: None)
