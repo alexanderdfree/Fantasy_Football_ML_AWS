@@ -7,6 +7,7 @@
  * Filters menus. Age/Class appear only when the artifact rows carry `age`
  * (older artifacts degrade to the classic bar). */
 import { useMemo, useState, useSyncExternalStore } from "react";
+import { contract } from "../api-contract.js";
 import { fmt } from "../lib/format.js";
 import { upcomingWeekStore, projectionFreshnessNotice, projectionCoverageNotice } from "../lib/upcomingWeek.js";
 import { meetsMinimumProjection } from "../lib/predictionFilters.js";
@@ -51,15 +52,20 @@ const TOGGLEABLE_COLUMNS = COLUMNS.filter((c) => !c.always);
 // ranks RB/WR better than the attention head (beats it on lineup regret in 4/4
 // rolling-origin seasons vs RotoWire — todo/expert-gap-investigation-2026-06.md §3);
 // other positions keep the attention-first chain. Display columns are unaffected.
-// K includes Ridge: it is the incumbent K baseline and is displayed here.
-const LGBM_RANKED_POSITIONS = new Set(["RB", "WR"]);
+// The chain lives in the API contract (served_model_chain) so the Comparison tab
+// headlines the same model this board ranks first. Field names are built once:
+// this runs inside the sort comparator, twice per comparison.
+const SERVED_PRED_FIELDS = Object.fromEntries(
+    Object.entries(contract.served_model_chain || {}).map(([pos, chain]) => [pos, chain.map((key) => `${key}_pred`)]),
+);
 function upcomingProjection(p) {
-    const order = p.position === "K" ? [p.ridge_pred, p.attn_nn_pred, p.lgbm_pred, p.nn_pred]
-        : LGBM_RANKED_POSITIONS.has(p.position)
-        ? [p.lgbm_pred, p.attn_nn_pred, p.nn_pred]
-        : [p.attn_nn_pred, p.lgbm_pred, p.nn_pred];
-    const best = order.find((v) => v != null);
-    return best != null ? best : null;
+    const fields = SERVED_PRED_FIELDS[p.position];
+    if (!fields) return null;
+    for (const field of fields) {
+        const v = p[field];
+        if (v != null) return v;
+    }
+    return null;
 }
 
 function sortValue(p, key) {

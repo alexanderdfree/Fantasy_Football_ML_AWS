@@ -51,8 +51,9 @@ Human overview: [README.md](README.md); read only when needed.
   components are unavailable, never a full-fantasy fallback. Use
   `src/shared/comparison_scoring.py` and the [cohort rules](agent-guides/validation.md#evaluation-cohorts).
   Headline cohorts use no graded forecast (`weekly_depth_starters`,
-  `elite_top24`); `weekly_reference_top24` is secondary. A winner needs a paired
-  CI excluding zero on MAE and RMSE. NFL.com offense is not graded (a stale
+  `elite_top24`); `weekly_reference_top24` is secondary. A winner needs the served
+  model's paired CI (`SERVED_MODEL`, not best-of-four) to exclude zero on MAE and
+  RMSE; hindsight cohorts carry no verdict. NFL.com offense is not graded (a stale
   RotoWire copy); all-zero provider rows are missing, never 0.0. Actual weekly
   leaders are for ranking; seasonal leaders are retrospective. Never use a model's
   own top-N pool for cross-source MAE, restore static expert summaries as live

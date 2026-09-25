@@ -8,7 +8,9 @@
       "excluded_components",
       "cohort_definitions",
       "uncertainty_meta",
-      "evaluation_season_note"
+      "evaluation_season_note",
+      "served_model",
+      "information_set_note"
     ],
     "sample_basis": "shared_player_weeks"
   },
@@ -98,6 +100,39 @@
     "half_ppr",
     "standard"
   ],
+  "served_model_chain": {
+    "DST": [
+      "attn_nn",
+      "lgbm",
+      "nn"
+    ],
+    "K": [
+      "ridge",
+      "attn_nn",
+      "lgbm",
+      "nn"
+    ],
+    "QB": [
+      "attn_nn",
+      "lgbm",
+      "nn"
+    ],
+    "RB": [
+      "lgbm",
+      "attn_nn",
+      "nn"
+    ],
+    "TE": [
+      "attn_nn",
+      "lgbm",
+      "nn"
+    ],
+    "WR": [
+      "lgbm",
+      "attn_nn",
+      "nn"
+    ]
+  },
   "version": "1.0",
   "version_header": "X-FFP-Contract-Version"
 }

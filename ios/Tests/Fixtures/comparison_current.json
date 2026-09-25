@@ -136,6 +136,31 @@
             },
             "verdict": "models"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "model": "attn_nn",
+            "requested": "attn_nn",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
+          },
           "status": "available",
           "winner": "models"
         }
@@ -261,6 +286,31 @@
               }
             },
             "verdict": "tie"
+          },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "espn",
+              "ci": [
+                0.0,
+                0.0
+              ],
+              "minus_best_expert": 0.0,
+              "verdict": "tie"
+            },
+            "model": "ridge",
+            "requested": "ridge",
+            "rmse": {
+              "best_expert": "espn",
+              "ci": [
+                0.0,
+                0.0
+              ],
+              "minus_best_expert": 0.0,
+              "verdict": "tie"
+            },
+            "status": "available",
+            "winner": "tie"
           },
           "status": "available",
           "winner": "tie"
@@ -390,6 +440,31 @@
             },
             "verdict": "models"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "model": "attn_nn",
+            "requested": "attn_nn",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
+          },
           "status": "available",
           "winner": "models"
         }
@@ -518,6 +593,31 @@
             },
             "verdict": "models"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -2.0,
+                -2.0
+              ],
+              "minus_best_expert": -2.0,
+              "verdict": "models"
+            },
+            "model": "lgbm",
+            "requested": "lgbm",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -2.0,
+                -2.0
+              ],
+              "minus_best_expert": -2.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
+          },
           "status": "available",
           "winner": "models"
         }
@@ -585,11 +685,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -631,11 +731,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -655,6 +755,31 @@
               }
             },
             "verdict": "models"
+          },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                4.0,
+                4.0
+              ],
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
+            },
+            "model": "lgbm",
+            "requested": "lgbm",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                4.0,
+                4.0
+              ],
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
+            },
+            "status": "available",
+            "winner": "experts"
           },
           "status": "available",
           "winner": "models"
@@ -701,6 +826,11 @@
         ],
         "uncertainty": {
           "reason": "no_common_rows",
+          "served_model": {
+            "model": "attn_nn",
+            "reason": "no_common_rows",
+            "status": "unavailable"
+          },
           "status": "unavailable"
         }
       },
@@ -738,6 +868,11 @@
         ],
         "uncertainty": {
           "reason": "no_common_rows",
+          "served_model": {
+            "model": "ridge",
+            "reason": "no_common_rows",
+            "status": "unavailable"
+          },
           "status": "unavailable"
         }
       },
@@ -866,6 +1001,31 @@
               }
             },
             "verdict": "models"
+          },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "model": "attn_nn",
+            "requested": "attn_nn",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
           },
           "status": "available",
           "winner": "models"
@@ -997,6 +1157,31 @@
             },
             "verdict": "models"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -2.0,
+                -2.0
+              ],
+              "minus_best_expert": -2.0,
+              "verdict": "models"
+            },
+            "model": "lgbm",
+            "requested": "lgbm",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -2.0,
+                -2.0
+              ],
+              "minus_best_expert": -2.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
+          },
           "status": "available",
           "winner": "models"
         }
@@ -1066,11 +1251,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -1112,11 +1297,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -1136,6 +1321,31 @@
               }
             },
             "verdict": "models"
+          },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                4.0,
+                4.0
+              ],
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
+            },
+            "model": "lgbm",
+            "requested": "lgbm",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                4.0,
+                4.0
+              ],
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
+            },
+            "status": "available",
+            "winner": "experts"
           },
           "status": "available",
           "winner": "models"
@@ -1180,98 +1390,8 @@
           "nflcom"
         ],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "K": {
@@ -1306,98 +1426,8 @@
           "rotowire"
         ],
         "uncertainty": {
-          "mae": {
-            "best_expert": "espn",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": 0.0,
-            "ci": [
-              0.0,
-              0.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  2.0,
-                  2.0
-                ],
-                "minus_best_expert": 2.0,
-                "verdict": "experts"
-              },
-              "lgbm": {
-                "ci": [
-                  3.0,
-                  3.0
-                ],
-                "minus_best_expert": 3.0,
-                "verdict": "experts"
-              },
-              "nn": {
-                "ci": [
-                  1.0,
-                  1.0
-                ],
-                "minus_best_expert": 1.0,
-                "verdict": "experts"
-              },
-              "ridge": {
-                "ci": [
-                  0.0,
-                  0.0
-                ],
-                "minus_best_expert": 0.0,
-                "verdict": "tie"
-              }
-            },
-            "verdict": "tie"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "espn",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": 0.0,
-            "ci": [
-              0.0,
-              0.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  2.0,
-                  2.0
-                ],
-                "minus_best_expert": 2.0,
-                "verdict": "experts"
-              },
-              "lgbm": {
-                "ci": [
-                  3.0,
-                  3.0
-                ],
-                "minus_best_expert": 3.0,
-                "verdict": "experts"
-              },
-              "nn": {
-                "ci": [
-                  1.0,
-                  1.0
-                ],
-                "minus_best_expert": 1.0,
-                "verdict": "experts"
-              },
-              "ridge": {
-                "ci": [
-                  0.0,
-                  0.0
-                ],
-                "minus_best_expert": 0.0,
-                "verdict": "tie"
-              }
-            },
-            "verdict": "tie"
-          },
-          "status": "available",
-          "winner": "tie"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "QB": {
@@ -1434,98 +1464,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "RB": {
@@ -1562,98 +1502,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 5,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "TE": {
@@ -1700,98 +1550,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       }
     },
@@ -1833,98 +1593,8 @@
           "nflcom"
         ],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "K": {
@@ -1959,98 +1629,8 @@
           "rotowire"
         ],
         "uncertainty": {
-          "mae": {
-            "best_expert": "espn",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": 0.0,
-            "ci": [
-              0.0,
-              0.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  2.0,
-                  2.0
-                ],
-                "minus_best_expert": 2.0,
-                "verdict": "experts"
-              },
-              "lgbm": {
-                "ci": [
-                  3.0,
-                  3.0
-                ],
-                "minus_best_expert": 3.0,
-                "verdict": "experts"
-              },
-              "nn": {
-                "ci": [
-                  1.0,
-                  1.0
-                ],
-                "minus_best_expert": 1.0,
-                "verdict": "experts"
-              },
-              "ridge": {
-                "ci": [
-                  0.0,
-                  0.0
-                ],
-                "minus_best_expert": 0.0,
-                "verdict": "tie"
-              }
-            },
-            "verdict": "tie"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "espn",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": 0.0,
-            "ci": [
-              0.0,
-              0.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  2.0,
-                  2.0
-                ],
-                "minus_best_expert": 2.0,
-                "verdict": "experts"
-              },
-              "lgbm": {
-                "ci": [
-                  3.0,
-                  3.0
-                ],
-                "minus_best_expert": 3.0,
-                "verdict": "experts"
-              },
-              "nn": {
-                "ci": [
-                  1.0,
-                  1.0
-                ],
-                "minus_best_expert": 1.0,
-                "verdict": "experts"
-              },
-              "ridge": {
-                "ci": [
-                  0.0,
-                  0.0
-                ],
-                "minus_best_expert": 0.0,
-                "verdict": "tie"
-              }
-            },
-            "verdict": "tie"
-          },
-          "status": "available",
-          "winner": "tie"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "QB": {
@@ -2087,98 +1667,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "RB": {
@@ -2215,98 +1705,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 5,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       },
       "TE": {
@@ -2353,98 +1753,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_on_outcomes",
+          "status": "not_applicable"
         }
       }
     },
@@ -2577,6 +1887,31 @@
             },
             "verdict": "models"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "model": "attn_nn",
+            "requested": "attn_nn",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
+          },
           "status": "available",
           "winner": "models"
         }
@@ -2704,6 +2039,31 @@
             },
             "verdict": "tie"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "espn",
+              "ci": [
+                0.0,
+                0.0
+              ],
+              "minus_best_expert": 0.0,
+              "verdict": "tie"
+            },
+            "model": "ridge",
+            "requested": "ridge",
+            "rmse": {
+              "best_expert": "espn",
+              "ci": [
+                0.0,
+                0.0
+              ],
+              "minus_best_expert": 0.0,
+              "verdict": "tie"
+            },
+            "status": "available",
+            "winner": "tie"
+          },
           "status": "available",
           "winner": "tie"
         }
@@ -2832,6 +2192,31 @@
               }
             },
             "verdict": "models"
+          },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "model": "attn_nn",
+            "requested": "attn_nn",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -3.0,
+                -3.0
+              ],
+              "minus_best_expert": -3.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
           },
           "status": "available",
           "winner": "models"
@@ -2962,6 +2347,31 @@
             },
             "verdict": "models"
           },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                -2.0,
+                -2.0
+              ],
+              "minus_best_expert": -2.0,
+              "verdict": "models"
+            },
+            "model": "lgbm",
+            "requested": "lgbm",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                -2.0,
+                -2.0
+              ],
+              "minus_best_expert": -2.0,
+              "verdict": "models"
+            },
+            "status": "available",
+            "winner": "models"
+          },
           "status": "available",
           "winner": "models"
         }
@@ -3030,11 +2440,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -3076,11 +2486,11 @@
               },
               "lgbm": {
                 "ci": [
-                  -2.0,
-                  -2.0
+                  4.0,
+                  4.0
                 ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
+                "minus_best_expert": 4.0,
+                "verdict": "experts"
               },
               "nn": {
                 "ci": [
@@ -3100,6 +2510,31 @@
               }
             },
             "verdict": "models"
+          },
+          "served_model": {
+            "fallback": false,
+            "mae": {
+              "best_expert": "rotowire",
+              "ci": [
+                4.0,
+                4.0
+              ],
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
+            },
+            "model": "lgbm",
+            "requested": "lgbm",
+            "rmse": {
+              "best_expert": "rotowire",
+              "ci": [
+                4.0,
+                4.0
+              ],
+              "minus_best_expert": 4.0,
+              "verdict": "experts"
+            },
+            "status": "available",
+            "winner": "experts"
           },
           "status": "available",
           "winner": "models"
@@ -3146,8 +2581,8 @@
           "nflcom"
         ],
         "uncertainty": {
-          "reason": "no_common_rows",
-          "status": "unavailable"
+          "reason": "selected_by_graded_forecast",
+          "status": "not_applicable"
         }
       },
       "K": {
@@ -3187,98 +2622,8 @@
           "rotowire"
         ],
         "uncertainty": {
-          "mae": {
-            "best_expert": "espn",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": 0.0,
-            "ci": [
-              0.0,
-              0.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  2.0,
-                  2.0
-                ],
-                "minus_best_expert": 2.0,
-                "verdict": "experts"
-              },
-              "lgbm": {
-                "ci": [
-                  3.0,
-                  3.0
-                ],
-                "minus_best_expert": 3.0,
-                "verdict": "experts"
-              },
-              "nn": {
-                "ci": [
-                  1.0,
-                  1.0
-                ],
-                "minus_best_expert": 1.0,
-                "verdict": "experts"
-              },
-              "ridge": {
-                "ci": [
-                  0.0,
-                  0.0
-                ],
-                "minus_best_expert": 0.0,
-                "verdict": "tie"
-              }
-            },
-            "verdict": "tie"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "espn",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": 0.0,
-            "ci": [
-              0.0,
-              0.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  2.0,
-                  2.0
-                ],
-                "minus_best_expert": 2.0,
-                "verdict": "experts"
-              },
-              "lgbm": {
-                "ci": [
-                  3.0,
-                  3.0
-                ],
-                "minus_best_expert": 3.0,
-                "verdict": "experts"
-              },
-              "nn": {
-                "ci": [
-                  1.0,
-                  1.0
-                ],
-                "minus_best_expert": 1.0,
-                "verdict": "experts"
-              },
-              "ridge": {
-                "ci": [
-                  0.0,
-                  0.0
-                ],
-                "minus_best_expert": 0.0,
-                "verdict": "tie"
-              }
-            },
-            "verdict": "tie"
-          },
-          "status": "available",
-          "winner": "tie"
+          "reason": "selected_by_graded_forecast",
+          "status": "not_applicable"
         }
       },
       "QB": {
@@ -3320,98 +2665,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 6,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_by_graded_forecast",
+          "status": "not_applicable"
         }
       },
       "RB": {
@@ -3453,98 +2708,8 @@
         "status": "available",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 5,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_by_graded_forecast",
+          "status": "not_applicable"
         }
       },
       "TE": {
@@ -3596,98 +2761,8 @@
         "status": "partial",
         "unavailable_sources": [],
         "uncertainty": {
-          "mae": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "n": 3,
-          "players": 3,
-          "rmse": {
-            "best_expert": "rotowire",
-            "best_model": "ridge",
-            "best_model_minus_best_expert": -5.0,
-            "ci": [
-              -5.0,
-              -5.0
-            ],
-            "models": {
-              "attn_nn": {
-                "ci": [
-                  -3.0,
-                  -3.0
-                ],
-                "minus_best_expert": -3.0,
-                "verdict": "models"
-              },
-              "lgbm": {
-                "ci": [
-                  -2.0,
-                  -2.0
-                ],
-                "minus_best_expert": -2.0,
-                "verdict": "models"
-              },
-              "nn": {
-                "ci": [
-                  -4.0,
-                  -4.0
-                ],
-                "minus_best_expert": -4.0,
-                "verdict": "models"
-              },
-              "ridge": {
-                "ci": [
-                  -5.0,
-                  -5.0
-                ],
-                "minus_best_expert": -5.0,
-                "verdict": "models"
-              }
-            },
-            "verdict": "models"
-          },
-          "status": "available",
-          "winner": "models"
+          "reason": "selected_by_graded_forecast",
+          "status": "not_applicable"
         }
       }
     }
@@ -3722,6 +2797,7 @@
     }
   },
   "generated_at": "2026-09-10T00:00:00+00:00",
+  "information_set_note": "Backtest model inputs for the graded season include realized quarterback participation, closing betting lines, recorded game-time weather and game-day roster status (ADR-0004), and the graded population is players who recorded a snap. The expert archives were fetched after the season and carry no capture timestamp; the graded experts omit every player ruled Out, so their information time is the final injury report or later. Live forecasts use pregame inputs only.",
   "model_source": "live",
   "quartile_bias": {
     "DST": {
@@ -4258,8 +3334,8 @@
           "n": 2
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 2
         },
         "nflcom": null,
@@ -4291,8 +3367,8 @@
           "n": 1
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 1
         },
         "nflcom": null,
@@ -4324,8 +3400,8 @@
           "n": 1
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 1
         },
         "nflcom": null,
@@ -4357,8 +3433,8 @@
           "n": 2
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 2
         },
         "nflcom": null,
@@ -4442,6 +3518,14 @@
       "receptions",
       "fumbles_lost"
     ]
+  },
+  "served_model": {
+    "DST": "attn_nn",
+    "K": "ridge",
+    "QB": "attn_nn",
+    "RB": "lgbm",
+    "TE": "attn_nn",
+    "WR": "lgbm"
   },
   "subsets": {
     "all": {
@@ -4644,11 +3728,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -4808,11 +3892,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -5038,11 +4122,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -5268,11 +4352,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 6,
-          "r2": 0.6225,
-          "rmse": 3.0
+          "r2": -2.3973,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -5498,11 +4582,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 4,
-          "r2": 0.308,
-          "rmse": 3.0
+          "r2": -5.2284,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -5692,11 +4776,11 @@
           "rmse": 6.0
         },
         "lgbm": {
-          "bias": 3.0,
-          "mae": 3.0,
+          "bias": 9.0,
+          "mae": 9.0,
           "n": 3,
-          "r2": 0.481,
-          "rmse": 3.0
+          "r2": -3.6713,
+          "rmse": 9.0
         },
         "nflcom": null,
         "nn": {
@@ -5728,14 +4812,20 @@
   "uncertainty_meta": {
     "confidence": 0.95,
     "gap": "best_model_minus_best_expert_minimum_within_replicate",
+    "headline_gap": "served_model_minus_best_expert",
     "method": "player_clustered_paired_bootstrap",
     "metrics": [
       "mae",
       "rmse"
     ],
+    "no_verdict_cohorts": {
+      "top12": "selected_on_outcomes",
+      "top30": "selected_on_outcomes",
+      "weekly_reference_top24": "selected_by_graded_forecast"
+    },
     "replicates": 2000,
     "seed": 20260925,
-    "winner_rule": "A group wins a row only when the 95% interval for best model minus best expert excludes zero in the same direction for both MAE and RMSE; otherwise the row is a statistical tie."
+    "winner_rule": "A row names a winner only when the 95% interval for the served model minus the best expert excludes zero in the same direction for both MAE and RMSE; otherwise the row is a statistical tie. The best-of-four gap is context only: its minimum is taken inside each replicate, but it still gives the model family four draws."
   },
   "weekly_ranking": {
     "DST": {

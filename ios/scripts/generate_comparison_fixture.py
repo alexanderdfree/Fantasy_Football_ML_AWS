@@ -49,6 +49,11 @@ def comparison_fixture() -> dict:
                 actual = score_actual_components(pd.DataFrame([row]), pos, prefix="actual_").iloc[0]
                 for index, source in enumerate(_ROW_PRED_PREFIXES):
                     row[f"{source}_pred_ppr"] = float(actual + index)
+                if pos == "WR":
+                    # WR's served model (LightGBM) loses to both experts while the
+                    # exact Ridge still wins best of four: clients must show the
+                    # served verdict ("Experts ahead"), not the family's.
+                    row["lgbm_pred_ppr"] = float(actual + 9.0)
                 if pos == "K":
                     row["espn_pred_ppr"] = float(actual)
                     row["rotowire_pred_ppr"] = np.nan

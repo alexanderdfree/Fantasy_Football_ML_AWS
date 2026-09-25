@@ -17,6 +17,10 @@ struct Comparison: Codable, Sendable {
     let cohortDefinitions: [String: String]?
     /// Set when the graded season is the one model changes were compared on.
     let evaluationSeasonNote: String?
+    /// POS -> the model the Next Week board ranks first; its interval is the verdict.
+    let servedModel: [String: String]?
+    /// Backtest inputs that were not all pregame, disclosed beside every verdict.
+    let informationSetNote: String?
     let coverage: [String: [String: Coverage]]?
     /// subset -> POS -> source ("ridge"…"espn") -> cell.
     let subsets: [String: [String: [String: MetricCell?]]]
@@ -27,6 +31,10 @@ struct Comparison: Codable, Sendable {
     let expertsMeta: [String: ExpertMeta]?
 
     var isUnavailable: Bool { modelSource == "unavailable" }
+
+    /// Cohorts selected on outcomes or on a graded expert's own forecasts: cells
+    /// and bias only, never a verdict, whatever the payload carries.
+    static let noVerdictSubsets: Set<String> = ["top12", "top30", "weekly_reference_top24"]
 
     var displayedSubsets: [String] {
         let order = ["weekly_depth_starters", "all", "elite_top24", "weekly_reference_top24", "top30", "top12"]
@@ -114,29 +122,73 @@ struct Comparison: Codable, Sendable {
         let excludedSources: [String: String]?
         let referenceStatus: String?
         let missingReferenceWeeks: Int?
-        /// Paired, player-clustered bootstrap for best model minus best expert.
+        /// Paired, player-clustered bootstrap: the served model and the best of four
+        /// against the best expert. Hindsight cohorts carry `not_applicable`.
         let uncertainty: Uncertainty?
 
-        /// The winning group ("models" / "experts"), or nil for a tie or no interval.
+        /// The served block when it can decide a row.
+        private var served: ServedGap? {
+            guard let served = uncertainty?.servedModel, served.status == "available" else { return nil }
+            return served
+        }
+
+        /// The winning group ("models" / "experts") under the served model's
+        /// both-metrics rule, or nil for a tie, a hindsight cohort, a snapshot
+        /// without a usable served block, or no interval. Best of four never decides.
         var decidedWinner: String? {
-            guard let uncertainty, uncertainty.status == "available",
-                  let winner = uncertainty.winner, winner != "tie" else { return nil }
+            guard uncertainty?.status == "available", let winner = served?.winner, winner != "tie" else { return nil }
             return winner
         }
 
-        /// "≈ tie · best model − best expert −0.08 [−0.23, +0.09] MAE" for the shown metric.
-        func verdict(_ metric: MetricKind) -> String? {
+        /// The served model's key when it decided the row for the models, so only
+        /// its own cell is highlighted.
+        var decidedModel: String? { decidedWinner == "models" ? served?.model : nil }
+
+        private static func label(_ winner: String?, _ verdict: String?, _ key: String) -> String {
+            // A decided row needs both metrics; one decided metric alone stays a tie.
+            winner == "models" ? "Models ahead"
+                : winner == "experts" ? "Experts ahead"
+                : verdict == "models" ? "≈ tie (models ahead on \(key) only)"
+                : verdict == "experts" ? "≈ tie (experts ahead on \(key) only)" : "≈ tie"
+        }
+
+        /// Lowercase only the leading group word; the metric abbreviation keeps its case.
+        private static func asContext(_ text: String) -> String {
+            text.hasPrefix("≈") ? text : text.lowercased()
+        }
+
+        private static func interval(_ delta: Double, _ ci: [Double], _ key: String) -> String {
+            let signed = { (value: Double) in String(format: "%+.2f", value) }
+            return "\(signed(delta)) [\(signed(ci[0])), \(signed(ci[1]))] \(key)"
+        }
+
+        /// The row verdict for the shown metric: "Models ahead · Attention NN − best
+        /// expert −0.08 [−0.23, +0.09] MAE". `modelLabel` renders a model key. A
+        /// snapshot without a served block, or whose served model was not graded,
+        /// gets a plain no-verdict line; best of four never becomes the verdict.
+        func verdict(_ metric: MetricKind, modelLabel: (String) -> String = { $0 }) -> String? {
+            guard let uncertainty, uncertainty.status == "available" else { return nil }
+            let key = metric == .mae ? "MAE" : "RMSE"
+            guard let block = uncertainty.servedModel else { return "No served-model verdict in this snapshot" }
+            guard let served, let gap = metric == .mae ? served.mae : served.rmse, let model = served.model,
+                  let delta = gap.minusBestExpert, let ci = gap.ci, ci.count == 2 else {
+                return "No verdict · \(modelLabel(block.model ?? "the served model")) not graded on these rows"
+            }
+            let fallback = served.fallback == true
+                ? " (next on the board; \(modelLabel(served.requested ?? "")) not graded)" : ""
+            return "\(Self.label(served.winner, gap.verdict, key)) · \(modelLabel(model)) − best expert "
+                + Self.interval(delta, ci, key) + fallback
+        }
+
+        /// Context beneath the verdict: the best-of-four gap, which gives the model
+        /// family four draws and therefore never decides a row.
+        func familyVerdict(_ metric: MetricKind) -> String? {
             guard let uncertainty, uncertainty.status == "available",
                   let gap = metric == .mae ? uncertainty.mae : uncertainty.rmse,
                   let delta = gap.bestModelMinusBestExpert, let ci = gap.ci, ci.count == 2 else { return nil }
             let key = metric == .mae ? "MAE" : "RMSE"
-            // A decided row needs both metrics; one decided metric alone stays a tie.
-            let label = uncertainty.winner == "models" ? "Models ahead"
-                : uncertainty.winner == "experts" ? "Experts ahead"
-                : gap.verdict == "models" ? "≈ tie (models ahead on \(key) only)"
-                : gap.verdict == "experts" ? "≈ tie (experts ahead on \(key) only)" : "≈ tie"
-            let signed = { (value: Double) in String(format: "%+.2f", value) }
-            return "\(label) · best model − best expert \(signed(delta)) [\(signed(ci[0])), \(signed(ci[1]))] \(key)"
+            return "best of four − best expert " + Self.interval(delta, ci, key) + " · "
+                + Self.asContext(Self.label(uncertainty.winner, gap.verdict, key))
         }
 
         var summary: String {
@@ -169,6 +221,39 @@ struct Comparison: Codable, Sendable {
         let winner: String?
         let mae: Gap?
         let rmse: Gap?
+        let servedModel: ServedGap?
+
+        enum CodingKeys: String, CodingKey {
+            case status, reason, winner, mae, rmse
+            case servedModel = "served_model"
+        }
+    }
+
+    /// The served model (the first graded model in the board's ranking chain)
+    /// against the best expert. `requested` is the chain's first model; `fallback`
+    /// is true when it had no graded forecasts and the next one was used.
+    struct ServedGap: Codable, Sendable {
+        let status: String
+        let reason: String?
+        let model: String?
+        let requested: String?
+        let fallback: Bool?
+        let winner: String?
+        let mae: ServedMetricGap?
+        let rmse: ServedMetricGap?
+    }
+
+    struct ServedMetricGap: Codable, Sendable {
+        let bestExpert: String?
+        let minusBestExpert: Double?
+        let ci: [Double]?
+        let verdict: String?
+
+        enum CodingKeys: String, CodingKey {
+            case ci, verdict
+            case bestExpert = "best_expert"
+            case minusBestExpert = "minus_best_expert"
+        }
     }
 
     struct Gap: Codable, Sendable {
@@ -315,6 +400,8 @@ struct Comparison: Codable, Sendable {
         case excludedComponents = "excluded_components"
         case cohortDefinitions = "cohort_definitions"
         case evaluationSeasonNote = "evaluation_season_note"
+        case servedModel = "served_model"
+        case informationSetNote = "information_set_note"
         case coverage
         case modelReliability = "model_reliability"
         case expertReliability = "expert_reliability"

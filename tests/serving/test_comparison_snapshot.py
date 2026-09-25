@@ -60,7 +60,14 @@ def test_published_comparison_never_reads_raw_references_or_recomputes(monkeypat
     assert coverage["n"] == 23 and coverage["cohort_n"] == 24
     assert coverage["reference_status"] == "available"
     assert response.get_json()["subsets"]["weekly_reference_top24"]["WR"]["rotowire"]["mae"] == 7
-    assert coverage["uncertainty"]["status"] == "available"
+    # Selected by RotoWire's own forecasts: cells are served, no verdict is.
+    assert coverage["uncertainty"] == {
+        "status": "not_applicable",
+        "reason": "selected_by_graded_forecast",
+    }
+    headline = response.get_json()["coverage"]["all"]["WR"]["uncertainty"]
+    assert headline["status"] == "available"
+    assert headline["served_model"]["model"] == "lgbm"
     assert response.headers["X-FFP-Snapshot-Generation"] == owner.snapshots.current().generation
 
 

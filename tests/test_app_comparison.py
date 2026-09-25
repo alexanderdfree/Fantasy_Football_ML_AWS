@@ -355,6 +355,13 @@ def test_comparison_scores_cached_sources_on_shared_component_actuals(
     assert qb["nflcom"] is None
     assert qb["rotowire"] != {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
     assert body["coverage"]["all"]["QB"]["uncertainty"]["status"] == "available"
+    # The verdict grades the served model (ADR-0003 head selection), and the
+    # backtest information set is disclosed; hindsight cohorts carry no verdict.
+    assert body["served_model"]["QB"] == "attn_nn" and body["served_model"]["K"] == "ridge"
+    assert body["coverage"]["all"]["QB"]["uncertainty"]["served_model"]["model"] == "attn_nn"
+    assert body["coverage"]["top12"]["QB"]["uncertainty"]["status"] == "not_applicable"
+    assert "closing betting lines" in body["information_set_note"]
+    assert body["uncertainty_meta"]["headline_gap"] == "served_model_minus_best_expert"
     assert len({cell["n"] for cell in qb.values() if cell is not None}) == 1
     assert body["coverage"]["all"]["QB"]["n"] == qb["ridge"]["n"]
 

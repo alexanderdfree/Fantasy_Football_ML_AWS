@@ -297,3 +297,46 @@ def test_incompatible_kicker_total_is_excluded_from_errors_and_quartiles():
     assert "nflcom" in coverage["all"]["K"]["excluded_sources"]
     assert "nflcom" not in rankings["K"]
     assert all(row.get("nflcom") is None for row in (quartiles["K"] or {}).values())
+
+
+def test_hindsight_cohorts_report_cells_but_no_verdict():
+    subsets, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
+    for name, reason in (
+        ("top12", "selected_on_outcomes"),
+        ("top30", "selected_on_outcomes"),
+        ("weekly_reference_top24", "selected_by_graded_forecast"),
+    ):
+        assert coverage[name]["WR"]["uncertainty"] == {"status": "not_applicable", "reason": reason}
+    assert subsets["top12"]["WR"]["ridge"]["mae"] == 7
+    for name in ("weekly_depth_starters", "all", "elite_top24"):
+        assert coverage[name]["WR"]["uncertainty"]["status"] != "not_applicable"
+
+
+def test_headline_verdict_grades_the_served_model_not_the_best_of_four():
+    data = records()
+    data["ridge_pred_ppr"] = data["actual_receiving_yards"] * 0.1 + 7  # exact
+    data["lgbm_pred_ppr"] = data["actual_receiving_yards"] * 0.1 + 7 + 9  # WR's served model, worse
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    gaps = coverage["all"]["WR"]["uncertainty"]
+    # Ridge is exact, so the family's best-of-four beats the experts...
+    assert gaps["winner"] == "models" and gaps["mae"]["best_model"] == "ridge"
+    # ...but the row verdict belongs to the model the site serves for WR.
+    served = gaps["served_model"]
+    assert served["status"] == "available" and served["model"] == "lgbm"
+    assert served["requested"] == "lgbm" and served["fallback"] is False
+    assert served["winner"] == "experts"
+    assert served["mae"]["minus_best_expert"] == 2 and served["mae"]["ci"] == [2, 2]
+    assert served["mae"]["best_expert"] in {"rotowire", "espn"}
+
+
+def test_served_model_follows_the_contract_chain_and_its_board_fallback(monkeypatch):
+    data = records()
+    data["lgbm_pred_ppr"] = np.nan  # WR's first-ranked model has no forecasts
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    served = coverage["all"]["WR"]["uncertainty"]["served_model"]
+    assert served["model"] == "attn_nn" and served["requested"] == "lgbm"
+    assert served["fallback"] is True
+    # The chain is the contract's, not a local copy: swapping it moves the verdict.
+    monkeypatch.setitem(comparison.SERVED_MODEL_CHAIN, "WR", ("nn",))
+    _, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
+    assert coverage["all"]["WR"]["uncertainty"]["served_model"]["model"] == "nn"
