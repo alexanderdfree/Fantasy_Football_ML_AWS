@@ -1,6 +1,6 @@
 # ADR Changelog
 
-- 2026-09-18 · Score all-zero provider rows as missing forecasts (reference recipe v4, cache schema 12), add the symmetric weekly consensus cohort as the Comparison headline, and align Timeline groups with the tab's displayed sources · (PR #1595) · → ADR-0024
+- 2026-09-25 · Fairness re-audit, superseding unmerged #1595: all-zero provider rows count as missing; NFL.com offense, a stale RotoWire copy, is no longer graded; forecast-free depth-chart and prior-season headline cohorts; a RotoWire-only secondary reference (v4); paired bootstrap intervals with a both-metrics winner rule; Timeline graded on RotoWire+ESPN with edge intervals; 2025 labelled a development-season backtest; cache schema 12 · (PR pending) · → ADR-0024
 
 - 2026-09-23 · Enforce DST synthetic-export cache compatibility before loading and preserve observed zero opponent counts · (PR #1599) · → ADR-0029
 

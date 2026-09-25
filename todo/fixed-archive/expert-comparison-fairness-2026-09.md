@@ -1,29 +1,57 @@
-### [FIXED] Expert placeholders graded as zeros, expert-selected headline cohort, and split surface populations
+### [FIXED] Model-vs-expert comparison graded a stale duplicate expert, used an expert-selected headline cohort and declared winners from noise
 
-- **File(s):** `src/shared/comparison_scoring.py`, `src/data/expert_sources.py`,
-  `src/prediction/{historical,comparison,comparison_snapshot}.py`,
-  `src/shared/evaluation_cohorts.py`, `src/serving/timeline.py`,
-  `src/artifacts/serving_snapshot.py`, `src/serving/frontend/src/views/{Comparison,Timeline}.jsx`
-  (PR pending; audit branch `claude/expert-comparison-fairness-6eab0c`, 2026-09-18).
-- **What:** After ADR-0024 the truth and components were symmetric, but three population
-  defects remained. (1) The hvpkod NFL.com archive lists every rostered player, so 64–77% of
-  its 2025 offense rows are all-zero placeholders; 168 of them reached the served common slate
-  as confident 0.0 forecasts while ESPN dropped its zero rows at ingestion. Unprojected backups
-  who started (a 0.0 against a 25.7-point game) cost NFL.com 0.32 QB MAE, and deep-bench zeros
-  handed it small free wins elsewhere. (2) The headline `weekly_reference_top24` cohort was
-  selected by the graded experts' own forecasts (NFL.com/RotoWire mean; ESPN alone for K), so
-  those sources' errors were conditioned on their own selection: own-selection bias measured
-  +0.40 for NFL.com against a neutral selector. (3) The Comparison tab intersected all seven
-  sources while the Timeline offense group omitted ESPN, so the same model had two MAEs on two
-  tabs (RB attention 4.74 vs 4.35).
-- **Fix:** Score provider rows through `score_forecast_components`: a row whose shared components
-  are all zero is a missing forecast for every source and surface (reference recipe
-  `shared_components_v4`, cache schema 12). Add `weekly_consensus_top24`, selected by the
-  equal-weight mean of every displayed source on the common slate, as the headline cohort; keep
-  the archived reference as a labelled secondary view. Give the Timeline offense group the tab's
-  displayed sources (ESPN included) and pin the parity with a test.
-- **Lesson:** Identical truth is not identical population. Provider archives encode "not
-  projected" differently, a selector drawn from graded sources conditions their errors, and two
-  surfaces that intersect different source sets are two different benchmarks. Replicate the served
-  numbers pandas-only from the current cache generation (`current.json`, not the top-level
-  tarball) before and after any comparison change.
+- **File(s):**
+  - `src/shared/{comparison_scoring,comparison_uncertainty,evaluation_cohorts}.py`
+  - `src/data/expert_sources.py`
+  - `src/prediction/{historical,comparison,comparison_snapshot}.py`
+  - `src/scripts/build_evaluation_reference.py`
+  - `src/serving/timeline.py`
+  - `src/serving/frontend/src/views/{Comparison,Timeline}.jsx`
+  - `ios/Sources/{Models/Comparison,Views/Comparison/ComparisonView}.swift`
+
+  PR pending. It supersedes unmerged #1595 (audits of 2026-09-18 and 2026-09-25).
+- **What:** ADR-0024 made truth and components symmetric, but the served comparison
+  was still unfair in five ways.
+  1. **Placeholder zeros were graded.** The hvpkod NFL.com archive lists every
+     rostered player, and 168 all-zero placeholder rows were graded as 0.0
+     forecasts. NFL.com QB MAE was 6.516 with them and 6.199 without.
+  2. **"NFL.com" is not an independent expert.**
+     - Its components reproduce RotoWire's series: 94% of passing-yard forecasts
+       match within 0.01.
+     - `hvpkod/NFL-Data` commit times show weeks 2–6 and 10–14 were captured
+       Tuesday–Thursday, before the final injury report. Those weeks still project
+       85 players ruled Out.
+     - Its whole deficit against RotoWire (+0.052 MAE) is those stale weeks.
+     - The Timeline graded "NFL.com + RotoWire", which is one provider twice, and
+       left out ESPN.
+  3. **The expert reference selected the headline cohort.** `weekly_reference_top24`
+     was chosen by the graded experts' own forecasts, so their winner's curse
+     inflated the models' RB/WR lead to about two to three times its size on
+     forecast-free cohorts.
+  4. **Winners were highlighted from noise.** The best of seven cells was
+     highlighted at 1e-9 tolerance, with four model draws against the experts. No
+     headline gap's 95% paired interval excluded zero.
+  5. **The default metric masked a flip.** MAE rewards median-like forecasts on
+     right-skewed points, and winners flipped under RMSE (TE, RB).
+- **Fix:**
+  - All-zero provider rows are missing forecasts (`score_forecast_components`).
+  - NFL.com offense joins `EXCLUDED_SOURCES` and leaves the reference recipe
+    (`shared_components_v4` is RotoWire-only).
+  - The headline cohorts are `weekly_depth_starters` (pregame depth chart) and
+    `elite_top24` (prior-season importance). Neither is selected by any forecast.
+  - Every cell carries paired, player-clustered bootstrap intervals, with group
+    minima taken inside each replicate. A row names a winner only when MAE and
+    RMSE agree and exclude zero. Cells also carry signed bias.
+  - The Timeline grades RotoWire+ESPN with season edge intervals.
+  - 2025 is labelled a development-season backtest.
+  - Cache schema 12.
+- **Lesson:**
+  - Identical truth is not an identical population or an independent source.
+    Check provider provenance, meaning capture time (git history or fetch
+    timestamps) and near-duplication with other providers, before counting it as
+    an expert.
+  - Select cohorts with something no graded source produced.
+  - Never declare a winner without a paired interval that accounts for picking
+    the best of several models.
+  - Replicate the served numbers pandas-only from the current cache generation
+    (`current.json`) before and after any comparison change.

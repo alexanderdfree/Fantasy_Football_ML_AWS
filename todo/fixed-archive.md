@@ -1,7 +1,7 @@
 # Fixed archive — index
 
-### [FIXED] Expert placeholders graded as zeros, expert-selected headline cohort, and split surface populations
-[Read the incident record](fixed-archive/expert-comparison-placeholders-consensus-2026-09.md).
+### [FIXED] Model-vs-expert comparison graded a stale duplicate expert, used an expert-selected headline cohort and declared winners from noise
+[Read the incident record](fixed-archive/expert-comparison-fairness-2026-09.md).
 
 ### [FIXED] CI test scope missed unknown paths mixed with recognized changes
 [Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
