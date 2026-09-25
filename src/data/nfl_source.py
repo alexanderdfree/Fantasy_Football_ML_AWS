@@ -27,6 +27,8 @@ nflverse release schemas):
 
 from __future__ import annotations
 
+import time
+
 import nflreadpy as _nflreadpy
 import pandas as pd
 import polars as pl
@@ -207,9 +209,46 @@ def team_week_stats_release(season: int) -> pd.DataFrame:
     return pd.read_parquet(url)
 
 
+# nflreadpy keeps one module-level ``requests.Session`` with no retries. Seven
+# refresh-splits runs since 2026-09-23 (three before #1631 raised the read timeout
+# from 30 s to 120 s, four after) died on the first play-by-play request of the
+# D/ST pass, always season 2012 or 2013, with ``Read timed out (read timeout=N)``:
+# urllib3 waited that long for response headers, on the session's first request
+# after roughly nine idle minutes. That is a dead pooled connection, not a slow
+# download, so a longer timeout changed nothing; urllib3 discards the failed
+# connection, so one more attempt on a fresh socket is the fix. nflreadpy wraps
+# every ``requests`` failure, a hang and a 404 alike, in the builtin
+# ``ConnectionError``; a 4xx response on the cause chain is raised at once.
+_PBP_MAX_RETRIES = 2
+_PBP_RETRY_BACKOFF_S = 5.0
+_sleep = time.sleep  # tests patch this name, never the process-wide ``time.sleep``
+
+
+def _retryable_download_error(error: BaseException) -> bool:
+    """True for a hang, reset or 5xx; False for a 4xx such as a missing season file."""
+    status = getattr(getattr(error.__cause__, "response", None), "status_code", None)
+    return status is None or int(status) >= 500
+
+
+def _load_pbp_with_retry(seasons: list[int]) -> pl.DataFrame:
+    """Load PBP seasons, retrying a hung or reset download on a fresh connection."""
+    for retry in range(1, _PBP_MAX_RETRIES + 1):
+        try:
+            return _nflreadpy.load_pbp(seasons)
+        except ConnectionError as e:
+            if not _retryable_download_error(e):
+                raise
+            print(
+                f"WARNING: nflverse PBP download for {seasons} failed ({e}); "
+                f"retry {retry} of {_PBP_MAX_RETRIES} in {_PBP_RETRY_BACKOFF_S:.0f}s"
+            )
+            _sleep(_PBP_RETRY_BACKOFF_S)
+    return _nflreadpy.load_pbp(seasons)
+
+
 @snapshot_source
 def pbp_data(seasons: list[int], cols: tuple[str, ...]) -> pd.DataFrame:
-    df = _nflreadpy.load_pbp(_native_int_seasons(seasons))
+    df = _load_pbp_with_retry(_native_int_seasons(seasons))
     available = [c for c in cols if c in df.columns]
     return _to_pandas(df.select(available))
 
