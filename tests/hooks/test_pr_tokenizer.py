@@ -65,6 +65,8 @@ _CREATE_MATCH = [
     # The pre-PR gate never trusts a help-looking word: it can be a flag value
     # (`--title --help` opens a PR titled "--help"), so skipping it would open a
     # gate bypass. Only the best-effort merge hooks skip help (see below).
+    # Claude's post-create injector shares this strict matcher, so it still
+    # fires on `gh pr create --help`.
     "gh pr create --help",
     "gh pr create --title --help",
 ]

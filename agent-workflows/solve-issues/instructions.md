@@ -80,7 +80,7 @@ dropped when editing this file:
 - `out_of_scope` and unresolved `UNCERTAIN` findings stay open unless the user explicitly decides otherwise; do not label them `leave`.
 - Codex workers draft commits only when subagents are available; they do not push or open PRs. Without subagents, execute the same tier-by-tier plan manually.
 - Codex tier PRs run `ruff check .`, `ruff format --check .`, and `pytest -m unit -q` in the foreground, then `/prompts:pre-pr-judge` before `gh pr create`.
-- Codex worktree merges use `gh pr merge <N> --squash` followed by `git push origin --delete <branch>`; never use `gh pr merge --delete-branch` from a worktree.
+- Codex worktree merges use `gh pr merge <N> --squash --match-head-commit <approved headRefOid>` followed by `git push origin --delete <branch>`; never use `gh pr merge --delete-branch` from a worktree.
 
 
 # Solve audit-job issues
@@ -319,7 +319,7 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - **Test plan** — pytest / ruff / benchmark checklist
    - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (memory `feedback_gpu_guarded_code_needs_gpu_test`)
 10. **Wait green CI** (`gh pr checks <N> --watch`) before opening the next tier's PR. This is the CI-load-light cadence — sequential PRs, not all three open at once. Before starting the next tier, re-check open and draft PRs for overlap with its files (agent-guides/delivery.md "Worktree workflow"): a held draft may already carry a fix behind an owner gate.
-11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for `regress-risk-high` fixes — the benchmark deltas from the PR body, and ask for explicit approval through the provider's user-question mechanism. Only after the user approves: run `gh pr merge <N> --squash`. Verify the PR is `MERGED` and the latest reviewed changes are in its squash commit before separately deleting the remote branch with `git push origin --delete <branch>`. Never auto-merge a solve-issues PR on green CI alone; provider post-PR hooks preserve the same stop for `audit-*/tier-*` branches.
+11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`), its `headRefOid` and — for `regress-risk-high` fixes — the benchmark deltas from the PR body, and ask for explicit approval through the provider's user-question mechanism. Only after the user approves, merge exactly that head: `gh pr merge <N> --squash --match-head-commit <headRefOid>`. Any other head needs green CI and fresh sign-off (agent-guides/delivery.md "PR and merge gates"). Verify the PR is `MERGED` and the latest reviewed changes are in its squash commit before separately deleting the remote branch with `git push origin --delete <branch>`. Never auto-merge a solve-issues PR on green CI alone; provider post-PR hooks preserve the same stop for `audit-*/tier-*` branches.
 12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
 
 After all tier PRs land, the open `severity-*`-labeled backlog should show only `out_of_scope` + UNCERTAIN→deferred findings. The next `[claude-audit]` or `[codex-audit]` cycle won't re-file the fixed/closed ones — producer dedupe spans **closed** issues from both labels too.

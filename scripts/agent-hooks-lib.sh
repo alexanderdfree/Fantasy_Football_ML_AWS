@@ -190,8 +190,9 @@ agent_hooks_pr_subcommand_segment_matches() {
   [ "${words[$((idx + 1))]}" = "pr" ] && [ "${words[$((idx + 2))]}" = "$subcmd" ] || return 1
 
   # `gh pr merge --help` / `-h` prints usage and merges nothing, so the
-  # best-effort post-merge hooks skip it. `create` stays strict for the pre-PR
-  # gate: a help-looking word can be a flag value (`--title --help`).
+  # best-effort post-merge hooks skip it. The check is word-based: a flag value
+  # spelled `--help` (`--subject --help`) is skipped too, which costs only that
+  # upkeep here but would bypass a gate, so `create` stays strict.
   if [ "$subcmd" = merge ] && agent_hooks_args_request_help "${words[@]:$((idx + 3))}"; then
     return 1
   fi

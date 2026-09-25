@@ -89,7 +89,8 @@ Human overview: [README.md](README.md); read only when needed.
   neutrality. Use relevant subgroup metrics and multi-seed evidence.
 - Run a gate separately from dependent mutations. Verify checkout before rebase,
   resolve all conflict markers, and verify MERGED state and latest squash content
-  before remote branch deletion. In worktrees use `gh pr merge --squash` without
+  before remote branch deletion. Merge only the checked head
+  (`gh pr merge --squash --match-head-commit <sha>`). In worktrees never add
   `--delete-branch`: from another checkout, gh 2.99+ removes the head's worktree.
 - Keep durable decisions in the relevant ADR and its changelog; record non-trivial
   fixes once in the fixed-issue archive. Update existing guidance where the lesson

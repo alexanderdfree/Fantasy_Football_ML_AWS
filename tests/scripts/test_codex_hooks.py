@@ -301,9 +301,10 @@ def test_pr_merge_matcher_rejects_quoted_or_argument_text(command: str):
 def test_post_pr_followup_merges_only_the_confirmed_head():
     """The prompt is agent guidance, like Claude's injected recipe: a watch can
     return on the previous run's green (#689), so its merge must pin the head
-    whose checks were confirmed, and deletion must still follow the merge."""
+    whose checks were confirmed (the approved one on audit tiers), every
+    non-CLEAN state needs an exit, and deletion must still follow the merge."""
     text = (PROJECT_ROOT / ".codex/prompts/post-pr-followup.md").read_text()
-    pinned_merge = 'gh pr merge PR --squash --match-head-commit "$(git rev-parse HEAD)"'
+    pinned_merge = "gh pr merge PR --squash --match-head-commit <headRefOid>"
     commands = re.findall(r"`([^`]+)`", text)
     merge_commands = {command for command in commands if command.startswith("gh pr merge")}
     # `--delete-branch` appears only in its prohibition.
@@ -312,15 +313,20 @@ def test_post_pr_followup_merges_only_the_confirmed_head():
     assert "do not use `--admin`" in text
 
     checks = text.index("`gh pr checks PR --watch`")
+    signoff = text.index("explicit merge sign-off")
     head = text.index("`gh pr view PR --json headRefOid,mergeStateStatus`")
     merge = text.index(f"`{pinned_merge}`")
     delete = text.index("`git push origin --delete <headRefName>`")
-    assert checks < head < merge < delete
-    assert "(#689)" in text[checks:head]
-    assert "missing-checks triage in `agent-guides/operations.md#ci-training`" in text[checks:head]
+    assert checks < signoff < head < merge < delete
+    assert "(#689)" in text[checks:signoff]
+    assert (
+        "missing-checks triage in `agent-guides/operations.md#ci-training`" in text[checks:signoff]
+    )
+    assert "any other head needs green CI and fresh sign-off" in text[signoff:head]
     assert "`headRefOid` equal to `git rev-parse HEAD`" in text[head:merge]
     assert "`mergeStateStatus` `CLEAN`" in text[head:merge]
-    assert "needs fresh sign-off" in text[merge:delete]
+    assert "if the state is `DIRTY`, rebase as in step 1" in text[head:merge]
+    assert "commits you did not push, or for any other state, stop and report" in text[head:merge]
 
 
 def test_codex_review_quiet_filters_known_loader_noise(tmp_path: Path):
@@ -853,6 +859,8 @@ class TestCodexHooks:
         assert context["hookEventName"] == "PostToolUse"
         additional_context = context["additionalContext"]
         assert "post-pr-followup" in additional_context
+        # Sessions that never open the (copied) prompt still see the head pin.
+        assert "--match-head-commit <headRefOid>" in additional_context
         assert "scripts/codex-review-quiet.sh --base origin/main" in additional_context
         assert "audit/tier explicit merge sign-off" in additional_context
         assert "post-session-critique" in additional_context
@@ -955,26 +963,18 @@ class TestCodexHooks:
             ).stdout.strip()
         )
 
-    @pytest.mark.parametrize("command", ["gh pr merge 1 --help", "gh pr merge -h"])
-    def test_post_pr_merge_ignores_help_invocations(
-        self, merge_scenario_codex: tuple[Path, Path], command: str
-    ):
-        # The stubbed PR is MERGED, so only the matcher stops a help call (which
-        # merges nothing) from fast-forwarding the parent.
-        main, worktree = merge_scenario_codex
-        before = _head(main)
-        result = _run_hook(
-            ".codex/hooks/post-pr-merge.sh",
-            {"cwd": str(worktree), "tool_input": {"command": command}},
-            worktree,
-        )
-        assert result.returncode == 0, result.stderr
-        assert result.stdout == ""
-        assert _head(main) == before
-
-    @pytest.mark.parametrize("response", [{"exit_code": 1}, None, {"session_id": 42}])
-    def test_post_pr_merge_does_not_mutate_parent_after_failed_or_unknown_command(
-        self, merge_scenario_codex: tuple[Path, Path], response
+    @pytest.mark.parametrize(
+        ("command", "response"),
+        [
+            ("gh pr merge 1 --squash", {"exit_code": 1}),
+            ("gh pr merge 1 --squash", None),
+            ("gh pr merge 1 --squash", {"session_id": 42}),
+            # The stubbed PR is MERGED, so only the matcher stops a usage call.
+            ("gh pr merge 1 --help", ""),
+        ],
+    )
+    def test_post_pr_merge_does_not_mutate_parent_after_failed_unknown_or_help_command(
+        self, merge_scenario_codex: tuple[Path, Path], command, response
     ):
         main, worktree = merge_scenario_codex
         before = _head(main)
@@ -982,7 +982,7 @@ class TestCodexHooks:
             ".codex/hooks/post-pr-merge.sh",
             {
                 "cwd": str(worktree),
-                "tool_input": {"command": "gh pr merge 1 --squash"},
+                "tool_input": {"command": command},
                 "tool_response": response,
             },
             worktree,
