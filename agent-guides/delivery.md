@@ -101,6 +101,14 @@
   [113-finding remediation record](../todo/fixed-archive/fixed-code-review-remediation-110-of-113-findings-landed-across-3-file-disjo-b9c7951c.md)
   records the pattern; the 2026-05-21 Tier A `_train_nn` conflict demonstrates its
   caller-boundary limitation.
+- When a bundle's change breaks a caller or test that another bundle owns, the
+  worker flags it in its report. The orchestrator fixes it in a tier-tagged
+  bridge commit on that tier's staging branch rather than retroactively widening
+  the bundle, which keeps bundles file-disjoint (#325, #326).
+- Delegated workers run the checks they report, such as pytest and lint, in the
+  foreground. A backgrounded check can end the worker before the result arrives,
+  so it never commits or reports; the refactor batch behind #253–#256 lost two of
+  its ten workers this way.
 - Do not add error handling, fallbacks or validation for impossible cases;
   network/data-source boundaries are real and should be defensive.
 - Scope, pending design decisions and infeasible requests follow

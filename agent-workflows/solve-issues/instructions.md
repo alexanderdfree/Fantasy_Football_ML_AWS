@@ -180,13 +180,13 @@ Worker brief (template — fill the `{...}` slots, send all workers in one paral
 > | `out_of_scope` | Real concern but belongs in a separate effort (major refactor, infra change, new design). |
 > | `speculative` | "Could possibly cause" with no reproducible failure mode. |
 >
-> **Verification depth** — verdict from grep alone is forbidden (memory `feedback_audit_run_the_test`). For each finding:
+> **Verification depth** — verdict from grep alone is forbidden (agent-guides/investigation.md "Verify behavior and effective state"). For each finding:
 >
 > - **Always** read the cited `file:line` directly (use absolute path inside this worktree — agent-guides/delivery.md "Worktree workflow").
-> - **Behavioral claims** (data leakage, wrong aggregation, sign error, regression risk): run the most-targeted relevant test, e.g. `pytest tests/{pos}/<file>::<test> -xvs` (foreground only — memory `feedback_background_pytest_terminates_agents`), or `python -m src.{pos}.run_pipeline` if the claim is pipeline-level.
-> - **Shared-code claims** (`src/shared/*.py`, `src/data/*.py`): grep every caller before verdicting (memory `feedback_grep_endpoint_when_changing_contract`). A claim that's true for the cited callsite but breaks 5 other callers is FIX with `fix_tier: C`, not LEAVE.
+> - **Behavioral claims** (data leakage, wrong aggregation, sign error, regression risk): run the most-targeted relevant test, e.g. `pytest tests/{pos}/<file>::<test> -xvs` (foreground only — agent-guides/delivery.md "When making changes"), or `python -m src.{pos}.run_pipeline` if the claim is pipeline-level.
+> - **Shared-code claims** (`src/shared/*.py`, `src/data/*.py`): grep every caller before verdicting (agent-guides/investigation.md "Verify behavior and effective state"). A claim that's true for the cited callsite but breaks 5 other callers is FIX with `fix_tier: C`, not LEAVE.
 > - **"Is X on main?" / docs-vs-code claims**: read `origin/main:<path>` via `git show origin/main:<path>`, not the worktree file (agent-guides/delivery.md "Worktree workflow").
-> - **Infra/config claims** (Batch, ECS, workflows): check all layers — per-submission `submit_job(...)` overrides can invalidate the resource default (memory `feedback_layered_config_overrides`).
+> - **Infra/config claims** (Batch, ECS, workflows): check all layers — per-submission `submit_job(...)` overrides can invalidate the resource default (agent-guides/investigation.md "Verify behavior and effective state").
 >
 > **Do NOT** commit, push, open PRs, modify files, or rebase. Verification only. Output one block per finding; group by verdict (FIX first, then LEAVE, then UNCERTAIN). Time budget: ~10–15 min per worker.
 
@@ -203,7 +203,7 @@ For each `LEAVE` verdict with `category: feature_drift`, cross-reference the cit
 
 ### Phase 4 — Bundle FIX set into tier-by-risk PRs
 
-Apply the project's tier definitions (agent-guides/delivery.md "Large (>10-item) parallel cleanups" + memory `feedback_tier_by_risk_pr_consolidation`):
+Apply the project's tier definitions (agent-guides/delivery.md "When making changes"):
 
 - **Tier A** — tests, docstrings, dead-symbol cleanup, operator tools (`src/qb/diagnose_outliers.py`, `src/rb/analyze_errors.py`), CLI scripts under `src/scripts/`. **No production behavior change.**
 - **Tier B** — behavior-equivalent fixes: refactors, dedup, in-place → return, mechanical wiring, new validators. **May touch training-adjacent files; no MAE delta.**
@@ -222,7 +222,7 @@ Within each tier, partition findings into **file-disjoint bundles** (one worker 
 
 **PR count target: 2–3 PRs** (one per non-empty tier). If a tier must split, split and open PRs in regress-risk ascending order before using file area as the tiebreaker (for example, Tier C low/medium before Tier C high) — but **max 4 PRs total** to keep `tests.yml`'s 7-shard matrix CI load light. If a tier is empty after triage, skip it entirely.
 
-For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (agent-guides/delivery.md "File-disjointness is for parallelism, not correctness"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (memory `feedback_tier_by_risk_pr_consolidation` — orchestrator-bridge pattern).
+For shared-code signature changes (a worker bundle modifies a function's signature in `src/shared/`), add **"grep every caller of any function whose signature you change"** to that worker's brief (agent-guides/delivery.md "When making changes"). If the grep finds callers in other bundles, the orchestrator either re-bundles to combine them or plans an **orchestrator-bridge commit** on the staging branch (agent-guides/delivery.md "When making changes" — orchestrator-bridge pattern).
 
 ### Phase 5 — Write the plan + exit
 
@@ -252,7 +252,7 @@ Spawn **one `WORKFLOW_SUBAGENTS` worker per area / per split issue**, all in one
 >
 > - **claimed FIXED** → open the cited `file:line` and confirm the described bug is gone / the fix is present; quote 1–3 lines as evidence. Docs findings: confirm the doc now matches the code it describes (the stale claim is gone **and** the new text is accurate).
 > - **claimed LEAVE** → re-validate the category against current code (`false_positive` = genuinely correct as-is; `stale` = genuinely resolved elsewhere; `feature_drift` = the suggestion would violate an agent-guides/stop-rules.md rule). **A LEAVE that is actually a real, unfixed bug is the critical thing to catch → flag it GAP.**
-> - Behavioral / shared-code / infra claims: same depth as the Mode A rubric — run the most-targeted test **foreground only** (memory `feedback_background_pytest_terminates_agents`); grep every caller for `src/shared/*` claims (memory `feedback_grep_endpoint_when_changing_contract`); check all config layers for Batch/ECS claims (memory `feedback_layered_config_overrides`).
+> - Behavioral / shared-code / infra claims: same depth as the Mode A rubric — run the most-targeted test **foreground only** (agent-guides/delivery.md "When making changes"); grep every caller for `src/shared/*` claims and check all config layers for Batch/ECS claims (agent-guides/investigation.md "Verify behavior and effective state").
 >
 > Return one block per finding, **GAP-first then CONFIRMED**:
 >
@@ -266,7 +266,7 @@ Spawn **one `WORKFLOW_SUBAGENTS` worker per area / per split issue**, all in one
 >
 > End with a one-line tally (e.g. "QB 4/4 confirmed; GAPs: none"). Time budget ~12–15 min.
 
-Verdict from grep alone is forbidden (memory `feedback_audit_run_the_test`) — and don't treat "the PR merged" as proof the fix is live: confirm against current `main` (agent-guides/delivery.md "PR and merge gates").
+Verdict from grep alone is forbidden (agent-guides/investigation.md "Verify behavior and effective state") — and don't treat "the PR merged" as proof the fix is live: confirm against current `main` (agent-guides/delivery.md "PR and merge gates").
 
 ### Phase 3V — Consolidate & decide
 
@@ -301,14 +301,14 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - Prepares data paths according to `agent-guides/environment.md`, using the existing launcher/linking helpers where applicable. Inspect existing paths before adding data symlinks; never replace populated data or infer the main checkout from a possibly relative Git-common-dir path.
    - Applies its bundle's fixes
    - For every NN/feature/loss/target change, and other bundles whose max regress-risk is `high`: runs the affected-position pipeline comparison required by `agent-guides/validation.md`, using the existing experiment harness, isolated outputs, and the relevant subgroup/multi-seed evidence. Risk labels do not waive that requirement.
-   - Runs `pytest -m unit -q` + `ruff check . && ruff format --check .` (**foreground** — memory `feedback_background_pytest_terminates_agents`)
+   - Runs `pytest -m unit -q` + `ruff check . && ruff format --check .` (**foreground** — agent-guides/delivery.md "When making changes")
    - Commits to its worktree branch, **does NOT push, does NOT open a PR** (agent-guides/delivery.md "Large (>10-item) parallel cleanups")
    - Reports back: commit SHA, branch name, files modified, findings skipped + why, any cross-bundle test-contract gaps flagged
 3. **Verify worker output** against the recorded absolute worktree path, branch, full commit SHA, and changed files. Do not identify worktrees by a guessed `agent-` substring. Before taking over an incomplete worker's checkout, confirm that worker has stopped; avoid concurrent edits or commits in the same checkout.
 4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (agent-guides/delivery.md "Worktree workflow").
 5. **Orchestrator-bridge commit (if any)** for cross-bundle test-contract gaps. Subject: `fix(audit-NNN, orchestrator, <tier>): <short summary>`.
-6. **Run the provider pre-PR gate** locally (`WORKFLOW_PRE_PR_GATE`; Codex uses `/prompts:pre-pr-gate`, not `.codex/hooks/pre-pr.sh` directly). If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — memory `feedback_surface_gate_friction`. Do not `--no-verify`.
-7. **Rebase** to ensure clean against `origin/main`: `git fetch origin main && git rebase origin/main` (memory `feedback_rebase_before_pre_pr_judge`).
+6. **Run the provider pre-PR gate** locally (`WORKFLOW_PRE_PR_GATE`; Codex uses `/prompts:pre-pr-gate`, not `.codex/hooks/pre-pr.sh` directly). If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — agent-guides/investigation.md "Scope and pending decisions". Do not `--no-verify`.
+7. **Rebase** to ensure clean against `origin/main`: `git fetch origin main && git rebase origin/main` (agent-workflows/pre-pr-judge/instructions.md "How to run").
 8. **Invoke the provider pre-pr judge entrypoint (`WORKFLOW_PRE_PR_JUDGE_ENTRYPOINT`)** (mandatory — see [the delivery guide](../../agent-guides/delivery.md) "When making changes").
 9. **Open the tier PR** with body following the PR [#325](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/325) / [#326](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/pull/326) structure:
    - **Summary** — tier name, max regress-risk, bundle count, finding count, cherry-pick method
@@ -317,7 +317,7 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - **Deferred** — bundles bumped to a later tier/regress-risk split and why
    - **Risk** — behavior risk plus model regress-risk; for `regress-risk-high`, list the metric deltas
    - **Test plan** — pytest / ruff / benchmark checklist
-   - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (memory `feedback_gpu_guarded_code_needs_gpu_test`)
+   - For Tier C: **mandatory Batch dry-run callout** if any bundle touches GPU code paths (agent-guides/validation.md "GPU and Batch validation")
 10. **Wait green CI** (`gh pr checks <N> --watch`) before opening the next tier's PR. This is the CI-load-light cadence — sequential PRs, not all three open at once. Before starting the next tier, re-check open and draft PRs for overlap with its files (agent-guides/delivery.md "Worktree workflow"): a held draft may already carry a fix behind an owner gate.
 11. **Get explicit user merge sign-off, then merge.** After green CI, show the user the PR diff (`gh pr diff <N>`) and — for `regress-risk-high` fixes — the benchmark deltas from the PR body, and ask for explicit approval through the provider's user-question mechanism. Only after the user approves: run `gh pr merge <N> --squash`. Verify the PR is `MERGED` and the latest reviewed changes are in its squash commit before separately deleting the remote branch with `git push origin --delete <branch>`. Never auto-merge a solve-issues PR on green CI alone; provider post-PR hooks preserve the same stop for `audit-*/tier-*` branches.
 12. **Confirm closure** — the merged PR's `Closes #N` auto-closes each finding-issue it fixed. Spot-check with `gh issue view #N --json state` (CLOSED); manually `gh issue close #N` any that GitHub didn't auto-close (wording mismatch, etc.). LEAVE issues were already closed at the top of this section.
