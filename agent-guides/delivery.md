@@ -4,7 +4,8 @@
 
 - Verify the active checkout and `git status` before editing. Resolve reported
   relative or parent-absolute paths inside this worktree, then verify the edit
-  there. A clean status after an intended edit can mean the parent was changed.
+  there. A clean status after an intended edit can mean the parent was changed
+  ([record and recovery](../todo/fixed-archive/worktree-parent-checkout-edits-2026-05.md)).
   Provider guard hooks are described in [CLAUDE.md](../CLAUDE.md) and
   [CODEX.md](../CODEX.md).
 - Codex startup uses [scripts/codex-fresh-worktree.sh](../scripts/codex-fresh-worktree.sh).
@@ -14,16 +15,27 @@
   `data/splits` from the main checkout, and starts Codex with `--cd` there. The
   basename comes from the main checkout; do not hardcode a historical folder name.
 - Fetch `origin/main` and inspect its recent commits at planning time and again
-  before a PR. Check open PRs for overlap in shared files such as TODO, configs
-  and tuning code. A later merge or concurrent PR may supersede the planned fix
-  (#383/#516, #634 superseded #629).
+  before a PR; read the whole `git log HEAD..origin/main`, because CI chore
+  commits crowd the top. Check open PRs, drafts included, for overlap in shared
+  files such as TODO, configs and tuning code, and repeat the check at each stage
+  of a multi-PR plan. A later merge or concurrent PR may supersede the planned fix
+  (#383/#516, #634 superseded #629; #1120 merged seconds after planning began). A
+  held draft pre-empts its fix: don't open a twin that bypasses its owner gate
+  (#1607).
 - Answer shipped-state and dead-link questions from `origin/main:<path>`, not
-  the worktree or parent's local `main`. The provider `post-pr-merge.sh` hooks
+  the worktree or parent's local `main` (a worktree forked before #146 reported
+  that PR's README fix as missing). The provider `post-pr-merge.sh` hooks
   fast-forward the parent only when it is clean and on `main`; they skip WIP.
-- Verify checkout succeeded before rebasing; a branch held by another worktree
-  must be rebased there (`git -C <path>`) or from `--detach origin/<branch>`.
-  After resolving conflicts, check that **all conflict markers** are gone before
-  staging and `rebase --continue`.
+- Verify checkout succeeded before rebasing. Rebase a branch held by another
+  worktree in that worktree (`git -C <path>`) once it is idle, or rebase it
+  detached from `origin/<branch>` and push with
+  `git push --force-with-lease origin HEAD:<branch>` only when its owner has no
+  WIP; the owner's local branch is left stale. After resolving conflicts, check
+  that **all conflict markers** are gone (`git diff --check` or a marker grep)
+  before staging and `rebase --continue`; an edit can report success without
+  applying. During a rebase `--ours` is the upstream side plus the commits
+  already replayed, and `--theirs` is the commit being applied. See the
+  [rebase-resolution record](../todo/fixed-archive/rebase-resolution-mistakes-2026-05.md).
 
 <a id="git-pr-ci-workflow"></a>
 <a id="git--pr--ci-workflow"></a>
@@ -34,20 +46,33 @@
   current green CI/review → merge when authorized. Provider details live in
   [CODEX.md](../CODEX.md), [CLAUDE.md](../CLAUDE.md) and [GEMINI.md](../GEMINI.md).
   Preserve explicit owner approval gates, including `solve-issues` sign-off.
-  Do not use `--no-verify` (including on merge-resolution commits) or `--admin`.
+  Do not use `--no-verify` (including on merge-resolution commits, #89) or `--admin`.
 - Wait for current checks with `gh pr checks <N> --watch`; fix red/pending checks.
-  The sole documented silent-stop exception is [CI operations](operations.md#ci-training):
-  when `Run Tests` stops firing on rapid force-push, run `pytest` locally before
-  an otherwise-authorized merge. This is not a general CI bypass.
+  A watch that returns immediately after a push or reopen has not seen the new
+  run: it reports no checks or the previous run's result (#689). Merge only the
+  head whose checks ran, e.g. `gh pr merge <N> --squash --match-head-commit <sha>`.
+  If no checks run at all, follow the missing-checks triage in
+  [CI operations](operations.md#ci-training), which also holds the sole
+  documented silent-stop exception: when `Run Tests` stops firing on rapid
+  force-push, run `pytest` locally before an otherwise-authorized merge. This is
+  not a general CI bypass.
 - Run a gate separately from dependent mutations: never batch
   `test && commit && push` or `merge && delete`. A masked merge failure followed
-  by branch deletion closed PR #622 and auto-closed #627. An authorized merge can
-  use `gh pr merge <N> --squash --auto` to wait on checks.
-- In worktrees, use `gh pr merge <N> --squash` without `--delete-branch` (the latter
-  tries to check out the parent's `main`). Verify **MERGED**, fetch, and inspect
-  the final squash content for the latest fix before separately deleting the
-  remote branch. The local feature branch can stay. A tracked file on disk is
-  not shipped until its change is merged.
+  by branch deletion closed PR #622 and auto-closed #627
+  ([record](../todo/fixed-archive/gate-chaining-closed-prs-2026-05.md)). Run a
+  hook-gated command such as `gh pr create` in its own call: a pre-tool block
+  cancels the whole invocation, including earlier steps (#1122). Derive the PR
+  number from the current branch (`gh pr view --json number`), never from
+  memory. `gh pr merge --auto` is not a way to wait: gh merges at once when the
+  PR is already mergeable, even while non-required checks are still pending.
+- In worktrees, use `gh pr merge <N> --squash` without `--delete-branch`: older
+  gh fails trying to check out the parent's `main`, and gh 2.99+ run from
+  another checkout removes the clean worktree that holds the head branch. Finish
+  committing before you merge; #292's fix landed 27 s after its merge
+  ([record](../todo/fixed-archive/pr-292-merged-without-late-fix.md)). Verify
+  **MERGED**, fetch, and inspect the final squash content for the latest fix
+  before separately deleting the remote branch. The local feature branch can
+  stay. A tracked file on disk is not shipped until its change is merged.
 - For stacked PRs, verify the GitHub base retarget before deleting the merged
   base, rebase to trigger CI after a base change, and give reviewers the explicit
   `gh pr diff`.

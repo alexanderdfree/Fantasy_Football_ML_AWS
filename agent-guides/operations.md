@@ -2,15 +2,22 @@
 
 Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies the shared entrypoint; current code/config and linked decisions supply operational state. Dated measurements describe their recorded regime, not a promise about today.
 
+<a id="ci-training"></a>
+
 ## CI & training
 
 - [tests.yml](../.github/workflows/tests.yml) runs ruff and pytest with `uv`,
   position/serving/shared shards and per-shard coverage. The
   [Codecov policy](../codecov.yml) owns the 80% component targets and diagnostic
-  CLI exclusions. If `Run Tests` silently stops firing after rapid force-push,
-  run `pytest` locally before an otherwise-authorized squash merge. Follow
-  [delivery gates](delivery.md#pr-and-merge-gates); this exception does not
-  authorize `--admin` or bypass another failing/pending check.
+  CLI exclusions. When a PR shows no check runs after a push, check
+  `gh pr view <N> --json mergeStateStatus` first: GitHub starts no
+  `pull_request` runs while a PR is `DIRTY`, so rebase and force-push (#1602).
+  If the PR is mergeable and `Run Tests` silently stopped firing after rapid
+  force-pushes, `gh pr close <N>` then `gh pr reopen <N>` usually re-triggers it
+  (#83); run `pytest` locally before an otherwise-authorized squash merge.
+  Follow [delivery gates](delivery.md#pr-and-merge-gates); this exception does
+  not authorize `--admin` or bypass another failing/pending check. If branch
+  protection still blocks the merge, the owner decides.
 - Test scope recognizes agent configuration and provider hooks as `shared`.
   Any unclassified non-documentation path still selects every shard, including
   mixed changes. Keep the allowlist in `scope_positions.py` and its tests;
@@ -30,7 +37,11 @@ Read only the sections relevant to the task. [AGENTS.md](../AGENTS.md) supplies 
   selects NN/CPU/merge branches versus monolithic Batch jobs. An unset split
   flag selects monolithic mode; `workflow_dispatch` is the explicit break-glass
   path around the normal backend-selection gate. Verify the live variables
-  and artifact state before reporting which route ran.
+  and artifact state before reporting which route ran. `gh run list --json
+  headSha` shows a `workflow_run` run's own SHA (main's HEAD when it was
+  queued), not the commit that triggered it; to confirm a commit's training
+  finished, look for its `append Batch benchmark run <sha7>` commit on
+  `origin/main`.
 - [scope_positions.py](../src/scripts/scope_positions.py) owns retrain scope for
   both backends. Update [its contract tests](../tests/scripts/test_scope_positions.py)
   when changing the global-trigger list. [ADR-0019](../docs/adr/0019-split-batch-training-gpu-nn-cpu-ridge-lgbm.md#decision)

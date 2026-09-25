@@ -137,3 +137,28 @@ All **14 relocated guidance blocks** also matched after reversing only the expli
 - A separate check caught a literal memory-index example. Its original `slug.md` text is restored. The strict preservation comparison leaves code spans verbatim and handles nested labels. Both bad cases failed the check before correction; all incident records and relocated guidance blocks now pass.
 - PR #1542 merged an overlapping operating-lessons extraction during this review. Its complete five-section body was compared with the original guidance after normalizing relative links and matched. Those rules already survive in the scoped guides (with the listed corrections), so `agent-workflows/operating-lessons.md` remains a compact router with its original five headings/anchors. Its path and all constraints remain available without a second copy.
 - PR #1542 also retired the `training-skipped:` marker tooling. Current guidance and ADR-0017 now respect that removal and retain only the qualified `[docs-only]` contract. Historical incident evidence is unchanged.
+
+## Claude memory consolidation (2026-09-25)
+
+Baseline `a209ecfb`. Claude's private auto-memory, which is not in git, retired
+entries that restated AGENTS.md or its topic guides and merged two clusters. A
+memory claiming that equal Ridge MAE proves identical data was retired in favor
+of the qualified [validation rule](../agent-guides/validation.md#production-path).
+This table maps each retired memory to the place its rule and unique evidence now
+live; the memory text itself stays out of the repository.
+
+| Retired or merged memory | Retained source |
+|---|---|
+| `gh_pr_merge_worktree`, `feedback_no_verify_merges`, `feedback_squash_merge_verify_content`, `feedback_never_chain_destructive_action_past_a_gate` | [PR and merge gates](../agent-guides/delivery.md#pr-and-merge-gates), which gained hook-gated command isolation, PR-number derivation, head matching and the gh 2.99+ `--delete-branch` risk; incidents in the [gate-chaining](fixed-archive/gate-chaining-closed-prs-2026-05.md) and [#292](fixed-archive/pr-292-merged-without-late-fix.md) records |
+| `feedback_verify_checkout_before_rebase`, `feedback_verify_no_conflict_markers`, `feedback_check_open_prs_same_area`, `feedback_check_origin_main_in_worktree` | [Worktree workflow](../agent-guides/delivery.md#worktree-workflow), including the idle-worktree and no-WIP conditions and the held-draft rule; incidents in the [rebase-resolution record](fixed-archive/rebase-resolution-mistakes-2026-05.md) |
+| `feedback_surface_infeasible_scope`, `feedback_validate_tentative_architecture`, `feedback_dont_trust_garbled_tool_output` | [Investigation](../agent-guides/investigation.md), now citing #273 and #686 |
+| `feedback_no_rolling_in_attn_static` | [Attention whitelist](../agent-guides/modeling.md#attention-static-feature-whitelist-is-separate-per-position) and [modeling stop rules](../agent-guides/stop-rules.md#modeling-and-features), which now cite the 2026-05-20 RB plan it came from; the memory's `2.0/δ` loss-weight advice predated the MSE `1/δ` rule |
+| `feedback_deterministic_metric_data_identity_tell` | Superseded by the [validation rule](../agent-guides/validation.md#production-path); its evidence is in the [refresh-splits race record](fixed-archive/fixed-train-batch-yml-raced-refresh-splits-yml-every-data-affecting-merge-au-9601b6f0.md) |
+| `feedback_edit_tool_worktree_path`, `feedback_worktree_data_symlink`, `feedback_worktree_splits_stale`, `feedback_worktree_verify_env`, `feedback_symlinked_venv_breaks_syspath`, `harness_worktree_bash_guard_refusals`: merged into one Claude-harness memory | [Environment](../agent-guides/environment.md) and [worktree workflow](../agent-guides/delivery.md#worktree-workflow); history in the [parent-checkout record](fixed-archive/worktree-parent-checkout-edits-2026-05.md). Superseded advice to delete `data/raw` before linking and to treat Miniforge as the gate interpreter was dropped |
+| `ci_trigger_anomaly`, `feedback_conflicting_pr_fires_no_ci`, `feedback_gh_checks_watch_stale_after_forcepush`, `feedback_gh_run_list_headsha_is_run_level`: merged into one memory | The missing-checks triage and run-level `headSha` note in [CI operations](../agent-guides/operations.md) ("CI & training"), plus [PR and merge gates](../agent-guides/delivery.md#pr-and-merge-gates); the old `--admin` fallback was dropped because both forbid it |
+
+Active references to these memory names in the shared solve-issues workflow and
+two `src/tuning` docstrings now point to the guides. Historical mentions remain
+in the `guard-worktree-path.sh` comment and an earlier stale-splits archive
+record. Review against gh 2.101 replaced the `--auto` advice (gh merges at once
+when a PR is already mergeable) and updated the `--delete-branch` rationale.

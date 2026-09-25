@@ -150,8 +150,8 @@ def _ensure_data_from_s3() -> None:
     environment, same convention as the training path.
 
     No-op locally without ``S3_BUCKET``; the local CLI form expects the
-    parquets already on disk (either via the worktree symlink pattern in
-    [[feedback_worktree_data_symlink]] or a real local pull).
+    parquets already on disk (either via the worktree data symlink described in
+    agent-guides/environment.md or a real local pull).
     """
     bucket = os.environ.get("S3_BUCKET")
     if not bucket:
