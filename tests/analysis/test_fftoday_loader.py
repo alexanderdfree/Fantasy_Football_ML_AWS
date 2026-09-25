@@ -21,6 +21,73 @@ from src.analysis.fftoday_loader import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("joined", [False, True])
+def test_transient_partial_fftoday_cache_recovers(tmp_path, monkeypatch, joined):
+    from urllib.error import HTTPError
+
+    from src.analysis import fftoday_loader as mod
+
+    failing = True
+
+    def reader(url):
+        if failing and "GameWeek=2&PosID=30" in url:
+            raise HTTPError(url, 503, "temporary outage", {}, None)
+        return _fake_reader(url)
+
+    monkeypatch.setattr(mod.time, "sleep", lambda _: None)
+    monkeypatch.setattr(mod, "FFTODAY_DEFAULT_WEEKS", (1, 2))
+    monkeypatch.setattr(mod.nfl_source, "rosters", lambda _: _rosters())
+
+    def load():
+        if joined:
+            return mod.load_fftoday_with_gsis_id(
+                [2013], str(tmp_path), reader=reader, min_match_rate=0.4
+            )
+        return mod.load_fftoday_projections([2013], cache_dir=str(tmp_path), reader=reader)
+
+    partial = load()
+    assert not (partial.position.eq("WR") & partial.week.eq(2)).any()
+    assert partial.attrs[mod._FETCH_COMPLETE_ATTR] is False
+    assert not list(tmp_path.glob("*.parquet"))
+    failing = False
+    healed = load()
+    assert (healed.position.eq("WR") & healed.week.eq(2)).any()
+    assert healed.attrs[mod._FETCH_COMPLETE_ATTR] is True
+
+
+def test_legacy_partial_fftoday_cache_is_refetched(tmp_path):
+    full = load_fftoday_projections(
+        [2013], weeks=(1, 2), cache_dir=str(tmp_path), reader=_fake_reader
+    )
+    path = next(tmp_path.glob("*.parquet"))
+    legacy = full.loc[full.week.eq(1)].copy()
+    legacy.attrs.clear()
+    legacy.to_parquet(path)
+    healed = load_fftoday_projections(
+        [2013], weeks=(1, 2), cache_dir=str(tmp_path), reader=_fake_reader
+    )
+    assert set(healed.week) == {1, 2}
+
+
+def test_custom_rosters_do_not_replace_default_joined_cache(tmp_path, monkeypatch):
+    from src.analysis import fftoday_loader as mod
+
+    monkeypatch.setattr(mod, "FFTODAY_DEFAULT_WEEKS", (1,))
+    monkeypatch.setattr(mod.nfl_source, "rosters", lambda _: _rosters())
+    default = mod.load_fftoday_with_gsis_id([2013], str(tmp_path), reader=_fake_reader)
+    path = next(tmp_path.glob("*joined*.parquet"))
+    original = path.read_bytes()
+    custom = _rosters()
+    custom["player_id"] = "custom-" + custom["player_id"]
+    injected = mod.load_fftoday_with_gsis_id(
+        [2013], str(tmp_path), rosters=custom, reader=_fake_reader
+    )
+    assert injected.player_id.str.startswith("custom-").all()
+    assert path.read_bytes() == original
+    resumed = mod.load_fftoday_with_gsis_id([2013], str(tmp_path), reader=_fake_reader)
+    pd.testing.assert_frame_equal(default, resumed)
+
+
 # A FFToday WR row: [Chg, Player(anchor), Team, Opp, rAtt, rYd, rTD, Rec, recYd, recTD, FPts]
 _WR_PAGE = """
 <table><tr class='tableclmhdr'><td>Chg</td><td>Player</td><td>Team</td><td>Opp</td>
@@ -127,6 +194,45 @@ def test_cache_key_distinguishes_sampled_from_contiguous_seasons(tmp_path):
     assert set(full["season"]) == {2013, 2014, 2015}
 
 
+@pytest.mark.parametrize("dimension", ["season", "week"])
+def test_sparse_cache_key_preserves_interior_values(tmp_path, dimension):
+    first = [2013, 2014, 2016] if dimension == "season" else [1, 2, 4]
+    second = [2013, 2015, 2016] if dimension == "season" else [1, 3, 4]
+
+    def load(values, reader=_fake_reader):
+        return load_fftoday_projections(
+            values if dimension == "season" else [2013],
+            weeks=[1] if dimension == "season" else values,
+            cache_dir=str(tmp_path),
+            reader=reader,
+        )
+
+    load(first)
+    actual = load(second)
+    assert set(actual[dimension]) == set(second)
+
+    def no_fetch(url):
+        raise AssertionError("permuted duplicate input should use the canonical cache")
+
+    cached = load([*reversed(second), second[0]], no_fetch)
+    pd.testing.assert_frame_equal(actual, cached)
+
+
+def test_joined_cache_preserves_sparse_season_membership(tmp_path, monkeypatch):
+    from src.analysis import fftoday_loader
+
+    monkeypatch.setattr(
+        fftoday_loader.nfl_source,
+        "rosters",
+        lambda seasons: pd.concat(
+            [_rosters().assign(season=s) for s in seasons], ignore_index=True
+        ),
+    )
+    for seasons in ([2013, 2014, 2016], [2013, 2015, 2016]):
+        actual = load_fftoday_with_gsis_id(seasons, cache_dir=str(tmp_path), reader=_fake_reader)
+        assert set(actual["season"]) == set(seasons)
+
+
 def test_min_season_guard():
     with pytest.raises(ValueError, match="archive starts at"):
         load_fftoday_projections([2009], weeks=(1,), reader=_fake_reader)
@@ -192,6 +298,127 @@ def test_bridge_raises_below_min_match_rate(tmp_path):
             min_match_rate=0.90,
             reader=_fake_reader,
         )
+
+
+# ---------- joined-cache identity validity ---------------------------------------
+
+
+def _identity_rosters(count: int = 2) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "player_id": f"00-{i}",
+                "player_name": f"Player {i}",
+                "position": "QB",
+                "team": "KC",
+                "season": 2024,
+            }
+            for i in range(count)
+        ]
+    )
+
+
+@pytest.fixture
+def joined_provider(monkeypatch, tmp_path):
+    """Synthetic complete projections + rosters; counts source loads per join."""
+    from src.analysis import fftoday_loader as mod
+
+    state = {"rosters": _identity_rosters(), "count": 2, "loads": 0, "roster_loads": 0}
+
+    def projections(*args, **kwargs):
+        state["loads"] += 1
+        frame = pd.DataFrame(
+            [
+                {
+                    "player_name": f"Player {i}",
+                    "position": "QB",
+                    "season": 2024,
+                    "week": 1,
+                    "team": "KC",
+                    "opponent": "BUF",
+                }
+                for i in range(state["count"])
+            ]
+        )
+        frame.attrs[mod._FETCH_COMPLETE_ATTR] = True
+        return frame
+
+    def rosters(seasons):
+        state["roster_loads"] += 1
+        return state["rosters"].copy()
+
+    monkeypatch.setattr(mod, "load_fftoday_projections", projections)
+    monkeypatch.setattr(mod.nfl_source, "rosters", rosters)
+
+    def run(threshold=1.0, **kwargs):
+        return mod.load_fftoday_with_gsis_id(
+            [2024], cache_dir=str(tmp_path), min_match_rate=threshold, **kwargs
+        )
+
+    return run, state, tmp_path
+
+
+@pytest.mark.parametrize("corruption", ["None", "nan", "missing_column", "actual_null"])
+def test_warm_join_rebuilds_invalid_identity_cache(joined_provider, corruption):
+    from src.data.identity import valid_player_ids
+
+    run, state, root = joined_provider
+    expected = run()
+    path = next(root.glob("*joined*.parquet"))
+    cached = pd.read_parquet(path)
+    if corruption == "missing_column":
+        cached = cached.drop(columns="player_id")
+    else:
+        cached.loc[0, "player_id"] = None if corruption == "actual_null" else corruption
+    cached.to_parquet(path)
+    actual = run()
+    assert state["loads"] == state["roster_loads"] == 2
+    pd.testing.assert_frame_equal(actual, expected)
+    assert valid_player_ids(actual.player_id).all()
+
+
+def test_healthy_warm_join_preserves_ids_without_loading_sources(joined_provider):
+    run, state, root = joined_provider
+    expected = run()
+    path = next(root.glob("*joined*.parquet"))
+    before = path.read_bytes()
+    actual = run()
+    assert state["loads"] == state["roster_loads"] == 1
+    assert path.read_bytes() == before
+    pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_exact_threshold_uses_original_projection_denominator_on_warm_join(joined_provider):
+    run, state, _ = joined_provider
+    state["count"] = 10
+    state["rosters"] = _identity_rosters(9)
+    first = run(0.9)
+    assert len(first) == 9  # matched-only rows
+    pd.testing.assert_frame_equal(run(0.9), first)
+    assert state["loads"] == 1
+    # Both thresholds share the rounded mr90 cache filename. The matched-only
+    # rows must not turn the original 9/10 coverage into 9/9.
+    with pytest.raises(RuntimeError, match="match rate"):
+        run(0.9001)
+    assert state["loads"] == 2
+
+
+@pytest.mark.parametrize("metadata", ["missing", None, 1, "2", True])
+def test_legacy_or_invalid_denominator_metadata_must_rebuild(joined_provider, metadata):
+    from src.analysis import fftoday_loader as mod
+
+    run, state, root = joined_provider
+    expected = run()
+    path = next(root.glob("*joined*.parquet"))
+    cached = pd.read_parquet(path)
+    if metadata == "missing":
+        cached.attrs.pop(mod._JOIN_SOURCE_ROWS_ATTR, None)
+    else:
+        cached.attrs[mod._JOIN_SOURCE_ROWS_ATTR] = metadata
+    cached.to_parquet(path)
+    actual = run()
+    assert state["loads"] == 2
+    pd.testing.assert_frame_equal(actual, expected)
 
 
 # ---------- expert registration --------------------------------------------------

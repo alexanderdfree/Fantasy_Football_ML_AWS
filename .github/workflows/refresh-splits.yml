@@ -121,7 +121,7 @@ jobs:
       # major version comment. SHA = aws-actions/configure-aws-credentials v4
       # tip as of 2026-05-21.
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c  # v6.2.4
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -194,6 +194,7 @@ jobs:
         # ``KeyError`` on missing cols rather than zero-filling silently.
         env:
           NFLREADPY_CACHE: "off"  # data/raw is the authoritative cache (matches tests.yml)
+          NFLREADPY_TIMEOUT: "120"  # large historical PBP downloads can exceed the 30s default
           FF_CAPTURE_PROVIDER_SOURCES: data/raw/provider_sources
         # CI and AWS use exactly the same production producer and season policy.
         run: python -m src.data.maintenance_build
@@ -607,7 +608,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

@@ -1,16 +1,37 @@
 # Fixed archive — index
 
-### [FIXED] Expert placeholders graded as zeros, expert-selected headline cohort, and split surface populations
-[Read the incident record](fixed-archive/expert-comparison-placeholders-consensus-2026-09.md).
+### [FIXED] Model-vs-expert comparison graded a stale duplicate expert, used an expert-selected headline cohort and declared winners from noise
+[Read the incident record](fixed-archive/expert-comparison-fairness-2026-09.md).
 
+### [FIXED] CI test scope missed unknown paths mixed with recognized changes
+[Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
+
+### [FIXED] Optional comparison tables stayed loading and Timeline labels assumed two experts
+[Read the incident record](fixed-archive/comparison-empty-ui-labels-2026-09.md).
+
+### [FIXED] Nested (K) served-kwargs builder dropped `nn_head_hidden_overrides` the training factory consumes
+[Read the incident record](fixed-archive/audit-1499-nested-served-kwargs-head-overrides.md).
+
+### [FIXED] DST `build_data` fabricated team-week rows for unplayed fixtures
+[Read the incident record](fixed-archive/audit-1499-dst-unplayed-fixtures.md).
+
+### [FIXED] Web client retained stale Wiki responses, hidden filters and mismatched comparison claims
+[Read the incident record](fixed-archive/runtime-web-client-audit-2026-09.md).
+### [FIXED] iOS client retained stale responses, colliding run identities and broken Wiki navigation
+[Read the incident record](fixed-archive/runtime-ios-client-audit-2026-09.md).
 ### [FIXED] Provider hook paths, workflow inputs and infrastructure ownership diverged
 [Read the incident record](fixed-archive/runtime-tooling-audit-2026-09.md).
 
 ### [FIXED] benchmark-batch spliced the unvalidated `image_sha` dispatch input into a `python -c` source string
 [Read the incident record](fixed-archive/audit-1499-benchmark-batch-image-sha-injection.md).
 
+### [FIXED] Comparison coverage, FFToday cache identity and analysis reporting seeds (from #1565)
+[Read the incident record](fixed-archive/runtime-serving-analysis-audit-2026-09.md).
 ### [FIXED] Architecture tab still described the pre-#870 Huber loss and the retired `val_mae_total` monitor
 [Read the incident record](fixed-archive/audit-1499-architecture-tab-training-loop-copy.md).
+
+### [FIXED] CI image-cache exports were discarded on exact hits
+[Read the incident record](fixed-archive/ci-roi-scoping-image-cache-2026-09.md).
 
 ### [FIXED] A/B job revisions retained mutable image tags
 [Read the incident record](fixed-archive/batch-experiment-image-digest-pins.md).
@@ -18,6 +39,8 @@
 ### [FIXED] Upcoming refresh mixed legacy hydration with historical provider replay
 [Read the incident record](fixed-archive/upcoming-sealed-data-live-provider-boundaries.md).
 
+### [FIXED] K and D/ST cross-validation folds imputed game context before slicing
+[Read the incident record](fixed-archive/kdst-fold-imputation-2026-09.md).
 ### [FIXED] Consolidated data isolation, truth provenance and client boundaries
 [Read the incident record](fixed-archive/consolidated-contract-review-followup.md).
 
@@ -27,6 +50,8 @@
 ### [FIXED] Reporting discarded optional model-selection provenance
 [Read the incident record](fixed-archive/selection-reporting-provenance.md).
 
+### [FIXED] Fantasy-point RMSE selection could not be compared against the raw-stat selectors (machinery added; defaults unchanged)
+[Read the incident record](fixed-archive/nn-selection-metric-alignment.md).
 ### [FIXED] Scheduled maintenance used the superseded cache and rollout protocols
 [Read the incident record](fixed-archive/maintenance-contract-consolidation-2026-09.md).
 
@@ -36,6 +61,8 @@
 ### [FIXED] Expert forecasts lost scoring components outside the model target list
 [Read the incident record](fixed-archive/expert-forecast-scoring-components.md).
 
+### [FIXED] Pipeline reports scored full fantasy points and merged seasons' weekly slates
+[Read the incident record](fixed-archive/pipeline-reporting-truth-2026-09.md).
 ### [FIXED] QB availability rewrite removed the intended historical role proxy
 [Read the incident record](fixed-archive/qb-role-reconstruction.md).
 
@@ -45,6 +72,8 @@
 ### [TESTED, REJECTED] B2 team PROE / pace season-to-date features (expert-edge Phase 2 RB-ordering lever)
 [Read the incident record](fixed-archive/proe-pace-rejection-2026-07.md).
 
+### [FIXED] Validation loss averaged batch means, over-weighting a short final batch
+[Read the incident record](fixed-archive/validation-sample-weighting-2026-09.md).
 ### [TESTED, REJECTED] Week-1 empty-history calibration arms (career games-gap, implied-total×no-history, RB returning re-add) — no arm clears the gates; QB attention destabilizes; the measurement reframes the cohort to QB/K-only
 [Read the incident record](fixed-archive/week1-games-gap-rejection-2026-07.md).
 

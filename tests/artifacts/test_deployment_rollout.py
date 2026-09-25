@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,64 @@ from src.artifacts import deployment, serving_snapshot
 
 pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_expected_revision_already_ready_does_not_wait_for_a_change(tmp_path):
+    aws = RolloutAWS(response_code=200)
+    result = deployment.deploy(
+        aws,
+        task_definition(),
+        cluster="cluster",
+        service="service",
+        state_path=tmp_path / "state.json",
+        sleep=lambda _: pytest.fail("An already-ready revision must not wait for a change"),
+    )
+    assert result == "new-revision"
+    assert json.loads((tmp_path / "state.json").read_text())["phase"] == "complete"
+
+
+@pytest.mark.parametrize("http_exit", [0, 22])
+def test_post_train_probe_accepts_unchanged_readiness_and_propagates_failure(tmp_path, http_exit):
+    workflow = yaml.safe_load((ROOT / ".github/workflows/train-batch.yml").read_text())
+    job = workflow["jobs"]["warm_cache"]
+    assert set(job["needs"]) == {"train", "ecs_rollout"}
+    assert not job.get("continue-on-error", False)
+    step = job["steps"][0]
+    assert not step.get("continue-on-error", False)
+    bin_path = tmp_path / "bin"
+    bin_path.mkdir()
+    (bin_path / "curl").write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$PROBE_LOG"\n'
+        'printf \'%s\\n\' \'{"status":"ready","generation":"unchanged"}\'\n'
+        'exit "$PROBE_EXIT"\n'
+    )
+    # A fingerprint-change loop would sleep even when every request is ready.
+    (bin_path / "sleep").write_text("#!/bin/sh\nexit 99\n")
+    for path in bin_path.iterdir():
+        path.chmod(0o755)
+    log = tmp_path / "probes.log"
+    env = dict(
+        os.environ,
+        PATH=f"{bin_path}:{os.environ['PATH']}",
+        SERVICE_URL="https://example.invalid/",
+        PROBE_LOG=str(log),
+        PROBE_EXIT=str(http_exit),
+    )
+    for _ in range(2):
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+        assert result.returncode == http_exit, result.stderr
+    probes = [line.split() for line in log.read_text().splitlines()]
+    assert len(probes) == 2
+    for args in probes:
+        assert args[-1] == "https://example.invalid/ready"
+        assert args[args.index("--retry") + 1] == "3"
+        assert args[args.index("--max-time") + 1] == "30"
 
 
 def test_invocation_budget_is_read_after_remote_preparation(tmp_path):

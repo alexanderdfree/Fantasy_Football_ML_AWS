@@ -5,12 +5,14 @@ share the same S3/local naming contract without importing ``src.tuning.tune_nn``
 and pulling in Optuna.
 """
 
-# v3 keeps the sampled parameters and opens a fresh study namespace: stacked
-# training and read-only lookups now resolve the same namespace, and the
-# planned sample-weighted validation objective (a separate change) must never
-# resume scheduler_v2 trials that averaged batch means. Until that objective
-# lands, v3 trials still report the batch-mean validation loss.
-SEARCH_SPACE_VERSION = "scheduler_v3"
+# Optuna scores are in ``OBJECTIVE_METRIC`` units: every trial optimizes
+# validation PPR fantasy-point RMSE, so both scope roots carry the
+# ``_fp_rmse_ppr_v1`` objective suffix and never resume a combined-loss study
+# (the ``scheduler_v2*`` studies or the bare ``v3`` isolation bump). The v3
+# root keeps the sampled parameters; stacked training and read-only lookups
+# resolve the same namespace.
+OBJECTIVE_METRIC = "fantasy_rmse_ppr"
+SEARCH_SPACE_VERSION = "scheduler_v3_fp_rmse_ppr_v1"
 
 # Shared metadata stays importable on orchestration runners without torch.
 ENSEMBLE_POSITIONS = ("QB", "RB", "WR", "TE")
@@ -33,8 +35,8 @@ def stacked_default_seed_list(n: int = DEFAULT_STACKED_SEEDS) -> list[int]:
 # param-space mismatch in one study; v1 also co-sampled lr/sizing, which
 # confounded its objective — GH #1239). The graph/mps/full suffixing below
 # applies to this root too. v3 is a fresh namespace for the same isolated
-# parameter space (see SEARCH_SPACE_VERSION for the objective sequencing).
-HISTORY_SEARCH_SPACE_VERSION = "history_v3"
+# parameter space; the objective suffix mirrors SEARCH_SPACE_VERSION.
+HISTORY_SEARCH_SPACE_VERSION = "history_v3_fp_rmse_ppr_v1"
 
 # Search-space roots selectable by ``--scope``. ``resolve_search_space_version``
 # applies the execution-profile (mps/graph/full) suffixes to whichever root.
@@ -53,8 +55,8 @@ def resolve_search_space_version(
 ) -> str:
     """Storage namespace for the execution profile.
 
-    ``root`` selects the sampled search space and objective (``scheduler_v3``
-    for full scope, ``history_v3`` for ``--scope history``); the mps/graph/full
+    ``root`` selects the sampled search space and objective (``scheduler_v3_fp_rmse_ppr_v1``
+    for full scope, ``history_v3_fp_rmse_ppr_v1`` for ``--scope history``); the mps/graph/full
     suffixes below are applied to it. CUDA-graph/MPS tuning follows a different
     training trajectory from the eager local default. Keep those studies separate so
     Batch graph-enabled results never resume from an older eager study DB.

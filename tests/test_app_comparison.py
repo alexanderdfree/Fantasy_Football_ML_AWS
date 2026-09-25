@@ -38,6 +38,48 @@ _POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"]
 _MODEL_KEYS = {"ridge", "nn", "attn_nn", "lgbm"}
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("has_forecast", [False, True])
+@pytest.mark.parametrize("has_components", [False, True])
+def test_api_comparison_requires_actuals_and_a_forecast(
+    client, app_module, monkeypatch, has_forecast, has_components
+):
+    frame = pd.DataFrame(
+        {
+            "position": ["WR"] * 2,
+            "player_id": ["a", "b"],
+            "season": [2025] * 2,
+            "week": [1] * 2,
+            "fantasy_points": [10.0, 20.0],
+            "actual_receiving_yards": [50.0, 100.0],
+            "actual_receiving_tds": [0.0, 0.0],
+            "actual_receptions": [5.0, 10.0],
+            "actual_fumbles_lost": [0.0, 0.0],
+        }
+    )
+    if has_forecast:
+        frame["ridge_pred_ppr"] = [10.0, 20.0]
+    if not has_components:
+        frame = frame.drop(columns="actual_receptions")
+    monkeypatch.setitem(app_module._cache, "results", frame)
+    monkeypatch.setattr(core, "_ensure_metrics", lambda: None)
+    monkeypatch.setattr(comparison, "load_reference", lambda: pd.DataFrame())
+    response = client.get("/api/comparison")
+    assert response.status_code == 200
+    payload = response.get_json()
+    coverage = payload["coverage"]["all"]["WR"]
+    available = has_forecast and has_components
+    assert coverage["status"] == ("available" if available else "unavailable")
+    assert coverage["n"] == (2 if available else 0)
+    if available:
+        assert payload["subsets"]["all"]["WR"]["ridge"]["mae"] == 0.0
+    else:
+        assert all(value is None for value in payload["subsets"]["all"]["WR"].values())
+        assert coverage["reason"] == (
+            "predictions_missing" if has_components else "shared_actual_components_missing"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # _model_blocks_from_results — pure helper (no Flask boundary)
 # --------------------------------------------------------------------------- #
@@ -293,11 +335,12 @@ def test_comparison_scores_cached_sources_on_shared_component_actuals(
 
     assert body["model_source"] == "live"
     assert set(body["subsets"]) == {
+        "weekly_depth_starters",
         "all",
-        "top12",
-        "top30",
+        "elite_top24",
         "weekly_reference_top24",
-        "weekly_consensus_top24",
+        "top30",
+        "top12",
     }
 
     qb = body["subsets"]["all"]["QB"]
@@ -307,8 +350,11 @@ def test_comparison_scores_cached_sources_on_shared_component_actuals(
     for key in _MODEL_KEYS:  # QB has all four models in the synthetic cache
         assert qb[key] is not None, key
         assert {"mae", "rmse", "r2", "n"} <= set(qb[key])
-    # Static accuracy cells must not override the same-sample computation.
-    assert qb["nflcom"] != {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
+    # Static accuracy cells must not override the same-sample computation, and
+    # NFL.com offense is displayed but never graded.
+    assert qb["nflcom"] is None
+    assert qb["rotowire"] != {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
+    assert body["coverage"]["all"]["QB"]["uncertainty"]["status"] == "available"
     assert len({cell["n"] for cell in qb.values() if cell is not None}) == 1
     assert body["coverage"]["all"]["QB"]["n"] == qb["ridge"]["n"]
 
@@ -366,7 +412,7 @@ def test_comparison_includes_quartile_bias(app_module, synthetic_cache, monkeypa
         for key in _MODEL_KEYS:  # QB has all four live model columns
             assert qbq[q][key] is not None, (q, key)
             assert {"n", "mae", "bias"} == set(qbq[q][key])
-        assert qbq[q]["nflcom"] is not None  # experts present for QB
+        assert qbq[q]["nflcom"] is None  # NFL.com offense is not graded
         assert qbq[q]["rotowire"] is not None
     # Coverage holes survive: NFL.com has no DST, RotoWire has no K (every quartile).
     assert all(qb["DST"][q]["nflcom"] is None for q in qb["DST"])
@@ -418,7 +464,7 @@ def test_comparison_works_without_static_expert_metadata(app_module, synthetic_c
     with app_module.app.test_client() as c:
         r = c.get("/api/comparison")
     assert r.status_code == 200
-    assert r.get_json()["subsets"]["all"]["QB"]["nflcom"] is not None
+    assert r.get_json()["subsets"]["all"]["QB"]["rotowire"] is not None
 
 
 # --------------------------------------------------------------------------- #

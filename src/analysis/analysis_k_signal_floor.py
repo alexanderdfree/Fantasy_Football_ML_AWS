@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -143,9 +144,9 @@ def _grouped_rolling_mean(
     df = full_df.sort_values(sort_cols)
     grp = df.groupby(group_col)["fantasy_points"]
     if window is None:
-        # expanding() on a groupby returns a MultiIndex (group, original).
-        # Drop the group level to realign on the input frame's index.
-        rolling = grp.expanding().mean().shift(1).reset_index(level=0, drop=True)
+        # Lag within each player/team so its first observation cannot inherit
+        # the previous group's entire (potentially future) history.
+        rolling = grp.transform(lambda x: x.expanding().mean().shift(1))
     else:
         rolling = grp.transform(lambda x: x.shift(1).rolling(window, min_periods=1).mean())
     return rolling.fillna(fill).reindex(full_df.index)
@@ -752,7 +753,7 @@ def main() -> int:
         "models_in_script": in_script,
         "models_from_benchmark": {
             **{k: float(v) for k, v in benchmark.items()},
-            "source": str(benchmark_path.relative_to(PROJECT_ROOT))
+            "source": os.path.relpath(benchmark_path, PROJECT_ROOT)
             if benchmark_path is not None and benchmark_path.exists()
             else "fallback (no benchmark_history/*.json found)",
         },

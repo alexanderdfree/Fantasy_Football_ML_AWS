@@ -182,6 +182,13 @@ _TEST_SHARED_REGEX = re.compile(
 _TEST_PER_POSITION_REGEX = {
     pos: re.compile(rf"^(src/{pos.lower()}/|tests/{pos.lower()}/)") for pos in ALL_POSITIONS
 }
+# These providers' configuration and hooks are exercised by tests/scripts and
+# tests/hooks in the shared shard. Other scripts/configs remain unclassified.
+_TEST_TOOLING_REGEX = re.compile(
+    r"^\.codex/(?:config\.toml|hooks\.json)$"
+    r"|^\.(?:claude|gemini)/settings\.json$"
+    r"|^\.(?:codex|claude|gemini)/hooks/"
+)
 
 
 def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
@@ -195,26 +202,29 @@ def compute_test_shards(changed_files: Iterable[str]) -> list[str]:
       5. Cross-cutting dirs (src/batch, src/scripts, src/benchmarking, src/tuning,
          src/analysis, other top-level tests/*.py, tests/{analysis,batch,scripts,
          integration,shared,tuning}/) → 'shared'.
-      6. Fallback: if no rule matched, run all 8 (conservative).
+      6. Recognized agent configuration/hooks → 'shared'.
+      7. Any unclassified non-doc path → all 8, even in a mixed diff.
     """
     files = [f for f in changed_files if f]
     non_docs = [f for f in files if not _TEST_DOCS_REGEX.search(f)]
     if not non_docs:
         return []
-    if any(_TEST_GLOBAL_REGEX.search(f) for f in non_docs):
-        return list(ALL_TEST_SHARDS)
-    shards: list[str] = [
-        pos
-        for pos, per_pos in _TEST_PER_POSITION_REGEX.items()
-        if any(per_pos.search(f) for f in non_docs)
-    ]
-    if any(_TEST_SERVING_REGEX.search(f) for f in non_docs):
-        shards.append("serving")
-    if any(_TEST_SHARED_REGEX.search(f) for f in non_docs):
-        shards.append("shared")
-    if not shards:
-        return list(ALL_TEST_SHARDS)
-    return shards
+    rules = {
+        **_TEST_PER_POSITION_REGEX,
+        "serving": _TEST_SERVING_REGEX,
+        "shared": _TEST_SHARED_REGEX,
+    }
+    shards: set[str] = set()
+    for path in non_docs:
+        if _TEST_GLOBAL_REGEX.search(path):
+            return list(ALL_TEST_SHARDS)
+        matched = {shard for shard, rule in rules.items() if rule.search(path)}
+        if _TEST_TOOLING_REGEX.search(path):
+            matched.add("shared")
+        if not matched:
+            return list(ALL_TEST_SHARDS)
+        shards.update(matched)
+    return [shard for shard in ALL_TEST_SHARDS if shard in shards]
 
 
 def main() -> int:

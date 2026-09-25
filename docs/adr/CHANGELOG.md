@@ -1,10 +1,22 @@
 # ADR Changelog
 
-- 2026-09-18 · Score all-zero provider rows as missing forecasts (reference recipe v4, cache schema 12), add the symmetric weekly consensus cohort as the Comparison headline, and align Timeline groups with the tab's displayed sources · (PR #1595) · → ADR-0024
+- 2026-09-25 · Fairness re-audit, superseding unmerged #1595: all-zero provider rows count as missing; NFL.com offense, a stale RotoWire copy, is no longer graded; forecast-free depth-chart and prior-season headline cohorts; a RotoWire-only secondary reference (v4); paired bootstrap intervals with a both-metrics winner rule; Timeline graded on RotoWire+ESPN with edge intervals; 2025 labelled a development-season backtest; cache schema 12 · (PR pending) · → ADR-0024
 
-- 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR pending) · → ADR-0029
+- 2026-09-23 · Enforce DST synthetic-export cache compatibility before loading and preserve observed zero opponent counts · (PR #1599) · → ADR-0029
+
+- 2026-09-18 · DST `build_data` drops unplayed (NaN-score) REG fixtures by default; the live upcoming-week special-teams builder opts back in via `include_unplayed=True` (#1520) · (PR pending) · → ADR-0018
+
+- 2026-09-18 · DST synthetic-history schema with team donors, the never-resampled opponent-offense stream in generation and replay, a raw-cache DST exporter and two recipes · (PR #1599) · → ADR-0029
+
+- 2026-09-18 · RB/WR/TE synthetic-history schemas, registry-driven generation and replay, skill-position source exporter and six shipped recipes · (PR #1593) · → ADR-0029
+
+- 2026-09-18 · Add PPR-RMSE selection machinery (`ridge_selection_metric`/`nn_selection_metric`/`lgbm_selection_metric`) with defaults unchanged (`raw_mae`/`weighted_mae`/`per_target`); any flip needs the dual-metric + protected-cohort gate · (PR pending) · → ADR-0002
 
 - 2026-09-18 · Declared usage/efficiency/role transforms with team accounting and an opaque-signal policy, extreme QB fixtures and paired model-response reports · (PR #1592) · → ADR-0029
+
+- 2026-09-18 · Training-pipeline baseline, ranking, backtest and cohort reports now use the same certified shared-component truth as serving/analysis, with season-aware weekly slates · (PR pending, extracted from #1565) · → ADR-0024
+
+- 2026-09-18 · Optimize NN (eager/stacked/history) and LightGBM tuning on validation PPR fantasy-point RMSE in new study namespaces (`scheduler_v3_fp_rmse_ppr_v1*`, `history_v3_fp_rmse_ppr_v1*`, `lgbm_ppr_rmse_v1*`; the `scheduler_v2*`/`scheduler_v3*`, `history_v2*`/`history_v3*` and `lgbm_seedavg_v1*` studies are orphaned, not migrated) and aggregate the namespaces the retune workflow submits; production selectors unchanged · (PR pending) · → ADR-0015
 
 - 2026-09-18 · Replay QB synthetic cohorts against saved checkpoints with exported forecast context, per-family readiness and recorded responses · (PR #1590) · → ADR-0029
 

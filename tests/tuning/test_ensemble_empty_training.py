@@ -72,11 +72,16 @@ def test_sized_empty_loader_fails_before_setup(setup, monkeypatch, routine, kind
 
 @pytest.mark.parametrize("routine", ["train_stacked", "train_sequential"])
 @pytest.mark.parametrize("initial_batches", [0, 1])
-def test_unsized_empty_or_exhausted_epoch_cannot_return_success(setup, routine, initial_batches):
+def test_unsized_empty_or_exhausted_epoch_cannot_return_success(
+    setup, monkeypatch, routine, initial_batches
+):
     captures, cfg = setup(4)
     loader = iter(captures[0]["train_loader"] if initial_batches else ())
     for capture in captures:
         capture["train_loader"] = loader
+    # The stacked per-epoch report scores PPR fantasy points, which the
+    # synthetic heads cannot provide; this test only counts the reports.
+    monkeypatch.setattr(ensemble, "stacked_val_rmse", lambda *args: [0.0] * len(captures))
     reports = []
     kwargs = (
         {"epoch_callback": lambda *args: reports.append(args)} if routine == "train_stacked" else {}

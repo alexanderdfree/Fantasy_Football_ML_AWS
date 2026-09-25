@@ -359,9 +359,8 @@ class TestIndexRoute:
 # including werkzeug HTTPExceptions (404 NotFound, 405 MethodNotAllowed). For
 # `/api/*` paths it preserves the HTTPException's real status as JSON (audit
 # #909) — an unknown `/api/` route returns 404, a wrong method returns 405 — and
-# only genuine non-HTTP bugs collapse to a 500. For non-`/api/` paths it still
-# `raise e`s, deferring to Flask's default rendering. The `/api/*` status
-# contract is asserted below.
+# only genuine non-HTTP bugs collapse to a 500. Non-`/api/` HTTP errors retain
+# Flask's default HTML rendering, including status and protocol headers.
 
 
 class TestApiErrorStatus:
@@ -378,6 +377,29 @@ class TestApiErrorStatus:
         r = client.post("/api/model_architecture")
         assert r.status_code == 405
         assert r.is_json
+        assert "GET" in r.headers["Allow"]
+
+
+@pytest.mark.unit
+class TestHtmlErrorStatus:
+    @pytest.mark.parametrize(
+        ("method", "path", "status"),
+        [
+            ("get", "/this-route-does-not-exist", 404),
+            ("get", "/static/missing-audit-asset.css", 404),
+            ("post", "/privacy", 405),
+        ],
+    )
+    def test_html_http_errors_preserve_status(
+        self, client, app_module, monkeypatch, method, path, status
+    ):
+        monkeypatch.setitem(app_module.app.config, "TESTING", False)
+        monkeypatch.setitem(app_module.app.config, "PROPAGATE_EXCEPTIONS", False)
+        response = getattr(client, method)(path)
+        assert response.status_code == status
+        assert response.mimetype == "text/html"
+        if status == 405:
+            assert "GET" in response.headers["Allow"]
 
 
 # ===========================================================================
@@ -395,9 +417,7 @@ class TestApiErrorStatus:
 # `TestTinyQBModelFixture` below for a round-trip sanity check on the
 # scaffold itself.
 #
-# We intentionally do NOT assert 404/405 on POST /predict_json here: the
-# global error handler re-raises non-`/api/` exceptions, which obscures
-# the underlying HTTP status from the test client.
+# HTTP errors for non-API paths are covered by TestHtmlErrorStatus above.
 
 
 # ===========================================================================

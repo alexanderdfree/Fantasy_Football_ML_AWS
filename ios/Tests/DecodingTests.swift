@@ -122,9 +122,10 @@ final class DecodingTests: XCTestCase {
         XCTAssertNotNil(comparison.excludedComponents?["DST"]?["points_allowed"])
         XCTAssertEqual(
             comparison.displayedSubsets,
-            ["weekly_consensus_top24", "weekly_reference_top24", "all", "top30", "top12"]
+            ["weekly_depth_starters", "all", "elite_top24", "weekly_reference_top24", "top30", "top12"]
         )
-        XCTAssertEqual(comparison.subsetTitle("weekly_consensus_top24"), "Expected starters · consensus top 24")
+        XCTAssertEqual(comparison.subsetTitle("weekly_depth_starters"), "Expected starters · pregame depth chart")
+        XCTAssertEqual(comparison.subsetTitle("elite_top24"), "Prior-season elite · top 24")
         XCTAssertNil(comparison.intervals)
         XCTAssertNil(comparison.expertReliability)
         for position in Position.displayOrder {
@@ -142,11 +143,20 @@ final class DecodingTests: XCTestCase {
         }
         XCTAssertEqual(
             comparison.cohortDefinitions?["weekly_reference_top24"],
-            "Top 24 per week by the archived shared-component NFL.com/RotoWire mean (ESPN for K, RotoWire for DST). "
-                + "Selected by graded expert forecasts, so those sources' errors are conditioned on their own selection; "
-                + "compare sources on the consensus cohort"
+            "Top 24 per week by the archived shared-component RotoWire forecast (ESPN for K). Selected by a graded "
+                + "expert's own forecasts, which penalizes that expert (winner's curse); a secondary view, not the headline"
         )
-        XCTAssertNotNil(comparison.cohortDefinitions?["weekly_consensus_top24"])
+        XCTAssertNotNil(comparison.cohortDefinitions?["weekly_depth_starters"])
+        XCTAssertNotNil(comparison.evaluationSeasonNote)
+        // NFL.com offense is displayed but never graded.
+        XCTAssertNil(comparison.cell(subset: "all", position: "QB", source: "nflcom"))
+        XCTAssertNotNil(comparison.exclusionReason(subset: "all", position: "QB", source: "nflcom"))
+        // The fixture's exact ridge forecasts beat both experts under MAE and RMSE.
+        let qb = try XCTUnwrap(comparison.coverage?["all"]?["QB"])
+        XCTAssertEqual(qb.decidedWinner, "models")
+        XCTAssertEqual(comparison.cell(subset: "all", position: "QB", source: "ridge")?.bias, 0)
+        XCTAssertTrue(qb.verdict(.mae)?.hasPrefix("Models ahead") ?? false)
+        XCTAssertTrue(qb.verdict(.r2)?.hasSuffix("RMSE") ?? false)
         XCTAssertEqual(comparison.subsetTitle("top12"), "Season leaders · top 12")
         XCTAssertEqual(CmpSource.resolve("espn", comparison: comparison).label, "ESPN")
     }

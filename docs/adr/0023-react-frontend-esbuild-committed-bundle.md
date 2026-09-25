@@ -82,6 +82,10 @@ front:
 
 ## Changelog
 
+- 2026-09-18 · Remove the Season Leaders filtered-slice stat readout (Avg Actual
+  / Most Accurate / Comparison rows / Best MAE) at the owner's request, with its
+  client-side grading helper (`sliceAccuracy`) and tests; the per-row
+  `comparison_*` contract fields stay (server-side ADR-0024 truth). #1616.
 - **2026-09-10** — History retains its last successful response while refreshing on mount, every 30 seconds while visible, and on focus/visibility return. Run ids key expanded rows so arrivals cannot move an expansion onto another run. Refresh errors preserve the existing rows; the committed bundle is rebuilt with the source.
 
 - 2026-09-10 · Clarify which design-system primitives are live and document the

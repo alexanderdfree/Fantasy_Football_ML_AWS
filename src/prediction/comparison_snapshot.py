@@ -8,6 +8,7 @@ without making HTTP handlers import a builder CLI.
 import json
 from datetime import UTC, datetime
 
+from src.config import TEST_SEASONS
 from src.prediction import comparison
 from src.shared.comparison_scoring import (
     ACTUAL_BASIS,
@@ -15,6 +16,7 @@ from src.shared.comparison_scoring import (
     EXCLUDED_SOURCES,
     scoring_components,
 )
+from src.shared.comparison_uncertainty import METHOD as UNCERTAINTY_METHOD
 
 
 def build_comparison_snapshot(results, *, reference=None) -> dict:
@@ -47,20 +49,39 @@ def build_comparison_snapshot(results, *, reference=None) -> dict:
         "excluded_components": EXCLUDED_COMPONENTS,
         "sample_basis": "shared_player_weeks",
         "cohort_definitions": {
-            "weekly_consensus_top24": (
-                "Top 24 per week by the equal-weight mean of every displayed source's "
-                "shared-component forecast (models and experts) on the common player-weeks; "
-                "each source contributes equally to selection"
+            "weekly_depth_starters": (
+                "Pregame depth-chart starters each week (rank 1 in the last depth chart "
+                "published before game day; up to three receivers per team; every kicker "
+                "and defense). Selected by neither outcomes nor any graded forecast"
+            ),
+            "elite_top24": (
+                "The 24 players per position with the highest prior-season mean "
+                "shared-component points. Selected by neither outcomes nor any graded "
+                "forecast; unavailable for K and D/ST"
             ),
             "weekly_reference_top24": (
-                "Top 24 per week by the archived shared-component NFL.com/RotoWire mean "
-                "(ESPN for K, RotoWire for DST). Selected by graded expert forecasts, so those "
-                "sources' errors are conditioned on their own selection; compare sources on the "
-                "consensus cohort"
+                "Top 24 per week by the archived shared-component RotoWire forecast (ESPN "
+                "for K). Selected by a graded expert's own forecasts, which penalizes that "
+                "expert (winner's curse); a secondary view, not the headline"
             ),
-            "top30": "Top 30 per season by regular-season actual shared-component points",
-            "top12": "Top 12 per season by regular-season actual shared-component points",
+            "top30": (
+                "Top 30 per season by regular-season actual shared-component points. "
+                "Selected on outcomes, which favors sources that forecast stars higher"
+            ),
+            "top12": (
+                "Top 12 per season by regular-season actual shared-component points. "
+                "Selected on outcomes, which favors sources that forecast stars higher"
+            ),
         },
+        # The configured test season is the season A/B decisions are judged on.
+        "evaluation_season_note": (
+            f"Model changes were compared on {', '.join(str(season) for season in seasons)} "
+            "during development, so these tables are a development-season backtest, "
+            "not an untouched holdout."
+            if seasons and set(seasons) <= set(TEST_SEASONS)
+            else None
+        ),
+        "uncertainty_meta": UNCERTAINTY_METHOD,
         "quartile_bias": quartile_bias,
         "quartile_bias_meta": {
             "n_quantiles": 4,

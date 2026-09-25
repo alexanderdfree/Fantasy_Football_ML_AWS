@@ -58,6 +58,23 @@ function TimelineChart({ weekly, sources, labels, theme, edges = false }) {
     return <canvas ref={ref} />;
 }
 
+const EDGE_VERDICTS = { model: "ahead of every expert", experts: "behind the best expert", tie: "≈ tie" };
+
+function signed(value) {
+    return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
+/* Season edge with its paired, player-clustered 95% interval; a tie when it spans zero. */
+function SeasonEdge({ report }) {
+    if (report?.edge == null || !report.edge_ci) return null;
+    const [low, high] = report.edge_ci;
+    return (
+        <span className={"comparison-gap" + (report.edge_verdict === "tie" ? "" : " comparison-gap-decided")}>
+            Season edge {signed(report.edge)} [{signed(low)}, {signed(high)}] · {EDGE_VERDICTS[report.edge_verdict] || report.edge_verdict}
+        </span>
+    );
+}
+
 function EdgeValue({ value }) {
     if (value == null) return <span className="delta-neutral">--</span>;
     const cls = value >= 0.02 ? "delta-positive" : value <= -0.02 ? "delta-negative" : "delta-neutral";
@@ -170,6 +187,7 @@ export function TimelineView({ scoring, theme }) {
                     <p className="results-info">
                         {payload.season ? `${payload.season} · ` : ""}{payload.positions.join(" / ")} · {expertNames} · {summary.n} common player-weeks
                     </p>
+                    {payload.evaluation_season_note && <p className="results-info">{payload.evaluation_season_note}</p>}
                     {summary.reason && <p className="error-message">{REASONS[summary.reason]}</p>}
                     <div className="timeline-track-card">
                         <div className="stat-block-row">
@@ -178,13 +196,15 @@ export function TimelineView({ scoring, theme }) {
                                     <span className="stat-block-label">{labels[model]} · MAE</span>
                                     <span className="stat-block-value neutral">{fmt(summary.models[model].mae, 2)}</span>
                                     <span>Beat {payload.experts.length > 1 ? "every expert" : expertNames}: {summary.models[model].beat_experts} / {summary.models[model].evaluated_weeks} weeks</span>
+                                    <SeasonEdge report={summary.models[model]} />
                                 </div>
                             ))}
                         </div>
                     </div>
                     <p className="results-info">
                         Season MAE weights each evaluated player-week equally. {summary.evaluated_weeks} / {summary.total_weeks} weeks evaluable.
-                        Positive edge means that model beat every required expert on the common sample.
+                        Positive edge means that model beat every required expert on the common sample. A season edge counts only when its
+                        95% interval (whole players resampled, best expert chosen in every draw) excludes zero; a single week is noise.
                     </p>
                     <details className="results-info">
                         <summary>Scoring and coverage</summary>

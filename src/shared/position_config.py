@@ -125,6 +125,10 @@ class PositionConfig:
     ridge_pca_components: int | None = None
     ridge_cv_folds: int | None = None
     ridge_refine_points: int | None = None
+    # Ridge alpha selector: ``raw_mae`` (independent per-target CV MAE; every
+    # production position) or ``fantasy_rmse_ppr`` (joint out-of-fold PPR RMSE,
+    # opt-in via ``src/tuning/ab_classical_selection.py``).
+    ridge_selection_metric: str = "raw_mae"
     cv_split_column: str | None = None
     train_elasticnet: bool = False
     enet_l1_ratios: list[float] = field(default_factory=lambda: list(DEFAULT_ENET_L1_RATIOS))
@@ -139,6 +143,14 @@ class PositionConfig:
     nn_epochs: int = 250
     nn_batch_size: int = 128
     nn_patience: int = 30
+    # NN checkpoint selector (``MultiHeadTrainer.selection_metric``). Default
+    # ``weighted_mae`` is the long-standing loss-weighted validation MAE rule;
+    # ``weighted_rmse`` and ``fantasy_rmse_ppr`` (validation PPR fantasy-point
+    # RMSE through the canonical aggregator) are opt-in for matched A/Bs
+    # (``src/tuning/ab_checkpoint_metric.py``). Raw-stat head losses are
+    # unchanged by any choice. Flipping production requires the dual-metric +
+    # protected-cohort gate (ADR-0002 changelog, 2026-09-18).
+    nn_selection_metric: str = "weighted_mae"
     nn_head_hidden_overrides: dict[str, int] = field(default_factory=dict)
     # Replace StandardScaler's fitted stats for the bounded ordinal
     # injury-report flags (game_status / practice_status) so their semantic
@@ -255,6 +267,11 @@ class PositionConfig:
     lgbm_min_child_samples: int = 30
     lgbm_min_split_gain: float = 0.0
     lgbm_objective: str = "huber"
+    # LightGBM iteration selector: ``per_target`` (per-head early stopping on
+    # the raw-stat metric; every production position) or ``fantasy_rmse_ppr``
+    # (fit the full tree budget, then pick per-head prefixes jointly on
+    # validation PPR RMSE; opt-in A/B only).
+    lgbm_selection_metric: str = "per_target"
 
     # === TabPFN (pretrained tabular transformer; 5th model variant) ===
     # Off by default — only positions that opt in run it (and the env must have

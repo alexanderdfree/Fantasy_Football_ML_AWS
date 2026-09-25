@@ -15,6 +15,8 @@ struct Comparison: Codable, Sendable {
     let excludedSources: [String: [String: String]]?
     let excludedComponents: [String: [String: String]]?
     let cohortDefinitions: [String: String]?
+    /// Set when the graded season is the one model changes were compared on.
+    let evaluationSeasonNote: String?
     let coverage: [String: [String: Coverage]]?
     /// subset -> POS -> source ("ridge"…"espn") -> cell.
     let subsets: [String: [String: [String: MetricCell?]]]
@@ -27,7 +29,7 @@ struct Comparison: Codable, Sendable {
     var isUnavailable: Bool { modelSource == "unavailable" }
 
     var displayedSubsets: [String] {
-        let order = ["weekly_consensus_top24", "weekly_reference_top24", "all", "top30", "top12"]
+        let order = ["weekly_depth_starters", "all", "elite_top24", "weekly_reference_top24", "top30", "top12"]
         return order.filter { subsets[$0] != nil } + subsets.keys.filter { !order.contains($0) }.sorted()
     }
 
@@ -43,7 +45,8 @@ struct Comparison: Codable, Sendable {
 
     func subsetTitle(_ subset: String) -> String {
         switch subset {
-        case "weekly_consensus_top24": return "Expected starters · consensus top \(weeklyTopN ?? 24)"
+        case "weekly_depth_starters": return "Expected starters · pregame depth chart"
+        case "elite_top24": return "Prior-season elite · top \(weeklyTopN ?? 24)"
         case "weekly_reference_top24": return "Expert reference · weekly top \(weeklyTopN ?? 24)"
         case "all": return "All players"
         case "top30": return "Season leaders · top \(topN ?? 30)"
@@ -86,6 +89,8 @@ struct Comparison: Codable, Sendable {
         let mae: Double?
         let rmse: Double?
         let r2: Double?
+        /// Mean prediction − actual (positive over-predicts). Shown, never ranked.
+        let bias: Double?
         let n: Int?
 
         func value(_ metric: MetricKind) -> Double? {
@@ -109,6 +114,30 @@ struct Comparison: Codable, Sendable {
         let excludedSources: [String: String]?
         let referenceStatus: String?
         let missingReferenceWeeks: Int?
+        /// Paired, player-clustered bootstrap for best model minus best expert.
+        let uncertainty: Uncertainty?
+
+        /// The winning group ("models" / "experts"), or nil for a tie or no interval.
+        var decidedWinner: String? {
+            guard let uncertainty, uncertainty.status == "available",
+                  let winner = uncertainty.winner, winner != "tie" else { return nil }
+            return winner
+        }
+
+        /// "≈ tie · best model − best expert −0.08 [−0.23, +0.09] MAE" for the shown metric.
+        func verdict(_ metric: MetricKind) -> String? {
+            guard let uncertainty, uncertainty.status == "available",
+                  let gap = metric == .mae ? uncertainty.mae : uncertainty.rmse,
+                  let delta = gap.bestModelMinusBestExpert, let ci = gap.ci, ci.count == 2 else { return nil }
+            let key = metric == .mae ? "MAE" : "RMSE"
+            // A decided row needs both metrics; one decided metric alone stays a tie.
+            let label = uncertainty.winner == "models" ? "Models ahead"
+                : uncertainty.winner == "experts" ? "Experts ahead"
+                : gap.verdict == "models" ? "≈ tie (models ahead on \(key) only)"
+                : gap.verdict == "experts" ? "≈ tie (experts ahead on \(key) only)" : "≈ tie"
+            let signed = { (value: Double) in String(format: "%+.2f", value) }
+            return "\(label) · best model − best expert \(signed(delta)) [\(signed(ci[0])), \(signed(ci[1]))] \(key)"
+        }
 
         var summary: String {
             if status == "unavailable" {
@@ -129,6 +158,31 @@ struct Comparison: Codable, Sendable {
             case excludedSources = "excluded_sources"
             case referenceStatus = "reference_status"
             case missingReferenceWeeks = "missing_reference_weeks"
+            case uncertainty
+        }
+    }
+
+    /// R² on one common sample orders sources exactly as RMSE, so it uses the RMSE interval.
+    struct Uncertainty: Codable, Sendable {
+        let status: String
+        let reason: String?
+        let winner: String?
+        let mae: Gap?
+        let rmse: Gap?
+    }
+
+    struct Gap: Codable, Sendable {
+        let bestModel: String?
+        let bestExpert: String?
+        let bestModelMinusBestExpert: Double?
+        let ci: [Double]?
+        let verdict: String?
+
+        enum CodingKeys: String, CodingKey {
+            case ci, verdict
+            case bestModel = "best_model"
+            case bestExpert = "best_expert"
+            case bestModelMinusBestExpert = "best_model_minus_best_expert"
         }
     }
 
@@ -260,6 +314,7 @@ struct Comparison: Codable, Sendable {
         case excludedSources = "excluded_sources"
         case excludedComponents = "excluded_components"
         case cohortDefinitions = "cohort_definitions"
+        case evaluationSeasonNote = "evaluation_season_note"
         case coverage
         case modelReliability = "model_reliability"
         case expertReliability = "expert_reliability"

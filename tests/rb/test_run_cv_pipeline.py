@@ -116,7 +116,10 @@ def cv_pipeline_run(cv_splits, tmp_path_factory):
         np.random.seed(42)
         torch.manual_seed(42)
         t0 = time.time()
-        result = run_cv_pipeline("RB", cfg, full_df.copy(), test_df.copy(), seed=42)
+        # Attach fixture wall-clock metadata to a detached compatibility mapping:
+        # run_cv_pipeline returns a read-only TrainingResult (#1566), mirroring
+        # tests/qb/test_run_cv_pipeline.py.
+        result = run_cv_pipeline("RB", cfg, full_df.copy(), test_df.copy(), seed=42).copy()
         result["_elapsed"] = time.time() - t0
         return result
     finally:

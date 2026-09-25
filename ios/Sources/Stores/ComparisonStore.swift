@@ -5,16 +5,23 @@ import Foundation
 @Observable
 final class ComparisonStore {
     private let api: any APIProviding
+    private var loadGeneration = 0
 
     init(api: any APIProviding = APIClient.shared) { self.api = api }
     var state: LoadState<Comparison> = .idle
 
     func load() async {
+        guard !Task.isCancelled else { return }
         if state.value != nil { return } // scoring-invariant (PPR-pinned) — fetch once
+        loadGeneration += 1
+        let generation = loadGeneration
         state = .loading
         do {
-            state = .loaded(try await api.get(.comparison, as: Comparison.self))
+            let value = try await api.get(.comparison, as: Comparison.self)
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            state = .loaded(value)
         } catch {
+            guard generation == loadGeneration, !Task.isCancelled else { return }
             state = .failed((error as? APIError)?.errorDescription ?? error.localizedDescription)
         }
     }

@@ -50,8 +50,12 @@ def _patch_cv(monkeypatch):
         )
         return {"cv_metrics": {"ridge": {}, "nn": {}}}
 
+    def _load(*, impute_context):
+        assert impute_context is False
+        return k_df.copy()
+
     for mod in (k_data, k_pipe):
-        monkeypatch.setattr(mod, "load_data", lambda: k_df.copy(), raising=False)
+        monkeypatch.setattr(mod, "load_data", _load, raising=False)
         monkeypatch.setattr(mod, "load_kicks", lambda df: kicks_df, raising=False)
     for mod in (k_targets, k_pipe):
         monkeypatch.setattr(mod, "compute_targets", lambda df: df, raising=False)
@@ -85,9 +89,15 @@ def test_run_k_cv_does_not_mutate_passed_config(monkeypatch):
     _patch_cv(monkeypatch)
     import src.k.run_pipeline as k_pipe
 
-    custom = {"targets": ["fg_made"], "attn_kick_stats": [], "attn_max_games": 5}
+    custom = {
+        "targets": ["fg_made"],
+        "attn_kick_stats": [],
+        "attn_max_games": 5,
+        "fill_nans_fn": k_pipe.CONFIG["fill_nans_fn"],
+    }
     k_pipe.run_cv(config=custom)
     assert "attn_history_builder_fn" not in custom  # copied, not mutated
+    assert custom["fill_nans_fn"] is k_pipe.CONFIG["fill_nans_fn"]
 
 
 @pytest.mark.unit

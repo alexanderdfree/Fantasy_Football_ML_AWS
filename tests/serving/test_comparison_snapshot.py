@@ -44,7 +44,7 @@ def _forbidden(*args, **kwargs):
 
 def test_published_comparison_never_reads_raw_references_or_recomputes(monkeypatch):
     frame = records()
-    frame.loc[0, "nflcom_comparison_pred_ppr"] = np.nan
+    frame.loc[0, "rotowire_comparison_pred_ppr"] = np.nan
     block = build_comparison_snapshot(frame, reference=_reference(frame))
     owner = _owner(frame, block)
     owner.publish()
@@ -59,7 +59,8 @@ def test_published_comparison_never_reads_raw_references_or_recomputes(monkeypat
     coverage = response.get_json()["coverage"]["weekly_reference_top24"]["WR"]
     assert coverage["n"] == 23 and coverage["cohort_n"] == 24
     assert coverage["reference_status"] == "available"
-    assert response.get_json()["subsets"]["weekly_reference_top24"]["WR"]["nflcom"]["mae"] == 7
+    assert response.get_json()["subsets"]["weekly_reference_top24"]["WR"]["rotowire"]["mae"] == 7
+    assert coverage["uncertainty"]["status"] == "available"
     assert response.headers["X-FFP-Snapshot-Generation"] == owner.snapshots.current().generation
 
 

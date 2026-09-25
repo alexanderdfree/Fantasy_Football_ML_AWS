@@ -113,8 +113,9 @@ The earlier CPU-era #1575 evidence remains available at its
 Those historical results are not AWS confirmation or evidence of accepted
 production defaults. All future fitting, including smoke tests, stays on Batch.
 
-> Reference recipe note (2026-09-18, PR #1595): `weekly_reference_top24` now keys on
-> `shared_components_v4` (all-zero provider rows are missing forecasts). Records produced
+> Reference recipe note (2026-09-25): `weekly_reference_top24` now keys on
+> `shared_components_v4`: RotoWire alone for offense and DST, ESPN for K, and all-zero
+> provider rows as missing forecasts. NFL.com is no longer averaged in. Records produced
 > under the v3 artifact carry a different `cohort_hash`, so a confirmation grid must be
 > re-run at one SHA after the v4 reference is published; `protocol.json` is byte-pinned
 > and still names the v3 recipe.

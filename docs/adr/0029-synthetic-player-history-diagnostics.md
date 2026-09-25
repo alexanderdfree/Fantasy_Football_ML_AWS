@@ -1,6 +1,6 @@
 # ADR-0029: Synthetic player-history diagnostics
 
-**Status:** Accepted (schema 3: forecast context, full-model replay and declared transforms for QB, RB, WR and TE; DST and K tracked below)
+**Status:** Accepted (schema 3: forecast context, full-model replay and declared transforms for QB, RB, WR, TE and DST; K tracked below)
 
 ## Context
 
@@ -17,8 +17,8 @@ recipes and artifacts separate from training splits, evaluation cohorts and
 `benchmark_history/`. Synthetic responses have no observed future outcome and
 must not be reported as forecast accuracy or used as synthetic training labels.
 
-Schema version 3 supports the flat skill positions (QB, RB, WR, TE) through a
-per-position registry and exports, per case, the attention history and the
+Schema version 3 supports the flat positions (QB, RB, WR, TE and DST) through
+a per-position registry and exports, per case, the attention history and the
 forecast game's static context:
 
 - A versioned JSON recipe specifies the seed, case count, history length, allowed
@@ -97,7 +97,7 @@ transforms and policy).
   usage stats, opaque externally modeled signals (`*_exp`, `qbr_total`,
   `pts_added`, and for RB/WR/TE the position-group shares, HHIs and
   opportunity index, whose denominators are team position-group totals that
-  the history does not carry), team totals with declared accounting (a stat
+  the history does not carry; DST's `opp_qb_epa`), team totals with declared accounting (a stat
   moves its team total one for one where the history carries that total:
   carries and targets everywhere, rushing yards for QB/RB, receiving yards for
   RB/WR/TE, RB receptions into `team_completions`; WR/TE receptions and
@@ -111,7 +111,8 @@ transforms and policy).
   `set_history_ppg` solves one factor per case so the window's mean projected
   points hit a target (usage stats may ride along; an unreachable target fails
   with the numbers). Per-position `transform_support` declines an op with a
-  stated reason before sampling.
+  stated reason before sampling: DST declines `set_history_ppg` because its
+  points include piecewise-constant points- and yards-allowed tier bonuses.
 - Relations (QB: `completions <= attempts`, `passing_tds <= completions`,
   `rushing_tds <= carries`, `carries <= team_rush_attempts`, interceptions
   within incompletions; RB: receptions within targets, touchdowns within
@@ -202,10 +203,74 @@ FF_FEATURE_CACHE_DISABLE=1 python -m src.analysis.synthetic_history_sources \
 ```
 
 Preparation uses the normal local raw dependencies; hydrate and verify the same
-release first (ADR-0026). Generation itself only reads the supplied parquet and
+release first (ADR-0026). Generation itself only reads the supplied parquets and
 recipe; it does not fetch data, train, invoke serving, or write production paths.
-The exporter covers the skill positions; DST and K have distinct loading paths
-and are tracked below.
+K has a distinct loading path and is tracked below.
+
+### DST: team donors and the opponent-offense stream
+
+DST rows are team-coded (`player_id` equals `recent_team`, no `season_type`),
+built by the DST runner from the raw caches rather than from split parquets,
+and scored with linear components plus points- and yards-allowed tier bonuses
+that the source computes itself; the generator recomputes the shared scoring
+and refuses a source whose `fantasy_points` disagree (`assert_equal`). The DST
+attention model reads a second stream: the forecast game's real opponent's
+prior regular-season offensive games (seven per-game stats, up to seventeen
+games, newest first). That stream is **never resampled or transformed** in
+any mode; generation builds it with the production opponent-history builder
+from a supplied per-game frame (`--opponent-per-game`), records the policy,
+exports the consumed rows as `opponent_games.parquet` and stores the tensors
+as `opponent_history` / `opponent_mask` in `history.npz`. Bootstrap and
+transformed DST cohorts therefore vary the defense's own history against the
+opponent's real form. The exporter publishes `dst.parquet`,
+`dst_opponent_per_game.parquet` (the production aggregation of the
+regular-season weekly player slice, with scores from the schedules cache) and
+`dst_opponent_weekly.parquet` (that slice), plus the raw-cache digests:
+
+```bash
+FF_FEATURE_CACHE_DISABLE=1 python -m src.analysis.synthetic_history_sources \
+  --position DST --output analysis_output/synthetic_sources/dst
+
+python -m src.analysis.synthetic_history \
+  --source analysis_output/synthetic_sources/dst/dst.parquet \
+  --opponent-per-game analysis_output/synthetic_sources/dst/dst_opponent_per_game.parquet \
+  --recipe src/analysis/synthetic_history_recipes/dst_replay.json \
+  --output analysis_output/synthetic/dst-replay-001
+
+python -m src.analysis.synthetic_replay \
+  --cohort analysis_output/synthetic/dst-replay-001 \
+  --output analysis_output/synthetic_replays/dst-replay-001 \
+  --families attn_nn ridge nn --sync \
+  --source analysis_output/synthetic_sources/dst/dst.parquet \
+  --opponent-weekly analysis_output/synthetic_sources/dst/dst_opponent_weekly.parquet
+```
+
+The replay's identity control rebuilds the opponent stream from the weekly
+slice through the production builder and requires it to match for every
+case in every mode (`opponent_stream` check, attention family only; flat
+families never read the frame); the builder reads the schedules cache for
+the opponent's points, so run the replay with the same `FF_CACHE_DIR` the
+export used, or the control fails loudly, and the replay manifest pins the
+schedules-cache digest it rebuilt from. Generation refuses an empty per-game
+frame, missing columns or non-finite observations, a game recorded with zero
+points but touchdowns (the builder's
+fill for a week absent from the schedules cache) and a forecast opponent-season
+absent from the frame, so a
+broken export cannot become silent zero padding; an opponent with no game
+before the forecast week is legitimate and recorded per case. Observed zero
+counts, including opponent windows with no interceptions or lost fumbles, are
+preserved. Because DST
+points are tiered, no per-unit scoring weights exist and the transform report
+records none. The exporter refuses to run when a raw cache is missing or the
+team-stats cache lacks the native loader's schema marker. It applies the existing
+cache-only source boundary during preparation, including for unsealed caches,
+and rejects concurrent raw-cache changes before publishing. It drops the
+network-fetched
+team-logo column so the export digest does not depend on connectivity. A checkpoint
+without an opponent stream cannot replay a DST cohort and vice versa. No
+DST relation holds by construction (fumble recoveries are not bounded by
+forced fumbles in the data) and no team total lives on the DST frame, so the
+DST schema declares bounds and counts only, with no team accounting.
 
 ```bash
 python -m src.analysis.synthetic_history \
@@ -235,9 +300,10 @@ Each new output directory contains:
 |---|---|
 | `games.parquet` | Case/step/block IDs, original donor player/season/week, teams, raw history signals (rewritten when transformed, with a `transformed` flag), historical projected-component points |
 | `donor_games.parquet` | Transformed cohorts only: the untransformed sampled window |
-| `cases.parquet` | Case index, forecast key, real prior games and exact-window flag, donor/sampled/generated history averages, unique donor-game counts |
+| `cases.parquet` | Case index, forecast key, real prior games and exact-window flag, donor/sampled/generated history averages, unique donor-game counts; positions with an opponent stream add the opponent's prior-game count |
 | `context.parquet` | Per case, the forecast game's teams and every unscaled production feature column |
-| `history.npz` | Unscaled `history` and Boolean `mask`; load with `allow_pickle=False` |
+| `history.npz` | Unscaled `history` and Boolean `mask`; positions with an opponent stream add `opponent_history` and `opponent_mask`; load with `allow_pickle=False` |
+| `opponent_games.parquet` | Positions with an opponent stream: the per-game rows each case's stream consumed, newest first (`history_slot`) |
 | `manifest.json` | Recipe, sampling identity, consumed-value/source-file hashes and their scope, implementation hashes, runtime versions, signal order, coverage, history kind, transform report, per-family readiness and artifact hashes |
 
 Replay a cohort against the position's served checkpoint (`--sync` pulls it
@@ -309,9 +375,10 @@ shared validator are the extension points):
 4. **Delivered:** position-specific schemas, checks and transform declarations
    for RB/WR/TE (flat), shipped replay and block-bootstrap recipes, and the
    skill-position source exporter.
-5. DST (team identities, no `season_type`, the opponent-offense stream as a
-   second, never-resampled history, tier scoring that keeps `fantasy_points`
-   as measured and declines `set_history_ppg`).
+5. **Delivered:** DST (team identities, no `season_type`, the opponent-offense
+   stream as a second, never-resampled history exported with its consumed
+   rows, tier scoring asserted equal to the shared scoring, `set_history_ppg`
+   declined, a raw-cache exporter and two recipes).
 6. K (nested per-kick history reconciled exactly against the weekly counts,
    `kicks.parquet`, four-dimensional tensors with an inner mask, seasons from
    2015, signed kicking total that declines `set_history_ppg`).
@@ -335,3 +402,14 @@ shared validator are the extension points):
   skill-position source exporter publishes prepared frames with hashes; six
   recipes ship in per-position PPG bands; player-seasons with duplicate game
   keys are excluded from the donor pool and recorded instead of rejected.
+- 2026-09-18: DST joins the registry with team donors, an asserted points
+  column, declared bounds and no accounting; the generator builds the
+  never-resampled opponent-offense stream from a supplied per-game frame and
+  exports it; the replay streams it to the checkpoint and its identity control
+  rebuilds it from the weekly slice; the exporter builds DST from the raw
+  caches; two DST recipes ship.
+- 2026-09-23: DST export checks team-cache compatibility before the native build
+  and enforces cache-only source reads throughout preparation; valid observed
+  zero turnover histories are preserved instead of treated as missing data.
+  Opponent weekly team-game keys must match finite schedule scores before the
+  native aggregation can zero-fill them; genuine observed shutouts remain valid.

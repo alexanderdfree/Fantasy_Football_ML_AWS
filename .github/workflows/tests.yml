@@ -61,6 +61,8 @@ jobs:
         with:
           # Need history to diff against the merge base / previous commit.
           fetch-depth: 0
+          # Partial clone: commits + trees only (history walks/diffs work); the ~200 MB of dead blobs are never downloaded.
+          filter: blob:none
 
       - id: scope
         run: |
@@ -128,7 +130,9 @@ jobs:
             echo 'shards=[]' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only "${diff_args[@]}")
+          # --no-renames: path listing needs no blob content (no lazy fetch under the
+          # partial clone); a rename lists both paths, which can only widen the scope.
+          files=$(git diff --name-only --no-renames "${diff_args[@]}")
           shards=$(printf '%s\n' "$files" | python3 -m src.scripts.scope_positions --mode test)
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
 
@@ -332,7 +336,7 @@ jobs:
         # the whole step (mirrors the "Trust Codecov CLI verification key" step).
         continue-on-error: true
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-${{ matrix.shard }}.xml
@@ -347,7 +351,7 @@ jobs:
         # Codecov upload/auth error (dependabot has no token; infra can flake).
         continue-on-error: true
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./junit-${{ matrix.shard }}.xml
@@ -367,6 +371,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # Partial clone: commits + trees only (history walks/diffs work); the ~200 MB of dead blobs are never downloaded.
+          filter: blob:none
 
       - id: changed
         run: |
@@ -381,7 +387,10 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only "${diff_args[@]}" | grep -qE '^src/serving/(frontend/|static/js/app\.js)'; then
+          # Assignment form so a failing `git diff` aborts under `set -e` instead of
+          # reading as "nothing changed" inside the `if`; --no-renames as in `detect`.
+          files=$(git diff --name-only --no-renames "${diff_args[@]}")
+          if printf '%s\n' "$files" | grep -qE '^src/serving/(frontend/|static/js/app\.js)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"

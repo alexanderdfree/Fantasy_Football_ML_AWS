@@ -132,7 +132,8 @@ model-head advancement does not mutate an already-built serving release: runtime
 consumers follow the complete snapshot pointer, not the individual model heads.
 Cache schema 12 includes the canonical data release and the separate expert
 display/comparison totals from ADR-0024, with all-zero provider rows scored as
-missing forecasts (schema 11 introduced the separate totals). Deployment binds that ID,
+missing forecasts and the forecast-free cohort inputs (pregame depth rank and
+prior-season importance); schema 11 introduced the separate totals. Deployment binds that ID,
 producer fingerprint and a verified snapshot generation into the task definition.
 Workers can refresh models within the same data release. If the global pointer
 moves to another release, an old task can recover its pinned immutable snapshot,

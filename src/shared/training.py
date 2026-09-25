@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from src.shared.aggregate_targets import infer_position, predictions_to_fantasy_points
 from src.shared.utils import (
     amp_dtype,
     cuda_graph_enabled,
@@ -19,6 +20,11 @@ from src.shared.utils import (
 )
 
 SUPPORTED_HEAD_LOSSES = ("huber", "mse", "poisson_nll", "hurdle_negbin", "hurdle_poisson")
+SELECTION_HISTORY_KEYS = {
+    "weighted_mae": "val_mae_weighted",
+    "weighted_rmse": "val_rmse_weighted",
+    "fantasy_rmse_ppr": "val_fantasy_rmse_ppr",
+}
 _TRUE_ENV = {"1", "true", "yes", "on"}
 _CUDA_GRAPH_RESTORE_BN_ENV = "FF_CUDA_GRAPH_RESTORE_BN"
 
@@ -1089,6 +1095,7 @@ class MultiHeadTrainer:
         log_every=10,
         epoch_callback=None,
         use_amp=False,
+        selection_metric="weighted_mae",
     ):
         self.model = model
         self.optimizer = optimizer
@@ -1099,8 +1106,18 @@ class MultiHeadTrainer:
         self.patience = patience
         self.scheduler_per_batch = scheduler_per_batch
         self.log_every = log_every
-        # Optional ``fn(epoch: int, avg_val_loss: float) -> None`` invoked once
-        # per epoch right after ``avg_val_loss`` is computed. Used by
+        if selection_metric not in SELECTION_HISTORY_KEYS:
+            raise ValueError(f"Unknown NN selection metric: {selection_metric}")
+        self.selection_metric = selection_metric
+        self.selection_position = infer_position(target_names)
+        if selection_metric == "fantasy_rmse_ppr" and self.selection_position is None:
+            raise ValueError(
+                "Fantasy-point selection requires a complete known position target set"
+            )
+        self.best_epoch = None
+        # Optional ``fn(epoch: int, selection_score: float) -> None`` invoked
+        # once per epoch right after the epoch's ``selection_metric`` score is
+        # computed (the quantity checkpoint selection uses). Used by
         # ``src/tuning/tune_nn.py`` to feed Optuna's pruner the trial's val
         # trajectory; if the callback raises (e.g. ``optuna.TrialPruned``) the
         # exception propagates and stops training. Default ``None`` keeps the
@@ -1500,15 +1517,25 @@ class MultiHeadTrainer:
             for k in [
                 "train_loss",
                 "val_loss",
+                "val_mae_weighted",
+                "val_rmse_weighted",
+                "val_selection_metric",
                 "epoch_sec",
                 "peak_mem_gb",
                 *[f"val_loss_{t}" for t in self.target_names],
                 *[f"val_mae_{t}" for t in self.target_names],
+                *[f"val_rmse_{t}" for t in self.target_names],
             ]
         }
-        # Weighted MAE used for early stopping mirrors the training loss's
-        # per-target weighting so high-scale targets (yards) don't dominate
-        # the selection criterion.
+        if self.selection_position is not None:
+            for fmt in ("ppr", "half_ppr", "standard"):
+                history[f"val_fantasy_rmse_{fmt}"] = []
+                history[f"val_fantasy_mae_{fmt}"] = []
+        # Loss-weighted MAE (the default selector) mirrors the training loss's
+        # per-target weighting so high-scale targets (yards) don't dominate the
+        # selection criterion. The weighted-RMSE and fantasy-point selectors
+        # are opt-in alternatives (``selection_metric``); every score is
+        # recorded so histories stay comparable across selectors.
         loss_weights = getattr(self.criterion, "loss_weights", None) or {}
         weight_sum = sum(loss_weights.get(t, 1.0) for t in self.target_names) or 1.0
         _cuda = torch.cuda.is_available() and self.device.type == "cuda"
@@ -1647,7 +1674,7 @@ class MultiHeadTrainer:
             # ``MultiTargetLoss._compute_loss_components`` (tensor-valued
             # components) instead of ``forward`` (float-valued).
             val_components_accum: dict[str, torch.Tensor] = {}
-            n_val_batches = 0
+            n_val_samples = 0
 
             with torch.no_grad():
                 if self._graphed_val is not None:
@@ -1658,14 +1685,16 @@ class MultiHeadTrainer:
                     # .item() syncs below).
                     gval = self._graphed_val
                     gval.replay()
-                    epoch_val_loss = epoch_val_loss + gval.loss_sum
+                    # The graph sums means of equally sized full batches.
+                    # Convert that prefix to a sample sum before adding its tail.
+                    epoch_val_loss = epoch_val_loss + gval.loss_sum * gval._bs
                     for k, acc in gval.comp_sums.items():
                         if k not in val_components_accum:
                             val_components_accum[k] = torch.zeros(
                                 (), device=self.device, dtype=torch.float32
                             )
-                        val_components_accum[k] = val_components_accum[k] + acc
-                    n_val_batches += gval.k
+                        val_components_accum[k] = val_components_accum[k] + acc * gval._bs
+                    n_val_samples += gval._n_fixed
                     for k in self.target_names:
                         all_preds[k].append(gval.pred_bufs[k])
                         all_targets[k].append(gval.target_prefix[k])
@@ -1677,14 +1706,17 @@ class MultiHeadTrainer:
                         preds, y_batch = self._forward_batch(batch)
                         loss, components = self.criterion._compute_loss_components(preds, y_batch)
 
-                    epoch_val_loss = epoch_val_loss + loss.detach().float()
+                    n_batch_samples = y_batch[self.target_names[0]].shape[0]
+                    epoch_val_loss = epoch_val_loss + loss.detach().float() * n_batch_samples
                     for k, v in components.items():
                         if k not in val_components_accum:
                             val_components_accum[k] = torch.zeros(
                                 (), device=self.device, dtype=torch.float32
                             )
-                        val_components_accum[k] = val_components_accum[k] + v.detach().float()
-                    n_val_batches += 1
+                        val_components_accum[k] = (
+                            val_components_accum[k] + v.detach().float() * n_batch_samples
+                        )
+                    n_val_samples += n_batch_samples
 
                     for k in self.target_names:
                         # Defer device→host transfer to one ``torch.cat(...)``
@@ -1695,29 +1727,23 @@ class MultiHeadTrainer:
                         all_targets[k].append(y_batch[k].detach())
 
             # Single end-of-epoch sync (forces accumulator off-GPU). Guard
-            # against ``n_val_batches == 0`` — same rationale as the train
-            # NaN guard above.
-            avg_val_loss = (epoch_val_loss / n_val_batches).item() if n_val_batches > 0 else 0.0
+            # against an empty loader. Weight each observation equally rather
+            # than giving a short final batch the weight of a full batch.
+            avg_val_loss = (epoch_val_loss / n_val_samples).item() if n_val_samples > 0 else 0.0
             history["val_loss"].append(avg_val_loss)
-
-            if self.epoch_callback is not None:
-                # Raises (e.g. optuna.TrialPruned) propagate up to whoever
-                # called trainer.train() — that is the intended control flow
-                # for tuner-driven pruning. Do NOT swallow.
-                self.epoch_callback(epoch, avg_val_loss)
 
             # Per-target val losses — single host sync per target per epoch
             # (was per-batch via ``.item()`` inside ``MultiTargetLoss.forward``).
             for t in self.target_names:
                 key = f"loss_{t}"
-                if key in val_components_accum and n_val_batches > 0:
+                if key in val_components_accum and n_val_samples > 0:
                     history[f"val_loss_{t}"].append(
-                        (val_components_accum[key] / n_val_batches).item()
+                        (val_components_accum[key] / n_val_samples).item()
                     )
                 else:
                     history[f"val_loss_{t}"].append(0.0)
 
-            # Per-target MAE — single GPU→CPU transfer per target per epoch
+            # Per-target errors — single GPU→CPU transfer per target per epoch
             # (was per-batch). ``all_preds[k]`` / ``all_targets[k]`` are lists
             # of GPU tensors accumulated above; ``torch.cat`` stays on-device
             # and the trailing ``.cpu().numpy()`` is the only host transfer.
@@ -1725,13 +1751,60 @@ class MultiHeadTrainer:
             # ``torch.cat([])`` raises, and a NaN feeds into the early-stop
             # comparison as ``inf < float('inf')`` = False, silently disabling
             # the early-stop reset and the best-checkpoint save.
+            val_preds = {}
+            val_targets = {}
             for k in self.target_names:
-                if n_val_batches > 0:
+                if n_val_samples > 0:
                     y_pred_all = torch.cat(all_preds[k]).cpu().numpy()
                     y_true_all = torch.cat(all_targets[k]).cpu().numpy()
-                    history[f"val_mae_{k}"].append(np.mean(np.abs(y_pred_all - y_true_all)))
+                    val_preds[k] = y_pred_all
+                    val_targets[k] = y_true_all
+                    errors = y_pred_all - y_true_all
+                    history[f"val_mae_{k}"].append(np.mean(np.abs(errors)))
+                    # Pool every validation row before taking the root; averaging
+                    # batch RMSEs would overweight a short final batch.
+                    history[f"val_rmse_{k}"].append(np.sqrt(np.mean(np.square(errors))))
                 else:
                     history[f"val_mae_{k}"].append(float("inf"))
+                    history[f"val_rmse_{k}"].append(float("inf"))
+
+            for metric in ("mae", "rmse"):
+                weighted = (
+                    sum(
+                        loss_weights.get(t, 1.0) * history[f"val_{metric}_{t}"][-1]
+                        for t in self.target_names
+                    )
+                    / weight_sum
+                )
+                history[f"val_{metric}_weighted"].append(float(weighted))
+            if self.selection_position is not None:
+                for fmt in ("ppr", "half_ppr", "standard"):
+                    if n_val_samples > 0:
+                        pred_points = predictions_to_fantasy_points(
+                            self.selection_position, val_preds, fmt
+                        )
+                        actual_points = predictions_to_fantasy_points(
+                            self.selection_position, val_targets, fmt
+                        )
+                        errors = pred_points - actual_points
+                        rmse = float(np.sqrt(np.mean(np.square(errors))))
+                        mae = float(np.mean(np.abs(errors)))
+                    else:
+                        rmse = mae = float("inf")
+                    history[f"val_fantasy_rmse_{fmt}"].append(rmse)
+                    history[f"val_fantasy_mae_{fmt}"].append(mae)
+            selection_score = history[SELECTION_HISTORY_KEYS[self.selection_metric]][-1]
+            if not np.isfinite(selection_score):
+                selection_score = float("inf")
+            history["val_selection_metric"].append(selection_score)
+            if self.epoch_callback is not None:
+                # Raises (e.g. optuna.TrialPruned) propagate up to whoever
+                # called trainer.train() — that is the intended control flow
+                # for tuner-driven pruning. Do NOT swallow. The callback
+                # receives the checkpoint-selection score (``selection_metric``)
+                # so a tuner prunes on the quantity it selects on; the plateau
+                # scheduler below still steps on ``avg_val_loss``.
+                self.epoch_callback(epoch, selection_score)
 
             # Per-epoch wall-clock is a host-side measurement; the
             # ``.item()`` on the loss accumulators and the ``.cpu().numpy()``
@@ -1761,16 +1834,11 @@ class MultiHeadTrainer:
                 if self._graphed_opt is not None:
                     self._graphed_opt.refresh_lr_from_scheduler()
 
-            # --- Early Stopping (loss-weighted MAE) ---
-            val_mae_weighted = (
-                sum(
-                    loss_weights.get(t, 1.0) * history[f"val_mae_{t}"][-1]
-                    for t in self.target_names
-                )
-                / weight_sum
-            )
-            if val_mae_weighted < self.best_val_metric:
-                self.best_val_metric = val_mae_weighted
+            # --- Early stopping and checkpoint selection (``selection_metric``;
+            # default loss-weighted MAE, strict ``<`` improvement) ---
+            if np.isfinite(selection_score) and selection_score < self.best_val_metric:
+                self.best_val_metric = selection_score
+                self.best_epoch = epoch + 1
                 self.best_model_state = {k: v.clone() for k, v in self.model.state_dict().items()}
                 self.epochs_without_improvement = 0
             else:
@@ -1780,7 +1848,7 @@ class MultiHeadTrainer:
                     if self.best_model_state is not None:
                         self.model.load_state_dict(self.best_model_state)
                     else:
-                        print("  WARNING: no valid checkpoint saved (all epochs had NaN MAE)")
+                        print("  WARNING: no valid checkpoint saved (non-finite validation score)")
                     break
 
             # --- Logging ---
@@ -1792,7 +1860,7 @@ class MultiHeadTrainer:
                     f"Epoch {epoch + 1:3d} | "
                     f"Train: {avg_train_loss:.4f} | "
                     f"Val: {avg_val_loss:.4f} | "
-                    f"MAE wtd: {val_mae_weighted:.3f} | "
+                    f"{self.selection_metric}: {selection_score:.3f} | "
                     f"epoch_sec={_epoch_sec:.2f} peak_mem_gb={_peak_mem_gb:.3f} | "
                     f"{target_maes}"
                 )
@@ -1803,6 +1871,28 @@ class MultiHeadTrainer:
             if not _fixed_epochs and self.best_model_state is not None:
                 self.model.load_state_dict(self.best_model_state)
 
+        selected_epoch = len(history["val_selection_metric"]) if _fixed_epochs else self.best_epoch
+        history["checkpoint_selection"] = {
+            "metric": self.selection_metric,
+            "scoring_format": "ppr" if self.selection_metric == "fantasy_rmse_ppr" else None,
+            "epoch": selected_epoch,
+            "score": (
+                history["val_selection_metric"][selected_epoch - 1]
+                if selected_epoch is not None and selected_epoch > 0
+                else None
+            ),
+            "fixed_epochs": _fixed_epochs,
+            "validation_metrics": {
+                key: values[selected_epoch - 1]
+                for key, values in history.items()
+                if selected_epoch is not None
+                and selected_epoch > 0
+                and key.startswith("val_fantasy_")
+            },
+            "validation_curve": [
+                v if np.isfinite(v) else None for v in history["val_selection_metric"]
+            ],
+        }
         return history
 
 

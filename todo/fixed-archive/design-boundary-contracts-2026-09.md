@@ -55,3 +55,20 @@ presented as model-quality validation.
 identity. Capture complete inputs and fitted state, make approval distinct from
 candidate existence, and protect the bytes actually consumed. The design and
 migration boundaries are recorded once in ADR-0027 and the build-plan runbook.
+
+**Test-contract follow-up (2026-09-23):** The full Batch unit gate exposed two
+filesystem-clock assumptions and two ordered-test pollution cases. The cheap
+split/schedule front-end keys observe path, device, inode, size, mtime and ctime;
+they do not universally detect changed bytes with identical metadata. Production
+parquet writers publish by atomic replacement, which changes inode. Tests now
+preserve size/mtime and hold ctime constant while checking replacement, separately
+cover ctime-only changes, and check directory identity. An in-place rewrite with
+every observed stat field unchanged is unobservable to a stat-only key.
+
+Ordered checks also reproduced the Batch-entry fixture leaking
+`FF_FEATURE_CACHE_DISABLE` into cache priming, and the synthetic DST exporter test
+caching patched callbacks before native CV. The owning fixtures/tests now restore
+the environment and initialize the native runner before patches. Assertions and
+test coverage are retained. These are test-isolation/contract repairs; no runtime
+cache implementation or model behavior changed. Full-suite acceptance remains an
+AWS Batch gate.

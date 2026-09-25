@@ -1,10 +1,12 @@
 """Retrospective weekly evaluation of cached forecasts and a release changelog.
 
 Each comparison group has a fixed source set matching the Comparison tab's
-displayed sources, so both surfaces grade one regular-season player-week
+graded sources, so both surfaces grade one regular-season player-week
 intersection on shared-component actuals for every MAE and per-model edge.
 Models retain their own records throughout the season; no outcome-selected
-winner is used to construct a track record. Release entries remain historical.
+winner is used to construct a track record. Each season edge carries a paired,
+player-clustered bootstrap interval, so a positive point edge inside noise is
+reported as a tie. Release entries remain historical.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import threading
 import numpy as np
 import pandas as pd
 
+from src.config import TEST_SEASONS
 from src.serving import core
 from src.serving.serialization import _actual_col, _pred_col
 from src.shared.comparison_scoring import (
@@ -24,6 +27,8 @@ from src.shared.comparison_scoring import (
     score_actual_components,
     scoring_components,
 )
+from src.shared.comparison_uncertainty import METHOD as UNCERTAINTY_METHOD
+from src.shared.comparison_uncertainty import group_gap_intervals
 from src.shared.evaluation_cohorts import regular_season_rows
 from src.shared.expert_eligibility import eligible_forecast_rows
 
@@ -32,8 +37,10 @@ TIMELINE_GROUPS = {
     "offense": {
         "label": "Offense",
         "positions": ("QB", "RB", "WR", "TE"),
-        "experts": ("nflcom", "rotowire", "espn"),
-        "excluded_sources": {},
+        # The two independent providers the Comparison tab grades. NFL.com is
+        # the RotoWire series at uncontrolled capture times (EXCLUDED_SOURCES).
+        "experts": ("rotowire", "espn"),
+        "excluded_sources": {"nflcom": EXCLUDED_SOURCES["QB"]["nflcom"]},
     },
     "k": {
         "label": "Kickers",
@@ -140,6 +147,27 @@ def _matched_metrics(frame, scoring, sources, experts):
     }
 
 
+def _season_edge_intervals(frame, scoring, sources, experts) -> dict:
+    """Each model's season edge (best expert MAE minus model MAE) with a paired CI.
+
+    The best expert is chosen inside every bootstrap replicate, matching the
+    edge definition. ``verdict`` is ``model`` only when the whole interval is
+    positive, ``experts`` when it is wholly negative, and ``tie`` otherwise.
+    """
+    if frame.empty or "player_id" not in frame:
+        return {}
+    columns = {source: _pred_col(source, scoring) for source in sources}
+    gaps = group_gap_intervals(frame, _actual_col(scoring), columns, _TIMELINE_MODELS, experts)
+    if gaps.get("status") != "available":
+        return {}
+    verdicts = {"models": "model", "experts": "experts", "tie": "tie"}
+    out = {}
+    for model, cell in gaps["mae"]["models"].items():
+        low, high = cell["ci"]
+        out[model] = {"ci": [round(-high, 4), round(-low, 4)], "verdict": verdicts[cell["verdict"]]}
+    return out
+
+
 def compute_timeline(scoring: str, group: str = "offense", season: int | None = None) -> dict:
     """One season and compatible position/source group; never mix their records."""
     results, _ = core._get_data(scoring)
@@ -187,10 +215,13 @@ def compute_timeline(scoring: str, group: str = "offense", season: int | None = 
     summary = _matched_metrics(results, scoring, sources, config["experts"])
     summary["total_weeks"] = len(weekly)
     summary["evaluated_weeks"] = sum(w["status"] == "available" for w in weekly)
+    intervals = _season_edge_intervals(results, scoring, sources, config["experts"])
     summary["models"] = {
         model: {
             "mae": summary["mae"][model],
             "edge": summary["edges"][model],
+            "edge_ci": intervals.get(model, {}).get("ci"),
+            "edge_verdict": intervals.get(model, {}).get("verdict"),
             "beat_experts": wins[model],
             "evaluated_weeks": summary["evaluated_weeks"],
         }
@@ -214,4 +245,12 @@ def compute_timeline(scoring: str, group: str = "offense", season: int | None = 
         "excluded_sources": config["excluded_sources"],
         "sample_basis": "shared_player_weeks",
         "edge_basis": "common_rows_per_model",
+        "edge_uncertainty": {**UNCERTAINTY_METHOD, "metrics": ["mae"]},
+        # The configured test season is the season A/B decisions are judged on.
+        "evaluation_season_note": (
+            f"Model changes were compared on the {season} season during development, so its "
+            "record is a development-season backtest, not an untouched holdout."
+            if season in TEST_SEASONS
+            else None
+        ),
     }

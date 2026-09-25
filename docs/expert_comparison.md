@@ -3,11 +3,25 @@
 > **Evaluation correction (2026-09-10):** the live Comparison tab now computes
 > every source's metrics from the same cached player-weeks and regular-season
 > actuals restricted to shared projected components, with PPR weights. DST points
-> allowed is excluded because provider definitions differ. Its primary cohort
-> is the consensus weekly top 24 (equal-weight mean of every displayed source);
-> the archived NFL.com/RotoWire reference is a secondary view, and provider rows
-> with every shared component at zero are missing forecasts, not zeros. Seasonal
-> top-12/top-30 and weekly leader capture are separate diagnostics. Earlier tables
+> allowed is excluded because provider definitions differ.
+>
+> **Fairness re-audit (2026-09-25):**
+> - The headline cohort is the pregame depth-chart starters. `elite_top24`
+>   (prior-season importance) is also served. Neither is selected by any graded
+>   forecast.
+> - The archived reference (RotoWire; ESPN for K) is a secondary view.
+> - NFL.com offense is displayed but not graded. Its archive is RotoWire's
+>   projection series, and 10 of 18 2025 weekly files were captured before the
+>   final injury report.
+> - Provider rows with every shared component at zero are missing forecasts, not
+>   zeros.
+> - A row names a winner only when a paired, player-clustered bootstrap interval
+>   excludes zero under both MAE and RMSE. On the 2025 slate served at this
+>   audit, no position meets that bar.
+> - 2025 is the season model changes were compared on, so it is a
+>   development-season backtest, not an untouched holdout.
+>
+> Seasonal top-12/top-30 and weekly leader capture are separate diagnostics. Earlier tables
 > below are dated research snapshots: the former static summary used modeled-stat
 > actuals and postseason-influenced leader IDs, and coverage was not always shared.
 > Do not read those snapshots as the current scoreboard. See [ADR-0024](adr/0024-fair-comparison-and-evaluation-cohorts.md)
@@ -20,7 +34,7 @@ This document compares our model's weekly fantasy point predictions against publ
 **Our evaluation setup:**
 - **Training data:** 2013-2023 NFL seasons (~11 seasons of weekly player data; 2012 is loaded for prior-season context only, not trained on)
 - **Validation set:** 2024 NFL season (for hyperparameter tuning and early stopping)
-- **Test set:** 2025 NFL season (held out entirely from training and validation)
+- **Test set:** 2025 NFL season (never fit or early-stopped on, but used to compare model changes during development, so it is a development-season backtest rather than an untouched holdout)
 - **Scoring format:** Full PPR (1 point per reception)
 - **Primary metric:** MAE (Mean Absolute Error) on total weekly fantasy points
 - **Player pool:** All rostered players at each position with recorded game stats
@@ -110,6 +124,8 @@ Unlike the FFA-tracked sources above (which publish only relative accuracy ranki
 
 ### Side-by-side With Our Model (PPR, 2025)
 
+> **Dated research snapshot.** This table picks the best of four models after the fact and grades NFL.com (now excluded as a stale RotoWire copy) on different rows from the models. It is not a fair scoreboard; see the live Comparison tab's paired intervals.
+
 Pairing the NFL.com MAEs above with the per-position best from the **current** fleet (the 2026-07-05 benchmark run `benchmark_history/2026-07-05T09-04-24_b8d6c00.json` — the retrain generation serving deploys; see the vintage note above for why this table no longer sources the dated 2026-05-29 snapshot):
 
 | Position | Our MAE (best model) | NFL.com MAE | Delta |
@@ -127,12 +143,12 @@ The same-sample significance tests below confirm the eyeball read: QB/RB/WR/TE a
 
 **Caveats:**
 - Single test season (2025). 2024 was used for hyperparameter tuning, so it's not a clean held-out comparison; the analysis script is multi-season-capable and will pool across years automatically as `TEST_SEASONS` grows.
-- NFL.com's player pool is implicitly curated (they only project players likely to play); our model evaluates every rostered player at each position. NFL.com's MAE is on `n_matched` rows where both sides have a projection, so this is partially controlled, but coverage differences in marginal players still affect the per-position N.
+- NFL.com's archive lists every rostered player: 64–77% of 2025 offense rows are all-zero placeholders, now treated as missing forecasts, not 0.0. Its component forecasts reproduce RotoWire's series, and 10 of 18 2025 weekly files predate the final injury report, so the live comparison no longer grades NFL.com offense.
 - The 92.2% NFL.com name-match rate (see the loader logs) drops ~7.8% of NFL.com rows that couldn't be joined to a `gsis_id` — mostly free-agent placeholders ("Alex Hale (K, FA)", etc.).
 
 ### Significance-tested head-to-head (`analysis_expert_comparison.py`)
 
-The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison against **each expert** (NFL.com, Sleeper/RotoWire, and FFToday — see below). For a given expert it joins our model's held-out per-player-week predictions to that expert on the **intersection** where both project, scores both against the same ground-truth `fantasy_points` column (genuinely *paired* errors), and adds:
+The baseline table above scores NFL.com against actuals across every NFL.com-matched row. A second script — [`src/analysis/analysis_expert_comparison.py`](../src/analysis/analysis_expert_comparison.py) — runs the stricter, decision-relevant comparison against **each expert** (NFL.com, Sleeper/RotoWire, and FFToday — see below). For a given expert it joins our model's held-out per-player-week predictions to that expert on the **intersection** where both project, scores both against the same shared-component truth (the script rewrites its `fantasy_points` column to the ADR-0024 component total, so the errors are genuinely *paired*), and adds:
 
 - **MAE and RMSE** for each side (see the loss-vs-metric caveat above for why both).
 - **Ranking** quality — top-K hit-rate and Spearman ρ — because fantasy is a selection problem and rank metrics are loss-agnostic.

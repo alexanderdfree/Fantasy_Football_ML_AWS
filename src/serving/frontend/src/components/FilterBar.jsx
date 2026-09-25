@@ -6,7 +6,7 @@
  * control is measured to compute the fit; editing the Filters checklist
  * switches to manual picks. A control that leaves the bar has its state reset
  * (via onResetFilter) so it can't invisibly constrain the table. */
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useFilterFit } from "../hooks/useFilterFit.js";
 
 export const AGE_BUCKETS = [
@@ -21,18 +21,23 @@ export function ageBucketFor(value) {
     return AGE_BUCKETS.find((b) => b.value === value) || AGE_BUCKETS[0];
 }
 
-export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFilter, stats }) {
+export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFilter }) {
     const keys = items.map((i) => i.value);
     const { rowRef, measureRef, fit } = useFilterFit(keys.length);
     // null → auto-fit (show what the row can hold); an array → manual picks.
     const [manual, setManual] = useState(null);
     const visible = manual || keys.slice(0, fit);
+    const previousKeys = useRef(keys);
+    const keySignature = keys.join("|");
 
     useEffect(() => {
-        if (manual) return;
-        keys.slice(fit).forEach(onResetFilter);
+        // A new data slice can remove Age/Class entirely (e.g. DST). Reset
+        // their values even in manual mode so a hidden filter cannot reject it.
+        previousKeys.current.filter((key) => !keys.includes(key)).forEach(onResetFilter);
+        previousKeys.current = keys;
+        if (!manual) keys.slice(fit).forEach(onResetFilter);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fit, manual]);
+    }, [fit, manual, keySignature]);
 
     const onFiltersChange = (next) => {
         const removed = visible.filter((k) => !next.includes(k));
@@ -55,50 +60,6 @@ export function AutoFitFilterBar({ items, renderControl, renderMenus, onResetFil
                     <Fragment key={i.value}>{renderControl(i.value, true)}</Fragment>
                 ))}
                 <div className="filter-menus">{renderMenus({ visibleFilters: visible, onFiltersChange, measure: true })}</div>
-            </div>
-            {stats || null}
-        </div>
-    );
-}
-
-/* Live readout of the filtered slice — average actual output and which
- * source best predicts these exact rows (updates with every filter change). */
-export function FilterSliceStats({ rows, sources }) {
-    const withActual = rows.filter((p) => p.actual != null);
-    if (!withActual.length) return null;
-    const avgActual = withActual.reduce((s, p) => s + p.actual, 0) / withActual.length;
-    let best = null;
-    for (const src of sources) {
-        let sum = 0;
-        let n = 0;
-        for (const p of withActual) {
-            const v = p[src.key];
-            if (v != null) { sum += Math.abs(v - p.actual); n += 1; }
-        }
-        if (n) {
-            const mae = sum / n;
-            if (!best || mae < best.mae) best = { label: src.label, mae };
-        }
-    }
-    return (
-        <div className="filters-stats-row">
-            <div className="stat-block-row">
-                <div className="stat-block">
-                    <span className="stat-block-label">Avg Actual</span>
-                    <span className="stat-block-value neutral">{avgActual.toFixed(1)}</span>
-                </div>
-                {best && (
-                    <div className="stat-block">
-                        <span className="stat-block-label">Most Accurate</span>
-                        <span className="stat-block-value">{best.label}</span>
-                    </div>
-                )}
-                {best && (
-                    <div className="stat-block">
-                        <span className="stat-block-label">Best MAE</span>
-                        <span className="stat-block-value neutral">{best.mae.toFixed(2)}</span>
-                    </div>
-                )}
             </div>
         </div>
     );

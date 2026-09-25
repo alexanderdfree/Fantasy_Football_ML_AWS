@@ -8,6 +8,7 @@ struct BenchmarkHistory: Codable, Sendable {
     let targetUnits: [String: String]
 
     struct Row: Codable, Sendable, Identifiable {
+        let runID: String?
         let timestamp: String?
         let gitHash: String?
         let prNumber: Int?
@@ -19,7 +20,12 @@ struct BenchmarkHistory: Codable, Sendable {
         let lgbm: [Pill]
         let totalElapsedSec: Double?
 
-        var id: String { gitHash ?? timestamp ?? "\(prNumber ?? -1)" }
+        var id: String {
+            if let runID = runID?.trimmingCharacters(in: .whitespacesAndNewlines), !runID.isEmpty {
+                return runID
+            }
+            return "\(gitHash ?? "unknown")|\(timestamp ?? "unknown")|\(prNumber ?? -1)"
+        }
 
         func pills(for model: PredictionModel) -> [Pill] {
             switch model {
@@ -32,6 +38,7 @@ struct BenchmarkHistory: Codable, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case timestamp, positions, ridge, nn, lgbm
+            case runID = "run_id"
             case gitHash = "git_hash"
             case prNumber = "pr_number"
             case trainingSkipped = "training_skipped"

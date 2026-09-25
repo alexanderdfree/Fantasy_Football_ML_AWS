@@ -22,8 +22,24 @@ EXCLUDED_COMPONENTS = {
 # NFL.com publishes bucket-scored kicker totals, without the made-yardage and
 # miss projections required by our K heads. Those totals cannot enter this
 # comparison. ESPN supplies all four K components.
+#
+# NFL.com offense is displayed but never graded. Its archived components match the
+# RotoWire series (94% of 2025 passing-yard forecasts within 0.01), so it is not an
+# independent expert. Its capture time is also uncontrolled: ten of the eighteen 2025
+# week files were committed before the final injury report and still project players
+# ruled Out. Grading it would count one provider twice at inconsistent information
+# times. (Audit 2026-09-25, ADR-0024.)
+_NFLCOM_OFFENSE_EXCLUSION = (
+    "NFL.com reproduces RotoWire's projection series, and its archive was captured "
+    "before the final injury report in 10 of 18 2025 weeks, so it is not graded as an "
+    "independent expert."
+)
 EXCLUDED_SOURCES = {
-    "K": {"nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."}
+    "QB": {"nflcom": _NFLCOM_OFFENSE_EXCLUSION},
+    "RB": {"nflcom": _NFLCOM_OFFENSE_EXCLUSION},
+    "WR": {"nflcom": _NFLCOM_OFFENSE_EXCLUSION},
+    "TE": {"nflcom": _NFLCOM_OFFENSE_EXCLUSION},
+    "K": {"nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."},
 }
 
 

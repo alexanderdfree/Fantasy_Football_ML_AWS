@@ -248,6 +248,9 @@ def build_defense_frame(
         schedules=schedules,
         team_stats=team_stats,
         scoring_events=before_week(scoring_events, season, week),
+        # The target week's scores are NaN by construction (above); keep those
+        # fixtures for their spread/total/is_home/opponent/rest context (#1520).
+        include_unplayed=True,
     )
     frame = dst_targets.compute_targets(frame)
     dst_features.compute_features(frame)

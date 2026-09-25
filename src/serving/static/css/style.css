@@ -1798,6 +1798,16 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 .comparison-table thead th.comparison-num { text-align: right; }
 .comparison-empty { color: var(--text-muted); }
 .comparison-best { color: var(--positive); font-weight: 700; }
+/* Paired-interval verdict under each position: muted for a tie, emphasized when decided. */
+.comparison-gap {
+    display: block;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-top: 2px;
+    max-width: 22em;
+}
+.comparison-gap-decided { color: var(--text-secondary); font-weight: 600; }
 .comparison-arch {
     display: block;
     font-size: 11px;
@@ -1891,8 +1901,8 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 
 /* === Design-system filter bar v2 (dropdown menus, auto-fit rows, fields) ===
    Plain token-driven classes lifted from the design system's component CSS;
-   consumed by the React views' Columns/Filters menus, Age/Class filters, the
-   team labels, and the filtered-slice stat readout. */
+   consumed by the React views' Columns/Filters menus, Age/Class filters,
+   the team labels and the stat blocks Timeline renders. */
 
 .field-label {
     display: block;
@@ -2083,7 +2093,7 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
     width: max-content;
 }
 
-/* ---- Filtered-slice stat readout (AVG ACTUAL / MOST ACCURATE / BEST MAE) ---- */
+/* ---- Stat-block readout (Timeline per-model MAE) ---- */
 .stat-block { display: flex; flex-direction: column; gap: 2px; }
 .stat-block-label {
     font-size: var(--font-size-xs);
@@ -2100,11 +2110,6 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 }
 .stat-block-value.neutral { color: var(--text-primary); }
 .stat-block-row { display: flex; gap: var(--space-6); }
-.filters-stats-row {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: var(--space-3);
-}
 
 /* ---- Team abbreviation + logo (logo matches surrounding text size) ---- */
 .team-label {

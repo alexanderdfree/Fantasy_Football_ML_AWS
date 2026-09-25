@@ -146,7 +146,7 @@ jobs:
       - name: Configure AWS credentials
         if: github.event_name == 'workflow_run'
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c  # v6.2.4
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -216,7 +216,7 @@ jobs:
     steps:
       - name: Configure AWS credentials
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c  # v6.2.4
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -227,6 +227,9 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           fetch-depth: 0
+          # Full clone on purpose (no blob filter): the pinned-release step reads blobs of
+          # other commits (`git show <sha>:<path>`) and the history append rebases; a
+          # partial clone would make a multi-hour run depend on lazy fetches mid-run.
           # Admin PAT so the later benchmark-history push bypasses main's
           # required status checks (enforce_admins=false on classic protection).
           token: ${{ secrets.PROTECTED_PUSH_TOKEN }}
@@ -724,7 +727,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

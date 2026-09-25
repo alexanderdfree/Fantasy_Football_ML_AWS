@@ -176,6 +176,43 @@ def test_regen_step_calls_build_features():
     # tests/maintenance/test_worker.py, so CI and Fargate cannot drift apart.
 
 
+def test_regen_http_timeout_reaches_nflreadpy_without_changing_cache_policy(monkeypatch):
+    """Exercise the actual package boundary without HTTP, producers, or fitting."""
+    import importlib
+    from io import BytesIO
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    import polars as pl
+
+    config = importlib.import_module("nflreadpy.config")
+    from nflreadpy.downloader import NflverseDownloader
+
+    document = _load_workflow()
+    step = next(
+        s for s in _refresh_job_steps() if s.get("name") == "Regenerate splits from nflverse + PBP"
+    )
+    assert document["jobs"]["refresh"]["timeout-minutes"] == 45
+    assert step["env"]["NFLREADPY_CACHE"] == "off"
+    assert step["env"]["NFLREADPY_TIMEOUT"] == "120"
+    for name in ("NFLREADPY_CACHE", "NFLREADPY_TIMEOUT"):
+        monkeypatch.setenv(name, step["env"][name])
+    monkeypatch.setattr(config, "config", config.NflreadpyConfig(_env_file=None))
+    downloader = NflverseDownloader()
+    downloader.cache = SimpleNamespace(get=lambda *a, **kw: None, set=lambda *a, **kw: None)
+    buffer = BytesIO()
+    pl.DataFrame({"season": [2012]}).write_parquet(buffer)
+    response = SimpleNamespace(headers={}, content=buffer.getvalue(), raise_for_status=lambda: None)
+    get = Mock(return_value=response)
+    monkeypatch.setattr(downloader.session, "get", get)
+    result = downloader.download("nflverse-data", "pbp/play_by_play_2012.parquet", season=2012)
+    assert result["season"].to_list() == [2012]
+    assert get.call_args.kwargs == {"timeout": 120, "stream": True}
+    assert get.call_args.args == (
+        "https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_2012.parquet",
+    )
+
+
 def test_verify_step_gates_s3_upload():
     """A ``Verify engineered columns present`` step MUST run between the
     regen and the S3 upload. Catches the 8c46b59 regression if a future

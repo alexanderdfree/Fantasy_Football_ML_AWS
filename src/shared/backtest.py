@@ -36,8 +36,9 @@ def run_weekly_simulation(
     season_preds = {name: [] for name in pred_columns}
     season_true = []
 
-    for week in sorted(test_df["week"].unique()):
-        week_df = test_df[test_df["week"] == week]
+    week_keys = ["season", "week"] if "season" in test_df else ["week"]
+    for key, week_df in test_df.groupby(week_keys, sort=True):
+        identity = dict(zip(week_keys, key, strict=True))
         if len(week_df) == 0:
             continue
 
@@ -49,7 +50,7 @@ def run_weekly_simulation(
             season_preds[model_name].extend(y_pred)
 
             metrics = compute_metrics(y_true, y_pred)
-            metrics["week"] = week
+            metrics.update(identity)
             weekly_metrics[model_name].append(metrics)
 
             if len(week_df) >= top_k:
@@ -61,13 +62,11 @@ def run_weekly_simulation(
                     warnings.simplefilter("ignore")
                     corr, _ = spearmanr(week_df[pred_col], week_df[true_col])
                 if np.isnan(corr):
-                    print(
-                        f"  WARNING: Spearman NaN for {model_name} week {week} (n={len(week_df)})"
-                    )
+                    print(f"  WARNING: Spearman NaN for {model_name} {identity} (n={len(week_df)})")
 
                 weekly_ranking[model_name].append(
                     {
-                        "week": week,
+                        **identity,
                         "top_k_hit_rate": hit_rate,
                         "spearman": corr,
                     }
@@ -97,8 +96,17 @@ def plot_weekly_accuracy(sim_results: dict, position: str, save_path: str) -> No
     """Two-panel figure: weekly MAE and top-12 hit rate."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
+    seasons = {
+        row.get("season") for weekly in sim_results["weekly_metrics"].values() for row in weekly
+    }
+
+    def week_labels(weekly):
+        if len(seasons) > 1:
+            return [f"{w['season']} W{w['week']}" for w in weekly]
+        return [w["week"] for w in weekly]
+
     for model_name, weekly in sim_results["weekly_metrics"].items():
-        weeks = [w["week"] for w in weekly]
+        weeks = week_labels(weekly)
         maes = [w["mae"] for w in weekly]
         ax1.plot(weeks, maes, label=model_name, marker="o", markersize=3)
     ax1.set_xlabel("Week")
@@ -109,13 +117,17 @@ def plot_weekly_accuracy(sim_results: dict, position: str, save_path: str) -> No
     for model_name, weekly in sim_results["weekly_ranking"].items():
         if not weekly:
             continue
-        weeks = [w["week"] for w in weekly]
+        weeks = week_labels(weekly)
         hit_rates = [w["top_k_hit_rate"] for w in weekly]
         ax2.plot(weeks, hit_rates, label=model_name, marker="o", markersize=3)
     ax2.set_xlabel("Week")
     ax2.set_ylabel("Top-12 Hit Rate")
     ax2.set_title(f"{position} Weekly Top-12 Hit Rate")
     ax2.legend()
+
+    if len(seasons) > 1:
+        for ax in (ax1, ax2):
+            ax.tick_params(axis="x", labelrotation=45)
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)

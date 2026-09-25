@@ -69,9 +69,13 @@ _KEYS = ["player_id", "season", "week"]
 _NFLCOM_POSITIONS = frozenset({"QB", "RB", "WR", "TE"})
 _ROTOWIRE_POSITIONS = frozenset({"QB", "RB", "WR", "TE", "DST"})
 
+# Must match the committed comparison_experts.json note this script regenerates.
 _NFLCOM_NOTE = (
-    "NFL.com weekly projections from the hvpkod/NFL-Data archive, scored through "
-    "our PPR aggregator. Curated to likely-to-play players (no DST projections)."
+    "NFL.com weekly projections from the hvpkod/NFL-Data archive, shown for reference "
+    "but not graded. The archive reproduces RotoWire’s projection series (94% of "
+    "2025 passing-yard forecasts match within 0.01), and 10 of 18 weekly files were "
+    "captured before the final injury report. Rostered players without a projection "
+    "appear as all-zero rows and are missing forecasts, never zeros. No DST projections."
 )
 _ROTOWIRE_NOTE = (
     "RotoWire projections via Sleeper's unofficial API — a single provider, not a "
@@ -99,7 +103,11 @@ def _round_metrics(actual: np.ndarray, pred: np.ndarray) -> dict | None:
 
 
 def _position_actuals(
-    pos: str, offense_actuals: pd.DataFrame, dst_actuals: pd.DataFrame, eval_seasons: Sequence[int]
+    pos: str,
+    offense_actuals: pd.DataFrame,
+    dst_actuals: pd.DataFrame,
+    eval_seasons: Sequence[int],
+    scoring_format: str = SCORING_FORMAT,
 ) -> pd.DataFrame:
     """Per-position [player_id, season, week, actual_pts] scored through the aggregator.
 
@@ -113,7 +121,7 @@ def _position_actuals(
     if pos_df.empty:
         return pd.DataFrame(columns=[*_KEYS, "actual_pts"])
     pos_df = pos_df.copy()
-    pos_df["actual_pts"] = _aggregate_actuals_to_ppr(pos_df, pos, SCORING_FORMAT)
+    pos_df["actual_pts"] = _aggregate_actuals_to_ppr(pos_df, pos, scoring_format)
     return pos_df[[*_KEYS, "actual_pts"]]
 
 
