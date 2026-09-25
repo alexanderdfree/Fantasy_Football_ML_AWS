@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-09-25 · Fairness re-audit, superseding unmerged #1595: all-zero provider rows count as missing; NFL.com offense, a stale RotoWire copy, is no longer graded; forecast-free depth-chart and prior-season headline cohorts; a RotoWire-only secondary reference (v4); paired bootstrap intervals with a both-metrics winner rule; Timeline graded on RotoWire+ESPN with edge intervals; 2025 labelled a development-season backtest; cache schema 12 · (PR pending) · → ADR-0024
+
 - 2026-09-23 · Enforce DST synthetic-export cache compatibility before loading and preserve observed zero opponent counts · (PR #1599) · → ADR-0029
 
 - 2026-09-18 · DST `build_data` drops unplayed (NaN-score) REG fixtures by default; the live upcoming-week special-teams builder opts back in via `include_unplayed=True` (#1520) · (PR pending) · → ADR-0018

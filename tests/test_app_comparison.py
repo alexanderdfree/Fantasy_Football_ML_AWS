@@ -334,7 +334,14 @@ def test_comparison_scores_cached_sources_on_shared_component_actuals(
         body = c.get("/api/comparison").get_json()
 
     assert body["model_source"] == "live"
-    assert set(body["subsets"]) == {"all", "top12", "top30", "weekly_reference_top24"}
+    assert set(body["subsets"]) == {
+        "weekly_depth_starters",
+        "all",
+        "elite_top24",
+        "weekly_reference_top24",
+        "top30",
+        "top12",
+    }
 
     qb = body["subsets"]["all"]["QB"]
     # Each architecture is its own block now (no single "Our Model" / best_arch).
@@ -343,8 +350,11 @@ def test_comparison_scores_cached_sources_on_shared_component_actuals(
     for key in _MODEL_KEYS:  # QB has all four models in the synthetic cache
         assert qb[key] is not None, key
         assert {"mae", "rmse", "r2", "n"} <= set(qb[key])
-    # Static accuracy cells must not override the same-sample computation.
-    assert qb["nflcom"] != {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
+    # Static accuracy cells must not override the same-sample computation, and
+    # NFL.com offense is displayed but never graded.
+    assert qb["nflcom"] is None
+    assert qb["rotowire"] != {"mae": 5.0, "rmse": 7.0, "r2": 0.3, "n": 100}
+    assert body["coverage"]["all"]["QB"]["uncertainty"]["status"] == "available"
     assert len({cell["n"] for cell in qb.values() if cell is not None}) == 1
     assert body["coverage"]["all"]["QB"]["n"] == qb["ridge"]["n"]
 
@@ -402,7 +412,7 @@ def test_comparison_includes_quartile_bias(app_module, synthetic_cache, monkeypa
         for key in _MODEL_KEYS:  # QB has all four live model columns
             assert qbq[q][key] is not None, (q, key)
             assert {"n", "mae", "bias"} == set(qbq[q][key])
-        assert qbq[q]["nflcom"] is not None  # experts present for QB
+        assert qbq[q]["nflcom"] is None  # NFL.com offense is not graded
         assert qbq[q]["rotowire"] is not None
     # Coverage holes survive: NFL.com has no DST, RotoWire has no K (every quartile).
     assert all(qb["DST"][q]["nflcom"] is None for q in qb["DST"])
@@ -454,7 +464,7 @@ def test_comparison_works_without_static_expert_metadata(app_module, synthetic_c
     with app_module.app.test_client() as c:
         r = c.get("/api/comparison")
     assert r.status_code == 200
-    assert r.get_json()["subsets"]["all"]["QB"]["nflcom"] is not None
+    assert r.get_json()["subsets"]["all"]["QB"]["rotowire"] is not None
 
 
 # --------------------------------------------------------------------------- #

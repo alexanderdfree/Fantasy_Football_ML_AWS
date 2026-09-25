@@ -33,12 +33,13 @@ The UI reports common sample sizes and missing data. Quartile bias uses the same
 common sample. Ranking metrics evaluate each source's own selections on that
 shared slate.
 
-Four cohort definitions remain separate:
+Six cohort definitions remain separate:
 
 | Name | Selection | Purpose |
 |---|---|---|
-| `weekly_reference_top24` | Top 24 per position/week by a fixed archived expert reference | Primary expected-starter accuracy and bias |
-| `elite_top24` | Top 24 distinct players by prior-season mean shared-component points | Historical continuity; pre-season importance |
+| `weekly_depth_starters` | Rank 1 in the last pregame depth chart before game day (WR slots ranked separately); every K and D/ST | Comparison tab headline for expected starters; selected by no outcome and no graded forecast |
+| `elite_top24` | Top 24 distinct players by prior-season mean shared-component points | Forecast-free pre-season importance; also a Comparison tab view (offense) |
+| `weekly_reference_top24` | Top 24 per position/week by a fixed archived expert reference | Secondary view; selecting on a graded source's own forecasts penalizes that source (winner's curse) |
 | `seasonal_actual_top24` | Top 24 by current-season regular-season shared-component actual total | Retrospective season-leader accuracy |
 | `weekly_actual_top24` | Actual weekly top 24 versus each source's predicted selection | Hit rate, points captured, and lineup regret |
 
@@ -48,11 +49,38 @@ missing rows never promote the next-ranked player. Ties use player ID, and
 seasons are ranked independently. Actual-week winners' negative bias is not a
 calibration target: selection on realized outcomes creates that pattern.
 
+### Source independence and capture time (2026-09-25 audit)
+
+A graded source must be an independent forecast captured at a comparable
+information time. The hvpkod NFL.com offense archive fails both tests. Its
+components reproduce RotoWire's projection series: 94% of 2025 passing-yard
+forecasts match within 0.01, and 27% of rows match on every component. Its 2025
+week files were committed Tuesday–Thursday of game week for weeks 2–6 and 10–14.
+In those weeks it still projects 85 players the final injury report ruled Out.
+NFL.com's whole deficit against RotoWire (+0.052 MAE) comes from those weeks;
+in the others the gap is −0.002. NFL.com offense is therefore excluded from
+grading with an explicit reason (`EXCLUDED_SOURCES`), like NFL.com K. It stays in
+the cache as a display column. RotoWire and ESPN are the graded experts.
+
+### Uncertainty and winner rule
+
+Every cohort cell carries a paired, player-clustered bootstrap interval
+(`src/shared/comparison_uncertainty.py`: 2,000 seeded replicates). Each replicate
+resamples whole players and recomputes every source on that draw. The best of
+the four models and the best expert are chosen inside each replicate, so a
+post-hoc best-of-four pick is part of the interval. A row names a winning group,
+and highlights that group's best cell, only when the best-model-minus-best-expert
+interval excludes zero in the same direction under both MAE and RMSE. Otherwise
+it is a statistical tie. Both metrics are required because the points are
+right-skewed and MAE rewards median-like forecasts, while published projections
+estimate expected points (RMSE's target). Cells also report signed bias, which
+is never ranked. The graded season is the configured test season used for A/B
+decisions, so both surfaces label it a development-season backtest.
 ## Timeline records
 
 The Timeline applies the same component truth to its `all` regular-season cohort.
-It separates offense (QB/RB/WR/TE, NFL.com and RotoWire), K (ESPN), and DST
-(RotoWire and ESPN). All four models and the group's required experts share one
+It separates offense (QB/RB/WR/TE, RotoWire and ESPN), K (ESPN), and DST
+(RotoWire and ESPN); NFL.com is excluded with the same reason as the tab. All four models and the group's required experts share one
 finite player-week intersection. The source set is fixed, including when a whole
 source or week is missing; an unavailable source never relaxes the comparison.
 The selected season is explicit. Missing position-weeks remain unavailable entries
@@ -64,7 +92,9 @@ edge requires beating every expert in the group. Unevaluable weeks are excluded
 from the win denominator, and ties are not wins. These decisions use unrounded
 errors; only display formatting rounds them. Season MAE pools player-week errors
 rather than averaging differently sized weekly means. No weekly winner or
-season-selected champion supplies an aggregate performance claim.
+season-selected champion supplies an aggregate performance claim. Each model's
+season edge carries the same paired bootstrap interval on MAE (best expert chosen
+per replicate); an edge whose interval spans zero is reported as a tie.
 
 The API reports the actual basis, components, source set, position scope, common
 sample size, pre-intersection coverage, and unavailable/excluded-source reasons.
@@ -81,24 +111,28 @@ The cache stores full offensive forecasts in `<source>_pred_<format>` and
 shared-component totals in `<source>_comparison_pred_<format>`. DST comparisons
 use their dedicated format-independent `<source>_pred_comparison` columns for
 every model and expert. Missing comparison values never fall back to display
-forecasts. Cache schema 11 requires these separate fields. Timeline applies the
-same NFL.com eligibility rule as the other metric boundaries.
+forecasts. Cache schema 12 requires these separate fields, the placeholder
+rule, and the forecast-free cohort inputs (`depth_chart_rank` and
+`prior_season_mean_shared_component_points`); schema 11 introduced the separate
+totals.
 
 ## Reference artifact
 
 `data/raw/weekly_evaluation_reference_v1.parquet` contains only player/week keys,
 position, pregame reference score/rank, source recipe, and generation metadata.
-The versioned recipe is the mean of archived NFL.com and RotoWire forecasts for
-QB/RB/WR/TE, ESPN for K, and RotoWire for DST. The current recipe is
-`shared_components_v3`; old recipe rows are preserved in the versioned parquet.
-NFL.com K is excluded from matched comparisons because its native bucket total
-cannot represent our made-yardage and miss targets. ESPN supplies those targets. Both required offense sources
-must exist for a candidate; it never becomes a mean of whichever happens to be
-available. This is a two-provider reference, not a claim of industry consensus.
+The current recipe, `shared_components_v4`, ranks archived RotoWire forecasts for
+QB/RB/WR/TE and DST, and ESPN for K. A provider row whose shared components are
+all zero is a missing forecast. NFL.com is not a reference source: its offense
+archive is RotoWire's series at uncontrolled capture times (v3 averaged the two).
+Old recipe rows are preserved in the versioned parquet. NFL.com K is excluded
+because its native bucket total cannot represent our made-yardage and miss
+targets. ESPN supplies those targets. This is a single-provider reference, not a
+claim of industry consensus, and it is a secondary view.
 
 Ranks are computed from the full published forecast pool, independently of
-actual outcomes and model forecasts. NFL.com offense before 2024 is excluded
-because the hvpkod archive backfilled actuals; RotoWire before 2018 is excluded.
+actual outcomes and model forecasts. RotoWire and ESPN before 2018 are excluded.
+NFL.com offense before 2024 remains ineligible everywhere because the hvpkod
+archive backfilled actuals.
 Unavailable seasons/weeks are explicit and never replaced with model rankings.
 The NFL.com cutoff is also enforced at projection and metric boundaries through
 `src/shared/expert_eligibility.py`, including cached and injected forecast totals.
@@ -180,6 +214,19 @@ Historical static tables remain dated research snapshots and are not comparable
 to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
+
+- 2026-09-25 — Fairness re-audit (supersedes unmerged #1595):
+  - Treat all-zero provider rows as missing forecasts.
+  - Stop grading NFL.com offense. It is RotoWire's series with 10 of 18 2025
+    captures before the final injury report.
+  - Head the tab with the forecast-free `weekly_depth_starters` and serve
+    `elite_top24`.
+  - Make the expert reference RotoWire-only (`shared_components_v4`) and
+    secondary.
+  - Add paired player-clustered bootstrap intervals and a both-metrics winner
+    rule, bias cells, and Timeline edge intervals.
+  - Grade the Timeline on RotoWire and ESPN like the tab, label 2025 a
+    development-season backtest, and move to cache schema 12 (PR pending).
 
 - 2026-09-18: Score training-pipeline baseline, ranking, backtest and cohort
   reports on the certified shared-component truth (`actual_projected_total`)

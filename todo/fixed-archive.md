@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Model-vs-expert comparison graded a stale duplicate expert, used an expert-selected headline cohort and declared winners from noise
+[Read the incident record](fixed-archive/expert-comparison-fairness-2026-09.md).
+
 ### [FIXED] Chaining a gate with its dependent action shipped a failing test and closed PRs #622 and #627
 [Read the incident record](fixed-archive/gate-chaining-closed-prs-2026-05.md).
 

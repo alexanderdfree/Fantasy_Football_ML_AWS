@@ -316,7 +316,7 @@ Rules of the road:
 Every benchmark-producing pipeline now includes cohort reports in its serialized
 output, including Batch split/merge and each rolling origin. `elite_top24` retains
 the prior-season definition; `weekly_reference_top24` uses a shared archived
-pregame reference. Cohort scores use only shared projected components on both predictions and actuals (`actual_basis=shared_projected_components_v1`). The reference recipe `shared_components_v2` uses NFL.com/RotoWire for offense, ESPN for K, and RotoWire for DST. Missing reference/prior/component data is reported explicitly.
+pregame reference (the served Comparison tab's headline is the forecast-free `weekly_depth_starters`). Cohort scores use only shared projected components on both predictions and actuals (`actual_basis=shared_projected_components_v2`); a provider row with every published stat at zero is a missing forecast. The reference recipe `shared_components_v4` uses RotoWire for offense and DST and ESPN for K; NFL.com is not a reference source. Missing reference/prior/component data is reported explicitly.
 To build the local reference (add `--upload` with `FF_MODEL_S3_BUCKET` to publish):
 
 ```bash

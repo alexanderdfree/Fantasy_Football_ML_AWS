@@ -26,8 +26,11 @@ from src.shared.comparison_scoring import (
     score_actual_components,
     scoring_components,
 )
+from src.shared.comparison_uncertainty import group_gap_intervals
 from src.shared.evaluation import compute_metrics
 from src.shared.evaluation_cohorts import (
+    depth_chart_starters,
+    elite_selection,
     load_reference,
     reference_selection,
     regular_season_rows,
@@ -52,12 +55,26 @@ _COMPARISON_EXPERTS_PATH = os.path.join(os.path.dirname(__file__), "comparison_e
 # re-enabled.
 _EXPERT_INTERVALS_PATH = os.path.join(os.path.dirname(__file__), "expert_intervals.json")
 
-COMPARISON_SUBSETS = ("weekly_reference_top24", "all", "top30", "top12")
+# Headline first. Depth-chart starters and prior-season elite are selected by
+# neither outcomes nor any graded forecast; the expert reference is a secondary
+# view because selecting on a source's own forecasts penalizes that source.
+COMPARISON_SUBSETS = (
+    "weekly_depth_starters",
+    "all",
+    "elite_top24",
+    "weekly_reference_top24",
+    "top30",
+    "top12",
+)
 COMPARISON_POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
 
 
 def _shared_rows(frame, scoring, columns=None):
-    """One intersection for every available displayed source; zero is a forecast."""
+    """One intersection for every available displayed source.
+
+    A projected zero is a forecast. All-zero provider placeholder rows were
+    already made unavailable when their comparison totals were built.
+    """
     actual = _actual_col(scoring)
     columns = (
         columns
@@ -81,8 +98,13 @@ def _shared_rows(frame, scoring, columns=None):
 def comparison_tables(results, scoring="ppr", *, reference=None):
     """Shared-component, regular-season, same-player-week accuracy for every source.
 
-    Cohorts are selected before source coverage is applied. In particular, the
-    weekly reference already has ranks from the full pregame forecast pool.
+    The headline cohort is the pregame depth-chart starters, and ``elite_top24``
+    uses prior-season importance: neither is selected by outcomes or by any graded
+    forecast. The archived expert reference remains a secondary view selected
+    before coverage from the full pregame forecast pool. Seasonal cohorts are
+    selected before coverage from regular-season actuals and are retrospective.
+    Each cohort cell carries paired bootstrap intervals for the best-model versus
+    best-expert gap; a winner exists only when those intervals agree.
     """
     subsets = {name: {} for name in COMPARISON_SUBSETS}
     coverage = {name: {} for name in COMPARISON_SUBSETS}
@@ -138,11 +160,27 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
             quartiles[pos] = None
             rankings[pos] = {}
             continue
-        df = df[df[actual].notna()]
-        masks = {"all": pd.Series(True, index=df.index)}
-        masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
+        graded = df[df[actual].notna()]
+        # Source admission and every metric use graded rows only; a source with
+        # forecasts solely on ungraded rows must not blank the position.
+        common_all, available_columns = _shared_rows(graded, scoring)
+        excluded = EXCLUDED_SOURCES.get(pos, {})
+        unavailable_sources = [
+            prefix
+            for prefix in _ROW_PRED_PREFIXES
+            if prefix not in available_columns
+            and prefix not in excluded
+            and _pred_col(prefix, scoring) in graded
+        ]
+        df = graded
+        masks, selection_meta = {}, {}
+        masks["weekly_depth_starters"], selection_meta["weekly_depth_starters"] = (
+            depth_chart_starters(df, pos)
+        )
+        masks["all"] = pd.Series(True, index=df.index)
+        masks["elite_top24"], selection_meta["elite_top24"] = elite_selection(df, 24)
         masks["weekly_reference_top24"], ref_meta = reference_selection(pos, df, reference, 24)
-        common_all, available_columns = _shared_rows(df, scoring)
+        masks.update({f"top{n}": seasonal_top_mask(df, n) for n in (12, 30)})
         quartiles[pos] = _quartile_bias_from_results(common_all, scoring, pos)
         rankings[pos] = weekly_ranking_metrics(common_all, available_columns)
         for name, mask in masks.items():
@@ -163,14 +201,23 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                 "n": int(len(common)),
                 "cohort_n": int(len(cohort)),
                 "sources": list(columns),
+                "unavailable_sources": unavailable_sources,
                 "source_n": {
                     prefix: int(cohort[col].notna().sum()) for prefix, col in columns.items()
                 },
+                **{k: v for k, v in selection_meta.get(name, {}).items() if k != "status"},
+                # Paired, player-clustered intervals for best model vs best expert.
+                # Presentation highlights a winner only when MAE and RMSE agree.
+                "uncertainty": group_gap_intervals(
+                    common, actual, columns, _MODEL_PRED_PREFIXES, _EXPERT_PRED_PREFIXES
+                ),
             }
             if not columns:
                 # Actuals without any finite forecast source are unavailable
                 # coverage, not an available cohort with every metric blank.
                 coverage[name][pos]["reason"] = "predictions_missing"
+            if name in selection_meta and not len(common):
+                coverage[name][pos].setdefault("reason", "no_common_forecast_rows")
             if name == "weekly_reference_top24":
                 coverage[name][pos].update({k: v for k, v in ref_meta.items() if k != "status"})
                 coverage[name][pos]["reference_status"] = ref_meta["status"]
@@ -180,10 +227,14 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
 
 def _accuracy_block(actual, prediction):
     metrics = compute_metrics(actual, prediction)
+    residual = np.asarray(prediction, dtype=float) - np.asarray(actual, dtype=float)
     return {
         "mae": round(float(metrics["mae"]), 4),
         "rmse": round(float(metrics["rmse"]), 4),
         "r2": round(float(metrics["r2"]), 4) if np.isfinite(metrics["r2"]) else None,
+        # pred - actual: positive over-predicts. MAE rewards median-like forecasts
+        # on right-skewed points, so bias is shown beside MAE and RMSE.
+        "bias": round(float(np.mean(residual)), 4),
         "n": int(len(actual)),
     }
 
@@ -345,17 +396,17 @@ def _quartile_bias_from_results(results, scoring, pos, n_q=4):
     Bins the position's test rows into ``n_q`` quartiles by **actual** fantasy
     points — Q1 = lowest scorers … Q4 = highest / boom weeks — rank-based so tied
     actuals never collapse a bin. For every prediction source (our four models
-    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the two experts ``nflcom``/``rotowire``,
-    i.e. ``_ROW_PRED_PREFIXES``) it reports per-quartile ``{n, mae, bias}`` where
+    ``ridge``/``nn``/``attn_nn``/``lgbm`` plus the graded experts, i.e. the
+    ``_ROW_PRED_PREFIXES`` not in ``EXCLUDED_SOURCES``) it reports per-quartile ``{n, mae, bias}`` where
     ``bias = mean(pred − actual)`` — **bias > 0 ⇒ over-predicts** (same residual
     convention as ``_model_reliabilities_from_results`` / ``expert_uncertainty``).
 
     Computed live from the same cached per-row predictions as
     ``_model_blocks_from_results`` (so it auto-updates on every retrain). The
-    quartile partition is defined once by the shared actual column, so every
-    source is scored on the *same* rows and is directly comparable across the
-    quartile axis; a source's per-quartile ``n`` may still differ because experts
-    don't project every player — that coverage gap is real and surfaced, not hidden.
+    quartile partition is defined once by the shared actual column on the common
+    player-week sample, so every source is scored on the *same* rows and is
+    directly comparable across the quartile axis; per-quartile ``n`` is identical
+    for every displayed source.
 
     Returns ``{ "Q1": {source: {n,mae,bias}|None, ...}, ... }`` keyed by the same
     source prefixes as the accuracy tables, or ``None`` when the slice is missing or

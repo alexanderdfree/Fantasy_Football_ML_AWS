@@ -62,6 +62,8 @@ API_CONTRACT = {
             "excluded_sources",
             "excluded_components",
             "cohort_definitions",
+            "uncertainty_meta",
+            "evaluation_season_note",
         ],
     },
     "compatibility": "Optional fields and new source IDs may be added within v1; consumers reject unsupported major versions.",

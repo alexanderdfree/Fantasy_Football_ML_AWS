@@ -39,6 +39,12 @@ def comparison_fixture() -> dict:
                     "week": week,
                     "season_type": "REG",
                     **{f"actual_{key}": float(player + week) for key in scoring_components(pos)},
+                    # Forecast-free cohorts: two pregame depth-chart starters per
+                    # position-week, and prior-season importance for offense only.
+                    "depth_chart_rank": 1.0 if player < 2 else 2.0,
+                    "prior_season_mean_shared_component_points": (
+                        float(10 - player) if pos not in ("K", "DST") else np.nan
+                    ),
                 }
                 actual = score_actual_components(pd.DataFrame([row]), pos, prefix="actual_").iloc[0]
                 for index, source in enumerate(_ROW_PRED_PREFIXES):

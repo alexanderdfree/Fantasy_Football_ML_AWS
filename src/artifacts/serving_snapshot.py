@@ -14,7 +14,7 @@ from src.artifacts.model_sync import load_manifest_snapshot
 
 FILES = ("predictions.parquet", "metrics.json", "fingerprint.json", "snapshot.json")
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DST")
-CACHE_SCHEMA_VERSION = 11
+CACHE_SCHEMA_VERSION = 12
 
 
 def _bytes(value):

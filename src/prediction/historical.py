@@ -64,8 +64,9 @@ from src.shared.aggregate_targets import (
     POSITION_TARGET_MAP,
     predictions_to_fantasy_points,
 )
-from src.shared.comparison_scoring import score_actual_components
+from src.shared.comparison_scoring import score_actual_components, score_forecast_components
 from src.shared.evaluation import compute_metrics
+from src.shared.evaluation_cohorts import PRIOR_IMPORTANCE_COLUMN, prior_season_importance
 from src.shared.model_sync import (
     refresh_sentinel_mtime,
     upload_predictions_cache_to_s3,  # noqa: F401 — legacy import compatibility; remote publication is offline
@@ -285,7 +286,7 @@ def _apply_expert_predictions(
         if raw is not None and {*_EXPERT_KEY_COLS, "position"}.issubset(raw.columns):
             dst = raw.loc[raw["position"].eq("DST") & raw["player_id"].notna()]
             scored = dst[_EXPERT_KEY_COLS].copy()
-            scored["comparison_total"] = score_actual_components(dst, "DST")
+            scored["comparison_total"] = score_forecast_components(dst, "DST")
             _assign_expert_totals(results, source, "comparison", scored, "comparison_total")
 
     for fmt in _VALID_SCORING:
@@ -502,6 +503,32 @@ def _load_base_splits():
     return train, val, test
 
 
+def _offense_prior_importance(results, val):
+    """Prior-season shared-component importance for the forecast-free ``elite_top24``.
+
+    Each offense position's production target builder scores the validation
+    split, so this truth matches the Batch cohort reports. K and D/ST stay
+    unavailable: the skill split is not their authoritative source.
+    """
+    out = pd.Series(np.nan, index=results.index, dtype=float)
+    if val is None or val.empty or "position" not in results:
+        return out
+    for pos in ("QB", "RB", "WR", "TE"):
+        rows = results["position"].eq(pos)
+        if not rows.any():
+            continue
+        reg = POSITION_REGISTRY[pos]
+        try:
+            prior = reg["compute_targets_fn"](reg["filter_fn"](val))
+        except KeyError as missing:
+            # The cohort then reports ``prior_season_scores_missing``; it never
+            # substitutes a full-fantasy or fabricated prior-season rank.
+            print(f"[comparison] {pos} prior-season importance unavailable: missing {missing}")
+            continue
+        out.loc[rows] = prior_season_importance(results.loc[rows], [prior], pos).to_numpy()
+    return out
+
+
 def _build_splits_dict(train, val, test, k_split, dst_split):
     """Assemble the per-position cache ``splits`` dict. QB/RB/WR/TE share the
     skill (train, val, test); K and DST pass their own authoritative tuples."""
@@ -536,6 +563,9 @@ def _load_base_data_locked():
         "fantasy_points",
         "fantasy_points_half_ppr",
         "fantasy_points_standard",
+        # Pregame depth rank (last snapshot before game day): selects the
+        # forecast-free ``weekly_depth_starters`` comparison cohort.
+        "depth_chart_rank",
     ]
     keep_cols = [c for c in keep_cols if c in test.columns]
     # K/DST arrive via their authoritative splits in the append loop below; the
@@ -546,6 +576,7 @@ def _load_base_data_locked():
     # appended positions from the base copy. (DST players aren't in test.parquet
     # today; that half of the guard is defensive.)
     results = test.loc[~test["position"].isin(_APPENDED_POSITIONS), keep_cols].copy()
+    results[PRIOR_IMPORTANCE_COLUMN] = _offense_prior_importance(results, val)
 
     # K/DST test frames need their index aligned to ``results``' offset so the
     # per-position writes in ``_apply_position_models`` land on the right rows.

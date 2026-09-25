@@ -111,6 +111,23 @@ def test_shared_frames_keep_zero_predictions_and_exclude_nan_and_inf():
     assert list(a.player_id) == list(b.player_id) == ["p00"]
 
 
+def test_offline_expert_summary_ignores_unavailable_placeholder_forecasts():
+    from src.analysis.build_comparison_summary import _expert_subsets
+
+    keys = {"season": 2025, "week": 1}
+    actuals = pd.DataFrame({"player_id": ["a", "b"], "actual_pts": [10.0, 20.0], **keys})
+    projection = pd.DataFrame(
+        {"player_id": ["a", "b"], "expert_pred_total": [12.0, np.nan], **keys}
+    )
+    blocks = _expert_subsets(actuals, projection, "expert_pred_total", {"top12": {"a", "b"}})
+    assert blocks["all"]["mae"] == 2.0 and blocks["top12"]["mae"] == 2.0
+    unavailable = projection.assign(expert_pred_total=np.nan)
+    assert _expert_subsets(actuals, unavailable, "expert_pred_total", {"top12": {"a"}}) == {
+        "all": None,
+        "top12": None,
+    }
+
+
 def test_disjoint_sources_make_all_metrics_unavailable():
     frame = _rows(3).assign(pred_total=[0.0, np.nan, np.nan])
     other = frame.assign(pred_total=[np.nan, 1.0, 2.0])
@@ -151,7 +168,7 @@ def test_nflcom_offense_excludes_backfilled_and_unknown_seasons(position):
     assert eligible_forecast_rows(frame, "espn", position).all()
 
 
-def test_serving_projector_and_metric_boundary_reject_old_cached_nflcom_totals():
+def test_serving_projector_rejects_old_nflcom_totals_and_metrics_never_grade_them():
     raw = _rows(2).assign(season=[2023, 2024])
     projected = project_nflcom_to_fantasy(raw, "WR")
     assert projected.season.tolist() == [2024]
@@ -165,8 +182,11 @@ def test_serving_projector_and_metric_boundary_reject_old_cached_nflcom_totals()
     cached["nflcom_comparison_pred_ppr"] = 9999.0
     cached["ridge_pred_ppr"] = cached.fantasy_points
     tables, coverage, _, _ = comparison_tables(cached, reference=pd.DataFrame())
-    assert tables["all"]["WR"]["nflcom"]["n"] == 1
-    assert coverage["all"]["WR"]["n"] == 1
+    # NFL.com offense (a stale RotoWire series) is never graded, in any season,
+    # and its cached totals cannot narrow the graded slate.
+    assert tables["all"]["WR"]["nflcom"] is None
+    assert "nflcom" in coverage["all"]["WR"]["excluded_sources"]
+    assert coverage["all"]["WR"]["n"] == 2
 
 
 def test_offline_preprojected_totals_cannot_bypass_backfill_rule():

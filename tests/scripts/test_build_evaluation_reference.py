@@ -40,16 +40,17 @@ def rows():
     )
 
 
-def test_reference_is_fixed_mean_and_ties_are_deterministic(monkeypatch):
+def test_reference_is_rotowire_only_and_ties_are_deterministic(monkeypatch):
     nfl, rw = rows(), rows()
     rw.loc[2, "expert_pred_total"] = 40
+    nfl["expert_pred_total"] = [0.0, 1000.0, -5.0]  # NFL.com never moves a rank
     fake_sources(monkeypatch, nfl, rw)
     ref = builder.build_reference([2025])
     assert ref.player_id.tolist() == ["c", "a", "b"]
     assert ref.reference_rank.tolist() == [1, 2, 3]
-    assert ref.reference_pred.tolist() == [25, 20, 20]
+    assert ref.reference_pred.tolist() == [40, 20, 20]
     assert set(ref.reference_version) == {REFERENCE_VERSION}
-    assert set(ref.reference_source) == {"nflcom+rotowire"}
+    assert set(ref.reference_source) == {"rotowire"}
     assert "fantasy_points" not in ref
 
 
@@ -79,11 +80,27 @@ def test_kicker_reference_uses_matching_espn_components_not_nfl_native_totals(mo
     assert ref.reference_pred.tolist() == [9, 7, 5]
 
 
-def test_backfilled_nflcom_offense_seasons_cannot_enter_reference(monkeypatch):
-    data = pd.concat([rows(), rows().assign(season=2023)], ignore_index=True)
-    fake_sources(monkeypatch, data, data)
+def test_nflcom_is_never_loaded_or_ranked_for_the_reference(monkeypatch):
+    def fail(seasons):
+        raise AssertionError("NFL.com must not be loaded for the reference")
+
+    rw = pd.concat([rows(), rows().assign(season=2023)], ignore_index=True)
+    skipped = frozenset({"QB", "RB", "TE", "K", "DST"})
+    sources = [
+        SimpleNamespace(name="nflcom", skipped=skipped, load=fail, project=lambda raw, *_: raw),
+        SimpleNamespace(
+            name="sleeper",
+            skipped=skipped,
+            load=lambda seasons: rw.copy(),
+            project=lambda raw, *_: raw.copy(),
+        ),
+    ]
+    monkeypatch.setattr(
+        "src.analysis.analysis_expert_comparison._build_experts", lambda *args: sources
+    )
     ref = builder.build_reference([2023, 2025])
-    assert set(ref.season) == {2025}
+    assert set(ref.season) == {2023, 2025}  # RotoWire's archive is usable from 2018
+    assert set(ref.reference_source) == {"rotowire"}
 
 
 def test_publication_preserves_other_seasons_and_rejects_empty_replacement(tmp_path, monkeypatch):
@@ -150,6 +167,13 @@ def test_partial_refresh_cannot_erase_archived_weeks(tmp_path, monkeypatch):
     assert path.read_bytes() == before
 
 
+def test_incomplete_provider_fetch_cannot_thin_the_reference(monkeypatch):
+    partial = rows()
+    partial.attrs["rotowire_fetch_complete_v1"] = False
+    fake_sources(monkeypatch, rows(), partial)
+    assert builder.build_reference([2025]).empty
+
+
 def test_loaders_receive_only_supported_seasons(monkeypatch):
     calls = {}
     skipped = frozenset({"QB", "RB", "TE", "K", "DST"})
@@ -168,7 +192,7 @@ def test_loaders_receive_only_supported_seasons(monkeypatch):
         lambda *a: [source("nflcom"), source("sleeper")],
     )
     result = builder.build_reference([2017, 2025])
-    assert calls == {"nflcom": [2025], "sleeper": [2025]}
+    assert calls == {"sleeper": [2025]}  # NFL.com is not a reference source
     assert set(result.season) == {2025}
     calls.clear()
     assert builder.build_reference([2012]).empty

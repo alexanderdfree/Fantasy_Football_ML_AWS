@@ -101,6 +101,12 @@ struct ComparisonView: View {
             note("Scoring", ScoringFormat(rawValue: comparison.scoring)?.displayName ?? comparison.scoring)
             note("Actuals", comparison.actualBasisDescription)
             note("Coverage", comparison.sampleBasisDescription)
+            note("Winners", "A row names a winner only when the 95% paired interval for the best model minus the best expert "
+                + "excludes zero under both MAE and RMSE; otherwise it is a statistical tie (≈). Intervals resample whole players, "
+                + "and the best of each group is chosen inside every draw.")
+            if let season = comparison.evaluationSeasonNote {
+                note("Evaluation season", season)
+            }
             if comparison.isUnavailable {
                 note("Availability", "Model comparison data is unavailable.")
             }
@@ -132,14 +138,20 @@ struct ComparisonPositionGroup: View {
             .map { CmpSource.resolve($0, comparison: comparison) }
         let coverage = comparison.coverage?[subset]?[position.rawValue]
         let components = coverage?.scoringComponents ?? comparison.scoringComponents?[position.rawValue]
-        let values = sources.compactMap {
-            comparison.cell(subset: subset, position: position.rawValue, source: $0.key)?.value(metric)
-        }
+        // Highlight only the winning group's best cell; a statistical tie highlights nothing.
+        let winner = coverage?.decidedWinner
+        let values = sources.filter { winner == "models" ? $0.isModel : winner == "experts" ? !$0.isModel : false }
+            .compactMap { comparison.cell(subset: subset, position: position.rawValue, source: $0.key)?.value(metric) }
         let best = metric.best(of: values)
+        let verdict = coverage?.verdict(metric)
 
         DisclosureGroup {
             Text(coverage?.summary ?? "Coverage metadata unavailable")
                 .font(.caption2).foregroundStyle(FFColor.textSecondary)
+            if let verdict {
+                Text(verdict).font(.caption2.weight(winner == nil ? .regular : .semibold))
+                    .foregroundStyle(FFColor.textSecondary)
+            }
             if let missing = coverage?.missingReferenceWeeks, missing > 0 {
                 Text("Missing pregame reference for \(missing) evaluation weeks")
                     .font(.caption2).foregroundStyle(FFColor.textSecondary)
@@ -170,6 +182,10 @@ struct ComparisonPositionGroup: View {
                     } else if let count = coverage?.sourceN?[source.key] {
                         Text("\(count) forecasts before shared filtering").font(.caption2).foregroundStyle(FFColor.textMuted)
                     }
+                    if let bias = comparison.cell(subset: subset, position: position.rawValue, source: source.key)?.bias {
+                        Text("bias " + String(format: "%+.2f", bias) + " (prediction − actual; not ranked)")
+                            .font(.caption2).foregroundStyle(FFColor.textMuted)
+                    }
                 }
             }
         } label: {
@@ -181,7 +197,12 @@ struct ComparisonPositionGroup: View {
                     }
                 }
                 Spacer()
-                if let best { Text(metric.format(best)).font(.caption.monospacedDigit()).foregroundStyle(FFColor.accent) }
+                if let best {
+                    Text(metric.format(best)).font(.caption.monospacedDigit()).foregroundStyle(FFColor.accent)
+                } else if verdict != nil {
+                    Text("≈").font(.caption.monospacedDigit()).foregroundStyle(FFColor.textMuted)
+                        .accessibilityLabel("Statistical tie")
+                }
             }
         }
     }

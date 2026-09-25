@@ -21,7 +21,7 @@ from src.config import CACHE_DIR, SCORING_HALF_PPR, SCORING_PPR, SCORING_STANDAR
 from src.data import nfl_source
 from src.data.cache_io import atomic_write_parquet
 from src.shared.aggregate_targets import POSITION_TARGET_MAP
-from src.shared.comparison_scoring import score_actual_components
+from src.shared.comparison_scoring import score_forecast_components
 from src.shared.expert_eligibility import filter_eligible_forecasts
 
 _EXPERT_KEY_COLS = ["player_id", "season", "week"]
@@ -34,7 +34,8 @@ def project_expert_comparison(
     """Score normalized forecasts on exactly the components used by comparison truth.
 
     Full display forecasts may include other offensive stats. Missing required
-    comparison components remain unavailable rather than falling back to totals.
+    comparison components remain unavailable rather than falling back to totals,
+    and an all-zero roster placeholder row is a missing forecast, not a zero.
     """
     columns = [*_EXPERT_KEY_COLS, "expert_pred_total"]
     if raw is None or raw.empty or not {*_EXPERT_KEY_COLS, "position"}.issubset(raw.columns):
@@ -43,7 +44,7 @@ def project_expert_comparison(
     if source is not None:
         frame = filter_eligible_forecasts(frame, source, pos)
     out = frame[_EXPERT_KEY_COLS].copy()
-    out["expert_pred_total"] = score_actual_components(frame, pos, scoring_format).to_numpy()
+    out["expert_pred_total"] = score_forecast_components(frame, pos, scoring_format).to_numpy()
     return out
 
 

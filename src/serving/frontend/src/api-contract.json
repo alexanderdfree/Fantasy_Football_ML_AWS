@@ -6,7 +6,9 @@
       "scoring_components",
       "excluded_sources",
       "excluded_components",
-      "cohort_definitions"
+      "cohort_definitions",
+      "uncertainty_meta",
+      "evaluation_season_note"
     ],
     "sample_basis": "shared_player_weeks"
   },

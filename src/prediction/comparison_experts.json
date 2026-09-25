@@ -18,7 +18,7 @@
     },
     "nflcom": {
       "label": "NFL.com",
-      "note": "NFL.com weekly projections from the hvpkod/NFL-Data archive, scored through our PPR aggregator. Curated to likely-to-play players (no DST projections).",
+      "note": "NFL.com weekly projections from the hvpkod/NFL-Data archive, shown for reference but not graded. The archive reproduces RotoWire\u2019s projection series (94% of 2025 passing-yard forecasts match within 0.01), and 10 of 18 weekly files were captured before the final injury report. Rostered players without a projection appear as all-zero rows and are missing forecasts, never zeros. No DST projections.",
       "seasons": "2025"
     },
     "rotowire": {

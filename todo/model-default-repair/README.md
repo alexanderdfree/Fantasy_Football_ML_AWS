@@ -112,3 +112,10 @@ The earlier CPU-era #1575 evidence remains available at its
 [immutable source report](https://github.com/alexanderdfree/Fantasy_Football_ML_AWS/blob/2a97c93fe493692e765969bb6d3b2eda1b16ac2a/todo/inheritance-reception-fix-validation.md).
 Those historical results are not AWS confirmation or evidence of accepted
 production defaults. All future fitting, including smoke tests, stays on Batch.
+
+> Reference recipe note (2026-09-25): `weekly_reference_top24` now keys on
+> `shared_components_v4`: RotoWire alone for offense and DST, ESPN for K, and all-zero
+> provider rows as missing forecasts. NFL.com is no longer averaged in. Records produced
+> under the v3 artifact carry a different `cohort_hash`, so a confirmation grid must be
+> re-run at one SHA after the v4 reference is published; `protocol.json` is byte-pinned
+> and still names the v3 recipe.
