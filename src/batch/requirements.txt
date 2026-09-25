@@ -12,5 +12,5 @@ matplotlib==3.11.2
 joblib==1.6.0
 lightgbm==4.7.0
 mord==0.7
-boto3==1.43.98
+boto3==1.43.99
 optuna==5.0.0
