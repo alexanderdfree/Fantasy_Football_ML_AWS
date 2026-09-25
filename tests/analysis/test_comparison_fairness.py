@@ -168,7 +168,7 @@ def test_nflcom_offense_excludes_backfilled_and_unknown_seasons(position):
     assert eligible_forecast_rows(frame, "espn", position).all()
 
 
-def test_serving_projector_and_metric_boundary_reject_old_cached_nflcom_totals():
+def test_serving_projector_rejects_old_nflcom_totals_and_metrics_never_grade_them():
     raw = _rows(2).assign(season=[2023, 2024])
     projected = project_nflcom_to_fantasy(raw, "WR")
     assert projected.season.tolist() == [2024]
@@ -182,8 +182,11 @@ def test_serving_projector_and_metric_boundary_reject_old_cached_nflcom_totals()
     cached["nflcom_comparison_pred_ppr"] = 9999.0
     cached["ridge_pred_ppr"] = cached.fantasy_points
     tables, coverage, _, _ = comparison_tables(cached, reference=pd.DataFrame())
-    assert tables["all"]["WR"]["nflcom"]["n"] == 1
-    assert coverage["all"]["WR"]["n"] == 1
+    # NFL.com offense (a stale RotoWire series) is never graded, in any season,
+    # and its cached totals cannot narrow the graded slate.
+    assert tables["all"]["WR"]["nflcom"] is None
+    assert "nflcom" in coverage["all"]["WR"]["excluded_sources"]
+    assert coverage["all"]["WR"]["n"] == 2
 
 
 def test_offline_preprojected_totals_cannot_bypass_backfill_rule():

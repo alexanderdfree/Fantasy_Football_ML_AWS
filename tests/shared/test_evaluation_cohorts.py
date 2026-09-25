@@ -67,35 +67,46 @@ def test_weekly_reference_cannot_change_with_actuals_or_model_forecasts():
     assert original.loc[first, "player_id"].tolist() == [f"p{i:02}" for i in range(24)]
 
 
-def test_consensus_selection_weights_every_displayed_source_equally():
-    from src.shared.evaluation_cohorts import consensus_selection
+def test_depth_chart_starters_ignore_outcomes_and_forecasts():
+    from src.shared.evaluation_cohorts import depth_chart_starters
 
-    base = frame().assign(pred_expert_total=np.arange(30, dtype=float) + 1)
-    columns = {"ridge": "pred_ridge_total", "nn": "pred_nn_total", "expert": "pred_expert_total"}
-    baseline, meta = consensus_selection(base, columns, 24)
-    assert meta["selection_sources"] == list(columns) and meta["selection_n"] == 24
-    assert base.loc[baseline, "player_id"].tolist() == [f"p{i:02}" for i in range(6, 30)]
-    memberships = set()
-    for col in columns.values():
-        boosted = base.copy()
-        boosted.loc[0, col] = 1000.0
-        mask, _ = consensus_selection(boosted, columns, 24)
-        memberships.add(tuple(boosted.loc[mask, "player_id"]))
-    assert len(memberships) == 1 and "p00" in next(iter(memberships))
-    flipped = base.assign(fantasy_points=-base.fantasy_points)
-    mask, _ = consensus_selection(flipped, columns, 24)
-    assert flipped.loc[mask, "player_id"].tolist() == base.loc[baseline, "player_id"].tolist()
-    partial = base.copy()
-    partial.loc[29, "pred_nn_total"] = np.nan
-    mask, _ = consensus_selection(partial, columns, 24)
-    assert "p29" not in partial.loc[mask, "player_id"].tolist()
-    empty, meta = consensus_selection(base, {}, 24)
-    assert not empty.any() and meta["status"] == "unavailable"
-    absent, meta = consensus_selection(base, {**columns, "missing": "pred_missing_total"}, 24)
-    assert meta["selection_sources"] == list(columns)  # absent columns are skipped, not KeyError
-    assert base.loc[absent, "player_id"].tolist() == base.loc[baseline, "player_id"].tolist()
-    nothing, meta = consensus_selection(base.assign(pred_ridge_total=np.nan), columns, 24)
-    assert not nothing.any() and meta["reason"] == "no_common_forecast_rows"
+    base = frame().assign(depth_chart_rank=[1.0, 2.0, -1.0, np.nan, 1.0] * 6)
+    mask, meta = depth_chart_starters(base, "WR")
+    assert meta == {"status": "available", "selection_basis": "pregame_depth_chart_rank_1"}
+    assert mask.sum() == 12
+    changed = base.assign(fantasy_points=-base.fantasy_points, pred_ridge_total=0.0)
+    assert depth_chart_starters(changed, "WR")[0].equals(mask)
+    for position in ("K", "DST"):
+        every, meta = depth_chart_starters(base.drop(columns="depth_chart_rank"), position)
+        assert every.all() and meta["selection_basis"] == "one_unit_per_team_game"
+    missing, meta = depth_chart_starters(base.drop(columns="depth_chart_rank"), "WR")
+    assert not missing.any() and meta["reason"] == "depth_chart_missing"
+    none, meta = depth_chart_starters(base.assign(depth_chart_rank=2.0), "WR")
+    assert not none.any() and meta["reason"] == "no_depth_chart_starters"
+
+
+def test_prior_importance_and_elite_selection_use_only_the_prior_season():
+    from src.shared.evaluation_cohorts import (
+        PRIOR_IMPORTANCE_COLUMN,
+        elite_selection,
+        prior_season_importance,
+    )
+
+    current = frame().drop(columns=PRIOR_IMPORTANCE_COLUMN)
+    prior = frame().assign(season=2024, receiving_yards=np.arange(30, dtype=float)[::-1] * 10)
+    importance = prior_season_importance(current, [prior], "WR")
+    # Prior-season shared-component points: p00 scored the most in 2024.
+    assert importance.iloc[0] == 29.0 and importance.iloc[29] == 0.0
+    assert prior_season_importance(current, [], "WR").isna().all()
+    ranked = current.assign(**{PRIOR_IMPORTANCE_COLUMN: importance})
+    mask, meta = elite_selection(ranked, 24)
+    assert meta["selected_players"] == 24 and meta["status"] == "available"
+    assert ranked.loc[mask, "player_id"].tolist() == [f"p{i:02}" for i in range(24)]
+    # This season's outcomes and forecasts cannot change membership.
+    changed = ranked.assign(fantasy_points=-ranked.fantasy_points, pred_ridge_total=0.0)
+    assert elite_selection(changed, 24)[0].equals(mask)
+    empty, meta = elite_selection(current, 24)
+    assert not empty.any() and meta["reason"] == "prior_season_scores_missing"
 
 
 def test_missing_actuals_do_not_promote_reference_rank_25():

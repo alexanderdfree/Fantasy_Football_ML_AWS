@@ -22,7 +22,9 @@ from src.shared.comparison_scoring import ACTUAL_BASIS, scoring_components
 pytestmark = pytest.mark.unit
 
 _MODELS = ("ridge", "nn", "attn_nn", "lgbm")
-_EXPERTS = ("nflcom", "rotowire", "espn")
+# Every cached expert column; NFL.com offense is present but never graded.
+_ALL_EXPERTS = ("nflcom", "rotowire", "espn")
+_EXPERTS = ("rotowire", "espn")
 
 
 def comparison_column(source):
@@ -73,18 +75,18 @@ def records(positions=("WR",), weeks=(1, 2), players=3):
                     row.update(
                         {
                             f"{expert}_pred_{fmt}": truth + 2 + reception_weight
-                            for expert in (*_EXPERTS, "espn")
+                            for expert in _ALL_EXPERTS
                         }
                     )
                     row.update(
                         {
                             f"{expert}_comparison_pred_{fmt}": truth + 2 + reception_weight
-                            for expert in (*_EXPERTS, "espn")
+                            for expert in _ALL_EXPERTS
                         }
                     )
                 if position == "DST":
                     row.update({f"{model}_pred_comparison": 7.0 for model in _MODELS})
-                    row.update({f"{expert}_pred_comparison": 8.0 for expert in (*_EXPERTS, "espn")})
+                    row.update({f"{expert}_pred_comparison": 8.0 for expert in _ALL_EXPERTS})
                 rows.append(row)
     return pd.DataFrame(rows)
 
@@ -109,6 +111,12 @@ class TestTimelineEndpoint:
             assert "winner" not in entry
             for src in (*_MODELS, *_EXPERTS):
                 assert src in entry["mae"]
+            assert "nflcom" not in entry["mae"]
+        assert data["experts"] == list(_EXPERTS)
+        assert "RotoWire" in data["excluded_sources"]["nflcom"]
+        assert data["edge_uncertainty"]["method"] == "player_clustered_paired_bootstrap"
+        for report in data["summary"]["models"].values():
+            assert {"edge_ci", "edge_verdict"} <= set(report)
 
     def test_summary_is_consistent_with_weekly(self, client_with_data):
         data = client_with_data.get("/api/timeline").get_json()
@@ -171,7 +179,7 @@ def test_shared_components_for_every_position_and_format(monkeypatch, fmt, expec
 
 def test_same_player_ids_for_every_metric_despite_different_source_populations(monkeypatch):
     data = records(weeks=(1,))
-    data.loc[0, comparison_column("nflcom")] = np.nan
+    data.loc[0, comparison_column("espn")] = np.nan
     data.loc[1, comparison_column("rotowire")] = np.nan
     # Disjoint missing players, not merely equal counts. Poison excluded rows.
     data.loc[:1, "ridge_pred_ppr"] = 10000
@@ -179,7 +187,7 @@ def test_same_player_ids_for_every_metric_despite_different_source_populations(m
     row = payload["weekly"][0]
     assert row["n"] == 1 and row["cohort_n"] == 3
     assert row["source_n"]["ridge"] == 3
-    assert row["source_n"]["nflcom"] == row["source_n"]["rotowire"] == 2
+    assert row["source_n"]["espn"] == row["source_n"]["rotowire"] == 2
     assert all(row["mae"][model] == 2 for model in _MODELS)
     assert row["edges"] == dict.fromkeys(_MODELS, 1.0)
 
@@ -213,18 +221,22 @@ def test_offense_group_grades_the_same_sources_and_rows_as_the_comparison_tab(mo
 
     data = records(positions=("WR",), weeks=(1, 2), players=30)
     data.loc[0, comparison_column("espn")] = np.nan
-    data.loc[1, comparison_column("nflcom")] = np.nan
+    data.loc[1, comparison_column("rotowire")] = np.nan
+    data.loc[2, comparison_column("nflcom")] = np.nan  # ungraded: cannot narrow either surface
     payload = evaluate(monkeypatch, data)
     _, coverage, _, _ = comparison_tables(data, reference=pd.DataFrame())
     assert set(payload["sources"]) == set(coverage["all"]["WR"]["sources"])
     assert payload["summary"]["n"] == coverage["all"]["WR"]["n"] == 58
 
 
-def test_timeline_rejects_cached_backfilled_nflcom_comparison_totals(monkeypatch):
-    data = records().assign(season=2023)
+def test_nflcom_offense_totals_never_enter_the_record(monkeypatch):
+    data = records()
+    expected = evaluate(monkeypatch, data)
+    exact = {"QB": 24.0, "RB": 24.0, "WR": 14.0, "TE": 14.0}
+    data[comparison_column("nflcom")] = data["position"].map(exact)  # a perfect NFL.com
     payload = evaluate(monkeypatch, data)
-    assert payload["summary"]["n"] == 0
-    assert "nflcom" in payload["summary"]["unavailable_sources"]
+    assert payload == expected
+    assert "nflcom" not in payload["sources"] and "nflcom" in payload["excluded_sources"]
 
 
 @pytest.mark.parametrize("missing", [None, np.nan, np.inf])
@@ -272,7 +284,7 @@ def test_zero_forecasts_are_valid_but_infinity_is_not(monkeypatch):
     data = records(weeks=(1,))
     for source in (*_MODELS, *_EXPERTS):
         data[comparison_column(source)] = 0.0
-    data.loc[0, comparison_column("nflcom")] = np.inf
+    data.loc[0, comparison_column("rotowire")] = np.inf
     payload = evaluate(monkeypatch, data)
     assert payload["summary"]["n"] == 2
     assert set(payload["summary"]["mae"].values()) == {14.0}
@@ -293,13 +305,16 @@ def test_alternating_winners_never_create_an_oracle_model_record(monkeypatch):
     data["ridge_pred_ppr"] = [14.0, 18.0]
     data["nn_pred_ppr"] = [18.0, 14.0]
     data["attn_nn_pred_ppr"] = data["lgbm_pred_ppr"] = 18.0
-    data[comparison_column("nflcom")] = data[comparison_column("rotowire")] = 16.0
+    data[comparison_column("rotowire")] = data[comparison_column("espn")] = 16.0
     summary = evaluate(monkeypatch, data)["summary"]
     assert "champion" not in summary and "best_mae" not in summary
     for model in ("ridge", "nn"):
         assert summary["models"][model] == {
             "mae": 2.0,
             "edge": 0.0,
+            # One player cannot support a clustered interval.
+            "edge_ci": None,
+            "edge_verdict": None,
             "beat_experts": 1,
             "evaluated_weeks": 2,
         }
@@ -383,3 +398,24 @@ class TestReleaseChangelog:
     def test_missing_file_degrades_to_empty(self, tmp_path, monkeypatch):
         monkeypatch.setattr(timeline, "_RELEASE_CHANGELOG_PATH", str(tmp_path / "absent.json"))
         assert timeline.load_release_changelog() == []
+
+
+def test_season_edge_interval_separates_a_real_edge_from_noise(monkeypatch):
+    data = records(weeks=(1, 2), players=30)
+    payload = evaluate(monkeypatch, data)
+    for model in _MODELS:  # models miss by 1, experts by 2 on every row
+        report = payload["summary"]["models"][model]
+        assert report["edge"] == 1.0 and report["edge_verdict"] == "model"
+        assert report["edge_ci"][0] > 0
+    same = data.copy()
+    for model in _MODELS:
+        same[f"{model}_pred_ppr"] = same[comparison_column("rotowire")]
+    tied = evaluate(monkeypatch, same)["summary"]["models"]["ridge"]
+    assert tied["edge"] == 0.0 and tied["edge_verdict"] == "tie"
+
+
+def test_development_season_is_labelled(monkeypatch):
+    payload = evaluate(monkeypatch, records())
+    assert "development-season backtest" in payload["evaluation_season_note"]
+    older = evaluate(monkeypatch, records().assign(season=2019))
+    assert older["evaluation_season_note"] is None

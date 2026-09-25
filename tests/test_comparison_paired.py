@@ -36,51 +36,138 @@ def records(n=30):
     )
 
 
+GRADED = {"ridge", "nn", "attn_nn", "lgbm", "rotowire", "espn"}
+
+
+def graded(cells):
+    """Cells for graded sources; NFL.com offense is displayed but never graded."""
+    assert cells["nflcom"] is None
+    return {source: cell for source, cell in cells.items() if cell is not None}
+
+
 def test_identical_forecasts_have_identical_errors_on_shared_actuals():
     subsets, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
-    cells = subsets["all"]["WR"]
-    assert all(cell["mae"] == 7 for cell in cells.values())
+    cells = graded(subsets["all"]["WR"])
+    assert set(cells) == GRADED
+    assert all(cell["mae"] == 7 and cell["bias"] == -7 for cell in cells.values())
     assert len({cell["n"] for cell in cells.values()}) == 1
     assert coverage["all"]["WR"]["n"] == 30
+    # Identical errors cannot produce a winner.
+    assert coverage["all"]["WR"]["uncertainty"]["winner"] == "tie"
+
+
+def test_nflcom_offense_is_excluded_as_a_duplicate_stale_rotowire_series():
+    data = records()
+    data["nflcom_comparison_pred_ppr"] = np.nan  # even a wholly missing NFL.com
+    data.loc[:4, "nflcom_comparison_pred_ppr"] = 1000.0  # or a wildly wrong one
+    subsets, coverage, quartiles, rankings = comparison.comparison_tables(
+        data, reference=pd.DataFrame()
+    )
+    cell = coverage["all"]["WR"]
+    assert cell["n"] == 30  # never narrows or poisons the graded slate
+    assert "nflcom" not in cell["sources"] and "nflcom" not in cell["unavailable_sources"]
+    assert "RotoWire" in cell["excluded_sources"]["nflcom"]
+    assert subsets["all"]["WR"]["nflcom"] is None
+    assert "nflcom" not in rankings["WR"]
+    assert all(row.get("nflcom") is None for row in quartiles["WR"].values())
 
 
 def test_missing_expert_week_is_excluded_for_every_displayed_source():
     data = records()
     data.loc[0, "fantasy_points"] = 10000
-    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan
+    data.loc[0, "rotowire_comparison_pred_ppr"] = np.nan
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
-    assert all(cell["mae"] == 7 and cell["n"] == 29 for cell in subsets["all"]["WR"].values())
+    cells = graded(subsets["all"]["WR"])
+    assert all(cell["mae"] == 7 and cell["n"] == 29 for cell in cells.values())
     assert coverage["all"]["WR"]["cohort_n"] == 30
 
 
 def test_zero_projection_is_retained_and_infinite_prediction_is_excluded():
     data = records()
-    data.loc[1, "nflcom_comparison_pred_ppr"] = np.inf
+    data.loc[1, "rotowire_comparison_pred_ppr"] = np.inf
+    data.loc[2, "rotowire_comparison_pred_ppr"] = 0.0
     subsets, _, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
-    assert subsets["all"]["WR"]["nflcom"]["n"] == 29
+    assert subsets["all"]["WR"]["rotowire"]["n"] == 29
 
 
-def test_consensus_cohort_is_selected_by_all_displayed_sources_on_common_rows():
+def depth_records():
     data = records()
-    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan  # top forecast lacks one source
+    data["depth_chart_rank"] = [1.0] * 10 + [2.0] * 10 + [-1.0] * 5 + [np.nan] * 5
+    return data
+
+
+def test_depth_chart_starters_use_neither_outcomes_nor_forecasts():
+    data = depth_records()
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
-    cell = coverage["weekly_consensus_top24"]["WR"]
-    assert cell["status"] == "available"
-    assert cell["n"] == cell["cohort_n"] == cell["selection_n"] == 24
-    assert cell["selection_basis"] == "equal_weight_mean_of_displayed_sources"
-    assert cell["selection_sources"] == list(coverage["all"]["WR"]["sources"])
-    cells = subsets["weekly_consensus_top24"]["WR"]
-    assert all(value["n"] == 24 and value["mae"] == 7 for value in cells.values())
+    cell = coverage["weekly_depth_starters"]["WR"]
+    assert cell["status"] == "available" and cell["n"] == cell["cohort_n"] == 10
+    assert cell["selection_basis"] == "pregame_depth_chart_rank_1"
+    baseline = [value["n"] for value in graded(subsets["weekly_depth_starters"]["WR"]).values()]
+    # Reversing every forecast and every outcome cannot move the membership.
+    flipped = data.copy()
+    for column in [c for c in data if c.endswith("_ppr")] + ["actual_receiving_yards"]:
+        flipped[column] = flipped[column].to_numpy()[::-1]
+    _, flipped_coverage, _, _ = comparison.comparison_tables(flipped, reference=pd.DataFrame())
+    assert flipped_coverage["weekly_depth_starters"]["WR"]["n"] == 10
+    assert baseline == [10] * len(GRADED)
 
 
-def test_consensus_cohort_is_selected_before_outcome_availability():
+def test_depth_starter_rows_without_outcomes_are_dropped_not_replaced():
+    data = depth_records()
+    data.loc[0, "actual_receptions"] = np.nan  # a starter with no recorded outcome
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    assert coverage["weekly_depth_starters"]["WR"]["n"] == 9
+
+
+def test_depth_starter_cohort_is_unavailable_without_depth_charts():
+    _, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
+    cell = coverage["weekly_depth_starters"]["WR"]
+    assert cell["status"] == "unavailable" and cell["n"] == 0
+    assert cell["reason"] == "depth_chart_missing"
+
+
+def test_every_kicker_is_a_depth_chart_starter():
+    data = records().assign(
+        position="K",
+        actual_fg_yard_points=5.0,
+        actual_pat_points=3.0,
+        actual_fg_misses=0.0,
+        actual_xp_misses=0.0,
+        rotowire_comparison_pred_ppr=np.nan,
+    )
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["weekly_depth_starters"]["K"]
+    assert cell["n"] == 30 and cell["selection_basis"] == "one_unit_per_team_game"
+
+
+def test_elite_cohort_uses_prior_season_importance_only():
+    data = pd.concat([records().assign(week=week) for week in (1, 2)], ignore_index=True)
+    number = data["player_id"].str[1:].astype(int)
+    data["prior_season_mean_shared_component_points"] = -number.astype(float)  # p00 highest
+    data.loc[number >= 24, "ridge_pred_ppr"] = 1000.0  # poisons ridge only if non-members enter
+    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    cell = coverage["elite_top24"]["WR"]
+    assert cell["status"] == "available" and cell["selected_players"] == 24
+    assert cell["n"] == 48  # 24 distinct players, both weeks
+    cells = graded(subsets["elite_top24"]["WR"])
+    assert all(value["n"] == 48 and value["mae"] == 7 for value in cells.values())
+
+
+def test_elite_cohort_is_unavailable_without_prior_season_scores():
+    _, coverage, _, _ = comparison.comparison_tables(records(), reference=pd.DataFrame())
+    cell = coverage["elite_top24"]["WR"]
+    assert cell["status"] == "unavailable" and cell["reason"] == "prior_season_scores_missing"
+
+
+def test_clear_model_advantage_under_both_metrics_is_declared():
     data = records()
-    data.loc[29, "actual_receptions"] = np.nan  # the top consensus pick has no recorded outcome
-    subsets, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
-    cell = coverage["weekly_consensus_top24"]["WR"]
-    assert cell["selection_n"] == 24
-    assert cell["n"] == cell["cohort_n"] == 23  # dropped, never replaced by rank 25
-    assert all(value["n"] == 23 for value in subsets["weekly_consensus_top24"]["WR"].values())
+    for model in ("ridge", "nn", "attn_nn", "lgbm"):
+        data[f"{model}_pred_ppr"] = data["actual_receiving_yards"] * 0.1 + 7  # exact
+    _, coverage, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
+    gaps = coverage["all"]["WR"]["uncertainty"]
+    assert gaps["status"] == "available" and gaps["players"] == 30
+    assert gaps["mae"]["verdict"] == gaps["rmse"]["verdict"] == gaps["winner"] == "models"
+    assert gaps["mae"]["ci"][1] < 0 and gaps["mae"]["best_expert"] in {"rotowire", "espn"}
 
 
 def test_source_with_forecasts_only_on_ungraded_rows_cannot_blank_the_position():
@@ -107,10 +194,11 @@ def test_weekly_list_is_reference_selected_before_coverage_filter():
     ref = data[["player_id", "position", "season", "week"]].copy()
     ref["reference_rank"] = np.arange(1, 31)
     ref["reference_version"] = REFERENCE_VERSION
-    data.loc[0, "nflcom_comparison_pred_ppr"] = np.nan
+    data.loc[0, "rotowire_comparison_pred_ppr"] = np.nan
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=ref)
     assert coverage["weekly_reference_top24"]["WR"]["cohort_n"] == 24
-    assert all(cell["n"] == 23 for cell in subsets["weekly_reference_top24"]["WR"].values())
+    cells = graded(subsets["weekly_reference_top24"]["WR"])
+    assert all(cell["n"] == 23 for cell in cells.values())
 
 
 def test_postseason_cannot_change_season_leader_membership():
@@ -129,7 +217,7 @@ def test_available_reference_cannot_hide_an_empty_comparison():
     ref["reference_rank"] = np.arange(1, 31)
     ref["reference_version"] = REFERENCE_VERSION
     # This source exists in the position, but not for any of the reference top 24.
-    data.loc[:23, "nflcom_comparison_pred_ppr"] = np.nan
+    data.loc[:23, "rotowire_comparison_pred_ppr"] = np.nan
     subsets, coverage, _, _ = comparison.comparison_tables(data, reference=ref)
     cell = coverage["weekly_reference_top24"]["WR"]
     assert cell["n"] == 0
@@ -142,15 +230,17 @@ def test_route_ignores_poisoned_static_expert_metrics(app_module, monkeypatch):
     monkeypatch.setattr(
         comparison,
         "_load_comparison_experts",
-        lambda: {"subsets": {"all": {"WR": {"nflcom": {"mae": 0}}}}},
+        lambda: {"subsets": {"all": {"WR": {"rotowire": {"mae": 0}, "nflcom": {"mae": 0}}}}},
     )
     monkeypatch.setattr(comparison, "load_reference", lambda: None)
     app_module._cache.update(results=records(), loaded=True)
     monkeypatch.setattr("src.serving.core._ensure_metrics", lambda: None)
     with app_module.app.test_client() as client:
         body = client.get("/api/comparison").get_json()
-    assert body["subsets"]["all"]["WR"]["nflcom"]["mae"] == 7
+    assert body["subsets"]["all"]["WR"]["rotowire"]["mae"] == 7
+    assert body["subsets"]["all"]["WR"]["nflcom"] is None
     assert body["sample_basis"] == "shared_player_weeks"
+    assert body["uncertainty_meta"]["method"] == "player_clustered_paired_bootstrap"
 
 
 def test_offline_actual_scoring_excludes_wr_rushing_and_qb_receiving():
@@ -183,7 +273,7 @@ def test_missing_actual_components_are_explicit_and_never_use_full_score():
     data = records()
     data.loc[0, "actual_receptions"] = np.nan
     subsets, _, _, _ = comparison.comparison_tables(data, reference=pd.DataFrame())
-    assert all(value["n"] == 29 for value in subsets["all"]["WR"].values())
+    assert all(value["n"] == 29 for value in graded(subsets["all"]["WR"]).values())
 
 
 def test_incompatible_kicker_total_is_excluded_from_errors_and_quartiles():

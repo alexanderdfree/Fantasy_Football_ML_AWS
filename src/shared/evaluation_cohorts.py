@@ -1,7 +1,8 @@
 """Evaluation-only cohorts shared by serving, local runs, and Batch artifacts.
 
 Reference ranks come from archived expert forecasts, never from actual outcomes
-or the model being evaluated. This module does not fit models or fetch data.
+or the model being evaluated. Depth-chart starters and prior-season importance
+use neither outcomes nor any forecast. This module does not fit models or fetch data.
 """
 
 from __future__ import annotations
@@ -25,6 +26,9 @@ from src.shared.comparison_scoring import (
 REFERENCE_FILENAME = "weekly_evaluation_reference_v1.parquet"
 REFERENCE_VERSION = "shared_components_v4"
 KEYS = ["player_id", "season", "week"]
+DEPTH_CHART_COLUMN = "depth_chart_rank"
+PRIOR_IMPORTANCE_COLUMN = "prior_season_mean_shared_component_points"
+TEAM_UNIT_POSITIONS = frozenset({"K", "DST"})
 MODEL_COLUMNS = {
     "Ridge": "pred_ridge_total",
     "NN": "pred_nn_total",
@@ -133,33 +137,75 @@ def reference_selection(position: str, frame: pd.DataFrame, reference: pd.DataFr
     }
 
 
-def consensus_selection(frame: pd.DataFrame, columns: dict[str, str], n: int):
-    """Top-N per week by the equal-weight mean of every displayed source's forecast.
+def depth_chart_starters(frame: pd.DataFrame, position: str):
+    """Pregame depth-chart starters: selected by neither outcomes nor any forecast.
 
-    Models and experts contribute identically, so no graded source's errors are
-    conditioned on its own selection more than any other's. Rows missing any
-    displayed source cannot be ranked, so the pool is the common slate itself;
-    actual outcomes never enter the ranking.
+    Offense rows qualify at ``depth_chart_rank == 1``: the latest depth-chart
+    snapshot taken no later than game day. WR slots are ranked separately, so a
+    team can list up to three starting receivers. Every K and D/ST row is its
+    team's single unit for that game. Unknown ranks (-1 or missing) never qualify.
+    A selector drawn from graded forecasts penalizes its own source (winner's
+    curse), so the headline cohort must not come from any displayed source.
     """
     empty = pd.Series(False, index=frame.index)
-    present = {name: col for name, col in columns.items() if col in frame}
-    meta = {
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_sources": list(present),
-        "selection_n": 0,
+    if position in TEAM_UNIT_POSITIONS:
+        return (
+            pd.Series(True, index=frame.index),
+            {"status": "available", "selection_basis": "one_unit_per_team_game"},
+        )
+    if DEPTH_CHART_COLUMN not in frame:
+        return empty, {"status": "unavailable", "reason": "depth_chart_missing"}
+    mask = pd.to_numeric(frame[DEPTH_CHART_COLUMN], errors="coerce").eq(1)
+    if not mask.any():
+        return empty, {"status": "unavailable", "reason": "no_depth_chart_starters"}
+    return mask, {"status": "available", "selection_basis": "pregame_depth_chart_rank_1"}
+
+
+def prior_season_importance(frame: pd.DataFrame, prior_frames, position: str) -> pd.Series:
+    """Each row's prior-season mean shared-component points; NaN when unknown.
+
+    A full-fantasy prior mean is not equivalent for offense, and the generic
+    split is invalid for K/DST, so callers pass that position's prior frames.
+    """
+    out = pd.Series(np.nan, index=frame.index, dtype=float)
+    frames = [regular_season_rows(f) for f in prior_frames if f is not None and len(f)]
+    if not frames or not {"player_id", "season"}.issubset(frame):
+        return out
+    prior = pd.concat(frames)
+    prior["fantasy_points"] = comparison_actuals(prior, position)
+    if not {*KEYS, "fantasy_points"}.issubset(prior):
+        return out
+    prior = (
+        prior.assign(player_id=prior["player_id"].astype(str))
+        .drop_duplicates(KEYS)
+        .groupby(["player_id", "season"])["fantasy_points"]
+        .mean()
+    )
+    lookup = pd.MultiIndex.from_arrays(
+        [frame["player_id"].astype(str), pd.to_numeric(frame["season"], errors="coerce") - 1]
+    )
+    return pd.Series(prior.reindex(lookup).to_numpy(dtype=float), index=frame.index)
+
+
+def elite_selection(frame: pd.DataFrame, n: int, column: str = PRIOR_IMPORTANCE_COLUMN):
+    """Top-N distinct players per season by prior-season importance (forecast-free)."""
+    empty = pd.Series(False, index=frame.index)
+    values = pd.to_numeric(frame.get(column, pd.Series(dtype=float)), errors="coerce")
+    if column not in frame or not np.isfinite(values).any():
+        return empty, {"status": "unavailable", "reason": "prior_season_scores_missing"}
+    players = frame.assign(player_id=frame["player_id"].astype(str)).drop_duplicates(
+        ["season", "player_id"]
+    )
+    top = ranked_rows(players, column, ["season"], n)
+    selected = pd.MultiIndex.from_frame(top[["season", "player_id"]])
+    keys = pd.MultiIndex.from_frame(
+        frame[["season", "player_id"]].assign(player_id=frame["player_id"].astype(str))
+    )
+    return pd.Series(keys.isin(selected), index=frame.index), {
+        "status": "available",
+        "selection_basis": column,
+        "selected_players": int(len(top)),
     }
-    if not present or not set(KEYS).issubset(frame):
-        return empty, {"status": "unavailable", "reason": "no_displayed_sources", **meta}
-    values = frame[list(present.values())].apply(pd.to_numeric, errors="coerce")
-    values = values.replace([np.inf, -np.inf], np.nan)
-    pool = frame[KEYS].assign(consensus=values.mean(axis=1, skipna=False))
-    top = ranked_rows(pool, "consensus", ["season", "week"], n)
-    selected = pd.MultiIndex.from_frame(top[KEYS])
-    keys = pd.MultiIndex.from_frame(frame[KEYS].assign(player_id=frame["player_id"].astype(str)))
-    meta["selection_n"] = int(len(top))
-    if not len(top):
-        return empty, {"status": "unavailable", "reason": "no_common_forecast_rows", **meta}
-    return pd.Series(keys.isin(selected), index=frame.index), {"status": "available", **meta}
 
 
 def metric_block(frame: pd.DataFrame, columns: dict[str, str]) -> dict:
@@ -280,32 +326,18 @@ def build_cohorts(
     ):
         if column in df:
             masks[name] = predicate(df[column])
-    prior_col = "prior_season_mean_shared_component_points"
+    prior_col = PRIOR_IMPORTANCE_COLUMN
     # Rebuild prior importance from the same components. A full-fantasy prior
     # mean is not equivalent for offense, and the generic split is invalid for K/DST.
     if prior_frames:
-        prior = pd.concat([regular_season_rows(f) for f in prior_frames if f is not None])
-        prior["fantasy_points"] = comparison_actuals(prior, position)
-        if {*KEYS, "fantasy_points"}.issubset(prior):
-            prior = (
-                prior.drop_duplicates(KEYS)
-                .groupby(["player_id", "season"])["fantasy_points"]
-                .mean()
-            )
-            lookup = pd.MultiIndex.from_arrays([df["player_id"], df["season"] - 1])
-            df[prior_col] = prior.reindex(lookup).to_numpy()
+        df[prior_col] = prior_season_importance(df, prior_frames, position)
     prior_ok = (
         prior_col in df
         and np.isfinite(pd.to_numeric(df[prior_col], errors="coerce")).any()
-        and (position not in {"K", "DST"} or bool(prior_frames))
+        and (position not in TEAM_UNIT_POSITIONS or bool(prior_frames))
     )
     if prior_ok:
-        players = df.drop_duplicates(["season", "player_id"])
-        top = ranked_rows(players, prior_col, ["season"], 24)
-        selected = pd.MultiIndex.from_frame(top[["season", "player_id"]])
-        masks["elite_top24"] = pd.Series(
-            pd.MultiIndex.from_frame(df[["season", "player_id"]]).isin(selected), index=df.index
-        )
+        masks["elite_top24"], _ = elite_selection(df, 24, prior_col)
     block = {}
     for name, mask in masks.items():
         sub = df[mask]

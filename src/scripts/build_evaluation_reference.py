@@ -20,25 +20,31 @@ from src.shared.evaluation_cohorts import (
     reference_path,
     regular_season_rows,
 )
-from src.shared.expert_eligibility import NFLCOM_OFFENSE_MIN_SEASON, filter_eligible_forecasts
+from src.shared.expert_eligibility import filter_eligible_forecasts
 
 
 def build_reference(
     seasons, *, nflcom_loader=None, rotowire_loader=None, espn_loader=None
 ) -> pd.DataFrame:
-    """Build shared-component ranks: NFL/RotoWire offense, ESPN K, RotoWire DST."""
+    """Build shared-component ranks: RotoWire offense and DST, ESPN K.
+
+    NFL.com is not a reference source (recipe ``shared_components_v4``): its
+    archive reproduces RotoWire's projection series at uncontrolled capture times,
+    so averaging it in weighted one provider twice with stale weeks. The
+    ``nflcom_loader`` argument is accepted for call-site compatibility only.
+    """
     from src.analysis.analysis_expert_comparison import _build_experts
 
+    del nflcom_loader
     seasons = sorted({int(season) for season in seasons})
     sources = [
         source
-        for source in _build_experts(nflcom_loader, rotowire_loader, None, espn_loader)
-        if source.name in {"nflcom", "sleeper", "espn"}
+        for source in _build_experts(None, rotowire_loader, None, espn_loader)
+        if source.name in {"sleeper", "espn"}
     ]
     raw = {}
     for source in sources:
-        minimum = NFLCOM_OFFENSE_MIN_SEASON if source.name == "nflcom" else 2018
-        supported = [season for season in seasons if season >= minimum]
+        supported = [season for season in seasons if season >= 2018]
         raw[source.name] = source.load(supported) if supported else None
         # A partial provider fetch must not thin the slate into a smaller but
         # "available" reference; the position stays unavailable instead.
@@ -47,7 +53,7 @@ def build_reference(
             raw[source.name] = None
     parts = []
     for pos in ("QB", "RB", "WR", "TE", "K", "DST"):
-        names = ("espn",) if pos == "K" else ("sleeper",) if pos == "DST" else ("nflcom", "sleeper")
+        names = ("espn",) if pos == "K" else ("sleeper",)
         required = [
             source for source in sources if source.name in names and pos not in source.skipped
         ]
@@ -56,12 +62,10 @@ def build_reference(
         projected = []
         for source in required:
             frame = regular_season_rows(source.project(raw[source.name], pos, "ppr"))
-            # The hvpkod NFL.com offense archive backfills box scores before 2024.
-            # RotoWire's usable archive begins in 2018. Never silently substitute
-            # another reference recipe when one required source is unavailable.
+            # RotoWire's and ESPN's usable archives begin in 2018. Never silently
+            # substitute another reference recipe when the required source is unavailable.
             frame = filter_eligible_forecasts(frame, source.name, pos)
-            first_season = NFLCOM_OFFENSE_MIN_SEASON if source.name == "nflcom" else 2018
-            frame = frame[frame["season"].isin(seasons) & frame["season"].ge(first_season)].dropna(
+            frame = frame[frame["season"].isin(seasons) & frame["season"].ge(2018)].dropna(
                 subset=["expert_pred_total"]
             )
             frame["player_id"] = frame["player_id"].astype(str)

@@ -1,10 +1,11 @@
 {
   "actual_basis": "shared_projected_components_v2",
   "cohort_definitions": {
-    "top12": "Top 12 per season by regular-season actual shared-component points",
-    "top30": "Top 30 per season by regular-season actual shared-component points",
-    "weekly_consensus_top24": "Top 24 per week by the equal-weight mean of every displayed source's shared-component forecast (models and experts) on the common player-weeks; each source contributes equally to selection",
-    "weekly_reference_top24": "Top 24 per week by the archived shared-component NFL.com/RotoWire mean (ESPN for K, RotoWire for DST). Selected by graded expert forecasts, so those sources' errors are conditioned on their own selection; compare sources on the consensus cohort"
+    "elite_top24": "The 24 players per position with the highest prior-season mean shared-component points. Selected by neither outcomes nor any graded forecast; unavailable for K and D/ST",
+    "top12": "Top 12 per season by regular-season actual shared-component points. Selected on outcomes, which favors sources that forecast stars higher",
+    "top30": "Top 30 per season by regular-season actual shared-component points. Selected on outcomes, which favors sources that forecast stars higher",
+    "weekly_depth_starters": "Pregame depth-chart starters each week (rank 1 in the last depth chart published before game day; up to three receivers per team; every kicker and defense). Selected by neither outcomes nor any graded forecast",
+    "weekly_reference_top24": "Top 24 per week by the archived shared-component RotoWire forecast (ESPN for K). Selected by a graded expert's own forecasts, which penalizes that expert (winner's curse); a secondary view, not the headline"
   },
   "coverage": {
     "all": {
@@ -43,7 +44,101 @@
         "status": "available",
         "unavailable_sources": [
           "nflcom"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "K": {
         "actual_basis": "shared_projected_components_v2",
@@ -75,12 +170,108 @@
         "status": "available",
         "unavailable_sources": [
           "rotowire"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "status": "available",
+          "winner": "tie"
+        }
       },
       "QB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 6,
         "scoring_components": [
           "passing_yards",
@@ -94,7 +285,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -104,17 +294,112 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "RB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 5,
         "scoring_components": [
           "rushing_tds",
@@ -128,7 +413,6 @@
           "attn_nn": 6,
           "espn": 5,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -138,12 +422,105 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 5,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "TE": {
         "actual_basis": "shared_projected_components_v2",
@@ -160,7 +537,9 @@
       "WR": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 6,
         "scoring_components": [
           "receiving_tds",
@@ -172,7 +551,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -182,12 +560,586 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
+      }
+    },
+    "elite_top24": {
+      "DST": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 0,
+        "excluded_sources": {},
+        "n": 0,
+        "reason": "prior_season_scores_missing",
+        "scoring_components": [
+          "def_sacks",
+          "def_ints",
+          "def_fumble_rec",
+          "def_fumbles_forced",
+          "def_safeties",
+          "def_tds",
+          "def_blocked_kicks",
+          "special_teams_tds",
+          "yards_allowed"
+        ],
+        "source_n": {
+          "attn_nn": 0,
+          "espn": 0,
+          "lgbm": 0,
+          "nn": 0,
+          "ridge": 0,
+          "rotowire": 0
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "unavailable",
+        "unavailable_sources": [
+          "nflcom"
+        ],
+        "uncertainty": {
+          "reason": "no_common_rows",
+          "status": "unavailable"
+        }
+      },
+      "K": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 0,
+        "excluded_sources": {
+          "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+        },
+        "n": 0,
+        "reason": "prior_season_scores_missing",
+        "scoring_components": [
+          "fg_yard_points",
+          "pat_points",
+          "fg_misses",
+          "xp_misses"
+        ],
+        "source_n": {
+          "attn_nn": 0,
+          "espn": 0,
+          "lgbm": 0,
+          "nn": 0,
+          "ridge": 0
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "espn"
+        ],
+        "status": "unavailable",
+        "unavailable_sources": [
+          "rotowire"
+        ],
+        "uncertainty": {
+          "reason": "no_common_rows",
+          "status": "unavailable"
+        }
+      },
+      "QB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
+        "n": 6,
+        "scoring_components": [
+          "passing_yards",
+          "rushing_yards",
+          "passing_tds",
+          "rushing_tds",
+          "interceptions",
+          "fumbles_lost"
+        ],
+        "selected_players": 3,
+        "selection_basis": "prior_season_mean_shared_component_points",
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available",
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
+      },
+      "RB": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
+        "n": 5,
+        "scoring_components": [
+          "rushing_tds",
+          "receiving_tds",
+          "rushing_yards",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "selected_players": 3,
+        "selection_basis": "prior_season_mean_shared_component_points",
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 5,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available",
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 5,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
+      },
+      "TE": {
+        "actual_basis": "shared_projected_components_v2",
+        "n": 0,
+        "reason": "shared_actual_components_missing",
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "status": "unavailable"
+      },
+      "WR": {
+        "actual_basis": "shared_projected_components_v2",
+        "cohort_n": 6,
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
+        "n": 6,
+        "scoring_components": [
+          "receiving_tds",
+          "receiving_yards",
+          "receptions",
+          "fumbles_lost"
+        ],
+        "selected_players": 3,
+        "selection_basis": "prior_season_mean_shared_component_points",
+        "source_n": {
+          "attn_nn": 6,
+          "espn": 6,
+          "lgbm": 6,
+          "nn": 6,
+          "ridge": 6,
+          "rotowire": 6
+        },
+        "sources": [
+          "ridge",
+          "nn",
+          "attn_nn",
+          "lgbm",
+          "rotowire",
+          "espn"
+        ],
+        "status": "available",
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       }
     },
     "top12": {
@@ -226,7 +1178,101 @@
         "status": "available",
         "unavailable_sources": [
           "nflcom"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "K": {
         "actual_basis": "shared_projected_components_v2",
@@ -258,12 +1304,108 @@
         "status": "available",
         "unavailable_sources": [
           "rotowire"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "status": "available",
+          "winner": "tie"
+        }
       },
       "QB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 6,
         "scoring_components": [
           "passing_yards",
@@ -277,7 +1419,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -287,17 +1428,112 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "RB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 5,
         "scoring_components": [
           "rushing_tds",
@@ -311,7 +1547,6 @@
           "attn_nn": 6,
           "espn": 5,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -321,12 +1556,105 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 5,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "TE": {
         "actual_basis": "shared_projected_components_v2",
@@ -343,7 +1671,9 @@
       "WR": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 6,
         "scoring_components": [
           "receiving_tds",
@@ -355,7 +1685,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -365,12 +1694,105 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       }
     },
     "top30": {
@@ -409,7 +1831,101 @@
         "status": "available",
         "unavailable_sources": [
           "nflcom"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "K": {
         "actual_basis": "shared_projected_components_v2",
@@ -441,12 +1957,108 @@
         "status": "available",
         "unavailable_sources": [
           "rotowire"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "status": "available",
+          "winner": "tie"
+        }
       },
       "QB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 6,
         "scoring_components": [
           "passing_yards",
@@ -460,7 +2072,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -470,17 +2081,112 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "RB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 5,
         "scoring_components": [
           "rushing_tds",
@@ -494,7 +2200,6 @@
           "attn_nn": 6,
           "espn": 5,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -504,12 +2209,105 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 5,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "TE": {
         "actual_basis": "shared_projected_components_v2",
@@ -526,7 +2324,9 @@
       "WR": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "n": 6,
         "scoring_components": [
           "receiving_tds",
@@ -538,7 +2338,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -548,15 +2347,108 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       }
     },
-    "weekly_consensus_top24": {
+    "weekly_depth_starters": {
       "DST": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
@@ -573,16 +2465,7 @@
           "special_teams_tds",
           "yards_allowed"
         ],
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_n": 6,
-        "selection_sources": [
-          "ridge",
-          "nn",
-          "attn_nn",
-          "lgbm",
-          "rotowire",
-          "espn"
-        ],
+        "selection_basis": "one_unit_per_team_game",
         "source_n": {
           "attn_nn": 6,
           "espn": 6,
@@ -602,7 +2485,101 @@
         "status": "available",
         "unavailable_sources": [
           "nflcom"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "K": {
         "actual_basis": "shared_projected_components_v2",
@@ -617,15 +2594,7 @@
           "fg_misses",
           "xp_misses"
         ],
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_n": 6,
-        "selection_sources": [
-          "ridge",
-          "nn",
-          "attn_nn",
-          "lgbm",
-          "espn"
-        ],
+        "selection_basis": "one_unit_per_team_game",
         "source_n": {
           "attn_nn": 6,
           "espn": 6,
@@ -643,13 +2612,109 @@
         "status": "available",
         "unavailable_sources": [
           "rotowire"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "status": "available",
+          "winner": "tie"
+        }
       },
       "QB": {
         "actual_basis": "shared_projected_components_v2",
-        "cohort_n": 6,
-        "excluded_sources": {},
-        "n": 6,
+        "cohort_n": 4,
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
+        "n": 4,
         "scoring_components": [
           "passing_yards",
           "rushing_yards",
@@ -658,43 +2723,127 @@
           "interceptions",
           "fumbles_lost"
         ],
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_n": 6,
-        "selection_sources": [
-          "ridge",
-          "nn",
-          "attn_nn",
-          "lgbm",
-          "nflcom",
-          "rotowire",
-          "espn"
-        ],
+        "selection_basis": "pregame_depth_chart_rank_1",
         "source_n": {
-          "attn_nn": 6,
-          "espn": 6,
-          "lgbm": 6,
-          "nflcom": 6,
-          "nn": 6,
-          "ridge": 6,
-          "rotowire": 6
+          "attn_nn": 4,
+          "espn": 4,
+          "lgbm": 4,
+          "nn": 4,
+          "ridge": 4,
+          "rotowire": 4
         },
         "sources": [
           "ridge",
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 4,
+          "players": 2,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "RB": {
         "actual_basis": "shared_projected_components_v2",
-        "cohort_n": 5,
-        "excluded_sources": {},
-        "n": 5,
+        "cohort_n": 4,
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
+        "n": 3,
         "scoring_components": [
           "rushing_tds",
           "receiving_tds",
@@ -703,37 +2852,119 @@
           "receptions",
           "fumbles_lost"
         ],
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_n": 5,
-        "selection_sources": [
-          "ridge",
-          "nn",
-          "attn_nn",
-          "lgbm",
-          "nflcom",
-          "rotowire",
-          "espn"
-        ],
+        "selection_basis": "pregame_depth_chart_rank_1",
         "source_n": {
-          "attn_nn": 5,
-          "espn": 5,
-          "lgbm": 5,
-          "nflcom": 5,
-          "nn": 5,
-          "ridge": 5,
-          "rotowire": 5
+          "attn_nn": 4,
+          "espn": 3,
+          "lgbm": 4,
+          "nn": 4,
+          "ridge": 4,
+          "rotowire": 4
         },
         "sources": [
           "ridge",
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 3,
+          "players": 2,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "TE": {
         "actual_basis": "shared_projected_components_v2",
@@ -749,46 +2980,130 @@
       },
       "WR": {
         "actual_basis": "shared_projected_components_v2",
-        "cohort_n": 6,
-        "excluded_sources": {},
-        "n": 6,
+        "cohort_n": 4,
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
+        "n": 4,
         "scoring_components": [
           "receiving_tds",
           "receiving_yards",
           "receptions",
           "fumbles_lost"
         ],
-        "selection_basis": "equal_weight_mean_of_displayed_sources",
-        "selection_n": 6,
-        "selection_sources": [
-          "ridge",
-          "nn",
-          "attn_nn",
-          "lgbm",
-          "nflcom",
-          "rotowire",
-          "espn"
-        ],
+        "selection_basis": "pregame_depth_chart_rank_1",
         "source_n": {
-          "attn_nn": 6,
-          "espn": 6,
-          "lgbm": 6,
-          "nflcom": 6,
-          "nn": 6,
-          "ridge": 6,
-          "rotowire": 6
+          "attn_nn": 4,
+          "espn": 4,
+          "lgbm": 4,
+          "nn": 4,
+          "ridge": 4,
+          "rotowire": 4
         },
         "sources": [
           "ridge",
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 4,
+          "players": 2,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       }
     },
     "weekly_reference_top24": {
@@ -829,7 +3144,11 @@
         "status": "unavailable",
         "unavailable_sources": [
           "nflcom"
-        ]
+        ],
+        "uncertainty": {
+          "reason": "no_common_rows",
+          "status": "unavailable"
+        }
       },
       "K": {
         "actual_basis": "shared_projected_components_v2",
@@ -866,12 +3185,108 @@
         "status": "available",
         "unavailable_sources": [
           "rotowire"
-        ]
+        ],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "espn",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": 0.0,
+            "ci": [
+              0.0,
+              0.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  2.0,
+                  2.0
+                ],
+                "minus_best_expert": 2.0,
+                "verdict": "experts"
+              },
+              "lgbm": {
+                "ci": [
+                  3.0,
+                  3.0
+                ],
+                "minus_best_expert": 3.0,
+                "verdict": "experts"
+              },
+              "nn": {
+                "ci": [
+                  1.0,
+                  1.0
+                ],
+                "minus_best_expert": 1.0,
+                "verdict": "experts"
+              },
+              "ridge": {
+                "ci": [
+                  0.0,
+                  0.0
+                ],
+                "minus_best_expert": 0.0,
+                "verdict": "tie"
+              }
+            },
+            "verdict": "tie"
+          },
+          "status": "available",
+          "winner": "tie"
+        }
       },
       "QB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "missing_reference_weeks": 0,
         "n": 6,
         "reference_hash": "2532e5d71f9e208683b9bd483f1f67910c0c4b99f23fc1273dcdbdfc63f23b40",
@@ -890,7 +3305,6 @@
           "attn_nn": 6,
           "espn": 6,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -900,17 +3314,112 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 6,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "RB": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 6,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "missing_reference_weeks": 0,
         "n": 5,
         "reference_hash": "1a389320477e474b63491cc7aa9b10b8948c7939318e32cfcd712bcbab63b070",
@@ -929,7 +3438,6 @@
           "attn_nn": 6,
           "espn": 5,
           "lgbm": 6,
-          "nflcom": 6,
           "nn": 6,
           "ridge": 6,
           "rotowire": 6
@@ -939,12 +3447,105 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "available",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 5,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       },
       "TE": {
         "actual_basis": "shared_projected_components_v2",
@@ -961,7 +3562,9 @@
       "WR": {
         "actual_basis": "shared_projected_components_v2",
         "cohort_n": 3,
-        "excluded_sources": {},
+        "excluded_sources": {
+          "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+        },
         "missing_reference_weeks": 1,
         "n": 3,
         "reference_hash": "89f7d6574d7727c480e1158fb78f51853da1099c8e525fdb687b319ab71c5598",
@@ -978,7 +3581,6 @@
           "attn_nn": 3,
           "espn": 3,
           "lgbm": 3,
-          "nflcom": 3,
           "nn": 3,
           "ridge": 3,
           "rotowire": 3
@@ -988,15 +3590,109 @@
           "nn",
           "attn_nn",
           "lgbm",
-          "nflcom",
           "rotowire",
           "espn"
         ],
         "status": "partial",
-        "unavailable_sources": []
+        "unavailable_sources": [],
+        "uncertainty": {
+          "mae": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "n": 3,
+          "players": 3,
+          "rmse": {
+            "best_expert": "rotowire",
+            "best_model": "ridge",
+            "best_model_minus_best_expert": -5.0,
+            "ci": [
+              -5.0,
+              -5.0
+            ],
+            "models": {
+              "attn_nn": {
+                "ci": [
+                  -3.0,
+                  -3.0
+                ],
+                "minus_best_expert": -3.0,
+                "verdict": "models"
+              },
+              "lgbm": {
+                "ci": [
+                  -2.0,
+                  -2.0
+                ],
+                "minus_best_expert": -2.0,
+                "verdict": "models"
+              },
+              "nn": {
+                "ci": [
+                  -4.0,
+                  -4.0
+                ],
+                "minus_best_expert": -4.0,
+                "verdict": "models"
+              },
+              "ridge": {
+                "ci": [
+                  -5.0,
+                  -5.0
+                ],
+                "minus_best_expert": -5.0,
+                "verdict": "models"
+              }
+            },
+            "verdict": "models"
+          },
+          "status": "available",
+          "winner": "models"
+        }
       }
     }
   },
+  "evaluation_season_note": "Model changes were compared on 2025 during development, so these tables are a development-season backtest, not an untouched holdout.",
   "excluded_components": {
     "DST": {
       "points_allowed": "Scoreboard, ESPN and RotoWire points-allowed definitions differ."
@@ -1005,6 +3701,18 @@
   "excluded_sources": {
     "K": {
       "nflcom": "NFL.com does not supply matching field-goal yardage and miss projections."
+    },
+    "QB": {
+      "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+    },
+    "RB": {
+      "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+    },
+    "TE": {
+      "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
+    },
+    "WR": {
+      "nflcom": "NFL.com reproduces RotoWire's projection series, and its archive was captured before the final injury report in 10 of 18 2025 weeks, so it is not graded as an independent expert."
     }
   },
   "experts_meta": {
@@ -1285,11 +3993,7 @@
           "mae": 3.0,
           "n": 2
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 2
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1322,11 +4026,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1359,11 +4059,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1396,11 +4092,7 @@
           "mae": 3.0,
           "n": 2
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 2
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1435,11 +4127,7 @@
           "mae": 3.0,
           "n": 2
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 2
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1472,11 +4160,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1509,11 +4193,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1546,11 +4226,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1586,11 +4262,7 @@
           "mae": 3.0,
           "n": 2
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 2
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1623,11 +4295,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1660,11 +4328,7 @@
           "mae": 3.0,
           "n": 1
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 1
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1697,11 +4361,7 @@
           "mae": 3.0,
           "n": 2
         },
-        "nflcom": {
-          "bias": 4.0,
-          "mae": 4.0,
-          "n": 2
-        },
+        "nflcom": null,
         "nn": {
           "bias": 1.0,
           "mae": 1.0,
@@ -1787,18 +4447,21 @@
     "all": {
       "DST": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.991,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": 0.9189,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.9797,
@@ -1806,18 +4469,21 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9977,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.9437,
@@ -1826,18 +4492,21 @@
       },
       "K": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.0,
@@ -1845,12 +4514,14 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
@@ -1860,42 +4531,43 @@
       },
       "QB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8843,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.0417,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.7396,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.537,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9711,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.2766,
@@ -1904,42 +4576,43 @@
       },
       "RB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 5,
           "r2": 0.9431,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 5,
           "r2": 0.4875,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 5,
           "r2": 0.8719,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 5,
-          "r2": 0.7722,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 5,
           "r2": 0.9858,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 5,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 5,
           "r2": 0.6441,
@@ -1957,42 +4630,207 @@
       },
       "WR": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8322,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.5099,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.6225,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.3289,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9581,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 6,
+          "r2": -0.0485,
+          "rmse": 5.0
+        }
+      }
+    },
+    "elite_top24": {
+      "DST": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "K": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "QB": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8843,
+          "rmse": 2.0
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.0417,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.7396,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9711,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 6,
+          "r2": 0.2766,
+          "rmse": 5.0
+        }
+      },
+      "RB": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 5,
+          "r2": 0.9431,
+          "rmse": 2.0
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 5,
+          "r2": 0.4875,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 5,
+          "r2": 0.8719,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 5,
+          "r2": 0.9858,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 5,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "bias": 5.0,
+          "mae": 5.0,
+          "n": 5,
+          "r2": 0.6441,
+          "rmse": 5.0
+        }
+      },
+      "TE": {
+        "attn_nn": null,
+        "espn": null,
+        "lgbm": null,
+        "nflcom": null,
+        "nn": null,
+        "ridge": null,
+        "rotowire": null
+      },
+      "WR": {
+        "attn_nn": {
+          "bias": 2.0,
+          "mae": 2.0,
+          "n": 6,
+          "r2": 0.8322,
+          "rmse": 2.0
+        },
+        "espn": {
+          "bias": 6.0,
+          "mae": 6.0,
+          "n": 6,
+          "r2": -0.5099,
+          "rmse": 6.0
+        },
+        "lgbm": {
+          "bias": 3.0,
+          "mae": 3.0,
+          "n": 6,
+          "r2": 0.6225,
+          "rmse": 3.0
+        },
+        "nflcom": null,
+        "nn": {
+          "bias": 1.0,
+          "mae": 1.0,
+          "n": 6,
+          "r2": 0.9581,
+          "rmse": 1.0
+        },
+        "ridge": {
+          "bias": 0.0,
+          "mae": 0.0,
+          "n": 6,
+          "r2": 1.0,
+          "rmse": 0.0
+        },
+        "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": -0.0485,
@@ -2003,18 +4841,21 @@
     "top12": {
       "DST": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.991,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": 0.9189,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.9797,
@@ -2022,18 +4863,21 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9977,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.9437,
@@ -2042,18 +4886,21 @@
       },
       "K": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.0,
@@ -2061,12 +4908,14 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
@@ -2076,42 +4925,43 @@
       },
       "QB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8843,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.0417,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.7396,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.537,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9711,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.2766,
@@ -2120,42 +4970,43 @@
       },
       "RB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 5,
           "r2": 0.9431,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 5,
           "r2": 0.4875,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 5,
           "r2": 0.8719,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 5,
-          "r2": 0.7722,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 5,
           "r2": 0.9858,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 5,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 5,
           "r2": 0.6441,
@@ -2173,42 +5024,43 @@
       },
       "WR": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8322,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.5099,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.6225,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.3289,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9581,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": -0.0485,
@@ -2219,18 +5071,21 @@
     "top30": {
       "DST": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.991,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": 0.9189,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.9797,
@@ -2238,18 +5093,21 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9977,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.9437,
@@ -2258,18 +5116,21 @@
       },
       "K": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.0,
@@ -2277,12 +5138,14 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
@@ -2292,42 +5155,43 @@
       },
       "QB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8843,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.0417,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.7396,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.537,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9711,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.2766,
@@ -2336,42 +5200,43 @@
       },
       "RB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 5,
           "r2": 0.9431,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 5,
           "r2": 0.4875,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 5,
           "r2": 0.8719,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 5,
-          "r2": 0.7722,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 5,
           "r2": 0.9858,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 5,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 5,
           "r2": 0.6441,
@@ -2389,42 +5254,43 @@
       },
       "WR": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8322,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.5099,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.6225,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.3289,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9581,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": -0.0485,
@@ -2432,21 +5298,24 @@
         }
       }
     },
-    "weekly_consensus_top24": {
+    "weekly_depth_starters": {
       "DST": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.991,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": 0.9189,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.9797,
@@ -2454,18 +5323,21 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9977,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.9437,
@@ -2474,18 +5346,21 @@
       },
       "K": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.0,
@@ -2493,12 +5368,14 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
@@ -2508,89 +5385,91 @@
       },
       "QB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
-          "n": 6,
-          "r2": 0.8843,
+          "n": 4,
+          "r2": 0.7878,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
-          "n": 6,
-          "r2": -0.0417,
+          "n": 4,
+          "r2": -0.9098,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
-          "n": 6,
-          "r2": 0.7396,
+          "n": 4,
+          "r2": 0.5225,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.537,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
-          "n": 6,
-          "r2": 0.9711,
+          "n": 4,
+          "r2": 0.9469,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
-          "n": 6,
+          "n": 4,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
-          "n": 6,
-          "r2": 0.2766,
+          "n": 4,
+          "r2": -0.3263,
           "rmse": 5.0
         }
       },
       "RB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
-          "n": 5,
-          "r2": 0.9431,
+          "n": 3,
+          "r2": 0.8565,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
-          "n": 5,
-          "r2": 0.4875,
+          "n": 3,
+          "r2": -0.2915,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
-          "n": 5,
-          "r2": 0.8719,
+          "n": 3,
+          "r2": 0.6771,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 5,
-          "r2": 0.7722,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
-          "n": 5,
-          "r2": 0.9858,
+          "n": 3,
+          "r2": 0.9641,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
-          "n": 5,
+          "n": 3,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
-          "n": 5,
-          "r2": 0.6441,
+          "n": 3,
+          "r2": 0.1032,
           "rmse": 5.0
         }
       },
@@ -2605,45 +5484,46 @@
       },
       "WR": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
-          "n": 6,
-          "r2": 0.8322,
+          "n": 4,
+          "r2": 0.6924,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
-          "n": 6,
-          "r2": -0.5099,
+          "n": 4,
+          "r2": -1.7682,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
-          "n": 6,
-          "r2": 0.6225,
+          "n": 4,
+          "r2": 0.308,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.3289,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
-          "n": 6,
-          "r2": 0.9581,
+          "n": 4,
+          "r2": 0.9231,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
-          "n": 6,
+          "n": 4,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
-          "n": 6,
-          "r2": -0.0485,
+          "n": 4,
+          "r2": -0.9223,
           "rmse": 5.0
         }
       }
@@ -2660,18 +5540,21 @@
       },
       "K": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.0,
@@ -2679,12 +5562,14 @@
         },
         "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.0,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
@@ -2694,42 +5579,43 @@
       },
       "QB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 6,
           "r2": 0.8843,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 6,
           "r2": -0.0417,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 6,
           "r2": 0.7396,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 6,
-          "r2": 0.537,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 6,
           "r2": 0.9711,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 6,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 6,
           "r2": 0.2766,
@@ -2738,42 +5624,43 @@
       },
       "RB": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 5,
           "r2": 0.9431,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 5,
           "r2": 0.4875,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 5,
           "r2": 0.8719,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 5,
-          "r2": 0.7722,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 5,
           "r2": 0.9858,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 5,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 5,
           "r2": 0.6441,
@@ -2791,42 +5678,43 @@
       },
       "WR": {
         "attn_nn": {
+          "bias": 2.0,
           "mae": 2.0,
           "n": 3,
           "r2": 0.7693,
           "rmse": 2.0
         },
         "espn": {
+          "bias": 6.0,
           "mae": 6.0,
           "n": 3,
           "r2": -1.0761,
           "rmse": 6.0
         },
         "lgbm": {
+          "bias": 3.0,
           "mae": 3.0,
           "n": 3,
           "r2": 0.481,
           "rmse": 3.0
         },
-        "nflcom": {
-          "mae": 4.0,
-          "n": 3,
-          "r2": 0.0773,
-          "rmse": 4.0
-        },
+        "nflcom": null,
         "nn": {
+          "bias": 1.0,
           "mae": 1.0,
           "n": 3,
           "r2": 0.9423,
           "rmse": 1.0
         },
         "ridge": {
+          "bias": 0.0,
           "mae": 0.0,
           "n": 3,
           "r2": 1.0,
           "rmse": 0.0
         },
         "rotowire": {
+          "bias": 5.0,
           "mae": 5.0,
           "n": 3,
           "r2": -0.4418,
@@ -2837,6 +5725,18 @@
   },
   "top12_n": 12,
   "top_n": 30,
+  "uncertainty_meta": {
+    "confidence": 0.95,
+    "gap": "best_model_minus_best_expert_minimum_within_replicate",
+    "method": "player_clustered_paired_bootstrap",
+    "metrics": [
+      "mae",
+      "rmse"
+    ],
+    "replicates": 2000,
+    "seed": 20260925,
+    "winner_rule": "A group wins a row only when the 95% interval for best model minus best expert excludes zero in the same direction for both MAE and RMSE; otherwise the row is a statistical tie."
+  },
   "weekly_ranking": {
     "DST": {
       "attn_nn": {
@@ -2927,12 +5827,6 @@
         "n_weeks": 0,
         "points_captured": null
       },
-      "nflcom": {
-        "hit_rate": null,
-        "lineup_regret": null,
-        "n_weeks": 0,
-        "points_captured": null
-      },
       "nn": {
         "hit_rate": null,
         "lineup_regret": null,
@@ -2966,12 +5860,6 @@
         "points_captured": null
       },
       "lgbm": {
-        "hit_rate": null,
-        "lineup_regret": null,
-        "n_weeks": 0,
-        "points_captured": null
-      },
-      "nflcom": {
         "hit_rate": null,
         "lineup_regret": null,
         "n_weeks": 0,
@@ -3011,12 +5899,6 @@
         "points_captured": null
       },
       "lgbm": {
-        "hit_rate": null,
-        "lineup_regret": null,
-        "n_weeks": 0,
-        "points_captured": null
-      },
-      "nflcom": {
         "hit_rate": null,
         "lineup_regret": null,
         "n_weeks": 0,
