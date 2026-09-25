@@ -417,5 +417,6 @@ def test_season_edge_interval_separates_a_real_edge_from_noise(monkeypatch):
 def test_development_season_is_labelled(monkeypatch):
     payload = evaluate(monkeypatch, records())
     assert "development-season backtest" in payload["evaluation_season_note"]
+    assert "closing betting lines" in payload["information_set_note"]
     older = evaluate(monkeypatch, records().assign(season=2019))
     assert older["evaluation_season_note"] is None

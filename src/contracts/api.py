@@ -20,6 +20,21 @@ PREDICTION_FIELDS = tuple(f"{source}_pred" for source in MODEL_SOURCES)
 COMPARISON_PREDICTION_FIELDS = tuple(
     f"{source}_comparison_pred" for source in (*MODEL_SOURCES, *EXPERT_SOURCES)
 )
+# Head selection, not ensembling (ADR-0003): the model the Next Week board ranks
+# first for a position, followed by the display fallbacks it uses when that
+# forecast is missing. The Comparison tab headlines the first model against the
+# best expert; a best-of-four gap gives the model family four draws, so it is
+# reported only as context. LightGBM ranks RB/WR (lineup regret, 4/4 rolling
+# origins vs RotoWire); Ridge is the incumbent K baseline.
+SERVED_MODEL_CHAIN = {
+    "QB": ("attn_nn", "lgbm", "nn"),
+    "RB": ("lgbm", "attn_nn", "nn"),
+    "WR": ("lgbm", "attn_nn", "nn"),
+    "TE": ("attn_nn", "lgbm", "nn"),
+    "K": ("ridge", "attn_nn", "lgbm", "nn"),
+    "DST": ("attn_nn", "lgbm", "nn"),
+}
+SERVED_MODEL = {position: chain[0] for position, chain in SERVED_MODEL_CHAIN.items()}
 
 # An intentionally small envelope schema: structural requirements shared by the
 # generated browser boundary, fixture tests, and independent Python consumers.
@@ -41,6 +56,7 @@ API_CONTRACT = {
     "expert_sources": list(EXPERT_SOURCES),
     "nullable_prediction_fields": list(PREDICTION_FIELDS),
     "nullable_comparison_prediction_fields": list(COMPARISON_PREDICTION_FIELDS),
+    "served_model_chain": {position: list(chain) for position, chain in SERVED_MODEL_CHAIN.items()},
     "optional_row_comparison_metadata": [
         "comparison_actual",
         "comparison_actual_basis",
@@ -56,6 +72,7 @@ API_CONTRACT = {
     "comparison": {
         "sample_basis": "shared_player_weeks",
         "actual_basis": "shared_projected_components_v2",
+        "headline_gap": "served_model_minus_best_expert",
         "optional_metadata": [
             "coverage",
             "scoring_components",
@@ -64,6 +81,8 @@ API_CONTRACT = {
             "cohort_definitions",
             "uncertainty_meta",
             "evaluation_season_note",
+            "served_model",
+            "information_set_note",
         ],
     },
     "compatibility": "Optional fields and new source IDs may be added within v1; consumers reject unsupported major versions.",

@@ -20,6 +20,25 @@ REPLICATES = 2000
 CONFIDENCE = 0.95
 SEED = 20260925
 METRICS = ("mae", "rmse")
+# Cohorts whose rows are selected on outcomes or on a graded expert's own
+# forecasts. Their cells are still reported, but no verdict is attached: selection
+# on outcomes rewards bullish forecasts, and selection on a source's forecasts
+# penalizes that source (winner's curse), so a winner there is not forecasting skill.
+NOT_APPLICABLE_COHORTS = {
+    "weekly_reference_top24": "selected_by_graded_forecast",
+    "top30": "selected_on_outcomes",
+    "top12": "selected_on_outcomes",
+}
+# Disclosed beside every backtest verdict. The graded season's model inputs are
+# not all pregame, and the expert archives have no capture timestamp.
+INFORMATION_SET_NOTE = (
+    "Backtest model inputs for the graded season include realized quarterback "
+    "participation, closing betting lines, recorded game-time weather and game-day "
+    "roster status (ADR-0004), and the graded population is players who recorded a "
+    "snap. The expert archives were fetched after the season and carry no capture "
+    "timestamp; both graded experts omit every player ruled Out, so their information "
+    "time is the final injury report or later. Live forecasts use pregame inputs only."
+)
 METHOD = {
     "method": "player_clustered_paired_bootstrap",
     "replicates": REPLICATES,
@@ -27,11 +46,15 @@ METHOD = {
     "seed": SEED,
     "metrics": list(METRICS),
     "gap": "best_model_minus_best_expert_minimum_within_replicate",
+    "headline_gap": "served_model_minus_best_expert",
     "winner_rule": (
-        "A group wins a row only when the 95% interval for best model minus best "
-        "expert excludes zero in the same direction for both MAE and RMSE; "
-        "otherwise the row is a statistical tie."
+        "A row names a winner only when the 95% interval for the served model minus "
+        "the best expert excludes zero in the same direction for both MAE and RMSE; "
+        "otherwise the row is a statistical tie. The best-of-four gap is context only: "
+        "its minimum is taken inside each replicate, but it still gives the model "
+        "family four draws."
     ),
+    "no_verdict_cohorts": dict(NOT_APPLICABLE_COHORTS),
 }
 
 
@@ -129,6 +152,39 @@ def group_gap_intervals(
             "ci": interval,
             "verdict": _verdict(interval),
             "models": per_model,
+        }
+    verdicts = {out[metric]["verdict"] for metric in METRICS}
+    out["winner"] = verdicts.pop() if len(verdicts) == 1 else "tie"
+    return out
+
+
+def served_gap(result: dict, model: str | None) -> dict:
+    """One pre-specified model against the best expert, under the both-metrics rule.
+
+    ``result`` is a ``group_gap_intervals`` report. Its best-of-four gap credits
+    the model family; this credits only ``model`` (the model the site serves for
+    the position), so the headline does not get four draws. The best expert is
+    still the minimum inside each replicate, which is conservative for the model.
+    """
+    if not model:
+        return {**_unavailable("served_model_unknown"), "model": None}
+    if not isinstance(result, dict) or result.get("status") != "available":
+        reason = (
+            result.get("reason", "gap_unavailable")
+            if isinstance(result, dict)
+            else "gap_unavailable"
+        )
+        return {**_unavailable(reason), "model": model}
+    out = {"status": "available", "model": model}
+    for metric in METRICS:
+        entry = ((result.get(metric) or {}).get("models") or {}).get(model)
+        if entry is None:
+            return {**_unavailable("served_model_not_graded"), "model": model}
+        out[metric] = {
+            "best_expert": result[metric]["best_expert"],
+            "minus_best_expert": entry["minus_best_expert"],
+            "ci": list(entry["ci"]),
+            "verdict": entry["verdict"],
         }
     verdicts = {out[metric]["verdict"] for metric in METRICS}
     out["winner"] = verdicts.pop() if len(verdicts) == 1 else "tie"

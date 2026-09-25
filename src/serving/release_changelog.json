@@ -53,7 +53,7 @@
     "family": "attn_nn",
     "model": "Attention NN",
     "title": "Current production baseline",
-    "summary": "Latest full six-position retrain; mean Attention-NN MAE holds at 4.383 (within seed noise of the 2026-06-11 best) on the held-out test season.",
+    "summary": "Latest full six-position retrain; mean Attention-NN MAE holds at 4.383 (within seed noise of the 2026-06-11 best) on the 2025 test season, a development-season backtest rather than an untouched holdout.",
     "mae": 4.383,
     "r2": 0.269,
     "prev_mae": 4.37,

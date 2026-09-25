@@ -59,23 +59,41 @@ function signed(value) {
     return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
-/* The server's paired interval for this row: which group (if any) wins, and the
- * best-model-minus-best-expert gap with its 95% interval for the shown metric. */
+/* The server's paired intervals for this row. The verdict grades the served model
+ * (the one the Next Week board ranks first for the position) against the best
+ * expert; the best-of-four gap is shown beneath it as context, because it gives
+ * the model family four draws. Hindsight cohorts (season leaders, the expert
+ * reference) carry no interval, so they get no verdict and no highlight. */
 function rowGap(coverageCell, metric) {
     const uncertainty = coverageCell?.uncertainty;
     const key = GAP_METRIC[metric];
     if (!key || !uncertainty || uncertainty.status !== "available" || !uncertainty[key]) return null;
-    const gap = uncertainty[key];
     const group = (verdict) => (verdict === "models" ? "Models" : "Experts");
     // A decided row needs both metrics; one decided metric alone stays a tie.
-    const label = uncertainty.winner === "models" || uncertainty.winner === "experts"
-        ? `${group(uncertainty.winner)} ahead`
-        : gap.verdict === "models" || gap.verdict === "experts"
-            ? `≈ tie (${group(gap.verdict).toLowerCase()} ahead on ${key.toUpperCase()} only)`
+    const label = (winner, verdict) => winner === "models" || winner === "experts"
+        ? `${group(winner)} ahead`
+        : verdict === "models" || verdict === "experts"
+            ? `≈ tie (${group(verdict).toLowerCase()} ahead on ${key.toUpperCase()} only)`
             : "≈ tie";
+    const interval = (gap, delta) => `${signed(delta)} [${signed(gap.ci[0])}, ${signed(gap.ci[1])}] ${key.toUpperCase()}`;
+    const family = uncertainty[key];
+    const familyLine = `best of four − best expert ${interval(family, family.best_model_minus_best_expert)} · ${label(uncertainty.winner, family.verdict).toLowerCase()}`;
+    const served = uncertainty.served_model;
+    if (served?.status === "available" && served[key]) {
+        const gap = served[key];
+        return {
+            winner: served.winner,
+            model: served.model,
+            text: `${label(served.winner, gap.verdict)} · ${SOURCE_LABELS[served.model] || served.model} − best expert ${interval(gap, gap.minus_best_expert)}`,
+            context: familyLine,
+        };
+    }
+    // Older payloads without a served-model block: the best-of-four verdict stands alone.
     return {
         winner: uncertainty.winner,
-        text: `${label} · best model − best expert ${signed(gap.best_model_minus_best_expert)} [${signed(gap.ci[0])}, ${signed(gap.ci[1])}] ${key.toUpperCase()}`,
+        model: null,
+        text: `${label(uncertainty.winner, family.verdict)} · best model − best expert ${interval(family, family.best_model_minus_best_expert)}`,
+        context: null,
     };
 }
 
@@ -94,18 +112,21 @@ function ComparisonTableHead({ firstLabel, sources }) {
     );
 }
 
-/* One row per position. The best cell of the winning group is highlighted only
- * when the paired interval excludes zero under both MAE and RMSE; a statistical
- * tie highlights nothing. Missing cells render an em dash. */
+/* One row per position. A cell is highlighted only when the served model's paired
+ * interval excludes zero under both MAE and RMSE: the served model's own cell when
+ * the models win, the best expert's cell when the experts win. A statistical tie
+ * highlights nothing. Missing cells render an em dash. */
 function ComparisonRows({ posMap, metric, coverage, sources }) {
     const higherBetter = metric === "r2" || metric === "hit_rate";
     return COMPARISON_POSITIONS.map((pos) => {
         const cells = posMap[pos] || {};
         const gap = rowGap(coverage?.[pos], metric);
         const group = gap?.winner === "models" ? MODEL_KEYS : gap?.winner === "experts" ? EXPERT_KEYS : null;
-        const values = group
-            ? sources.filter((s) => group.has(s.key)).map((s) => comparisonCellValue(cells[s.key], metric)).filter((v) => v !== null)
-            : [];
+        const candidates = !group ? []
+            : gap.winner === "models" && gap.model ? sources.filter((s) => s.key === gap.model)
+                : sources.filter((s) => group.has(s.key));
+        const highlightKeys = new Set(candidates.map((s) => s.key));
+        const values = candidates.map((s) => comparisonCellValue(cells[s.key], metric)).filter((v) => v !== null);
         const best = values.length ? (higherBetter ? Math.max(...values) : Math.min(...values)) : null;
         return (
             <tr key={pos}>
@@ -119,13 +140,14 @@ function ComparisonRows({ posMap, metric, coverage, sources }) {
                         </div>
                     )}
                     {gap && <span className={"comparison-gap" + (gap.winner === "tie" ? "" : " comparison-gap-decided")}>{gap.text}</span>}
+                    {gap?.context && <span className="comparison-gap comparison-gap-context">{gap.context}</span>}
                 </td>
                 {sources.map((s) => {
                     const v = comparisonCellValue(cells[s.key], metric);
                     if (v === null) {
                         return <td key={s.key} className="comparison-num comparison-empty">{"—"}</td>;
                     }
-                    const isBest = best !== null && group.has(s.key) && Math.abs(v - best) < 1e-9;
+                    const isBest = best !== null && highlightKeys.has(s.key) && Math.abs(v - best) < 1e-9;
                     return (
                         <td key={s.key} className={"comparison-num" + (isBest ? " comparison-best" : "")}
                             title={cells[s.key]?.n_weeks != null ? `${cells[s.key].n_weeks} comparable weeks` : undefined}>
@@ -276,7 +298,7 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
 
             {data && <div className="comparison-notes" id="comparison-contract">
                 <p>{data.sample_basis === "shared_player_weeks"
-                    ? "Every displayed source is scored on the same regular-season player-weeks. Missing forecasts are excluded. A projected zero is retained, but a provider row with every shared component at zero is an unprojected placeholder and counts as missing."
+                    ? "Every displayed source is scored on the same regular-season player-weeks. Missing forecasts are excluded. A projected zero is retained, but a provider row with every published stat at zero is an unprojected placeholder and counts as missing."
                     : `Sample basis: ${data.sample_basis || "not supplied by this response"}.`}</p>
                 <p>{["shared_projected_components_v1", "shared_projected_components_v2"].includes(data.actual_basis)
                     ? "Predictions and actuals use only the shared projected components below. Stats outside those sets are excluded from actuals too."
@@ -438,8 +460,9 @@ export function ComparisonView({ scoring, search, theme, onPlayer, activateView 
                         <ul className="comparison-note-list">
                             {data.quartile_bias_meta?.seasons?.length > 0 && <li><strong>Evaluation seasons.</strong> {data.quartile_bias_meta.seasons.join(", ")}.{data.evaluation_season_note ? ` ${data.evaluation_season_note}` : ""}</li>}
                             <li><strong>Scoring.</strong> {data.scoring}. {["shared_projected_components_v1", "shared_projected_components_v2"].includes(data.actual_basis) ? "Predictions and regular-season actuals include only the shared projected components listed above. These component scores differ from full fantasy totals." : "Refer to the response's actual basis above."}</li>
-                            <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly shared-component point totals. A row names a winner (its best cell highlighted) only when the 95% interval for the best model minus the best expert excludes zero under both MAE and RMSE; otherwise it reads “≈ tie”. {data.uncertainty_meta ? `Intervals resample whole players (${data.uncertainty_meta.replicates} paired draws), and the best of each group is chosen inside every draw, so picking the best of four models after the fact is accounted for.` : ""}</li>
+                            <li><strong>Our models.</strong> {modelLine}MAE/RMSE/R² are on weekly shared-component point totals. {data.served_model ? `The verdict on each row grades the served model, the one the Next Week board ranks first for that position (${COMPARISON_POSITIONS.map((pos) => `${pos}: ${SOURCE_LABELS[data.served_model[pos]] || data.served_model[pos] || "—"}`).join(", ")}), against the best expert. ` : ""}A row names a winner (that cell highlighted) only when the 95% interval for that gap excludes zero under both MAE and RMSE; otherwise it reads “≈ tie”. {data.uncertainty_meta ? `Intervals resample whole players (${data.uncertainty_meta.replicates} paired draws). The best-of-four line beneath each verdict takes its minimum inside every draw, but it still gives the model family four draws, so it is context, never the verdict. ` : ""}Season-leader and expert-reference tables carry no verdict: their rows are selected on outcomes or on a graded expert’s own forecasts.</li>
                             <li><strong>Metrics.</strong> MAE rewards median-like forecasts on these right-skewed points; RMSE rewards accurate expected points, which is what published projections estimate. Bias is shown for context and never ranked.</li>
+                            {data.information_set_note && <li><strong>Backtest inputs.</strong> {data.information_set_note}</li>}
                             <li><strong>NFL.com.</strong> {nflNote}</li>
                             <li><strong>RotoWire.</strong> {rwNote}</li>
                             <li><strong>ESPN.</strong> {espnNote}</li>

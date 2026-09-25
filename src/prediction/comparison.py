@@ -13,6 +13,7 @@ import traceback
 import numpy as np
 import pandas as pd
 
+from src.contracts.api import SERVED_MODEL
 from src.contracts.serialization import (
     _EXPERT_PRED_PREFIXES,
     _MODEL_PRED_PREFIXES,
@@ -26,7 +27,11 @@ from src.shared.comparison_scoring import (
     score_actual_components,
     scoring_components,
 )
-from src.shared.comparison_uncertainty import group_gap_intervals
+from src.shared.comparison_uncertainty import (
+    NOT_APPLICABLE_COHORTS,
+    group_gap_intervals,
+    served_gap,
+)
 from src.shared.evaluation import compute_metrics
 from src.shared.evaluation_cohorts import (
     depth_chart_starters,
@@ -103,8 +108,10 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
     forecast. The archived expert reference remains a secondary view selected
     before coverage from the full pregame forecast pool. Seasonal cohorts are
     selected before coverage from regular-season actuals and are retrospective.
-    Each cohort cell carries paired bootstrap intervals for the best-model versus
-    best-expert gap; a winner exists only when those intervals agree.
+    Forecast-free cohorts carry paired bootstrap intervals; the verdict grades the
+    served model (``SERVED_MODEL``) against the best expert, and the best-of-four
+    gap is context. Cohorts selected on outcomes or by a graded expert's own
+    forecasts (``NOT_APPLICABLE_COHORTS``) report cells but no verdict.
     """
     subsets = {name: {} for name in COMPARISON_SUBSETS}
     coverage = {name: {} for name in COMPARISON_SUBSETS}
@@ -193,6 +200,16 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                         common[actual].to_numpy(), common[col].to_numpy()
                     )
             subsets[name][pos] = cells
+            if name in NOT_APPLICABLE_COHORTS:
+                # Outcome- or forecast-selected rows: cells only, never a winner.
+                uncertainty = {"status": "not_applicable", "reason": NOT_APPLICABLE_COHORTS[name]}
+            else:
+                # Paired, player-clustered intervals. The headline grades the served
+                # model; the best-of-four gap is kept for context.
+                uncertainty = group_gap_intervals(
+                    common, actual, columns, _MODEL_PRED_PREFIXES, _EXPERT_PRED_PREFIXES
+                )
+                uncertainty["served_model"] = served_gap(uncertainty, SERVED_MODEL.get(pos))
             coverage[name][pos] = {
                 "actual_basis": ACTUAL_BASIS,
                 "scoring_components": list(scoring_components(pos)),
@@ -206,11 +223,9 @@ def comparison_tables(results, scoring="ppr", *, reference=None):
                     prefix: int(cohort[col].notna().sum()) for prefix, col in columns.items()
                 },
                 **{k: v for k, v in selection_meta.get(name, {}).items() if k != "status"},
-                # Paired, player-clustered intervals for best model vs best expert.
-                # Presentation highlights a winner only when MAE and RMSE agree.
-                "uncertainty": group_gap_intervals(
-                    common, actual, columns, _MODEL_PRED_PREFIXES, _EXPERT_PRED_PREFIXES
-                ),
+                # Presentation highlights a winner only when the served model's MAE
+                # and RMSE intervals agree.
+                "uncertainty": uncertainty,
             }
             if not columns:
                 # Actuals without any finite forecast source are unavailable

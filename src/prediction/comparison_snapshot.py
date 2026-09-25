@@ -9,6 +9,7 @@ import json
 from datetime import UTC, datetime
 
 from src.config import TEST_SEASONS
+from src.contracts.api import SERVED_MODEL
 from src.prediction import comparison
 from src.shared.comparison_scoring import (
     ACTUAL_BASIS,
@@ -16,6 +17,7 @@ from src.shared.comparison_scoring import (
     EXCLUDED_SOURCES,
     scoring_components,
 )
+from src.shared.comparison_uncertainty import INFORMATION_SET_NOTE
 from src.shared.comparison_uncertainty import METHOD as UNCERTAINTY_METHOD
 
 
@@ -82,6 +84,10 @@ def build_comparison_snapshot(results, *, reference=None) -> dict:
             else None
         ),
         "uncertainty_meta": UNCERTAINTY_METHOD,
+        # The model the Next Week board ranks first per position (ADR-0003 head
+        # selection); its interval is the row verdict, best-of-four is context.
+        "served_model": dict(SERVED_MODEL),
+        "information_set_note": INFORMATION_SET_NOTE,
         "quartile_bias": quartile_bias,
         "quartile_bias_meta": {
             "n_quantiles": 4,

@@ -33,7 +33,7 @@ The UI reports common sample sizes and missing data. Quartile bias uses the same
 common sample. Ranking metrics evaluate each source's own selections on that
 shared slate.
 
-Six cohort definitions remain separate:
+Five cohort definitions remain separate:
 
 | Name | Selection | Purpose |
 |---|---|---|
@@ -76,6 +76,21 @@ right-skewed and MAE rewards median-like forecasts, while published projections
 estimate expected points (RMSE's target). Cells also report signed bias, which
 is never ranked. The graded season is the configured test season used for A/B
 decisions, so both surfaces label it a development-season backtest.
+
+The row verdict grades the **served model** against the best expert: the model
+the Next Week board ranks first for the position (ADR-0003 head selection,
+`SERVED_MODEL` in `src/contracts/api.py`), with the best expert still chosen
+inside each replicate. The best-of-four gap is reported beneath it as context
+only: its minimum is taken inside each replicate, but it still gives the model
+family four draws, and it hid that the served model loses K on both metrics and
+trails on RMSE at RB/WR/TE. Cohorts selected on outcomes (`top12`, `top30`) or by
+a graded expert's own forecasts (`weekly_reference_top24`) report cells and bias
+but carry no interval and no verdict (`NOT_APPLICABLE_COHORTS`). Both surfaces
+also disclose the backtest information set (`INFORMATION_SET_NOTE`): realized QB
+participation, closing lines, game-time weather and game-day roster status on the
+graded rows, the played-only population, and the experts' undocumented capture
+time.
+
 ## Timeline records
 
 The Timeline applies the same component truth to its `all` regular-season cohort.
@@ -121,8 +136,9 @@ totals.
 `data/raw/weekly_evaluation_reference_v1.parquet` contains only player/week keys,
 position, pregame reference score/rank, source recipe, and generation metadata.
 The current recipe, `shared_components_v4`, ranks archived RotoWire forecasts for
-QB/RB/WR/TE and DST, and ESPN for K. A provider row whose shared components are
-all zero is a missing forecast. NFL.com is not a reference source: its offense
+QB/RB/WR/TE and DST, and ESPN for K. A provider row with every published stat at
+zero is a missing forecast; a genuine forecast whose production lies outside the
+shared set keeps its 0.0 shared total. NFL.com is not a reference source: its offense
 archive is RotoWire's series at uncontrolled capture times (v3 averaged the two).
 Old recipe rows are preserved in the versioned parquet. NFL.com K is excluded
 because its native bucket total cannot represent our made-yardage and miss
@@ -152,11 +168,13 @@ Other seasons and recipe versions remain intact.
 ## Serialization and validation
 
 The actual basis is `shared_projected_components_v2`. The serving cache schema
-is 10: it persists dedicated DST comparison totals computed before rounding raw
-heads for display. Native totals and old rounded heads are never a fallback.
-Missing dedicated totals make DST comparison unavailable until the cache is
-rebuilt. Reference recipe v3 ranks DST on this same nine-component sum. The
-training data-release builder and normal cache rebuild publish the migration.
+is 12: schema 10 first persisted dedicated DST comparison totals computed before
+rounding raw heads for display, 11 separated display and comparison totals, and
+12 added the placeholder rule and the forecast-free cohort inputs. Native totals
+and old rounded heads are never a fallback. Missing dedicated totals make DST
+comparison unavailable until the cache is rebuilt. Reference recipe v3 introduced
+the nine-component DST sum that v4 keeps. The training data-release builder and
+normal cache rebuild publish the migration.
 
 Offline top-N and tier reports use the same raw component truth and one finite
 player-week intersection across available sources. Seasonal cohorts and prior
@@ -190,7 +208,10 @@ Regression tests cover equal forecasts receiving equal scores, invariance to
 unprojected actual stats, missing components, exclusion of NFL.com K, ESPN K
 reference selection, cross-position scoring components, missing forecast weeks, postseason exclusion, reference
 selection independent of actuals/model forecasts, no rank-25 promotion when an
-actual is missing, and serialized Batch/rolling-origin output.
+actual is missing, serialized Batch/rolling-origin output, the all-zero placeholder
+rule, forecast-free depth-chart and elite selection, the both-metrics winner rule,
+served-model verdicts distinct from best-of-four, no verdict on hindsight cohorts,
+and the information-set disclosure.
 
 ## Rejected alternatives
 
@@ -215,7 +236,13 @@ to the corrected primary metric without rerunning their evaluation.
 
 ## Changelog
 
-- 2026-09-25 — Fairness re-audit (supersedes unmerged #1595):
+- 2026-09-25 — Headline the served model: the row verdict grades `SERVED_MODEL`
+  (ADR-0003 head selection) against the best expert, with the best-of-four gap
+  as context; `top12`, `top30` and `weekly_reference_top24` carry no verdict;
+  both surfaces disclose the backtest information set; stale cohort count and
+  schema/recipe lines corrected (PR pending).
+
+- 2026-09-25 — Fairness re-audit (PR #1595):
   - Treat all-zero provider rows as missing forecasts.
   - Stop grading NFL.com offense. It is RotoWire's series with 10 of 18 2025
     captures before the final injury report.
@@ -226,7 +253,7 @@ to the corrected primary metric without rerunning their evaluation.
   - Add paired player-clustered bootstrap intervals and a both-metrics winner
     rule, bias cells, and Timeline edge intervals.
   - Grade the Timeline on RotoWire and ESPN like the tab, label 2025 a
-    development-season backtest, and move to cache schema 12 (PR pending).
+    development-season backtest, and move to cache schema 12 (PR #1595).
 
 - 2026-09-18: Score training-pipeline baseline, ranking, backtest and cohort
   reports on the certified shared-component truth (`actual_projected_total`)

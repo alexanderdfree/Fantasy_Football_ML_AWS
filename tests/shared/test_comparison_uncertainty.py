@@ -4,7 +4,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.shared.comparison_uncertainty import METHOD, group_gap_intervals
+from src.shared.comparison_uncertainty import (
+    INFORMATION_SET_NOTE,
+    METHOD,
+    NOT_APPLICABLE_COHORTS,
+    group_gap_intervals,
+    served_gap,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -91,3 +97,61 @@ def test_a_missing_group_is_unavailable_not_a_win():
     frame = slate({source: lambda rng, n: rng.normal(0, 3, n) for source in COLUMNS})
     only_models = group_gap_intervals(frame, "actual", COLUMNS, MODELS, ())
     assert only_models == {"status": "unavailable", "reason": "model_or_expert_group_missing"}
+
+
+def test_served_model_verdict_does_not_inherit_the_best_of_four():
+    # Ridge is exact, so the family's best-of-four wins outright; the served
+    # model (attention) is worse than the experts on both metrics and loses.
+    errors = {
+        "ridge": lambda rng, n: np.zeros(n),
+        "nn": lambda rng, n: rng.normal(0, 3, n),
+        "attn_nn": lambda rng, n: rng.normal(0, 6, n),
+        "lgbm": lambda rng, n: rng.normal(0, 3, n),
+        "rotowire": lambda rng, n: rng.normal(0, 3, n),
+        "espn": lambda rng, n: rng.normal(0, 3, n),
+    }
+    gaps = run(slate(errors, players=200))
+    assert gaps["winner"] == "models"
+    served = served_gap(gaps, "attn_nn")
+    assert served["status"] == "available" and served["model"] == "attn_nn"
+    assert served["winner"] == "experts"
+    for metric in ("mae", "rmse"):
+        assert served[metric]["verdict"] == "experts" and served[metric]["ci"][0] > 0
+        assert served[metric]["best_expert"] in EXPERTS
+        assert (
+            served[metric]["minus_best_expert"]
+            == gaps[metric]["models"]["attn_nn"]["minus_best_expert"]
+        )
+    assert served_gap(gaps, "ridge")["winner"] == "models"
+
+
+def test_served_model_gap_needs_a_graded_model_and_an_available_report():
+    frame = slate({source: lambda rng, n: rng.normal(0, 3, n) for source in COLUMNS})
+    gaps = run(frame)
+    assert served_gap(gaps, "tabpfn") == {
+        "status": "unavailable",
+        "reason": "served_model_not_graded",
+        "model": "tabpfn",
+    }
+    assert served_gap(gaps, None) == {
+        "status": "unavailable",
+        "reason": "served_model_unknown",
+        "model": None,
+    }
+    unavailable = run(frame.iloc[:0])
+    assert served_gap(unavailable, "ridge") == {
+        "status": "unavailable",
+        "reason": "no_common_rows",
+        "model": "ridge",
+    }
+
+
+def test_no_verdict_cohorts_and_headline_rule_are_declared():
+    assert NOT_APPLICABLE_COHORTS == {
+        "weekly_reference_top24": "selected_by_graded_forecast",
+        "top30": "selected_on_outcomes",
+        "top12": "selected_on_outcomes",
+    }
+    assert METHOD["headline_gap"] == "served_model_minus_best_expert"
+    assert METHOD["no_verdict_cohorts"] == NOT_APPLICABLE_COHORTS
+    assert "closing betting lines" in INFORMATION_SET_NOTE

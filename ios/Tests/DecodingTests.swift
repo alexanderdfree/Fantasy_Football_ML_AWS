@@ -157,6 +157,20 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(comparison.cell(subset: "all", position: "QB", source: "ridge")?.bias, 0)
         XCTAssertTrue(qb.verdict(.mae)?.hasPrefix("Models ahead") ?? false)
         XCTAssertTrue(qb.verdict(.r2)?.hasSuffix("RMSE") ?? false)
+        // The verdict grades the served model (ADR-0003 head selection), and only
+        // that model's cell is highlighted; best of four is context beneath it.
+        XCTAssertEqual(comparison.servedModel?["QB"], "attn_nn")
+        XCTAssertEqual(comparison.servedModel?["K"], "ridge")
+        XCTAssertEqual(qb.decidedModel, "attn_nn")
+        XCTAssertTrue(qb.verdict(.mae) { _ in "Attention NN" }?.contains("Attention NN − best expert") ?? false)
+        XCTAssertTrue(qb.familyVerdict(.mae)?.hasPrefix("best of four − best expert") ?? false)
+        XCTAssertNotNil(comparison.informationSetNote)
+        // Hindsight cohorts carry cells but no interval and no verdict.
+        let top12 = try XCTUnwrap(comparison.coverage?["top12"]?["QB"])
+        XCTAssertEqual(top12.uncertainty?.status, "not_applicable")
+        XCTAssertNil(top12.decidedWinner)
+        XCTAssertNil(top12.verdict(.mae))
+        XCTAssertNotNil(comparison.cell(subset: "top12", position: "QB", source: "ridge"))
         XCTAssertEqual(comparison.subsetTitle("top12"), "Season leaders · top 12")
         XCTAssertEqual(CmpSource.resolve("espn", comparison: comparison).label, "ESPN")
     }

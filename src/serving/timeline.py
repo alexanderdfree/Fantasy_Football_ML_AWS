@@ -27,8 +27,8 @@ from src.shared.comparison_scoring import (
     score_actual_components,
     scoring_components,
 )
+from src.shared.comparison_uncertainty import INFORMATION_SET_NOTE, group_gap_intervals
 from src.shared.comparison_uncertainty import METHOD as UNCERTAINTY_METHOD
-from src.shared.comparison_uncertainty import group_gap_intervals
 from src.shared.evaluation_cohorts import regular_season_rows
 from src.shared.expert_eligibility import eligible_forecast_rows
 
@@ -253,4 +253,5 @@ def compute_timeline(scoring: str, group: str = "offense", season: int | None = 
             if season in TEST_SEASONS
             else None
         ),
+        "information_set_note": INFORMATION_SET_NOTE,
     }

@@ -188,6 +188,7 @@ export function TimelineView({ scoring, theme }) {
                         {payload.season ? `${payload.season} · ` : ""}{payload.positions.join(" / ")} · {expertNames} · {summary.n} common player-weeks
                     </p>
                     {payload.evaluation_season_note && <p className="results-info">{payload.evaluation_season_note}</p>}
+                    {payload.information_set_note && <p className="results-info">{payload.information_set_note}</p>}
                     {summary.reason && <p className="error-message">{REASONS[summary.reason]}</p>}
                     <div className="timeline-track-card">
                         <div className="stat-block-row">
