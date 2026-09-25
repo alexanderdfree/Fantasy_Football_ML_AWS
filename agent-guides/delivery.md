@@ -102,13 +102,13 @@
   records the pattern; the 2026-05-21 Tier A `_train_nn` conflict demonstrates its
   caller-boundary limitation.
 - When a bundle's change breaks a caller or test that another bundle owns, the
-  worker flags it in its report. The orchestrator fixes it in a tier-tagged
-  bridge commit on that tier's staging branch rather than retroactively widening
-  the bundle, which keeps bundles file-disjoint (#325, #326).
-- Delegated workers run the checks they report, such as pytest and lint, in the
-  foreground. A backgrounded check can end the worker before the result arrives,
-  so it never commits or reports; the refactor batch behind #253–#256 lost two of
-  its ten workers this way.
+  worker reports it. The orchestrator adds an orchestrator-bridge commit to the
+  tier PR that carries the breaking change, rather than retroactively widening a
+  bundle (#325, #326).
+- Worker briefs require each check a worker reports (pytest, lint, pipeline
+  comparisons) to finish before the worker commits or reports; run short checks
+  in the foreground. In May 2026, two of ten Claude Code sub-agents in the batch
+  behind #253–#256 backgrounded pytest and ended before it finished.
 - Do not add error handling, fallbacks or validation for impossible cases;
   network/data-source boundaries are real and should be defensive.
 - Scope, pending design decisions and infeasible requests follow
