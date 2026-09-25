@@ -21,4 +21,38 @@
 
 ## Changelog
 
+- **2026-09-24 — Deliver the ZTNB expectation correction after technical checks (#1608).**
+  The owner superseded the prior accuracy-only hold: an objectively incorrect
+  expectation should be repaired even when historical forecast errors worsen.
+  New `hurdle_negbin` fits use the corrected mean by default; saved legacy
+  checkpoints retain their original interpretation, including after re-save.
+  Numerical/gradient checks, factory compatibility, restored-weight and saved
+  inference parity remain delivery gates. Stable probability arithmetic is
+  shared with the count-likelihood correction in #1613. The historical
+  regressions below remain disclosed; they are not an accuracy-improvement or
+  combined-change validation claim. This decision does not activate optional
+  feature/scaler changes or alter frozen evaluation protocols/results.
+
+- **2026-09-18 — Corrected ZTNB reception expectation (historical proposal and hold; policy superseded above).**
+  Isolated from #1575 (component 2 of 3) as a draft PR. For `hurdle_negbin`
+  reception heads, the loss fits an **untruncated** NB-2 mean `mu`, so the
+  reported expectation is `sigmoid(gate) * mu / (1-P_NB(0))`. The former
+  `sigmoid(gate)*mu` omitted the truncation normalization. Probability
+  arithmetic uses log1p/expm1 in at least FP32 and stays in torch. Each gated
+  head stores a tensor expectation version in its checkpoint: absent/zero
+  preserves legacy behavior, one enables the corrected NB mean. Loading
+  respects the saved mode rather than reinterpreting old weights using today's
+  defaults; a warm start keeps the new fit's requested mode. Other loss
+  families, gated TD outputs, and target/loss-weight definitions are unchanged.
+  New archives require serving code that understands the head version;
+  existing archives remain readable. This is a correctness change, not a claim
+  of metric neutrality: with the gate and rate co-trained under the legacy
+  reporting it **regresses** the attention forecast (WR attention MAE
+  +0.070 ± 0.017 and bias +0.20 ± 0.08 over 3 GPU seeds; RB/TE CPU attention
+  MAE +0.037/+0.039). At the time, delivery was held for the
+  dual-metric + protected-cohort gate; the 2026-09-24 decision supersedes that
+  requirement for this proven correctness bug. See the
+  [incident record](../../todo/fixed-archive/ztnb-reception-expectation-2026-09.md)
+  and the [validation record](../../todo/inheritance-reception-fix-validation.md).
+
 - **2026-05-20** — D5 extended with `hurdle_poisson` loss family (zero-truncated Poisson on positives + BCE gate) as an available primitive alongside `hurdle_negbin`. RB sparse-count ablation (Variants D/E/Bf added to `src/tuning/ablate_rb_gate.py`) showed Variant E (hurdle_poisson on rushing_tds, receiving_tds, fumbles_lost) wins per-target MAE — count_sum 0.353 vs Ridge 0.369 — but regresses aggregate FP MAE +0.163 vs current Variant C. **Rejected for shipping**; primitive kept available for future use, current RB config unchanged.

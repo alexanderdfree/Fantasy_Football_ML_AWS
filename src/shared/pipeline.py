@@ -65,6 +65,7 @@ from src.shared.neural_net import (
     build_multihead_net,
     build_multihead_net_with_history,
     build_multihead_net_with_nested_history,
+    load_warm_start_state,
 )
 from src.shared.training import (
     MultiHeadHistoryTrainer,
@@ -1008,7 +1009,7 @@ def _train_attention_nn(
     # is byte-identical to the from-scratch fit. Load onto the raw model before
     # _maybe_compile so the (optional) compile wrapper sees the warm weights.
     if init_state_dict is not None:
-        model.load_state_dict(init_state_dict)
+        load_warm_start_state(model, init_state_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
@@ -1128,7 +1129,7 @@ def _train_nested_attention_nn(
     # Warm-start hook (default-off, numerically inert when None) — see the twin
     # in _train_attention_nn. Production passes None (byte-identical fit).
     if init_state_dict is not None:
-        model.load_state_dict(init_state_dict)
+        load_warm_start_state(model, init_state_dict)
 
     history = _run_nn_training(
         model=_maybe_compile(model),
