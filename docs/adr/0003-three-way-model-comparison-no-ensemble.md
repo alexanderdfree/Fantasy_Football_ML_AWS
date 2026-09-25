@@ -6,6 +6,8 @@
 
 **Context.** A core goal is comparing multiple model architectures quantitatively. Ensembling would dominate any single model's MAE, but it would also muddle the question the project is trying to answer.
 
+**Validation objective.** Production Ridge, NN, and LightGBM select raw-stat models on validation PPR fantasy-point RMSE (`ridge_selection_metric` / `nn_selection_metric` / `lgbm_selection_metric = "fantasy_rmse_ppr"`; NN details in ADR-0002). Ridge uses expanding-window CV and cached per-target candidate predictions, including fixed special heads; two coordinate sweeps over each coarse/refined grid select target-specific alphas against the mean fold PPR RMSE. LightGBM fits the configured tree budget with its unchanged raw-stat loss, then uses two coordinate sweeps over per-head tree prefixes to minimize aggregate validation PPR RMSE; its per-head raw RMSE initializes the search only. These are bounded coordinate searches, not exhaustive joint optima. Selected tree counts survive save/load, and unselected trees are trimmed from served artifacts. LightGBM Optuna/pruning averages PPR RMSE across folds and seeds in the `lgbm_ppr_rmse_v1*` study namespace (ADR-0015). Validation/test separation, stat diagnostics and other scoring formats are retained. ElasticNet's optional independent raw-stat MAE search is unchanged. The legacy `raw_mae` / `per_target` selectors remain available for explicit comparisons (`src/tuning/ab_classical_selection.py`).
+
 **Options considered.**
 
 | Option | What it answers | What it costs |
@@ -40,6 +42,7 @@ It ships **disabled for every position** (`PositionConfig.train_tabpfn=False`), 
 
 ## Changelog
 
+- **2026-09-18** — **Held production flip (PR #1568).** Ridge alpha selection and LightGBM tree-prefix selection move to validation PPR fantasy-point RMSE (`ridge_selection_metric` / `lgbm_selection_metric = "fantasy_rmse_ppr"` for all six positions), preserving raw-stat fitting, temporal CV and artifact replay; `raw_mae` / `per_target` stay as explicit comparison arms. The "Validation objective" paragraph above records the intended policy. Not merged until the dual-metric + protected-cohort gate passes (ADR-0002, 2026-09-18): every classical gain in the 36-cell evidence fails a protected cohort (e.g. QB/RB LightGBM `weekly_reference_top24` RMSE worse in 3/3 seeds).
 - 2026-07-06 · The NextWeek board's default "rank" sort now uses **per-position best-ranker head selection**: LightGBM ranks RB/WR (it beats the attention head on lineup regret in 4/4 rolling-origin seasons vs RotoWire — [todo/expert-gap-investigation-2026-06.md](../../todo/expert-gap-investigation-2026-06.md) §3); other positions keep the attention-first chain. This *selects* one independent comparison column per position — no blending — so the decision is unchanged. (PR pending)
 - **2026-06-30** — Doc-nit: the Decision's "LightGBM … falls apart on K/DST" reflects the decision-time read. Current benchmarks show LightGBM is **best/tied-best on DST R²** and 2nd-best on K (every model has ≈0 R² on K); the neural nets are the weak DST/K models. The original framing is retained as decision-time context.
 - 2026-06-08 · Added `TabPFNMultiTarget` as an opt-in, default-off 5th model variant (dormant infrastructure; not in prod). Decision unchanged — independent comparison, no ensemble. (PR for the TabPFN model variant)
