@@ -182,10 +182,10 @@ Worker brief (template — fill the `{...}` slots, send all workers in one paral
 >
 > **Verification depth** — verdict from grep alone is forbidden (memory `feedback_audit_run_the_test`). For each finding:
 >
-> - **Always** read the cited `file:line` directly (use absolute path inside this worktree — memory `feedback_edit_tool_worktree_path`).
+> - **Always** read the cited `file:line` directly (use absolute path inside this worktree — agent-guides/delivery.md "Worktree workflow").
 > - **Behavioral claims** (data leakage, wrong aggregation, sign error, regression risk): run the most-targeted relevant test, e.g. `pytest tests/{pos}/<file>::<test> -xvs` (foreground only — memory `feedback_background_pytest_terminates_agents`), or `python -m src.{pos}.run_pipeline` if the claim is pipeline-level.
 > - **Shared-code claims** (`src/shared/*.py`, `src/data/*.py`): grep every caller before verdicting (memory `feedback_grep_endpoint_when_changing_contract`). A claim that's true for the cited callsite but breaks 5 other callers is FIX with `fix_tier: C`, not LEAVE.
-> - **"Is X on main?" / docs-vs-code claims**: read `origin/main:<path>` via `git show origin/main:<path>`, not the worktree file (memory `feedback_check_origin_main_in_worktree`).
+> - **"Is X on main?" / docs-vs-code claims**: read `origin/main:<path>` via `git show origin/main:<path>`, not the worktree file (agent-guides/delivery.md "Worktree workflow").
 > - **Infra/config claims** (Batch, ECS, workflows): check all layers — per-submission `submit_job(...)` overrides can invalidate the resource default (memory `feedback_layered_config_overrides`).
 >
 > **Do NOT** commit, push, open PRs, modify files, or rebase. Verification only. Output one block per finding; group by verdict (FIX first, then LEAVE, then UNCERTAIN). Time budget: ~10–15 min per worker.
@@ -246,7 +246,7 @@ Use this when Phase 1 selected Mode B: the findings are already claimed-remediat
 
 Spawn **one `WORKFLOW_SUBAGENTS` worker per area / per split issue**, all in one parallel batch (or sequentially if the provider has no parallel workers). Worker brief (fill the `{...}` slots):
 
-> You are VERIFYING already-claimed remediation of audit findings for area **{AREA}**, issue(s) **#{N}**. Working dir: `{worktree_path}` — confirm it is at `origin/main` HEAD; read files with **absolute paths** (memory `feedback_edit_tool_worktree_path`). Each issue body lists findings (id + `file:line` + what + why) and carries a remediation comment mapping each finding to a FIX (with PR #) or a LEAVE (category + reason); the fix PRs are already merged to `main`. CONFIRM the remediation is real and sound — do **not** re-fix, edit, commit, or push.
+> You are VERIFYING already-claimed remediation of audit findings for area **{AREA}**, issue(s) **#{N}**. Working dir: `{worktree_path}` — confirm it is at `origin/main` HEAD; read files with **absolute paths** (agent-guides/delivery.md "Worktree workflow"). Each issue body lists findings (id + `file:line` + what + why) and carries a remediation comment mapping each finding to a FIX (with PR #) or a LEAVE (category + reason); the fix PRs are already merged to `main`. CONFIRM the remediation is real and sound — do **not** re-fix, edit, commit, or push.
 >
 > Fetch `gh issue view <N> --json body,comments`. For each finding:
 >
@@ -266,7 +266,7 @@ Spawn **one `WORKFLOW_SUBAGENTS` worker per area / per split issue**, all in one
 >
 > End with a one-line tally (e.g. "QB 4/4 confirmed; GAPs: none"). Time budget ~12–15 min.
 
-Verdict from grep alone is forbidden (memory `feedback_audit_run_the_test`) — and don't treat "the PR merged" as proof the fix is live: confirm against current `main` (memory `feedback_squash_merge_verify_content`).
+Verdict from grep alone is forbidden (memory `feedback_audit_run_the_test`) — and don't treat "the PR merged" as proof the fix is live: confirm against current `main` (agent-guides/delivery.md "PR and merge gates").
 
 ### Phase 3V — Consolidate & decide
 
@@ -305,7 +305,7 @@ gh issue close <#> --reason "not planned" --comment "Triaged LEAVE (<category>):
    - Commits to its worktree branch, **does NOT push, does NOT open a PR** (agent-guides/delivery.md "Large (>10-item) parallel cleanups")
    - Reports back: commit SHA, branch name, files modified, findings skipped + why, any cross-bundle test-contract gaps flagged
 3. **Verify worker output** against the recorded absolute worktree path, branch, full commit SHA, and changed files. Do not identify worktrees by a guessed `agent-` substring. Before taking over an incomplete worker's checkout, confirm that worker has stopped; avoid concurrent edits or commits in the same checkout.
-4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (memory `feedback_verify_no_conflict_markers`).
+4. **Cherry-pick each bundle commit onto the staging branch** in the planned regress-risk ascending bundle order. After any conflict resolution via Edit, **grep for `<<<<<<<` markers before `git add`** (agent-guides/delivery.md "Worktree workflow").
 5. **Orchestrator-bridge commit (if any)** for cross-bundle test-contract gaps. Subject: `fix(audit-NNN, orchestrator, <tier>): <short summary>`.
 6. **Run the provider pre-PR gate** locally (`WORKFLOW_PRE_PR_GATE`; Codex uses `/prompts:pre-pr-gate`, not `.codex/hooks/pre-pr.sh` directly). If a gate false-positives (e.g. mtime on stash-pop), surface the 3 options to the user (eat cost / authorized bypass / fix the gate) — memory `feedback_surface_gate_friction`. Do not `--no-verify`.
 7. **Rebase** to ensure clean against `origin/main`: `git fetch origin main && git rebase origin/main` (memory `feedback_rebase_before_pre_pr_judge`).
@@ -350,7 +350,7 @@ Once the verify-then-close plan is approved:
 - **CI-friendly PR cadence** — 2–3 PRs instead of 50+ per-bug PRs cuts ~95% of `tests.yml`'s 7-shard matrix runs.
 - **Plan-mode-first + merge sign-off** — verdict list and bundling strategy are user-approved before any branches are cut or workers spawn. Workers operate on a vetted plan; nothing speculative ships. And beyond plan approval, each tier PR stops for **explicit user merge sign-off** (the diff + any `regress-risk-high` benchmark deltas) — a solve-issues PR is never auto-merged on green CI alone (enforced by `post-pr-create.sh` for `audit-*/tier-*` branches).
 - **Reuses established orchestration** — the per-tier worker → cherry-pick → staging-branch → one-PR flow has shipped 6+ tier PRs (the code-review remediation rollup #312/#314/#315, audit-318 cycles) without conflict-driven rebundles.
-- **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — memory `feedback_squash_merge_verify_content`) and closes the finite tracking issues, so the next `[claude-audit]` or `[codex-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
+- **Verify-then-close (Mode B) retires remediated backlogs** — confirms a remediation actually held on `main` (not merely that PRs merged — agent-guides/delivery.md "PR and merge gates") and closes the finite tracking issues, so the next `[claude-audit]` or `[codex-audit]` re-scan starts from a true-clean state instead of re-flagging already-fixed findings or leaving split issues open indefinitely.
 
 ## Format example — triage table excerpt
 

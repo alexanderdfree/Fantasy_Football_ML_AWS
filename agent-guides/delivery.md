@@ -16,14 +16,21 @@
 - Fetch `origin/main` and inspect its recent commits at planning time and again
   before a PR. Check open PRs for overlap in shared files such as TODO, configs
   and tuning code. A later merge or concurrent PR may supersede the planned fix
-  (#383/#516, #634 superseded #629).
+  (#383/#516, #634 superseded #629). Include draft PRs and repeat the check at
+  each stage of a multi-PR plan: #1120 merged seconds after planning began, and
+  held draft #1607 already carried a fix planned for a later tier.
 - Answer shipped-state and dead-link questions from `origin/main:<path>`, not
-  the worktree or parent's local `main`. The provider `post-pr-merge.sh` hooks
+  the worktree or parent's local `main` (a worktree forked before #146 reported
+  that PR's README fix as missing). The provider `post-pr-merge.sh` hooks
   fast-forward the parent only when it is clean and on `main`; they skip WIP.
 - Verify checkout succeeded before rebasing; a branch held by another worktree
   must be rebased there (`git -C <path>`) or from `--detach origin/<branch>`.
-  After resolving conflicts, check that **all conflict markers** are gone before
-  staging and `rebase --continue`.
+  After resolving conflicts, check that **all conflict markers** are gone
+  (`git diff --check` or a marker grep) before staging and `rebase --continue`;
+  an edit can report success without applying. To keep `origin/main`'s version
+  of a conflicted file, use `git checkout origin/main -- <file>`: `--ours` and
+  `--theirs` are swapped during a rebase. See the
+  [rebase-resolution record](../todo/fixed-archive/rebase-resolution-mistakes-2026-05.md).
 
 <a id="git-pr-ci-workflow"></a>
 <a id="git--pr--ci-workflow"></a>
@@ -34,19 +41,30 @@
   current green CI/review → merge when authorized. Provider details live in
   [CODEX.md](../CODEX.md), [CLAUDE.md](../CLAUDE.md) and [GEMINI.md](../GEMINI.md).
   Preserve explicit owner approval gates, including `solve-issues` sign-off.
-  Do not use `--no-verify` (including on merge-resolution commits) or `--admin`.
+  Do not use `--no-verify` (including on merge-resolution commits, #89) or `--admin`.
 - Wait for current checks with `gh pr checks <N> --watch`; fix red/pending checks.
-  The sole documented silent-stop exception is [CI operations](operations.md#ci-training):
+  A watch that returns immediately after a push or reopen may be reporting the
+  previous run (#689): before merging, confirm `mergeStateStatus` is `CLEAN`
+  and `headRefOid` is the head you expect. The sole documented silent-stop exception is [CI operations](operations.md#ci-training):
   when `Run Tests` stops firing on rapid force-push, run `pytest` locally before
   an otherwise-authorized merge. This is not a general CI bypass.
 - Run a gate separately from dependent mutations: never batch
   `test && commit && push` or `merge && delete`. A masked merge failure followed
-  by branch deletion closed PR #622 and auto-closed #627. An authorized merge can
-  use `gh pr merge <N> --squash --auto` to wait on checks.
+  by branch deletion closed PR #622 and auto-closed #627
+  ([record](../todo/fixed-archive/gate-chaining-closed-prs-2026-05.md)). Run a
+  hook-gated command such as `gh pr create` in its own call: a pre-tool block
+  cancels the whole invocation, including earlier steps (#1122). Derive the PR
+  number from the current branch (`gh pr view --json number`), never from
+  memory. `gh pr merge --auto` works only when the repository allows auto-merge
+  (`allow_auto_merge`); otherwise watch checks and merge as a separate step.
 - In worktrees, use `gh pr merge <N> --squash` without `--delete-branch` (the latter
-  tries to check out the parent's `main`). Verify **MERGED**, fetch, and inspect
-  the final squash content for the latest fix before separately deleting the
-  remote branch. The local feature branch can stay. A tracked file on disk is
+  tries to check out the parent's `main`; if it already failed there, the merge
+  itself succeeded and only the remote branch remains). Before merging, confirm
+  the PR head includes your latest commit: #292's fix was committed after its
+  merge ([record](../todo/fixed-archive/pr-292-merged-without-late-fix.md)).
+  Verify **MERGED**, fetch, and inspect the final squash content for the latest
+  fix before separately deleting the remote branch. The local feature branch can
+  stay. A tracked file on disk is
   not shipped until its change is merged.
 - For stacked PRs, verify the GitHub base retarget before deleting the merged
   base, rebase to trigger CI after a base change, and give reviewers the explicit

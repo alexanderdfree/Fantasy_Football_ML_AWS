@@ -1,5 +1,17 @@
 # Fixed archive — index
 
+### [FIXED] Chaining a gate with its dependent action shipped a failing test and closed PRs #622 and #627
+[Read the incident record](fixed-archive/gate-chaining-closed-prs-2026-05.md).
+
+### [FIXED] PR #292 merged before its userdata ordering fix was committed
+[Read the incident record](fixed-archive/pr-292-merged-without-late-fix.md).
+
+### [FIXED] Rebase resolution committed conflict markers and rebased the wrong branch
+[Read the incident record](fixed-archive/rebase-resolution-mistakes-2026-05.md).
+
+### [FIXED] Worktree sessions wrote their edits into the parent checkout
+[Read the incident record](fixed-archive/worktree-parent-checkout-edits-2026-05.md).
+
 ### [FIXED] CI test scope missed unknown paths mixed with recognized changes
 [Read the incident record](fixed-archive/ci-test-scope-rollout-2026-09.md).
 

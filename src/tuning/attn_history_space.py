@@ -265,7 +265,7 @@ def assert_raw_per_game(cols: list[str]) -> None:
     Enforces the history-branch stop-rule: tokens must be raw per-game signals,
     never windowed/expanding-mean derivations (those re-create the double-count
     the static-vs-history split prevents — AGENTS.md, the rejected role-
-    inheritance token, [[feedback_no_rolling_in_attn_static]]).
+    inheritance token, agent-guides/modeling.md).
     """
     bad = [c for c in cols if _is_windowed(c)]
     if bad:
