@@ -110,7 +110,15 @@ test("comparison displays shared components, cohorts, ESPN and partial reference
     await expect(page.locator("#comparison-contract")).toContainText("NFL.com does not supply matching field-goal yardage");
     await expect(page.locator("#view-comparison")).toContainText(comparison.cohort_definitions.weekly_reference_top24);
     await expect(page.locator("#comparison-weekly-top24")).toContainText("partial reference");
-    await expect(page.locator("table").filter({ has: page.locator("#comparison-all-body") }).getByRole("columnheader", { name: "ESPN" })).toBeVisible();
+    const allTable = page.locator("table").filter({ has: page.locator("#comparison-all-body") });
+    await expect(allTable.getByRole("columnheader", { name: "ESPN" })).toBeVisible();
+    // NFL.com offense is excluded server-side, so its all-dash column is not rendered.
+    await expect(allTable.getByRole("columnheader", { name: "NFL.com" })).toHaveCount(0);
+    await expect(page.locator("#comparison-contract")).toContainText("reproduces RotoWire");
+    // Headline cohort and the paired-interval verdict per row.
+    await expect(page.locator("#comparison-depth-starters tr")).toHaveCount(6);
+    await expect(page.locator("#comparison-all-body")).toContainText("Models ahead");
+    await expect(page.locator("#comparison-all-body .comparison-best")).not.toHaveCount(0);
 });
 
 test("loaded comparison omits unavailable optional tables without staying in loading state", async ({ page }) => {
@@ -139,7 +147,26 @@ test("loaded comparison omits unavailable optional tables without staying in loa
         await expect(page.locator(`#${id} .comparison-empty`)).not.toHaveCount(0);
     }
     await expect(page.locator("#comparison-all-body tr")).toHaveCount(6);
+    await expect(page.locator("#comparison-depth-starters tr")).toHaveCount(6);
     await expect(page.locator("#comparison-weekly-consensus")).toHaveCount(0);
+});
+
+test("a statistical tie highlights no cell", async ({ page }) => {
+    await localAPI(page);
+    const response = structuredClone(comparison);
+    for (const cohort of Object.values(response.coverage)) {
+        for (const cell of Object.values(cohort)) {
+            if (cell.uncertainty?.status === "available") cell.uncertainty.winner = "tie";
+        }
+    }
+    await page.route("**/api/comparison", (route) => route.fulfill({
+        contentType: "application/json",
+        headers: { "X-FFP-Contract-Version": "1.0" },
+        body: JSON.stringify(response),
+    }));
+    await page.goto("/#comparison");
+    await expect(page.locator("#comparison-all-body")).toContainText("≈ tie");
+    await expect(page.locator("#view-comparison .comparison-best")).toHaveCount(0);
 });
 
 for (const [experts, names] of [

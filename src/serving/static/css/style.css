@@ -1798,6 +1798,16 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
 .comparison-table thead th.comparison-num { text-align: right; }
 .comparison-empty { color: var(--text-muted); }
 .comparison-best { color: var(--positive); font-weight: 700; }
+/* Paired-interval verdict under each position: muted for a tie, emphasized when decided. */
+.comparison-gap {
+    display: block;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-top: 2px;
+    max-width: 22em;
+}
+.comparison-gap-decided { color: var(--text-secondary); font-weight: 600; }
 .comparison-arch {
     display: block;
     font-size: 11px;
