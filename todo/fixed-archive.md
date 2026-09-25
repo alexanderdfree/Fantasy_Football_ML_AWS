@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] refresh-splits died seven times on the first play-by-play request of the D/ST pass
+[Read the incident record](fixed-archive/nflverse-pbp-first-request-hang-2026-09.md).
+
 ### [FIXED] Model-vs-expert comparison graded a stale duplicate expert, used an expert-selected headline cohort and declared winners from noise
 [Read the incident record](fixed-archive/expert-comparison-fairness-2026-09.md).
 

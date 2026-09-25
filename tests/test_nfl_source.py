@@ -180,10 +180,30 @@ def test_rosters_coerces_numpy_int_seasons_for_strict_loader(monkeypatch):
     assert all(type(s) is int for s in captured["seasons"])
 
 
+def _hung(seasons):
+    raise ConnectionError(
+        "Failed to download play_by_play_2012.parquet: HTTPSConnectionPool(...): "
+        "Read timed out. (read timeout=120)"
+    )
+
+
+def _http_failure(status):
+    import requests
+
+    class _Response:
+        status_code = status
+
+    def loader(seasons):
+        cause = requests.exceptions.HTTPError(f"{status} error", response=_Response())
+        raise ConnectionError(f"Failed to download: {status}") from cause
+
+    return loader
+
+
 @pytest.mark.unit
-def test_pbp_data_retries_a_stalled_download_then_succeeds(monkeypatch):
-    """A stalled nflverse stream (nflreadpy raises ``ConnectionError``) is retried
-    after a pause; the 2026-09-25 refresh-splits runs died on one season each."""
+def test_pbp_data_retries_a_hung_download_then_succeeds(monkeypatch):
+    """The first request after the session idles hangs until the read timeout;
+    the next attempt runs on a fresh connection (seven refresh-splits runs)."""
     pbp = pl.DataFrame({"season": [2012], "week": [1], "posteam": ["KC"], "epa": [0.1]})
     calls: list[list[int]] = []
     naps: list[float] = []
@@ -191,37 +211,69 @@ def test_pbp_data_retries_a_stalled_download_then_succeeds(monkeypatch):
     def flaky(seasons):
         calls.append(list(seasons))
         if len(calls) == 1:
-            raise ConnectionError("Failed to download play_by_play_2012.parquet: Read timed out")
+            _hung(seasons)
         return pbp
 
     monkeypatch.setattr(nfl_source._nflreadpy, "load_pbp", flaky)
-    monkeypatch.setattr(nfl_source, "_PBP_RETRY_BACKOFF_S", 0.0)
-    monkeypatch.setattr(nfl_source.time, "sleep", naps.append)
+    monkeypatch.setattr(nfl_source, "_sleep", naps.append)
     out = nfl_source.pbp_data([2012], ("season", "week", "posteam"))
     assert list(out.columns) == ["season", "week", "posteam"] and len(out) == 1
     assert calls == [[2012], [2012]]
-    assert naps == [0.0]
+    assert naps == [nfl_source._PBP_RETRY_BACKOFF_S]
 
 
 @pytest.mark.unit
-def test_pbp_download_gives_up_after_the_configured_retries():
-    attempts = []
+def test_pbp_download_gives_up_after_the_configured_retries(monkeypatch):
+    attempts: list[list[int]] = []
 
-    def always_stalls(seasons):
-        attempts.append(seasons)
-        raise TimeoutError("read timed out")
+    def always_hangs(seasons):
+        attempts.append(list(seasons))
+        _hung(seasons)
 
-    with pytest.raises(TimeoutError):
-        nfl_source._load_pbp_with_retry(
-            [2013], loader=always_stalls, max_retries=2, backoff_s=0.0, sleep=lambda s: None
-        )
-    assert len(attempts) == 3
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_pbp", always_hangs)
+    monkeypatch.setattr(nfl_source, "_sleep", lambda s: None)
+    with pytest.raises(ConnectionError):
+        nfl_source._load_pbp_with_retry([2013])
+    assert len(attempts) == nfl_source._PBP_MAX_RETRIES + 1
 
 
 @pytest.mark.unit
-def test_pbp_download_does_not_retry_other_errors():
+def test_pbp_download_does_not_retry_a_missing_season_file_but_does_retry_a_5xx(monkeypatch):
+    """nflreadpy wraps a 404 in the same ConnectionError as a hang; the response on
+    the cause chain tells them apart."""
+    attempts: list[list[int]] = []
+    missing = _http_failure(404)
+
+    def track_missing(seasons):
+        attempts.append(list(seasons))
+        missing(seasons)
+
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_pbp", track_missing)
+    monkeypatch.setattr(nfl_source, "_sleep", lambda s: None)
+    with pytest.raises(ConnectionError):
+        nfl_source._load_pbp_with_retry([1999])
+    assert len(attempts) == 1
+
+    served: list[list[int]] = []
+    gateway = _http_failure(502)
+
+    def flaky_gateway(seasons):
+        served.append(list(seasons))
+        if len(served) == 1:
+            gateway(seasons)
+        return pl.DataFrame({"season": [2012]})
+
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_pbp", flaky_gateway)
+    out = nfl_source._load_pbp_with_retry([2012])
+    assert len(served) == 2 and out.height == 1
+
+
+@pytest.mark.unit
+def test_pbp_download_does_not_retry_other_errors(monkeypatch):
     def bad_input(seasons):
-        raise ValueError("no such season")
+        raise ValueError("Failed to parse data")
 
+    monkeypatch.setattr(nfl_source._nflreadpy, "load_pbp", bad_input)
+    monkeypatch.setattr(nfl_source, "_sleep", lambda s: None)
     with pytest.raises(ValueError):
-        nfl_source._load_pbp_with_retry([1999], loader=bad_input, sleep=lambda s: None)
+        nfl_source._load_pbp_with_retry([2012])

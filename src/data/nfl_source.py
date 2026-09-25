@@ -209,46 +209,41 @@ def team_week_stats_release(season: int) -> pd.DataFrame:
     return pd.read_parquet(url)
 
 
-# nflverse release-asset downloads of the ~100 MB per-season PBP parquets stall
-# for whole minutes at a time: on 2026-09-25 three consecutive refresh-splits runs
-# each died on one season (2012, 2013, 2012) with ``Read timed out (read
-# timeout=120)`` from release-assets.githubusercontent.com, while the same files
-# had downloaded fine minutes earlier for the red-zone pass. nflreadpy's own
-# urllib3 retries do not cover a stalled stream, so retry the whole season load
-# after a pause. nflreadpy raises ``ConnectionError`` for a failed download; a
-# 404 surfaces differently and is not retried here.
+# nflreadpy keeps one module-level ``requests.Session`` with no retries. Seven
+# refresh-splits runs since 2026-09-23 (three before #1631 raised the read timeout
+# from 30 s to 120 s, four after) died on the first play-by-play request of the
+# D/ST pass, always season 2012 or 2013, with ``Read timed out (read timeout=N)``:
+# urllib3 waited that long for response headers, on the session's first request
+# after roughly nine idle minutes. That is a dead pooled connection, not a slow
+# download, so a longer timeout changed nothing; urllib3 discards the failed
+# connection, so one more attempt on a fresh socket is the fix. nflreadpy wraps
+# every ``requests`` failure, a hang and a 404 alike, in the builtin
+# ``ConnectionError``; a 4xx response on the cause chain is raised at once.
 _PBP_MAX_RETRIES = 2
-_PBP_RETRY_BACKOFF_S = 30.0
+_PBP_RETRY_BACKOFF_S = 5.0
+_sleep = time.sleep  # tests patch this name, never the process-wide ``time.sleep``
 
 
-def _load_pbp_with_retry(
-    seasons: list[int],
-    *,
-    loader=None,
-    max_retries: int | None = None,
-    backoff_s: float | None = None,
-    sleep=None,
-) -> pl.DataFrame:
-    """Load PBP seasons, retrying a stalled or reset download after a pause.
+def _retryable_download_error(error: BaseException) -> bool:
+    """True for a hang, reset or 5xx; False for a 4xx such as a missing season file."""
+    status = getattr(getattr(error.__cause__, "response", None), "status_code", None)
+    return status is None or int(status) >= 500
 
-    Defaults resolve at call time so tests can patch the module settings.
-    """
-    load = _nflreadpy.load_pbp if loader is None else loader
-    max_retries = _PBP_MAX_RETRIES if max_retries is None else max_retries
-    backoff_s = _PBP_RETRY_BACKOFF_S if backoff_s is None else backoff_s
-    sleep = time.sleep if sleep is None else sleep
-    for attempt in range(max_retries + 1):
+
+def _load_pbp_with_retry(seasons: list[int]) -> pl.DataFrame:
+    """Load PBP seasons, retrying a hung or reset download on a fresh connection."""
+    for retry in range(1, _PBP_MAX_RETRIES + 1):
         try:
-            return load(seasons)
-        except (ConnectionError, TimeoutError) as e:
-            if attempt >= max_retries:
+            return _nflreadpy.load_pbp(seasons)
+        except ConnectionError as e:
+            if not _retryable_download_error(e):
                 raise
             print(
-                f"WARNING: nflverse PBP download for {seasons} failed ({type(e).__name__}); "
-                f"retrying in {backoff_s:.0f}s (attempt {attempt + 1} of {max_retries})"
+                f"WARNING: nflverse PBP download for {seasons} failed ({e}); "
+                f"retry {retry} of {_PBP_MAX_RETRIES} in {_PBP_RETRY_BACKOFF_S:.0f}s"
             )
-            sleep(backoff_s)
-    raise RuntimeError("unreachable")  # pragma: no cover
+            _sleep(_PBP_RETRY_BACKOFF_S)
+    return _nflreadpy.load_pbp(seasons)
 
 
 @snapshot_source

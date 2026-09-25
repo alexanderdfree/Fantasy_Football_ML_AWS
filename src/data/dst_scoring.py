@@ -142,10 +142,7 @@ def load_dst_scoring_events(
             raise ValueError(f"D/ST scoring PBP has no complete regular-season data for {season}")
         return frame
 
-    # Two concurrent ~100 MB nflverse downloads, not three: the sequential red-zone
-    # pass fetched every season while this three-wide pool stalled in three
-    # consecutive refresh-splits runs (2026-09-25). The loader also retries.
-    with ThreadPoolExecutor(max_workers=min(2, len(seasons))) as pool:
+    with ThreadPoolExecutor(max_workers=min(3, len(seasons))) as pool:
         futures = [pool.submit(copy_context().run, fetch, season) for season in seasons]
         frame = pd.concat((future.result() for future in futures), ignore_index=True)
     if not _valid_cache(frame, seasons):
