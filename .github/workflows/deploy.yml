@@ -154,7 +154,7 @@ jobs:
       - name: Update image in task definition
         id: render-task-def
         # SHA-pinned per CodeQL actions/unpinned-tag; version is recorded below.
-        uses: aws-actions/amazon-ecs-render-task-definition@138c24f321fdbdf7edee4a685519d253cae2cdea  # v1.9.0
+        uses: aws-actions/amazon-ecs-render-task-definition@8d79160660ad39c402a16e5fc7cd2a32e8f7d6b7  # v1.9.1
         with:
           task-definition: task-definition.json
           container-name: fantasy-predictor
