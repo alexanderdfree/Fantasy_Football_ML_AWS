@@ -1,6 +1,7 @@
 /* Global header: glowing wordmark, sun/moon theme toggle, scoring segmented
  * toggle (persisted), debounced player search. Markup mirrors index.html so
  * style.css applies unchanged. */
+import { useLayoutEffect, useRef } from "react";
 import { PillGroup } from "./components/common.jsx";
 
 const SCORING_OPTIONS = [
@@ -28,9 +29,21 @@ function MoonIcon() {
 }
 
 export function Header({ theme, onToggleTheme, scoring, onScoring, search, onSearch }) {
+    const headerRef = useRef(null);
+    useLayoutEffect(() => {
+        const root = document.documentElement;
+        const updateHeight = () => root.style.setProperty("--header-height", `${headerRef.current.getBoundingClientRect().height}px`);
+        updateHeight();
+        const observer = new ResizeObserver(updateHeight);
+        observer.observe(headerRef.current);
+        return () => {
+            observer.disconnect();
+            root.style.removeProperty("--header-height");
+        };
+    }, []);
     const oled = theme === "oled";
     return (
-        <header className="header">
+        <header className="header" ref={headerRef}>
             <div className="header-left">
                 <h1 className="logo">Fantasy Football Predictor</h1>
                 <span className="subtitle">Position-Specific ML Predictions</span>
@@ -63,6 +76,7 @@ export function Header({ theme, onToggleTheme, scoring, onScoring, search, onSea
                     <input
                         type="text"
                         id="search-input"
+                        aria-label="Search players"
                         placeholder="Search players..."
                         value={search}
                         onChange={(e) => onSearch(e.target.value)}
