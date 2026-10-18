@@ -985,6 +985,8 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
 
     # Don't surface projections for players ruled OUT (they won't play); keep
     # them in injuries_df so the role-inheritance feature still sizes vacancies.
+    # Practice report joins also need those identities to distinguish teammates.
+    practice_identity_roster = roster
     out_ids = set(injuries_df.loc[injuries_df["report_status"] == "Out", "gsis_id"])
     roster_source["injury_excluded_players"] = int(roster["player_id"].isin(out_ids).sum())
     if out_ids:
@@ -999,7 +1001,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     game_status_map = injury_report.statuses
     with live_source_cache(CACHE_DIR):
         practice_report = practice_reports.fetch_practice_report(
-            season, week, roster, rosters_df=rosters_df
+            season, week, roster, rosters_df=rosters_df, identity_roster=practice_identity_roster
         )
     practice_status_map = practice_report.values
     with live_source_cache(CACHE_DIR):

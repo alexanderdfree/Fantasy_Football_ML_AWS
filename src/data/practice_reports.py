@@ -16,9 +16,9 @@ import pandas as pd
 
 from src.data import nfl_source
 from src.data.identity import schedule_team_code_normalization
-from src.data.source_result import SourceResult, SourceStatus
 from src.data.roster_identity import current_rosters, practice_alias_lookup
 from src.data.roster_identity import name_key as _name
+from src.data.source_result import SourceResult, SourceStatus
 
 _STATUS = {
     "Full Participation in Practice": 2.0,
@@ -128,12 +128,24 @@ class PracticeReport:
 
 
 def fetch_practice_report(
-    season: int, week: int, roster: pd.DataFrame, *, rosters_df: pd.DataFrame | None = None
+    season: int,
+    week: int,
+    roster: pd.DataFrame,
+    *,
+    rosters_df: pd.DataFrame | None = None,
+    identity_roster: pd.DataFrame | None = None,
 ) -> PracticeReport:
-    """Combine per-team coverage; current official tables override older feeds."""
+    """Combine per-team coverage; current official tables override older feeds.
+
+    ``roster`` defines the projected players whose participation is needed.
+    ``identity_roster`` may retain validated players excluded as Out so their
+    reports cannot make healthy teammates appear to have unresolved identities.
+    """
     values = {}
     covered = set()
     errors = []
+    roster_ids = set(roster["player_id"].astype(str))
+    expected = set(roster["recent_team"])
     try:
         injuries = nfl_source.injuries([season])
         injuries = injuries[injuries["season"].eq(season) & injuries["week"].eq(week)]
@@ -161,12 +173,18 @@ def fetch_practice_report(
             )
         )
         official_teams = {names[name] for name in official.covered if name in names}
-        lookup = practice_alias_lookup(roster, current_rosters(rosters_df, season, week))
+        lookup = practice_alias_lookup(
+            roster if identity_roster is None else identity_roster,
+            current_rosters(rosters_df, season, week),
+            include_inactive=True,
+        )
         reported = {}
         unknown = set()
         unresolved_groups = set()
         for row in official.records:
             key = (names.get(row["team_name"]), row["position"], _name(row["name"]))
+            if key[0] not in expected:
+                continue  # Completed games and bye teams are outside this slate.
             matches = lookup.get(key, set())
             if len(matches) != 1:
                 unknown.update(matches)
@@ -175,6 +193,8 @@ def fetch_practice_report(
                     unmatched.append(row["name"])
                 continue
             pid = next(iter(matches))
+            if pid not in roster_ids:
+                continue  # A verified Out/reserve report is irrelevant to projected teammates.
             if row["practice_status"] is None:
                 unknown.add(pid)  # an unknown status is not a healthy report
             else:
@@ -196,13 +216,11 @@ def fetch_practice_report(
     except Exception as exc:
         errors.append(f"NFL.com: {exc!r}")
 
-    expected = set(roster["recent_team"])
     # For nflverse-only teams, unlisted players may also be healthy. A team
     # with no report in either source gets no synthetic healthy values.
     for row in roster.to_dict("records"):
         if row["recent_team"] in covered - official_teams:
             values.setdefault(str(row["player_id"]), 2.0)
-    roster_ids = set(roster["player_id"].astype(str))
     values = {pid: value for pid, value in values.items() if pid in roster_ids}
     metadata = {
         "provider": "NFL.com official injury reports; nflverse fallback",
