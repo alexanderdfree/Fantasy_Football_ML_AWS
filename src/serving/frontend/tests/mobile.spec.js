@@ -4,11 +4,15 @@ import { readFileSync } from "node:fs";
 const fixtures = JSON.parse(readFileSync(new URL("../../../../ios/Tests/Fixtures/client_contract.json", import.meta.url)));
 const comparison = JSON.parse(readFileSync(new URL("../../../../ios/Tests/Fixtures/comparison_current.json", import.meta.url)));
 const playerName = "Marquez Valdes-Scantling";
+const longFeature = "prior_season_mean_total_fantasy_points_exp";
+const wikiPath = "docs/archive/design_weather_and_odds.md";
 const models = ["ridge", "nn", "attn_nn", "lgbm"];
 const modelLabels = { ridge: "Ridge", nn: "Neural Net", attn_nn: "Attention NN", lgbm: "LightGBM", espn: "ESPN" };
 
 async function localAPI(page) {
     const snapshot = structuredClone(fixtures.snapshot);
+    const architecture = structuredClone(fixtures.architecture);
+    architecture.positions.QB.features.other = [...(architecture.positions.QB.features.other || []), longFeature];
     for (const rows of Object.values(snapshot.scoring)) {
         rows.forEach((row, index) => {
             row.team = index % 2 ? "BUF" : "KC";
@@ -47,7 +51,7 @@ async function localAPI(page) {
             scoring: snapshot.scoring, generated_at: new Date().toISOString(),
         };
         else if (url.pathname === "/api/comparison") body = comparison;
-        else if (url.pathname === "/api/model_architecture") body = fixtures.architecture;
+        else if (url.pathname === "/api/model_architecture") body = architecture;
         else if (url.pathname === "/api/metrics") body = Object.fromEntries(
             ["Ridge Regression", "Neural Network", "Attention NN", "LightGBM"].map(label => [label, {
                 overall: { mae: 2, rmse: 3, r2: 0.7 }, by_position: [{ position: "QB", mae: 2, r2: 0.7 }],
@@ -68,7 +72,7 @@ async function localAPI(page) {
                 models: Object.fromEntries(models.map(model => [model, { mae: 2, beat_experts: 0, evaluated_weeks: 1 }])) },
         };
         else if (url.pathname === "/api/wiki/index") body = [{ group: "Documentation", name: "Architecture", slug: "architecture" }];
-        else if (url.pathname === "/api/wiki/architecture") body = { html: `<h1>Architecture</h1><p>Mobile documentation fixture.</p><pre><code>${"wide_code_column ".repeat(20)}</code></pre>` };
+        else if (url.pathname === "/api/wiki/architecture") body = { html: `<h1>Architecture</h1><p>Mobile documentation fixture.</p><ul><li><a id="mobile-prose-link" href="${wikiPath}">${wikiPath}</a></li><li><code id="mobile-inline-code">${wikiPath}</code></li></ul><pre><code>${"wide_code_column ".repeat(20)}</code></pre>` };
         else if (url.pathname.startsWith("/api/player/")) body = { ...fixtures.player[scoring], name: playerName, headshot: "/mobile-headshot.svg" };
         return route.fulfill({ contentType: "application/json", headers: { "X-FFP-Contract-Version": "1.0" }, body: JSON.stringify(body) });
     });
@@ -153,6 +157,29 @@ for (const width of [320, 375, 390, 768, 820, 1024, 1440]) {
         ]) {
             await page.goto(`/?mobile-layout=${view}#${view}`);
             await expect(page.locator(ready).first()).toBeVisible();
+            if (view === "model-architecture") {
+                const accordion = page.locator(".arch-accordion").filter({ has: page.locator(".arch-pos-label", { hasText: /^QB$/ }) });
+                await accordion.locator("summary").click();
+                const chip = accordion.locator(".feature-chip").filter({ hasText: longFeature });
+                await chip.scrollIntoViewIfNeeded();
+                await expect(chip).toBeInViewport({ ratio: 1 });
+                await fitsHorizontally(chip, width);
+                expect(await chip.evaluate(el => {
+                    const chip = el.getBoundingClientRect();
+                    const body = el.closest(".arch-accordion-body").getBoundingClientRect();
+                    return chip.left >= body.left && chip.right <= body.right && el.scrollWidth <= el.clientWidth;
+                })).toBe(true);
+            }
+            if (view === "wiki") {
+                await fitsHorizontally(page.locator("#mobile-prose-link"), width);
+                await fitsHorizontally(page.locator("#mobile-inline-code"), width);
+                const codeBlock = page.locator("#wiki-content pre");
+                await fitsHorizontally(codeBlock, width);
+                expect(await codeBlock.evaluate(el => {
+                    el.scrollLeft = el.scrollWidth;
+                    return el.scrollWidth > el.clientWidth && el.scrollLeft > 0;
+                })).toBe(true);
+            }
             await documentFits(page);
         }
     });

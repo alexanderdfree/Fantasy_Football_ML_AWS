@@ -10,6 +10,8 @@
   visible navigation strip. Player dialogs lacked space for long names beside
   the portrait and close button. Populated performance charts also preserved
   their canvas minimum width on 320px screens.
+  Live Wiki links containing long repository paths widened the page to 337px,
+  and long architecture feature names were clipped inside the accordion.
 - **Fix:** Let the header wrap; use a compact mobile control grid with touch
   targets and readable inputs. Bound live filter groups and arrange menus in
   two columns while preserving intrinsic measurement widths. Keep each popover
@@ -17,6 +19,8 @@
   strip. Wrap dialog names, shrink mobile portraits, reserve close-button space,
   constrain dialog height to the dynamic viewport, and lock background scrolling.
   Let chart grid items shrink while wide tables keep their local scrolling.
+  Wrap long Wiki prose paths and architecture feature chips without changing
+  preformatted code blocks' local horizontal scrolling.
   Rebuild the committed React bundle. Rendered browser checks cover populated
   views from 320px through desktop widths and exercise filtering, menu toggles,
   table scrolling, navigation, and player details.
