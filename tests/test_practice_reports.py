@@ -361,3 +361,36 @@ def test_same_name_nonparticipant_preserves_active_identity_ambiguity(roster, mo
     assert "a" not in report.values and "b" not in report.values
     assert "reserve" not in report.values
     assert report.metadata["unmatched_report_names"] == ["Zay Flowers"]
+
+
+@pytest.mark.parametrize("other_team,other_position", [("NE", "WR"), ("BAL", "TE")])
+def test_inactive_reference_cannot_retarget_projected_players(
+    roster, monkeypatch, other_team, other_position
+):
+    projected = pd.DataFrame(
+        {
+            "player_id": ["current", "teammate"],
+            "espn_name": ["Current Player", "Teammate"],
+            "position": ["WR", other_position],
+            "recent_team": ["BAL", other_team],
+        }
+    )
+    reference = pd.DataFrame(
+        {
+            "player_id": ["current"],
+            "full_name": ["Current Player"],
+            "position": [other_position],
+            "team": [other_team],
+            "season": [2026],
+            "week": [1],
+            "status": ["CUT"],
+        }
+    )
+    html = report_html("Full Participation in Practice", name="Current Player")
+    conflicting = report_html("Did Not Participate In Practice", name="Current Player")
+    conflicting = conflicting.replace("Ravens", "Patriots" if other_team == "NE" else "Ravens")
+    html += conflicting.replace("<td>WR</td>", f"<td>{other_position}</td>")
+    monkeypatch.setattr(pr, "_fetch_official", lambda s, w: pr.parse_practice_report(html, s, w))
+    report = pr.fetch_practice_report(2026, 1, projected, rosters_df=reference)
+    assert report.values["current"] == 2.0
+    assert report.metadata["errors"] == []

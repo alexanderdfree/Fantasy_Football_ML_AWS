@@ -102,9 +102,11 @@ def practice_alias_lookup(
         contexts.add((pid, *context))
         lookup.setdefault((*context, name_key(row["espn_name"])), set()).add(pid)
     team_positions = {(team, position) for _, team, position in contexts}
+    roster_ids = {pid for pid, _, _ in contexts}
     for row in reference.to_dict("records"):
         inactive = (
             include_inactive
+            and row["player_id"] not in roster_ids
             and row.get("status") in {"RES", "INA", "EXE", "DEV", "CUT", "RET"}
             and (row["team"], row["position"]) in team_positions
         )

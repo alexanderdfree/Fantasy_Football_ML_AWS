@@ -17,7 +17,8 @@ before requesting a forecast.
 joins, while counting coverage and returning values only for projected players.
 Recognize same-week, same-team, same-position reserve identities without making
 them active roster members; keep ambiguous, conflicting and unknown identities
-unresolved. Ignore reports for teams outside the upcoming slate. Normalize UK
+unresolved. An inactive reference cannot retarget an existing validated player's
+identity across teams or positions. Ignore reports for teams outside the upcoming slate. Normalize UK
 constituent-country names to Open-Meteo's `GB` country code.
 
 **Validation:** Regression tests cover excluded teammates, scoped reserve
@@ -27,7 +28,7 @@ handoff. Weather tests exercise geocoding and kickoff-hour forecasts with each U
 country name. A live probe of the corrected adapter returned Wembley weather
 in the required Fahrenheit/mph units. Replaying the actual Week 6 source inputs
 reduced unknown practice participation from 84 to 3 of 439 projected players,
-with all 26 teams covered. Full unit validation passed 6,309 tests (3 skipped).
+with all 26 teams covered. Full unit validation passed 6,311 tests (3 skipped).
 The remaining practice values, two conflicting roster eligibility records and
 two unconfirmed retractable roofs remain explicitly uncertain.
 
