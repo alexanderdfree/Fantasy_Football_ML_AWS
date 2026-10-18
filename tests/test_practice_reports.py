@@ -265,3 +265,99 @@ def test_unmatched_alias_keeps_known_status_or_unknown(roster, monkeypatch, has_
         assert "a" not in result.values
     assert "b" not in result.values  # cannot establish who the unmatched report describes
     assert result.metadata["unmatched_report_names"] == ["Andrew Ogletree"]
+
+
+def test_out_players_reports_do_not_make_projected_teammates_unknown(roster):
+    # The live builder removes Out players before projecting. The full verified
+    # roster still identifies the official report as Zay's, not Healthy Raven's.
+    projected = roster.loc[roster.player_id.ne("a")].copy()
+    report = pr.fetch_practice_report(2026, 1, projected, identity_roster=roster)
+    assert report.values == {"b": 2.0, "c": 0.0}
+    assert report.metadata["unknown_players"] == 1  # ATL has no published report.
+    assert report.metadata["unmatched_report_names"] == []
+    assert "a" not in report.values
+
+
+@pytest.mark.parametrize("status", ["RES", "INA", "EXE", "DEV", "CUT", "RET"])
+def test_current_week_nonparticipant_does_not_block_published_absence(roster, monkeypatch, status):
+    reference = pd.DataFrame(
+        {
+            "player_id": ["reserve"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Reported Reserve"],
+            "status": [status],
+        }
+    )
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Reported Reserve"), s, w),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster, rosters_df=reference)
+    assert report.values["a"] == report.values["b"] == 2.0
+    assert "reserve" not in report.values
+    assert report.metadata["unmatched_report_names"] == []
+
+
+@pytest.mark.parametrize("status", ["ACT", "UNKNOWN", None])
+def test_unconfirmed_nonparticipant_identity_still_blocks_teammate_defaults(
+    roster, monkeypatch, status
+):
+    reference = pd.DataFrame(
+        {
+            "player_id": ["elsewhere"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Andrew Ogletree"],
+            "status": [status],
+        }
+    )
+    roster.loc[0, "espn_name"] = "Drew Ogletree"
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Andrew Ogletree"), s, w),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster, rosters_df=reference)
+    assert "a" not in report.values and "b" not in report.values
+    assert report.metadata["unmatched_report_names"] == ["Andrew Ogletree"]
+
+
+def test_report_from_outside_projection_slate_is_not_an_unmatched_identity(roster, monkeypatch):
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html().replace("Ravens", "Seahawks"), s, w),
+    )
+    monkeypatch.setattr(
+        pr.nfl_source,
+        "teams",
+        lambda: pd.DataFrame({"team_nick": ["Seahawks"], "team_abbr": ["SEA"]}),
+    )
+    report = pr.fetch_practice_report(2026, 1, roster)
+    assert report.values == {"c": 0.0}
+    assert report.metadata["unmatched_report_names"] == []
+    assert report.metadata["missing_teams"] == ["ATL", "BAL"]
+
+
+def test_same_name_nonparticipant_preserves_active_identity_ambiguity(roster, monkeypatch):
+    reference = pd.DataFrame(
+        {
+            "player_id": ["reserve"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Zay Flowers"],
+            "status": ["RES"],
+        }
+    )
+    report = pr.fetch_practice_report(2026, 1, roster, rosters_df=reference)
+    assert "a" not in report.values and "b" not in report.values
+    assert "reserve" not in report.values
+    assert report.metadata["unmatched_report_names"] == ["Zay Flowers"]

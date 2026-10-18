@@ -1,6 +1,7 @@
 """Live schedule enrichment must reach the actual model feature merge."""
 
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 import pytest
@@ -116,6 +117,48 @@ def test_forecast_uses_kickoff_hour_and_explicit_units():
     payload["hourly_units"]["wind_speed_10m"] = "km/h"
     with pytest.raises(ValueError, match="units"):
         live._forecast_at_kickoff(payload, "2026-09-13T17:00Z")
+
+
+@pytest.mark.parametrize("country", ["England", "Scotland", "Wales", "Northern Ireland"])
+def test_uk_venue_country_names_reach_kickoff_forecast(monkeypatch, country):
+    kickoff = (pd.Timestamp.now("UTC") + pd.Timedelta(days=1)).floor("h")
+    requests = []
+
+    def get_json(url):
+        requests.append(url)
+        query = parse_qs(urlsplit(url).query)
+        if urlsplit(url).hostname == "geocoding-api.open-meteo.com":
+            assert query["name"] == ["London"]
+            assert query["countryCode"] == ["GB"]
+            return {
+                "results": [
+                    {
+                        "name": "London",
+                        "country_code": "GB",
+                        "latitude": 51.50853,
+                        "longitude": -0.12574,
+                    }
+                ]
+            }
+        assert query["latitude"] == ["51.50853"]
+        assert query["longitude"] == ["-0.12574"]
+        assert query["temperature_unit"] == ["fahrenheit"]
+        assert query["wind_speed_unit"] == ["mph"]
+        return {
+            "hourly_units": {"temperature_2m": "°F", "wind_speed_10m": "mp/h"},
+            "hourly": {
+                "time": [kickoff.strftime("%Y-%m-%dT%H:%M")],
+                "temperature_2m": [56.4],
+                "wind_speed_10m": [10.7],
+            },
+        }
+
+    monkeypatch.setattr(live.espn_live, "_get_json", get_json)
+    assert live._venue_forecast(
+        {"fullName": "Wembley Stadium", "address": {"city": "London", "country": country}},
+        kickoff.isoformat(),
+    ) == {"temp": 56.4, "wind": 10.7}
+    assert len(requests) == 2
 
 
 def test_missing_schedule_context_fails_instead_of_neutralizing_every_feature():

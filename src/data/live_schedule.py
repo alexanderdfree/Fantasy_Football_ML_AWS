@@ -8,9 +8,8 @@ from urllib.parse import urlencode
 import numpy as np
 import pandas as pd
 
-from src.data import nfl_source
+from src.data import espn_live, nfl_source
 from src.data.source_result import SourceResult, SourceStatus
-from src.data import espn_live
 
 WEATHER_SOURCE = "https://open-meteo.com/"
 _COUNTRIES = {
@@ -18,6 +17,10 @@ _COUNTRIES = {
     "United States": "US",
     "Australia": "AU",
     "United Kingdom": "GB",
+    "England": "GB",
+    "Scotland": "GB",
+    "Wales": "GB",
+    "Northern Ireland": "GB",
     "Germany": "DE",
     "Spain": "ES",
     "Ireland": "IE",

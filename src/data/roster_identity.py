@@ -83,8 +83,15 @@ def resolve_player(player: dict, reference: pd.DataFrame) -> tuple[str | None, s
     return pid, "weekly_roster_name_dob"
 
 
-def practice_alias_lookup(roster: pd.DataFrame, reference: pd.DataFrame) -> dict:
-    """Join official name variants through GSIS, preserving every ambiguity."""
+def practice_alias_lookup(
+    roster: pd.DataFrame, reference: pd.DataFrame, *, include_inactive: bool = False
+) -> dict:
+    """Join official name variants through GSIS, preserving every ambiguity.
+
+    Practice reports also list reserves and other nonparticipants. Their
+    current-week identities can establish that a report does not describe a
+    projected teammate; they must never create an active roster player.
+    """
     lookup: dict[tuple, set[str]] = {}
     contexts = set()
     for row in roster.to_dict("records"):
@@ -94,8 +101,14 @@ def practice_alias_lookup(roster: pd.DataFrame, reference: pd.DataFrame) -> dict
         context = (row["recent_team"], row["position"])
         contexts.add((pid, *context))
         lookup.setdefault((*context, name_key(row["espn_name"])), set()).add(pid)
+    team_positions = {(team, position) for _, team, position in contexts}
     for row in reference.to_dict("records"):
-        if (row["player_id"], row["team"], row["position"]) not in contexts:
+        inactive = (
+            include_inactive
+            and row.get("status") in {"RES", "INA", "EXE", "DEV", "CUT", "RET"}
+            and (row["team"], row["position"]) in team_positions
+        )
+        if (row["player_id"], row["team"], row["position"]) not in contexts and not inactive:
             continue
         for name in _names(row):
             key = (row["team"], row["position"], name)

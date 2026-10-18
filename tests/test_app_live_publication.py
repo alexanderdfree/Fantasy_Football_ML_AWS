@@ -283,10 +283,11 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
     monkeypatch.setattr(espn_live, "_get_json", request)
     monkeypatch.setattr(live.nfl_source, "rosters_weekly", lambda *args: pd.DataFrame())
     monkeypatch.setattr(espn_live, "fetch_depth_chart_ranks", lambda *args, **kwargs: {})
+    practice = Mock(return_value=SimpleNamespace(values={}, metadata={"unknown_players": 0}))
     monkeypatch.setattr(
         live.practice_reports,
         "fetch_practice_report",
-        lambda *args, **kwargs: SimpleNamespace(values={}, metadata={"unknown_players": 0}),
+        practice,
     )
     monkeypatch.setattr(
         live.live_sources,
@@ -349,6 +350,8 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
         lambda results, **kwargs: results.assign(age=25, is_rookie=False),
     )
     result = live.refresh_upcoming_week_cache(force=True)
+    assert "00-out" in set(practice.call_args.kwargs["identity_roster"]["player_id"])
+    assert "00-out" not in set(practice.call_args.args[2]["player_id"])
     assert "00-out" not in set(seen["roster"]["player_id"])
     assert "00-out" not in set(seen["inference_roster"]["player_id"])
     assert seen["injuries"].set_index("gsis_id").loc["00-out", "report_status"] == "Out"
