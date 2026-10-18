@@ -30,6 +30,84 @@ async function localAPI(page, { snapshotStatus = 200, snapshot = fixtures.snapsh
     });
 }
 
+function dstSnapshot(teams) {
+    const snapshot = structuredClone(fixtures.snapshot);
+    for (const scoring of Object.keys(snapshot.scoring)) {
+        const base = snapshot.scoring[scoring].find((player) => player.position === "DST");
+        snapshot.scoring[scoring] = teams.map((team) => ({
+            ...base, player_id: team, name: `${team} D/ST`, team,
+            // A stale or unavailable API headshot must not break the local logo.
+            headshot: `https://a.espncdn.com/unavailable/${team}.png`,
+        }));
+    }
+    return snapshot;
+}
+
+test("all team logos and historical aliases decode with external traffic blocked", async ({ page }) => {
+    const teams = "ARI ATL BAL BUF CAR CHI CIN CLE DAL DEN DET GB HOU IND JAX KC LA LAC LV MIA MIN NE NO NYG NYJ PHI PIT SEA SF TB TEN WAS JAC LAR OAK SD STL WSH".split(" ");
+    await localAPI(page, { snapshot: dstSnapshot(teams) });
+    await page.goto("/#predictions");
+    const logos = page.locator("#predictions-body .team-logo");
+    await expect(logos).toHaveCount(teams.length);
+    for (const logo of await logos.all()) {
+        await logo.scrollIntoViewIfNeeded();
+        await expect(logo).toBeVisible();
+        await expect.poll(() => logo.evaluate((image) => image.complete && image.naturalWidth === 200)).toBe(true);
+    }
+});
+
+for (const [team, playerStatus] of [["NO", 200], ["NYG", 404]]) {
+    test(`${team} DST detail uses a local logo with player response ${playerStatus}`, async ({ page }) => {
+        const snapshot = dstSnapshot([team]);
+        for (const rows of Object.values(snapshot.scoring)) {
+            rows[0].opponent = team === "NO" ? "NYG" : "NO";
+            rows[0].is_home = 1;
+        }
+        await localAPI(page, { snapshot, playerStatus });
+        await page.route("**/api/upcoming_week", (route) => route.fulfill({
+            contentType: "application/json",
+            body: JSON.stringify({ available: true, season: 2026, week: 6,
+                generated_at: new Date().toISOString(), scoring: snapshot.scoring }),
+        }));
+        if (playerStatus === 200) {
+            await page.route("**/api/player/**", (route) => route.fulfill({
+                contentType: "application/json",
+                body: JSON.stringify({ ...fixtures.player.ppr, position: "DST", team, name: `${team} D/ST`, headshot: "" }),
+            }));
+        }
+        await page.goto("/");
+        const row = page.locator(`#homepage-body [data-player-id="${team}"]`);
+        await expect(row.locator(".team-logo")).toHaveCount(2);
+        await expect.poll(() => row.locator(".team-logo").evaluateAll((images) => images.every((image) => image.complete && image.naturalWidth === 200))).toBe(true);
+        await row.locator(".col-player").click();
+        await expect(page.locator("#modal-name")).toHaveText(`${team} D/ST`);
+        const logo = page.locator("#modal-headshot");
+        await expect(logo).toBeVisible();
+        await expect.poll(() => logo.evaluate((image) => image.complete && image.naturalWidth === 200)).toBe(true);
+        if (playerStatus === 404) await expect(page.locator("#modal-note")).toContainText("No prior-season");
+    });
+}
+
+test("a failed logo does not hide a replacement team's image", async ({ page }) => {
+    await localAPI(page, { snapshotStatus: 404 });
+    let team = "NO";
+    await page.route("**/api/predictions?**", (route) => route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ...fixtures.predictions.ppr,
+            players: [{ ...dstSnapshot([team]).scoring.ppr[0], player_id: "same-row" }], total: 1 }),
+    }));
+    await page.route("**/static/img/teams/no.png", (route) => route.abort());
+    await page.goto("/#predictions");
+    const logo = page.locator('[data-player-id="same-row"] .team-logo');
+    await expect(logo).toHaveAttribute("src", "/static/img/teams/no.png");
+    await expect(logo).toBeHidden();
+    team = "NYG";
+    await page.locator("#scoring-filter").getByRole("button", { name: "Standard", exact: true }).click();
+    await expect(logo).toHaveAttribute("src", "/static/img/teams/nyg.png");
+    await expect(logo).toBeVisible();
+    await expect.poll(() => logo.evaluate((image) => image.complete && image.naturalWidth === 200)).toBe(true);
+});
+
 test("history replaces a failed presentation when accepted results arrive", async ({ page }) => {
     await localAPI(page);
     let accepted = false;
