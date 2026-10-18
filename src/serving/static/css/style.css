@@ -815,6 +815,11 @@ tbody tr:last-child td {
     flex-shrink: 0;
 }
 
+.player-team-logo {
+    object-fit: contain;
+    padding: 4px;
+}
+
 .player-name {
     font-weight: 500;
 }
