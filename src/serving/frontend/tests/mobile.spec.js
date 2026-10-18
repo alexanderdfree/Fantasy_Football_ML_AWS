@@ -9,10 +9,13 @@ const wikiPath = "docs/archive/design_weather_and_odds.md";
 const models = ["ridge", "nn", "attn_nn", "lgbm"];
 const modelLabels = { ridge: "Ridge", nn: "Neural Net", attn_nn: "Attention NN", lgbm: "LightGBM", espn: "ESPN" };
 
-async function localAPI(page) {
+async function localAPI(page, { longWiki = false } = {}) {
     const snapshot = structuredClone(fixtures.snapshot);
     const architecture = structuredClone(fixtures.architecture);
     architecture.positions.QB.features.other = [...(architecture.positions.QB.features.other || []), longFeature];
+    const wikiIndex = [{ group: "Documentation", name: "Architecture", slug: "architecture" },
+        ...(longWiki ? Array.from({ length: 40 }, (_, index) => ({ group: "Guides", name: `Guide ${index + 1}`, slug: `guide-${index + 1}` })) : [])];
+    const wikiProse = longWiki ? Array.from({ length: 32 }, () => "<p>Each position predicts raw NFL stats from prior games. Documentation explains the inputs, model configuration, and evaluation of completed player weeks.</p>").join("") : "";
     for (const rows of Object.values(snapshot.scoring)) {
         rows.forEach((row, index) => {
             row.team = index % 2 ? "BUF" : "KC";
@@ -71,8 +74,12 @@ async function localAPI(page) {
             summary: { n: 24, cohort_n: 24, actual_n: 24, source_n: sourceN, evaluated_weeks: 1, total_weeks: 1,
                 models: Object.fromEntries(models.map(model => [model, { mae: 2, beat_experts: 0, evaluated_weeks: 1 }])) },
         };
-        else if (url.pathname === "/api/wiki/index") body = [{ group: "Documentation", name: "Architecture", slug: "architecture" }];
-        else if (url.pathname === "/api/wiki/architecture") body = { html: `<h1>Architecture</h1><p>Mobile documentation fixture.</p><ul><li><a id="mobile-prose-link" href="${wikiPath}">${wikiPath}</a></li><li><code id="mobile-inline-code">${wikiPath}</code></li></ul><pre><code>${"wide_code_column ".repeat(20)}</code></pre>` };
+        else if (url.pathname === "/api/wiki/index") body = wikiIndex;
+        else if (url.pathname === "/api/wiki/architecture") body = { html: `<h1>Architecture</h1><p>Mobile documentation fixture.</p><ul><li><a id="mobile-prose-link" href="${wikiPath}">${wikiPath}</a></li><li><code id="mobile-inline-code">${wikiPath}</code></li></ul><pre><code>${"wide_code_column ".repeat(20)}</code></pre>${wikiProse}` };
+        else if (longWiki && url.pathname.startsWith("/api/wiki/")) {
+            const document = wikiIndex.find(item => item.slug === url.pathname.split("/").pop());
+            body = { html: `<h1>${document.name}</h1>${wikiProse}` };
+        }
         else if (url.pathname.startsWith("/api/player/")) body = { ...fixtures.player[scoring], name: playerName, headshot: "/mobile-headshot.svg" };
         return route.fulfill({ contentType: "application/json", headers: { "X-FFP-Contract-Version": "1.0" }, body: JSON.stringify(body) });
     });
@@ -184,6 +191,44 @@ for (const width of [320, 375, 390, 768, 820, 1024, 1440]) {
         }
     });
 }
+
+test("tablet Wiki sidebar links remain clickable below the wrapped header", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await localAPI(page, { longWiki: true });
+    await page.goto("/#wiki");
+    await expect(page.locator("#wiki-content h1")).toHaveText("Architecture");
+    const sidebar = page.locator("#wiki-sidebar");
+    await page.evaluate(() => window.scrollTo(0, 350));
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await sidebar.evaluate(el => {
+        const link = el.querySelectorAll(".wiki-sidebar-link")[20];
+        el.scrollTop += link.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+    });
+    expect(await sidebar.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+    const firstVisible = await sidebar.evaluate(el => {
+        const bounds = el.getBoundingClientRect();
+        const link = [...el.querySelectorAll(".wiki-sidebar-link")].find(candidate => {
+            const rect = candidate.getBoundingClientRect();
+            return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+        });
+        const rect = link.getBoundingClientRect();
+        return { name: link.textContent, slug: link.dataset.slug, top: rect.top, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    const header = await page.locator(".header").boundingBox();
+    expect(firstVisible.top).toBeGreaterThanOrEqual(header.y + header.height);
+    // Click its current screen position; locator.click() could scroll away an occlusion.
+    await page.mouse.click(firstVisible.x, firstVisible.y);
+    await expect(page.locator("#wiki-content h1")).toHaveText(firstVisible.name);
+    await expect(sidebar.locator(`[data-slug="${firstVisible.slug}"]`)).toHaveClass(/active/);
+    const gap = (await sidebar.boundingBox()).y - header.y - header.height;
+    await page.setViewportSize({ width: 1440, height: 700 });
+    await expect.poll(async () => {
+        const resizedHeader = await page.locator(".header").boundingBox();
+        const resizedSidebar = await sidebar.boundingBox();
+        const resizedGap = resizedSidebar.y - resizedHeader.y - resizedHeader.height;
+        return resizedHeader.height < header.height && Math.abs(resizedGap - gap) < 1;
+    }).toBe(true);
+});
 
 test("mobile deep links and back reveal the active tab without moving the page", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 650 });

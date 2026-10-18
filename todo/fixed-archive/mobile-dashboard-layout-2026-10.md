@@ -19,6 +19,8 @@
   strip. Wrap dialog names, shrink mobile portraits, reserve close-button space,
   constrain dialog height to the dynamic viewport, and lock background scrolling.
   Let chart grid items shrink while wide tables keep their local scrolling.
+  Measure the header so a wrapped tablet header cannot cover the sticky Wiki
+  sidebar or its scrollable navigation links.
   Wrap long Wiki prose paths and architecture feature chips without changing
   preformatted code blocks' local horizontal scrolling.
   Rebuild the committed React bundle. Rendered browser checks cover populated
