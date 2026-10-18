@@ -6,6 +6,7 @@ import { fetchJSON } from "./api.js";
 import { fmt, sizedHeadshot } from "./lib/format.js";
 import { modelColors, chartTheme } from "./lib/chartTheme.js";
 import { useChart } from "./hooks/useChart.js";
+import { TeamLogo } from "./components/TeamLabel.jsx";
 
 function TrendChart({ weekly, theme }) {
     const canvasRef = useChart(() => {
@@ -94,7 +95,9 @@ export function PlayerModal({ playerId, fallback, scoring, theme, onClose }) {
             <div className="modal-content">
                 <button type="button" className="modal-close" id="modal-close" onClick={onClose}>&times;</button>
                 <div className="modal-header">
-                    {identity && identity.headshot
+                    {identity?.position === "DST"
+                        ? <TeamLogo abbr={identity.team} id="modal-headshot" className="modal-headshot" alt={identity.name || ""} />
+                        : identity && identity.headshot
                         ? <img id="modal-headshot" className="modal-headshot" src={sizedHeadshot(identity.headshot, 400)} alt={identity.name || ""} loading="lazy" decoding="async" />
                         : <img id="modal-headshot" className="modal-headshot" alt="" style={{ display: "none" }} />}
                     <div>

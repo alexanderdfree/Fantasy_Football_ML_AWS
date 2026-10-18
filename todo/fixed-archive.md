@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Dashboard team and DST logos depended on external image requests
+[Read the incident record](fixed-archive/dst-local-team-logos-2026-10.md).
+
 ### [FIXED] refresh-splits died seven times on the first play-by-play request of the D/ST pass
 [Read the incident record](fixed-archive/nflverse-pbp-first-request-hang-2026-09.md).
 

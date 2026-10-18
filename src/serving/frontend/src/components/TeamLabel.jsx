@@ -1,19 +1,26 @@
 /* TeamLabel / MatchupLabel — a team (or matchup) abbreviation followed by the
- * team logo, sized to the surrounding text. Logos are hotlinked from ESPN's
- * public NFL logo CDN (the same CDN-imagery approach as player headshots); a
- * failed logo load hides the <img> so the abbreviation still reads cleanly. */
+ * bundled team logo, sized to the surrounding text. Keep logo rendering
+ * independent of third-party CDN availability, including in DST detail cards. */
+
+const TEAMS = new Set("ARI ATL BAL BUF CAR CHI CIN CLE DAL DEN DET GB HOU IND JAX KC LA LAC LV MIA MIN NE NO NYG NYJ PHI PIT SEA SF TB TEN WAS".split(" "));
+const LOGO_ALIASES = { JAC: "JAX", LAR: "LA", OAK: "LV", SD: "LAC", STL: "LA", WSH: "WAS" };
 
 export function teamLogoUrl(abbr) {
-    return `https://a.espncdn.com/i/teamlogos/nfl/500/${String(abbr || "").toLowerCase()}.png`;
+    const code = String(abbr || "").trim().toUpperCase();
+    const team = LOGO_ALIASES[code] || code;
+    return TEAMS.has(team) ? `/static/img/teams/${team.toLowerCase()}.png` : "";
 }
 
-export function TeamLogo({ abbr }) {
-    if (!abbr) return null;
+export function TeamLogo({ abbr, className = "team-logo", alt = "", ...props }) {
+    const src = teamLogoUrl(abbr);
+    if (!src) return null;
     return (
         <img
-            className="team-logo"
-            src={teamLogoUrl(abbr)}
-            alt=""
+            {...props}
+            key={src}
+            className={className}
+            src={src}
+            alt={alt}
             loading="lazy"
             decoding="async"
             onError={(e) => { e.currentTarget.style.display = "none"; }}
