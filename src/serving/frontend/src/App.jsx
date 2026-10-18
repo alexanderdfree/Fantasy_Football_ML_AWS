@@ -59,6 +59,7 @@ export function App() {
         document.documentElement.getAttribute("data-theme") === "oled" ? "oled" : "midnight"
     ));
     const [modal, setModal] = useState(null); // { playerId, fallback }
+    const navRef = useRef(null);
     // Snapshot-first bootstrap (zero server compute; falls back to the live API).
     const [bootstrap, setBootstrap] = useState({
         ready: false, usingSnapshot: false, snapshotData: null, weeks: [], teams: [], degraded: [],
@@ -141,6 +142,23 @@ export function App() {
         setView(next);
     }, []);
 
+    // Keep deep links and back/forward navigation visible in the mobile tab
+    // strip. Scroll only the strip so restoring a tab cannot move the page.
+    useEffect(() => {
+        const nav = navRef.current;
+        const revealActiveTab = () => {
+            const active = nav.querySelector(".tab.active");
+            const bounds = nav.getBoundingClientRect();
+            const tab = active.getBoundingClientRect();
+            if (tab.left < bounds.left) nav.scrollLeft -= bounds.left - tab.left;
+            else if (tab.right > bounds.right) nav.scrollLeft += tab.right - bounds.right;
+        };
+        revealActiveTab();
+        const observer = new ResizeObserver(revealActiveTab);
+        observer.observe(nav);
+        return () => observer.disconnect();
+    }, [view]);
+
     const onToggleTheme = useCallback(() => {
         setTheme((prev) => {
             const next = prev === "oled" ? "midnight" : "oled";
@@ -176,12 +194,13 @@ export function App() {
                 search={searchInput}
                 onSearch={onSearch}
             />
-            <nav className="nav-tabs">
+            <nav className="nav-tabs" ref={navRef} aria-label="Main navigation">
                 {TAB_VIEWS.map((v) => (
                     <button
                         key={v}
                         type="button"
                         className={`tab${v === view ? " active" : ""}`}
+                        aria-current={v === view ? "page" : undefined}
                         data-view={v}
                         onClick={() => activateView(v)}
                     >

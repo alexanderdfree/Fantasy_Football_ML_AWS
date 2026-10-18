@@ -223,8 +223,10 @@ body {
 /* === Header === */
 .header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
+    gap: 12px 24px;
     padding: 16px 24px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
@@ -235,13 +237,17 @@ body {
 
 .header-left {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
+    min-width: 0;
     gap: 12px;
 }
 
 .header-right {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    max-width: 100%;
     gap: 16px;
 }
 
@@ -948,6 +954,7 @@ tbody tr:last-child td {
 }
 
 .chart-box {
+    min-width: 0;
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border);
@@ -1020,8 +1027,10 @@ tbody tr:last-child td {
 
 .modal-close {
     position: absolute;
-    top: 12px;
-    right: 16px;
+    top: 4px;
+    right: 4px;
+    width: 44px;
+    height: 44px;
     background: none;
     border: none;
     color: var(--text-muted);
@@ -1039,7 +1048,10 @@ tbody tr:last-child td {
     align-items: center;
     gap: 16px;
     margin-bottom: 20px;
+    padding-right: 28px;
 }
+
+.modal-header > div { min-width: 0; }
 
 .modal-headshot {
     width: 88px;
@@ -1047,11 +1059,13 @@ tbody tr:last-child td {
     border-radius: 50%;
     background: var(--bg-hover);
     object-fit: cover;
+    flex-shrink: 0;
 }
 
 .modal-header h2 {
     font-size: 22px;
     font-weight: 700;
+    overflow-wrap: anywhere;
 }
 
 .modal-pos-team {
@@ -1061,6 +1075,7 @@ tbody tr:last-child td {
 
 .modal-stats {
     display: flex;
+    flex-wrap: wrap;
     gap: 24px;
     margin-bottom: 20px;
 }
@@ -1094,12 +1109,18 @@ tbody tr:last-child td {
         padding: 12px 16px;
     }
     .header-right {
-        flex-direction: column;
-        align-items: stretch;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
         gap: 8px;
     }
-    .search-box { width: 100%; }
-    .scoring-toggle.pill-group { justify-content: center; }
+    .logo { white-space: normal; }
+    .theme-toggle { height: 44px; justify-content: center; }
+    .search-box { width: 100%; grid-column: 1 / -1; }
+    .search-box input { min-height: 44px; font-size: 16px; }
+    .scoring-toggle.pill-group { min-width: 0; }
+    .scoring-toggle .pill { flex: 1; min-height: 38px; padding: 7px 6px; }
+    .pill, select, .field-select, .text-field, .dropdown-trigger { min-height: 44px; }
+    select, .field-select, .text-field, .filter-group input[type="number"] { font-size: 16px; }
     .filter-meta { margin-left: 0; }
     .charts-row { grid-template-columns: 1fr; }
     .subtitle { display: none; }
@@ -1116,7 +1137,8 @@ tbody tr:last-child td {
     .player-headshot { width: 32px; height: 32px; }
 
     /* Modal: use nearly the full viewport and a slightly shorter chart. */
-    .modal-content { width: 95%; padding: 20px 16px; max-height: 90vh; }
+    .modal-content { width: 95%; padding: 20px 16px; max-height: 90vh; max-height: calc(100dvh - 24px); overscroll-behavior: contain; }
+    .modal-headshot { width: 64px; height: 64px; }
     .modal-header h2 { font-size: 19px; }
     .modal-stat-value { font-size: 20px; }
     .modal .chart-box { height: 280px; padding: 12px; }
@@ -2091,6 +2113,38 @@ tr.predictions-row-expandable.expanded .row-caret { transform: rotate(90deg); }
     pointer-events: none;
     flex-wrap: nowrap;
     width: max-content;
+}
+
+@media (max-width: 768px) {
+    /* Constrain live controls, keeping the off-screen copy at its intrinsic
+       width so auto-fit measurements still describe the desktop row. */
+    .filter-group select, .filter-group input { font-size: 16px; }
+    .filters-row:not(.filters-row--measure) > .filter-group {
+        min-width: 0;
+        max-width: 100%;
+    }
+    .filters-row:not(.filters-row--measure) .filter-menus {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px 8px;
+        width: 100%;
+        margin-left: 0;
+    }
+    .filters-row:not(.filters-row--measure) .filter-menus > .meta-badge {
+        grid-column: 1 / -1;
+        justify-self: start;
+    }
+    .filter-menus > .filter-group { min-width: 0; }
+    .filter-menus .dropdown-menu { width: 100%; }
+    .filter-menus .dropdown-trigger {
+        width: 100%;
+        justify-content: space-between;
+        gap: 4px;
+        padding: 7px 8px;
+    }
+    .filter-menus .dropdown-count { padding: 1px 4px; }
+    .filter-menus .dropdown-panel { max-width: calc(100vw - 50px); }
+    .filter-menus > .filter-group:first-of-type .dropdown-panel { left: 0; right: auto; }
 }
 
 /* ---- Stat-block readout (Timeline per-model MAE) ---- */

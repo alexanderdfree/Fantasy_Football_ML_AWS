@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Mobile dashboard filters and tablet header widened the page, and active navigation tabs stayed offscreen
+[Read the incident record](fixed-archive/mobile-dashboard-layout-2026-10.md).
+
 ### [FIXED] Dashboard team and DST logos depended on external image requests
 [Read the incident record](fixed-archive/dst-local-team-logos-2026-10.md).
 

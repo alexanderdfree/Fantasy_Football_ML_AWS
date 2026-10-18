@@ -63,6 +63,7 @@ export function Header({ theme, onToggleTheme, scoring, onScoring, search, onSea
                     <input
                         type="text"
                         id="search-input"
+                        aria-label="Search players"
                         placeholder="Search players..."
                         value={search}
                         onChange={(e) => onSearch(e.target.value)}

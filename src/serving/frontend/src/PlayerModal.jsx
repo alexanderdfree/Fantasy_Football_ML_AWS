@@ -73,8 +73,13 @@ export function PlayerModal({ playerId, fallback, scoring, theme, onClose }) {
     useEffect(() => {
         if (!playerId) return undefined;
         const onKey = (e) => { if (e.key === "Escape") onClose(); };
+        const overflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
         document.addEventListener("keydown", onKey);
-        return () => document.removeEventListener("keydown", onKey);
+        return () => {
+            document.removeEventListener("keydown", onKey);
+            document.body.style.overflow = overflow;
+        };
     }, [playerId, onClose]);
 
     if (!playerId) return null;
@@ -91,9 +96,9 @@ export function PlayerModal({ playerId, fallback, scoring, theme, onClose }) {
     const note = useFallback ? "No prior-season game log to chart yet." : "";
 
     return (
-        <div id="player-modal" className="modal open" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div id="player-modal" className="modal open" role="dialog" aria-modal="true" aria-labelledby="modal-name" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className="modal-content">
-                <button type="button" className="modal-close" id="modal-close" onClick={onClose}>&times;</button>
+                <button type="button" className="modal-close" id="modal-close" aria-label="Close player details" onClick={onClose}>&times;</button>
                 <div className="modal-header">
                     {identity?.position === "DST"
                         ? <TeamLogo abbr={identity.team} id="modal-headshot" className="modal-headshot" alt={identity.name || ""} />
