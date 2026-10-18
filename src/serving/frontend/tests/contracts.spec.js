@@ -43,20 +43,22 @@ function dstSnapshot(teams) {
     return snapshot;
 }
 
-test("all team logos and historical aliases decode with external traffic blocked", async ({ page }) => {
+test("all DST player-column icons and team logos decode with external traffic blocked", async ({ page }) => {
     const teams = "ARI ATL BAL BUF CAR CHI CIN CLE DAL DEN DET GB HOU IND JAX KC LA LAC LV MIA MIN NE NO NYG NYJ PHI PIT SEA SF TB TEN WAS JAC LAR OAK SD STL WSH".split(" ");
     await localAPI(page, { snapshot: dstSnapshot(teams) });
     await page.goto("/#predictions");
-    const logos = page.locator("#predictions-body .team-logo");
-    await expect(logos).toHaveCount(teams.length);
-    for (const logo of await logos.all()) {
-        await logo.scrollIntoViewIfNeeded();
-        await expect(logo).toBeVisible();
-        await expect.poll(() => logo.evaluate((image) => image.complete && image.naturalWidth === 200)).toBe(true);
+    for (const selector of [".col-player img.player-headshot", ".col-team img.team-logo"]) {
+        const logos = page.locator(`#predictions-body ${selector}`);
+        await expect(logos).toHaveCount(teams.length);
+        for (const logo of await logos.all()) {
+            await logo.scrollIntoViewIfNeeded();
+            await expect(logo).toBeVisible();
+            await expect.poll(() => logo.evaluate((image) => image.complete && image.naturalWidth === 200)).toBe(true);
+        }
     }
 });
 
-for (const [team, playerStatus] of [["NO", 200], ["NYG", 404]]) {
+for (const [team, playerStatus] of [["NO", 200], ["NYG", 404], ["CAR", 200]]) {
     test(`${team} DST detail uses a local logo with player response ${playerStatus}`, async ({ page }) => {
         const snapshot = dstSnapshot([team]);
         for (const rows of Object.values(snapshot.scoring)) {
@@ -77,6 +79,10 @@ for (const [team, playerStatus] of [["NO", 200], ["NYG", 404]]) {
         }
         await page.goto("/");
         const row = page.locator(`#homepage-body [data-player-id="${team}"]`);
+        const playerIcon = row.locator(".col-player img.player-headshot");
+        await expect(playerIcon).toHaveCount(1);
+        await expect(playerIcon).toBeVisible();
+        await expect.poll(() => playerIcon.evaluate((image) => image.complete && image.naturalWidth === 200)).toBe(true);
         await expect(row.locator(".team-logo")).toHaveCount(2);
         await expect.poll(() => row.locator(".team-logo").evaluateAll((images) => images.every((image) => image.complete && image.naturalWidth === 200))).toBe(true);
         await row.locator(".col-player").click();

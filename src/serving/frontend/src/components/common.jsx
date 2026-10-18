@@ -1,6 +1,7 @@
 /* Small shared building blocks. Markup + class names mirror the vanilla app
  * exactly so the (design-system-tokened) style.css styles them unchanged. */
 import { fmt, sizedHeadshot, errDelta, deltaClass, fmtDelta } from "../lib/format.js";
+import { TeamLogo } from "./TeamLabel.jsx";
 
 /* Single-select pill row (position filters, metric toggles). `options` is
  * [{value, label, disabled?, title?}]; parent owns the active value. */
@@ -28,11 +29,11 @@ export function PosBadge({ position }) {
     return <span className={`pos-badge pos-${position}`}>{position}</span>;
 }
 
-/* Headshot + name cell. DST is a team unit with no player photo; a missing
- * headshot falls back to the empty-circle placeholder. */
+/* Icon + name cell. DST uses its bundled team logo; other players use their
+ * headshot or the empty-circle placeholder when no photo is available. */
 export function PlayerCell({ player }) {
     const headshot = player.position === "DST"
-        ? null
+        ? <TeamLogo abbr={player.team} className="player-headshot player-team-logo" />
         : player.headshot
             ? <img className="player-headshot" src={sizedHeadshot(player.headshot, 400)} alt="" loading="lazy" decoding="async" />
             : <div className="player-headshot" />;
