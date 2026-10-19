@@ -1,5 +1,8 @@
 # Fixed archive — index
 
+### [FIXED] Live snap history lacked a verified actual-observation fallback
+[Read the incident record](fixed-archive/live-sleeper-snap-fallback-2026-10.md).
+
 ### [FIXED] Mobile dashboard controls exceeded the viewport
 [Read the incident record](fixed-archive/mobile-dashboard-layout-2026-10.md).
 

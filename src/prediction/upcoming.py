@@ -46,7 +46,15 @@ from src.contracts.serialization import (
     _safe_num,
     _safe_str,
 )
-from src.data import espn_live, live_qbr, live_schedule, live_sources, nfl_source, practice_reports
+from src.data import (
+    espn_live,
+    live_qbr,
+    live_schedule,
+    live_snap_counts,
+    live_sources,
+    nfl_source,
+    practice_reports,
+)
 from src.data.cache_io import atomic_write_parquet
 from src.data.expert_sources import EXPERT_SCORING_VERSION, load_sleeper_with_gsis_id
 from src.data.external_sources import FF_OPP_FEATURE_COLUMNS
@@ -217,6 +225,7 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
                 historical_root, f"ff_opportunity_{SEASONS[0]}_{SEASONS[-1]}.parquet"
             )
             qbr_recovery = {}
+            snap_counts_recovery = {}
         else:
             with live_source_cache(fresh_cache):
                 try:
@@ -234,6 +243,11 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
             )
         current = current.merge(keys, on=["season", "week", "recent_team"], how="inner")
         if season not in SEASONS:
+            # Resolve the live identity bridge independently of pinned providers.
+            with live_source_cache(fresh_cache):
+                current, snap_counts_recovery = live_snap_counts.recover_snap_counts(
+                    current, schedules, season
+                )
             current, qbr_recovery = live_qbr.recover_qbr(current, schedules, season)
         opportunity_rows = 0
         opportunity = pd.DataFrame()
@@ -272,6 +286,7 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
         if "qbr_total" in current
         else 0,
         "coverage": source_coverage,
+        "snap_counts_recovery": snap_counts_recovery,
         "qbr_recovery": qbr_recovery,
     }
     return result

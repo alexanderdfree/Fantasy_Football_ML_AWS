@@ -75,7 +75,42 @@ retrieval times, effective identities and content hashes accompany accepted
 resolutions. A source captured after kickoff is retrospective evidence and cannot
 establish that its bytes were available to an earlier forecast.
 
+## Actual snap-count fallback
+
+The CI history builder may fill missing current-season skill-player `snap_pct`
+observations from Sleeper's public weekly **actual statistics** endpoint. Existing
+nflverse values, including observed zero, remain authoritative. The fallback does
+not append player-games, change the coverage denominator, query sealed evaluation
+seasons, or alter the training feature definition.
+Its player-ID lookup runs inside the disposable live-source cache context, so a
+pinned historical release cannot substitute or block the live identity bridge.
+
+Admission requires a unique bidirectional Sleeper-to-GSIS identity, the existing
+modeled role, and matching regular-season week, historical team/opponent and date
+against a completed NFL schedule game. A source game ID is opaque provenance and
+must bind consistently to that matchup. Mutable player-profile team metadata
+cannot override the historical row. Both offensive snap counts must be explicitly
+present, finite whole numbers with a positive team denominator, a played-game
+indicator and a player count within the team total. Missing fields, projected
+statistics, conflicts and invalid observations remain unknown. Accepted player
+counts divided by team counts use exact decimal half-even rounding to the native
+two-decimal fraction, avoiding binary-float half-tie differences.
+All valid source player records, including unmapped linemen, constrain the team
+denominator and provider-game consistency before a skill-player value can fill.
+
+Retrieval URLs, times, payload hashes, validated game identities, recovery counts
+and rejected/error outcomes accompany the history metadata. The existing coverage
+calculation and warnings run after recovery; any remaining missing observation
+retains its NaN and normal model encoding. This is an optional out-of-serving
+source boundary, so provider failure cannot make absent data appear complete.
+Sleeper documents free noncommercial API use; this weekly statistics route is
+undocumented and carries no assumed publication or availability guarantee. See
+[Sleeper API terms](https://docs.sleeper.com/) and the
+[recovery record](../../todo/fixed-archive/live-sleeper-snap-fallback-2026-10.md).
+
 ## Changelog
+
+- **2026-10-19** — Add verified Sleeper actual-snap recovery for missing live-season history cells, preserving native observations, cohorts, archived inputs and residual source warnings. (PR #1655.)
 
 - **2026-10-18** — Add verified official roster exclusions, dated club published-absence practice evidence, and game-specific official roof announcements. Preserve independent game status, inactive projection exclusions, source-failure disclosure and retrospective/prospective evidence boundaries. (PR #1653; follow-up to PR #1649.)
 

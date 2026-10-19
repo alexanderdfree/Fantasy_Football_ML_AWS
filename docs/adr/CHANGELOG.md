@@ -1,5 +1,7 @@
 # ADR Changelog
 
+- 2026-10-19 · Add an actual-observation Sleeper snap fallback for live history; preserve native values, archived inputs and all remaining source warnings · (PR #1655) · → ADR-0018
+
 - 2026-10-18 · Resolve remaining live practice, inactive-roster identity and roof gaps through attributed official sources, preserving derived-absence and event-time semantics · (PR #1653; follow-up to PR #1649) · → ADR-0018
 
 - 2026-09-25 · Fairness re-audit, superseding unmerged #1595: all-zero provider rows count as missing; NFL.com offense, a stale RotoWire copy, is no longer graded; forecast-free depth-chart and prior-season headline cohorts; a RotoWire-only secondary reference (v4); paired bootstrap intervals with a both-metrics winner rule; Timeline graded on RotoWire+ESPN with edge intervals; 2025 labelled a development-season backtest; cache schema 12 · (PR pending) · → ADR-0024
