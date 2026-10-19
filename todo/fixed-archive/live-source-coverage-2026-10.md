@@ -71,10 +71,12 @@ and the official [Atlanta](https://www.mercedesbenzstadium.com/falcons-gameday/c
 and [Indianapolis](https://www.colts.com/game-day/regular-season-game-3) game pages.
 These captures were retrieved after kickoff on October 18 Eastern and establish
 retrospective source resolution, not pregame source availability or accuracy.
-The follow-up full unit suite passed 6,461 tests (3 skipped), including source
+The follow-up full unit suite passed 6,468 tests (3 skipped), including source
 identity, unavailable/malformed evidence, game-date and redirect boundaries.
 
 **Lesson:** Provider disagreement needs an identity-bound primary source. An
 explicit published absence can establish a derived encoding without establishing
 measured participation; a building's indoor flag cannot establish a game's roof
-decision. Source event time and retrieval time must remain distinct.
+decision. Retain current franchise names before constructing official matchup
+keys from a directory that also contains historical relocations. Source event
+time and retrieval time must remain distinct.

@@ -218,8 +218,9 @@ def parse_roof_report(html: str, game: dict, *, team_names: dict | None = None) 
 
 def _read_html(url):
     with urllib.request.urlopen(url, timeout=20) as response:
-        if urlsplit(response.geturl()).netloc != urlsplit(url).netloc:
-            raise ValueError("Official roof source redirected to a different host")
+        final = urlsplit(response.geturl())
+        if final.scheme != "https" or final.netloc != urlsplit(url).netloc:
+            raise ValueError("Official roof source redirected outside its HTTPS host")
         return response.read().decode("utf-8")
 
 

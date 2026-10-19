@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+from contextlib import nullcontext
 from html import escape
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -249,3 +251,32 @@ def test_no_request_for_unverified_venue(monkeypatch):
     )
     assert reports.fetch_verified_roof(game("ATL", neutral_site=True)) is None
     assert reports.fetch_verified_roof(game("ATL", venue={"fullName": "Other Venue"})) is None
+
+
+def test_source_html_accepts_redirect_within_official_https_host(monkeypatch):
+    response = SimpleNamespace(
+        geturl=lambda: "https://www.colts.com/game-day/regular-season-game-4/",
+        read=lambda: b"<html>Official roof announcement</html>",
+    )
+    monkeypatch.setattr(
+        reports.urllib.request, "urlopen", lambda *args, **kwargs: nullcontext(response)
+    )
+    assert reports._read_html("https://www.colts.com/game-day/regular-season-game-4") == (
+        "<html>Official roof announcement</html>"
+    )
+
+
+@pytest.mark.parametrize(
+    "destination",
+    ["http://www.colts.com/game-day/", "https://unverified.example/game-day/"],
+)
+def test_source_html_rejects_http_downgrade_and_other_host(monkeypatch, destination):
+    response = SimpleNamespace(
+        geturl=lambda: destination,
+        read=lambda: pytest.fail("Unverified response must not be read"),
+    )
+    monkeypatch.setattr(
+        reports.urllib.request, "urlopen", lambda *args, **kwargs: nullcontext(response)
+    )
+    with pytest.raises(ValueError, match="HTTPS host"):
+        reports._read_html("https://www.colts.com/game-day/")

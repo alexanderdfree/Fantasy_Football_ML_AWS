@@ -143,10 +143,11 @@ def _club_absence(season, week, team, report, schedule_rows, teams):
     ]
     if len(games) != 1:
         return None
+    current_teams = teams.loc[~teams["team_abbr"].isin(schedule_team_code_normalization())]
     names = dict(
         zip(
-            teams["team_abbr"].replace(schedule_team_code_normalization()),
-            teams["team_name"],
+            current_teams["team_abbr"],
+            current_teams["team_name"],
             strict=True,
         )
     )

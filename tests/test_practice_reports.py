@@ -522,3 +522,51 @@ def test_official_identity_cannot_override_roster_conflict(roster, monkeypatch, 
 def test_absence_without_schedule_context_is_not_verified(roster):
     row = pr.parse_practice_report(report_html(""), 2026, 1).records[0]
     assert pr._club_absence(2026, 1, "BAL", row, None, pd.DataFrame()) is None
+
+
+@pytest.mark.parametrize(
+    "opponent,name",
+    [
+        ("LAC", "Los Angeles Chargers"),
+        ("LV", "Las Vegas Raiders"),
+        ("LA", "Los Angeles Rams"),
+        ("TB", "Tampa Bay Buccaneers"),
+    ],
+)
+def test_club_matchup_keeps_current_names_before_normalizing_relocations(
+    monkeypatch, opponent, name
+):
+    teams = pd.DataFrame(
+        {
+            "team_abbr": ["PIT", "LAC", "LV", "LA", "TB", "SD", "OAK", "STL"],
+            "team_name": [
+                "Pittsburgh Steelers",
+                "Los Angeles Chargers",
+                "Las Vegas Raiders",
+                "Los Angeles Rams",
+                "Tampa Bay Buccaneers",
+                "San Diego Chargers",
+                "Oakland Raiders",
+                "St. Louis Rams",
+            ],
+        }
+    )
+    schedules = pd.DataFrame(
+        [
+            {
+                "season": 2026,
+                "week": 6,
+                "home_team": opponent,
+                "away_team": "PIT",
+                "kickoff": "2026-10-18T17:00Z",
+            }
+        ]
+    )
+
+    def verify(season, week, team, game, names, report):
+        assert names[opponent] == name
+        assert names["PIT"] == "Pittsburgh Steelers"
+        return {"value": 2.0}
+
+    monkeypatch.setattr(pr.club_practice, "verify_published_absence", verify)
+    assert pr._club_absence(2026, 6, "PIT", {}, schedules, teams) == {"value": 2.0}
