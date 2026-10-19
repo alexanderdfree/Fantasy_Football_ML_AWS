@@ -16,6 +16,223 @@ def missing_live_snaps(monkeypatch):
 
     monkeypatch.setattr(live.nfl_source, "snap_counts", unavailable)
     monkeypatch.setattr(live.live_qbr, "recover_qbr", lambda frame, *args: (frame, {}))
+    recover_snap_counts = live.live_snap_counts.recover_snap_counts
+    monkeypatch.setattr(
+        live.live_snap_counts, "recover_snap_counts", lambda frame, *args: (frame, {})
+    )
+    return recover_snap_counts
+
+
+@pytest.fixture
+def history_inputs(monkeypatch, tmp_path):
+    """Run the real live-history boundary with small, isolated source frames."""
+
+    def prepare(*, season=2026, snap_values=(0.9, None, None, 0.0)):
+        current = pd.DataFrame(
+            {
+                "player_id": ["qb1", "rb1", "wr1", "native_zero", "future", "unplayed"],
+                "season": [season] * 6,
+                "season_type": ["REG"] * 6,
+                "week": [6, 6, 6, 6, 7, 6],
+                "position": ["QB", "RB", "WR", "TE", "WR", "RB"],
+                "recent_team": ["SEA", "SEA", "NE", "NE", "SEA", "IND"],
+                "opponent_team": ["NE", "NE", "SEA", "SEA", "NE", "CHI"],
+                "attempts": [30, 0, 0, 0, 0, 0],
+                "carries": [1, 10, 0, 0, 0, 1],
+                "targets": [0, 2, 5, 0, 1, 0],
+                "special_teams_tds": [0, 0, 0, 1, 0, 0],
+                "snap_pct": [*snap_values, None, None],
+                "qbr_total": [78.6, None, None, None, None, None],
+                "pts_added": [3.0, None, None, None, None, None],
+            }
+        )
+        old = current.iloc[[0]].assign(player_id="archived", season=season - 1, week=1)
+        schedule = pd.DataFrame(
+            {
+                "season": [season, season],
+                "week": [6, 6],
+                "game_type": ["REG", "REG"],
+                "game_id": [f"{season}_06_NE_SEA", f"{season}_06_CHI_IND"],
+                "gameday": [f"{season}-10-18", f"{season}-10-18"],
+                "home_team": ["SEA", "IND"],
+                "away_team": ["NE", "CHI"],
+                "home_score": [13, None],
+                "away_score": [10, None],
+            }
+        )
+
+        def load(seasons, cache_dir=None):
+            if cache_dir:
+                signature = f"{seasons[0]}_{seasons[-1]}"
+                current[["player_id", "season", "week"]].assign(
+                    **{column: 0.0 for column in live.FF_OPP_FEATURE_COLUMNS}
+                ).to_parquet(f"{cache_dir}/ff_opportunity_{signature}.parquet")
+            return current.copy()
+
+        teams = current.rename(columns={"recent_team": "team"})[
+            ["season", "week", "team"]
+        ].drop_duplicates()
+        monkeypatch.setattr(live, "load_raw_data", load)
+        monkeypatch.setattr(live, "load_team_week_stats", lambda *args, **kwargs: teams.copy())
+        monkeypatch.setattr(live, "preprocess", lambda frame: frame.copy())
+        monkeypatch.setattr(live, "CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(live, "_history_cache", old)
+        monkeypatch.setattr(live, "_history_seasons", tuple(range(live.SEASONS[0], season)))
+        return current, schedule
+
+    return prepare
+
+
+def _snap_issues(history):
+    quality = live.upcoming_status.data_quality(
+        {"injuries": {"status": "available"}, "history": history}
+    )
+    return [issue for issue in quality["issues"] if issue["source"] == "snap_counts"]
+
+
+def _sleeper_snap_payload(player_id="10", team="SEA", opponent="NE", *, snaps=50, total=100):
+    return {
+        "category": "stat",
+        "sport": "nfl",
+        "season": "2026",
+        "week": 6,
+        "season_type": "regular",
+        "date": "2026-10-18",
+        "team": team,
+        "opponent": opponent,
+        "game_id": "sleeper-game",
+        "player_id": player_id,
+        "player": {"position": "RB" if player_id == "10" else "TE"},
+        "stats": {"gp": 1, "off_snp": snaps, "tm_off_snp": total},
+    }
+
+
+def _stub_sleeper_response(monkeypatch, payload):
+    monkeypatch.setattr(
+        live.live_snap_counts.nfl_source,
+        "player_ids",
+        lambda: pd.DataFrame({"sleeper_id": ["10", "11"], "gsis_id": ["rb1", "native_zero"]}),
+    )
+
+    def get_json(url):
+        return payload, {
+            "url": url,
+            "retrieved_at": "2026-10-19T06:00:00+00:00",
+            "sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(live.live_snap_counts, "_get_json", get_json)
+
+
+def test_snap_recovery_precedes_qbr_and_counts_only_filled_completed_games(
+    monkeypatch, history_inputs
+):
+    _, schedule = history_inputs()
+    receipt = {"provider": "Sleeper actual statistics", "recovered_rows": 1, "errors": []}
+    calls = []
+
+    def recover(frame, schedules, season):
+        assert set(frame.player_id) == {"qb1", "rb1", "wr1", "native_zero"}
+        assert season == 2026
+        pd.testing.assert_frame_equal(schedules, schedule)
+        calls.append("snaps")
+        result = frame.copy()
+        result.loc[result.player_id.eq("rb1"), "snap_pct"] = 0.5
+        return result, receipt
+
+    def qbr(frame, *args):
+        assert frame.set_index("player_id").loc["rb1", "snap_pct"] == 0.5
+        calls.append("qbr")
+        return frame, {}
+
+    monkeypatch.setattr(live.live_snap_counts, "recover_snap_counts", recover)
+    monkeypatch.setattr(live.live_qbr, "recover_qbr", qbr)
+
+    result = live._load_history(2026, 6, schedule)
+
+    assert calls == ["snaps", "qbr"]
+    assert set(result.player_id) == {"archived", "qb1", "rb1", "wr1", "native_zero"}
+    history = result.attrs["live_history_sources"]
+    assert history["snap_counts_recovery"] == receipt
+    assert history["player_rows"] == 4
+    assert history["coverage"]["snap_counts"] == live.upcoming_status.coverage(3, 4)
+    assert "3 of 4 completed player-games" in _snap_issues(history)[0]["message"]
+
+
+def test_actual_snap_fallback_preserves_native_zero_and_residual_gap_warning(
+    monkeypatch, history_inputs, missing_live_snaps
+):
+    _, schedule = history_inputs()
+    monkeypatch.setattr(live.live_snap_counts, "recover_snap_counts", missing_live_snaps)
+    _stub_sleeper_response(
+        monkeypatch,
+        [_sleeper_snap_payload(), _sleeper_snap_payload("11", "NE", "SEA", snaps=80)],
+    )
+
+    result = live._load_history(2026, 6, schedule)
+
+    values = result.set_index("player_id")["snap_pct"]
+    assert values["rb1"] == 0.5
+    assert values["native_zero"] == 0.0
+    assert values["qb1"] == 0.9
+    assert pd.isna(values["wr1"])
+    history = result.attrs["live_history_sources"]
+    assert history["snap_counts_recovery"]["recovered_rows"] == 1
+    assert history["coverage"]["snap_counts"] == live.upcoming_status.coverage(3, 4)
+    assert _snap_issues(history)
+
+
+@pytest.mark.parametrize("provider_error", [False, True], ids=["empty_source", "source_outage"])
+def test_unavailable_optional_snap_provider_retains_missing_history_and_warning(
+    monkeypatch, history_inputs, missing_live_snaps, provider_error
+):
+    _, schedule = history_inputs(snap_values=(None, None, None, None))
+    monkeypatch.setattr(live.live_snap_counts, "recover_snap_counts", missing_live_snaps)
+    _stub_sleeper_response(monkeypatch, [])
+    if provider_error:
+
+        def unavailable(url):
+            raise ConnectionError("Sleeper temporarily unavailable")
+
+        monkeypatch.setattr(live.live_snap_counts, "_get_json", unavailable)
+
+    result = live._load_history(2026, 6, schedule)
+
+    current = result[result.season.eq(2026)]
+    assert len(current) == 4
+    assert current.snap_pct.isna().all()
+    history = result.attrs["live_history_sources"]
+    assert history["coverage"]["snap_counts"] == live.upcoming_status.coverage(0, 4)
+    assert history["snap_counts_recovery"]["recovered_rows"] == 0
+    assert "0 of 4 completed player-games" in _snap_issues(history)[0]["message"]
+    if provider_error:
+        assert history["snap_counts_recovery"]["errors"]
+
+
+def test_historical_history_replay_never_queries_live_snap_fallback(monkeypatch, history_inputs):
+    _, schedule = history_inputs(season=2025)
+    monkeypatch.setattr(
+        live.live_snap_counts,
+        "recover_snap_counts",
+        lambda *args: pytest.fail("Historical replay must not recover today's snap observations"),
+    )
+    monkeypatch.setattr(
+        live.nfl_source,
+        "snap_counts",
+        lambda *args: pytest.fail("Historical replay must retain its sealed native snap source"),
+    )
+    monkeypatch.setattr(
+        live.live_qbr,
+        "recover_qbr",
+        lambda *args: pytest.fail("Historical replay must not recover today's QBR observations"),
+    )
+
+    result = live._load_history(2025, 6, schedule)
+
+    history = result.attrs["live_history_sources"]
+    assert history["snap_counts_recovery"] == {}
+    assert history["coverage"]["snap_counts"] == live.upcoming_status.coverage(2, 4)
+    assert _snap_issues(history)
 
 
 def test_supplementary_coverage_counts_completed_observations_not_nonempty_files():
