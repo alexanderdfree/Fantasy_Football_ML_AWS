@@ -41,8 +41,7 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
-from src.data import nfl_source
-from src.data import roster_identity
+from src.data import nfl_source, roster_identity
 
 _ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 # Depth charts live on the separate "core" host (the site API doesn't expose
@@ -558,19 +557,23 @@ def fetch_active_rosters(
     season: int | None = None,
     week: int | None = None,
     rosters_df: pd.DataFrame | None = None,
+    official_roster_verifier=None,
 ) -> pd.DataFrame:
     """Fetch active skill-position rosters for the given teams.
 
     ``team_id_to_code`` maps each ESPN team id to its nflverse ``recent_team``
     code (built from the slate). Returns a DataFrame with ``player_id`` (gsis),
     ``position``, ``recent_team``. Missing crosswalk entries can use a verified
-    current-week name/DOB match. Unresolved identities and eligibility are
+    current-week name/DOB match. A crosswalk establishes identity, not active
+    eligibility: with an official verifier, a conflicting current-week inactive
+    reference must also be resolved. Unresolved identities and eligibility are
     recorded in ``attrs['source_metadata']``, never silently treated as complete.
     """
     crosswalk = espn_to_gsis_map()
     reference = roster_identity.current_rosters(rosters_df, season, week)
     rows: list[dict] = []
     unresolved = []
+    verified_exclusions = []
     recovered = {}
     parsed = 0
     failed_teams = []
@@ -590,15 +593,46 @@ def fetch_active_rosters(
         ):
             parsed += 1
             gsis = roster_identity.player_id(crosswalk.get(p["espn_id"]))
-            if not gsis:
-                gsis, reason = roster_identity.resolve_player(p, reference)
+            primary_gsis = gsis
+            identity_reference = reference
+            needs_resolution = not gsis
+            if gsis and official_roster_verifier is not None and not reference.empty:
+                scoped = reference.loc[
+                    reference["player_id"].eq(gsis)
+                    & reference["team"].eq(team_code)
+                    & reference["position"].eq(p["position"])
+                ]
+                if "status" in scoped and scoped["status"].isin({"DEV", "CUT"}).any():
+                    # A later crosswalk update must not reintroduce a known
+                    # practice-squad/released player. Scope by the primary ID
+                    # before reusing the same name/DOB and eligibility checks.
+                    identity_reference = scoped
+                    needs_resolution = True
+            if needs_resolution:
+                gsis, reason = roster_identity.resolve_player(p, identity_reference)
                 if not gsis:
+                    if official_roster_verifier is not None and reason.startswith(
+                        "eligibility_unconfirmed:"
+                    ):
+                        exclusion = official_roster_verifier.verify_inactive_identity(
+                            team_code,
+                            p["position"],
+                            p["espn_name"],
+                            identity_reference,
+                            espn_player=p,
+                        )
+                        if exclusion is not None and (
+                            primary_gsis is None or exclusion.get("player_id") == primary_gsis
+                        ):
+                            verified_exclusions.append(exclusion)
+                            continue
                     unresolved.append(
                         {k: p[k] for k in ("espn_id", "espn_name", "position", "recent_team")}
                         | {"reason": reason}
                     )
                     continue
-                recovered[p["espn_id"]] = gsis
+                if primary_gsis is None:
+                    recovered[p["espn_id"]] = gsis
             rows.append(
                 {
                     "player_id": gsis,
@@ -629,6 +663,7 @@ def fetch_active_rosters(
         "recovered_players": len(recovered),
         "identity_reference_rows": len(reference),
         "unresolved_players": unresolved,
+        "verified_exclusions": verified_exclusions,
         "failed_teams": sorted(failed_teams),
     }
     return result

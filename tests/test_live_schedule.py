@@ -208,3 +208,57 @@ def test_unknown_retractable_roof_does_not_use_outdoor_forecast(monkeypatch):
     assert metadata["source_result"]["status"] == "unavailable"
     assert metadata["source_result"]["content_id"] is None
     json.dumps(metadata, allow_nan=False)  # API clients require valid JSON
+
+
+@pytest.mark.parametrize(
+    "home,away,venue,roof",
+    [
+        ("ATL", "CHI", "Mercedes-Benz Stadium", "closed"),
+        ("IND", "TEN", "Lucas Oil Stadium", "open"),
+    ],
+)
+def test_verified_game_roof_reaches_weather_and_feature_calendar(
+    monkeypatch, home, away, venue, roof
+):
+    slate, schedules = sample()
+    for frame in (slate, schedules):
+        frame["home_team"], frame["away_team"] = home, away
+    schedules["roof"] = float("nan")
+    slate["neutral_site"] = False
+    slate.at[0, "venue"] = {"fullName": venue}
+    evidence = {
+        "roof": roof,
+        "url": "https://www.colts.com/game-day/verified-game",
+        "value_kind": "official_game_roof_announcement",
+    }
+    seen = []
+
+    def verified(game):
+        seen.append((game["season"], game["week"], game["home_team"], game["away_team"]))
+        return evidence
+
+    monkeypatch.setattr(live.roof_reports, "fetch_verified_roof", verified)
+    monkeypatch.setattr(live, "_venue_forecast", lambda *args: {"temp": 57.0, "wind": 8.0})
+    enriched, meta = live.enrich_schedule_rows(slate, schedules)
+    assert seen == [(2026, 1, home, away)]
+    assert enriched.roof.tolist() == [roof]
+    assert enriched.temp.tolist() == ([65.0] if roof == "closed" else [57.0])
+    assert enriched.wind.tolist() == ([0.0] if roof == "closed" else [8.0])
+    assert meta["by_game"][0]["roof_announcement"] == evidence
+    assert meta["by_game"][0]["weather"] == ("indoor" if roof == "closed" else "forecast")
+    assert meta["source_result"]["status"] == "available"
+
+
+def test_missing_game_roof_announcement_keeps_unknown_retractable_weather(monkeypatch):
+    slate, schedules = sample()
+    for frame in (slate, schedules):
+        frame["home_team"], frame["away_team"] = "ATL", "CHI"
+    schedules["roof"] = float("nan")
+    slate["neutral_site"] = False
+    slate.at[0, "venue"] = {"fullName": "Mercedes-Benz Stadium"}
+    monkeypatch.setattr(live.roof_reports, "fetch_verified_roof", lambda game: None)
+    monkeypatch.setattr(live, "_venue_forecast", lambda *args: pytest.fail("unknown roof"))
+    enriched, meta = live.enrich_schedule_rows(slate, schedules)
+    assert enriched[["temp", "wind"]].isna().all().all()
+    assert meta["coverage"] == {"unknown_roof": 1}
+    assert meta["by_game"][0]["roof_announcement"] is None

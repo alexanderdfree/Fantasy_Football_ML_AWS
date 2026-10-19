@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 import numpy as np
 import pandas as pd
 
-from src.data import espn_live, nfl_source
+from src.data import espn_live, nfl_source, roof_reports
 from src.data.source_result import SourceResult, SourceStatus
 
 WEATHER_SOURCE = "https://open-meteo.com/"
@@ -160,6 +160,7 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
         row["home_score"] = np.nan
         row["away_score"] = np.nan
         venue = row.get("venue") or {}
+        row["_roof_announcement"] = None
         venue_id = venue.get("id")
         if row.get("neutral_site") and not venue_id:
             raise ValueError("Cannot verify a neutral game's venue without an ID")
@@ -182,6 +183,10 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
                 print(f"[live_schedule] venue {venue_id} unavailable: {exc!r}")
                 if row.get("neutral_site"):
                     raise ValueError("Cannot verify a neutral game's venue") from exc
+        roof_announcement = roof_reports.fetch_verified_roof(row)
+        if roof_announcement is not None:
+            row["roof"] = roof_announcement["roof"]
+            row["_roof_announcement"] = roof_announcement
         covered = row["roof"] in ("dome", "closed")
         if covered:
             row["temp"], row["wind"] = 65.0, 0.0
@@ -217,6 +222,7 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
                 "venue": (row.get("venue") or {}).get("fullName"),
                 "kickoff": row.get("kickoff"),
                 "roof": row["roof"] if isinstance(row["roof"], str) else "unknown",
+                "roof_announcement": row["_roof_announcement"],
                 "weather": {"covered_venue": "indoor", "forecast": "forecast"}.get(
                     row["_weather_status"], "unavailable"
                 ),
@@ -251,8 +257,8 @@ def enrich_schedule_rows(live: pd.DataFrame, schedules: pd.DataFrame) -> tuple[p
     if not live.empty and live["week"].nunique() == 1:
         period["week"] = int(live["week"].iloc[0])
     status["source_result"] = SourceResult.capture(
-        enriched[[*keys, "temp", "wind", "_weather_status"]],
-        provider="Open-Meteo; ESPN fallback; venue context",
+        enriched[[*keys, "roof", "temp", "wind", "_weather_status"]],
+        provider="Open-Meteo; ESPN fallback; official roof announcements; venue context",
         status=availability,
         effective_period=period,
         coverage={

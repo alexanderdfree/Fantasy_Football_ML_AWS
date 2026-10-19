@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 
 import pandas as pd
 
-from src.data import nfl_source
+from src.data import club_practice, nfl_source
 from src.data.identity import schedule_team_code_normalization
 from src.data.roster_identity import current_rosters, practice_alias_lookup
 from src.data.roster_identity import name_key as _name
@@ -98,7 +98,10 @@ class _PracticeParser(HTMLParser):
                         "team_name": self.team,
                         "name": self.row[0],
                         "position": self.row[1],
+                        "injuries": self.row[2],
+                        "raw_practice_status": self.row[3],
                         "practice_status": _STATUS.get(self.row[3]),
+                        "game_status": self.row[4],
                     }
                 )
         if tag == "table":
@@ -127,6 +130,32 @@ class PracticeReport:
     metadata: dict
 
 
+def _club_absence(season, week, team, report, schedule_rows, teams):
+    if schedule_rows is None or "team_name" not in teams:
+        return None
+    required = {"season", "week", "home_team", "away_team", "kickoff"}
+    if not required.issubset(schedule_rows):
+        return None
+    games = schedule_rows.loc[
+        schedule_rows["season"].eq(season)
+        & schedule_rows["week"].eq(week)
+        & (schedule_rows["home_team"].eq(team) | schedule_rows["away_team"].eq(team))
+    ]
+    if len(games) != 1:
+        return None
+    current_teams = teams.loc[~teams["team_abbr"].isin(schedule_team_code_normalization())]
+    names = dict(
+        zip(
+            current_teams["team_abbr"],
+            current_teams["team_name"],
+            strict=True,
+        )
+    )
+    return club_practice.verify_published_absence(
+        season, week, team, games.iloc[0].to_dict(), names, report
+    )
+
+
 def fetch_practice_report(
     season: int,
     week: int,
@@ -134,6 +163,8 @@ def fetch_practice_report(
     *,
     rosters_df: pd.DataFrame | None = None,
     identity_roster: pd.DataFrame | None = None,
+    schedule_rows: pd.DataFrame | None = None,
+    official_roster_verifier=None,
 ) -> PracticeReport:
     """Combine per-team coverage; current official tables override older feeds.
 
@@ -160,6 +191,8 @@ def fetch_practice_report(
 
     official_teams = set()
     unmatched = []
+    published_absence_evidence = []
+    inactive_report_identities = []
     try:
         official = _fetch_official(season, week)
         teams = nfl_source.teams()
@@ -173,9 +206,12 @@ def fetch_practice_report(
             )
         )
         official_teams = {names[name] for name in official.covered if name in names}
+        identity = roster if identity_roster is None else identity_roster
+        reference = current_rosters(rosters_df, season, week)
+        identity_ids = set(identity["player_id"].astype(str))
         lookup = practice_alias_lookup(
-            roster if identity_roster is None else identity_roster,
-            current_rosters(rosters_df, season, week),
+            identity,
+            reference,
             include_inactive=True,
         )
         reported = {}
@@ -186,6 +222,27 @@ def fetch_practice_report(
             if key[0] not in expected:
                 continue  # Completed games and bye teams are outside this slate.
             matches = lookup.get(key, set())
+            if not matches and official_roster_verifier is not None:
+                # A released player can remain on the practice report while
+                # the weekly reference still says ACT. Corroborate that
+                # inactive identity, without admitting him to projections or
+                # overriding any validated identity in another context.
+                try:
+                    evidence = official_roster_verifier.verify_inactive_identity(
+                        key[0], key[1], row["name"], reference
+                    )
+                    if evidence:
+                        candidate = str(evidence["player_id"])
+                        context = reference.loc[
+                            reference["player_id"].eq(candidate)
+                            & reference["team"].eq(key[0])
+                            & reference["position"].eq(key[1])
+                        ]
+                        if candidate not in identity_ids and not context.empty:
+                            matches = {candidate}
+                            inactive_report_identities.append(evidence)
+                except Exception as exc:  # optional official-source boundary
+                    errors.append(f"Official inactive identity: {exc!r}")
             if len(matches) != 1:
                 unknown.update(matches)
                 unresolved_groups.add(key[:2])
@@ -196,7 +253,17 @@ def fetch_practice_report(
             if pid not in roster_ids:
                 continue  # A verified Out/reserve report is irrelevant to projected teammates.
             if row["practice_status"] is None:
-                unknown.add(pid)  # an unknown status is not a healthy report
+                evidence = None
+                if row.get("raw_practice_status") == "":
+                    try:
+                        evidence = _club_absence(season, week, key[0], row, schedule_rows, teams)
+                    except Exception as exc:  # missing club evidence remains unknown
+                        errors.append(f"Official club practice: {exc!r}")
+                if evidence:
+                    reported[pid] = evidence["value"]
+                    published_absence_evidence.append({"player_id": pid, **evidence})
+                else:
+                    unknown.add(pid)  # unknown is never silently treated as full
             else:
                 reported[pid] = row["practice_status"]
         for row in roster.to_dict("records"):
@@ -223,7 +290,11 @@ def fetch_practice_report(
             values.setdefault(str(row["player_id"]), 2.0)
     values = {pid: value for pid, value in values.items() if pid in roster_ids}
     metadata = {
-        "provider": "NFL.com official injury reports; nflverse fallback",
+        "provider": (
+            "NFL.com official injury reports; official club practice reports; nflverse fallback"
+            if published_absence_evidence
+            else "NFL.com official injury reports; nflverse fallback"
+        ),
         "url": f"https://www.nfl.com/injuries/league/{season}/reg{week}",
         "fetched_at": datetime.now(UTC).isoformat(),
         "covered_teams": sorted(expected & covered),
@@ -231,6 +302,9 @@ def fetch_practice_report(
         "known_players": len(values),
         "unknown_players": len(roster_ids - set(values)),
         "unmatched_report_names": sorted(set(unmatched)),
+        "derived_published_absence_players": len(published_absence_evidence),
+        "published_absence_evidence": published_absence_evidence,
+        "inactive_report_identities": inactive_report_identities,
         "errors": errors,
     }
     state = (
@@ -253,6 +327,7 @@ def fetch_practice_report(
             "unknown_players": metadata["unknown_players"],
             "covered_teams": len(expected & covered),
             "missing_teams": len(expected - covered),
+            "derived_published_absence_players": len(published_absence_evidence),
         },
         errors=errors,
         value_kind="reported_or_published_absence",

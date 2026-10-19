@@ -394,3 +394,179 @@ def test_inactive_reference_cannot_retarget_projected_players(
     report = pr.fetch_practice_report(2026, 1, projected, rosters_df=reference)
     assert report.values["current"] == 2.0
     assert report.metadata["errors"] == []
+
+
+def test_blank_nfl_status_requires_verified_club_absence(roster, monkeypatch):
+    html = report_html("").replace("<td></td></tr>", "<td>Questionable</td></tr>")
+    monkeypatch.setattr(pr, "_fetch_official", lambda s, w: pr.parse_practice_report(html, s, w))
+    receipt = {
+        "url": "https://official.test/team/injury-report/",
+        "effective_period": {"season": 2026, "week": 1},
+        "practice_dates": ["2026-09-09", "2026-09-10", "2026-09-11"],
+        "observed_participation": None,
+        "encoding": "derived_published_absence",
+        "value": 2.0,
+    }
+
+    def club_absence(season, week, team, row, schedules, teams):
+        assert row["game_status"] == "Questionable"
+        assert row["raw_practice_status"] == ""
+        return receipt
+
+    monkeypatch.setattr(pr, "_club_absence", club_absence)
+    result = pr.fetch_practice_report(2026, 1, roster)
+    assert result.values["a"] == 2.0
+    assert result.metadata["published_absence_evidence"] == [{"player_id": "a", **receipt}]
+    assert result.metadata["derived_published_absence_players"] == 1
+    assert result.metadata["source_result"]["coverage"]["derived_published_absence_players"] == 1
+
+
+@pytest.mark.parametrize("outcome", ["missing", "failure"])
+def test_blank_status_without_verified_absence_stays_unknown(roster, monkeypatch, outcome):
+    monkeypatch.setattr(
+        pr, "_fetch_official", lambda s, w: pr.parse_practice_report(report_html(""), s, w)
+    )
+
+    def club_absence(*args):
+        if outcome == "failure":
+            raise ValueError("wrong week")
+        return None
+
+    monkeypatch.setattr(pr, "_club_absence", club_absence)
+    result = pr.fetch_practice_report(2026, 1, roster)
+    assert "a" not in result.values
+    assert result.metadata["derived_published_absence_players"] == 0
+    assert result.metadata["unknown_players"] == 2
+
+
+def test_unknown_token_never_uses_published_absence(roster, monkeypatch):
+    monkeypatch.setattr(
+        pr, "_fetch_official", lambda s, w: pr.parse_practice_report(report_html("Unknown"), s, w)
+    )
+
+    def unexpected(*args):
+        pytest.fail("An unknown token is not a published absence")
+
+    monkeypatch.setattr(pr, "_club_absence", unexpected)
+    assert "a" not in pr.fetch_practice_report(2026, 1, roster).values
+
+
+def test_official_inactive_identity_resolves_stale_active_reference(roster, monkeypatch):
+    reference = pd.DataFrame(
+        {
+            "player_id": ["released"],
+            "team": ["BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Released Receiver"],
+            "status": ["ACT"],
+        }
+    )
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Released Receiver"), s, w),
+    )
+    receipt = {"player_id": "released", "status": "CUT", "roster_url": "https://official.test"}
+
+    class Verifier:
+        def verify_inactive_identity(self, team, position, name, current):
+            assert (team, position, name) == ("BAL", "WR", "Released Receiver")
+            assert current.iloc[0]["season"] == 2026 and current.iloc[0]["week"] == 1
+            return receipt
+
+    result = pr.fetch_practice_report(
+        2026, 1, roster, rosters_df=reference, official_roster_verifier=Verifier()
+    )
+    assert result.values["a"] == result.values["b"] == 2.0
+    assert "released" not in result.values
+    assert result.metadata["unmatched_report_names"] == []
+    assert result.metadata["inactive_report_identities"] == [receipt]
+
+
+@pytest.mark.parametrize("conflict", ["projected_id", "wrong_context", "missing", "failure"])
+def test_official_identity_cannot_override_roster_conflict(roster, monkeypatch, conflict):
+    reference = pd.DataFrame(
+        {
+            "player_id": ["a" if conflict == "projected_id" else "released"],
+            "team": ["NE" if conflict in {"wrong_context", "projected_id"} else "BAL"],
+            "position": ["WR"],
+            "season": [2026],
+            "week": [1],
+            "full_name": ["Released Receiver"],
+            "status": ["ACT"],
+        }
+    )
+    monkeypatch.setattr(
+        pr,
+        "_fetch_official",
+        lambda s, w: pr.parse_practice_report(report_html(name="Released Receiver"), s, w),
+    )
+
+    class Verifier:
+        def verify_inactive_identity(self, *args):
+            if conflict == "failure":
+                raise OSError("offline")
+            if conflict == "missing":
+                return None
+            return {"player_id": "a" if conflict == "projected_id" else "released"}
+
+    result = pr.fetch_practice_report(
+        2026, 1, roster, rosters_df=reference, official_roster_verifier=Verifier()
+    )
+    assert "a" not in result.values and "b" not in result.values
+    assert result.metadata["unmatched_report_names"] == ["Released Receiver"]
+
+
+def test_absence_without_schedule_context_is_not_verified(roster):
+    row = pr.parse_practice_report(report_html(""), 2026, 1).records[0]
+    assert pr._club_absence(2026, 1, "BAL", row, None, pd.DataFrame()) is None
+
+
+@pytest.mark.parametrize(
+    "opponent,name",
+    [
+        ("LAC", "Los Angeles Chargers"),
+        ("LV", "Las Vegas Raiders"),
+        ("LA", "Los Angeles Rams"),
+        ("TB", "Tampa Bay Buccaneers"),
+    ],
+)
+def test_club_matchup_keeps_current_names_before_normalizing_relocations(
+    monkeypatch, opponent, name
+):
+    teams = pd.DataFrame(
+        {
+            "team_abbr": ["PIT", "LAC", "LV", "LA", "TB", "SD", "OAK", "STL"],
+            "team_name": [
+                "Pittsburgh Steelers",
+                "Los Angeles Chargers",
+                "Las Vegas Raiders",
+                "Los Angeles Rams",
+                "Tampa Bay Buccaneers",
+                "San Diego Chargers",
+                "Oakland Raiders",
+                "St. Louis Rams",
+            ],
+        }
+    )
+    schedules = pd.DataFrame(
+        [
+            {
+                "season": 2026,
+                "week": 6,
+                "home_team": opponent,
+                "away_team": "PIT",
+                "kickoff": "2026-10-18T17:00Z",
+            }
+        ]
+    )
+
+    def verify(season, week, team, game, names, report):
+        assert names[opponent] == name
+        assert names["PIT"] == "Pittsburgh Steelers"
+        return {"value": 2.0}
+
+    monkeypatch.setattr(pr.club_practice, "verify_published_absence", verify)
+    assert pr._club_absence(2026, 6, "PIT", {}, schedules, teams) == {"value": 2.0}
