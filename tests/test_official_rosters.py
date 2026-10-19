@@ -47,6 +47,15 @@ def profile_html(document=None):
     return '<script type="application/ld+json">' + json.dumps(document) + "</script>"
 
 
+def profile_header(name="Miller Moss", position="QB"):
+    # The real Jack Stoll profile omits roleName but retains these header fields.
+    return (
+        f'<h1 class="nfl-c-player-header__title">{name}</h1>'
+        '<div class="nfl-c-player-header__player-data nfl-u-hide-empty">'
+        f'<span class="nfl-c-player-header__position"> {position} </span></div>'
+    )
+
+
 @pytest.fixture
 def sources(monkeypatch):
     document = profile_document()
@@ -91,13 +100,14 @@ def sources(monkeypatch):
         "teams",
         lambda: pd.DataFrame(
             {
-                "team_abbr": ["CHI", "LAC", "SD", "LA", "STL"],
+                "team_abbr": ["CHI", "LAC", "SD", "LA", "STL", "SF"],
                 "team_name": [
                     "Chicago Bears",
                     "Los Angeles Chargers",
                     "San Diego Chargers",
                     "Los Angeles Rams",
                     "St. Louis Rams",
+                    "San Francisco 49ers",
                 ],
             }
         ),
@@ -284,6 +294,82 @@ def test_jsonld_graph_can_contain_profile_and_unrelated_metadata(sources):
         {"@graph": [{"@type": "WebPage", "name": "Info"}, sources.document]}
     )
     assert verify(sources)["status"] == "DEV"
+
+
+def test_missing_role_name_uses_verified_stoll_profile_header(sources):
+    roster_url = "https://www.nfl.com/teams/san-francisco-49ers/roster"
+    profile_url = "https://www.nfl.com/players/jack-stoll/"
+    sources.reference.loc[
+        0, ["team", "position", "full_name", "birth_date", "player_id", "espn_id"]
+    ] = ["SF", "TE", "Jack Stoll", "1998-01-28", "00-0036741", "4034862"]
+    sources.espn.update(
+        espn_id="4034862",
+        espn_name="Jack Stoll",
+        position="TE",
+        recent_team="SF",
+        roster_birth_date="1998-01-28T08:00Z",
+    )
+    sources.pages[roster_url] = roster_html(
+        name="Jack Stoll", position="TE", link="/players/jack-stoll/"
+    ).replace("Chicago Bears", "San Francisco 49ers")
+    sources.document["name"] = "San Francisco 49ers"
+    sources.document["member"]["startDate"] = "2021"
+    del sources.document["member"]["roleName"]
+    sources.document["member"]["member"] = {
+        "@type": "Person",
+        "name": "Jack Stoll",
+        "birthDate": "1998-01-28",
+    }
+    sources.pages[profile_url] = profile_html(sources.document) + profile_header("Jack Stoll", "TE")
+    result = official.OfficialRosterVerifier(2026, 6).verify_inactive_identity(
+        "SF", "TE", "Jack Stoll", sources.reference, espn_player=sources.espn
+    )
+    assert result["player_id"] == "00-0036741"
+    assert result["status"] == "DEV"
+    assert result["profile_url"] == profile_url
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "",
+        '<h1 class="nfl-c-player-header__title">Miller Moss</h1>',
+        '<span class="nfl-c-player-header__position">QB</span>',
+        profile_header() + profile_header(),
+        profile_header() + '<h1 class="nfl-c-player-header__title">Miller Moss</h1>',
+        profile_header() + '<span class="nfl-c-player-header__position">QB</span>',
+        profile_header(name="Other Quarterback"),
+        profile_header(position="TE"),
+        profile_header().replace("nfl-c-player-header__title", "page-title"),
+        profile_header().replace("nfl-c-player-header__position", "position"),
+        profile_header() + '<h1 class="nfl-c-player-header__title">Miller Moss',
+        profile_header() + '<span class="nfl-c-player-header__position">QB',
+    ],
+)
+def test_missing_role_name_requires_unique_matching_complete_official_headers(sources, header):
+    del sources.document["member"]["roleName"]
+    sources.pages[PROFILE_URL] = profile_html(sources.document) + header
+    assert verify(sources) is None
+
+
+@pytest.mark.parametrize("role_name", [None, "", "TE"])
+def test_present_null_empty_or_conflicting_role_name_cannot_use_matching_header(sources, role_name):
+    sources.document["member"]["roleName"] = role_name
+    sources.pages[PROFILE_URL] = profile_html(sources.document) + profile_header()
+    assert verify(sources) is None
+
+
+@pytest.mark.parametrize("field", ["team", "name", "birthday"])
+def test_missing_role_header_fallback_preserves_other_jsonld_identity_checks(sources, field):
+    del sources.document["member"]["roleName"]
+    if field == "team":
+        sources.document["name"] = "San Francisco 49ers"
+    elif field == "name":
+        sources.document["member"]["member"]["name"] = "Other Quarterback"
+    else:
+        sources.document["member"]["member"]["birthDate"] = "2002-03-20"
+    sources.pages[PROFILE_URL] = profile_html(sources.document) + profile_header()
+    assert verify(sources) is None
 
 
 @pytest.mark.parametrize("unclosed", [False, True])

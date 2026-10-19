@@ -113,14 +113,34 @@ class _ProfileParser(HTMLParser):
         self.script = None
         self.documents = []
         self.invalid_jsonld = False
+        self.headers = {"name": [], "position": []}
+        self._header = None
+        self._header_depth = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag == "script" and dict(attrs).get("type") == "application/ld+json":
+        attrs = dict(attrs)
+        if tag == "script" and attrs.get("type") == "application/ld+json":
             self.script = []
+        classes = attrs.get("class", "").split()
+        field = None
+        if tag == "h1" and "nfl-c-player-header__title" in classes:
+            field = "name"
+        elif tag == "span" and "nfl-c-player-header__position" in classes:
+            field = "position"
+        if self._header is not None:
+            if field is not None:
+                self.headers[field].append("")  # A nested competing header is ambiguous too.
+            if tag == self._header[0]:
+                self._header_depth += 1
+        elif field is not None:
+            self._header = (tag, field, [])
+            self._header_depth = 1
 
     def handle_data(self, data):
         if self.script is not None:
             self.script.append(data)
+        if self._header is not None:
+            self._header[2].append(data)
 
     def handle_endtag(self, tag):
         if tag == "script" and self.script is not None:
@@ -131,6 +151,11 @@ class _ProfileParser(HTMLParser):
                 # alongside another, valid SportsTeam record.
                 self.invalid_jsonld = True
             self.script = None
+        if self._header is not None and tag == self._header[0]:
+            self._header_depth -= 1
+            if not self._header_depth:
+                self.headers[self._header[1]].append(_text(self._header[2]))
+                self._header = None
 
 
 def _sports_teams(value):
@@ -308,10 +333,23 @@ class OfficialRosterVerifier:
             return None
         role = teams[0].get("member") or {}
         person = role.get("member") or {}
+        profile_position = role.get("roleName")
+        if "roleName" not in role:
+            # Some official profiles omit the JSON-LD field while publishing
+            # position beside the player's name in the visible profile header.
+            # A present null/empty/conflicting roleName must never use this path.
+            if (
+                profile._header is not None
+                or len(profile.headers["name"]) != 1
+                or len(profile.headers["position"]) != 1
+                or name_key(profile.headers["name"][0]) != name_key(name)
+            ):
+                return None
+            profile_position = profile.headers["position"][0]
         if (
             teams[0].get("name") != team_name
             or role.get("@type") != "OrganizationRole"
-            or role.get("roleName") != position
+            or profile_position != position
             or person.get("@type") != "Person"
             or name_key(person.get("name")) != name_key(name)
             or _birthday(person.get("birthDate")) != birthday

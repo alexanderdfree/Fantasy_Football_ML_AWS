@@ -82,3 +82,18 @@ measured participation; a building's indoor flag cannot establish a game's roof
 decision. Retain current franchise names before constructing official matchup
 keys from a directory that also contains historical relocations. Source event
 time and retrieval time must remain distinct.
+
+The final current-slate check found one additional official-profile schema
+variation: Jack Stoll's NFL JSON-LD omits `OrganizationRole.roleName`, while the
+unique visible NFL profile header identifies him as `TE`. Both the current
+[NFL 49ers roster](https://www.nfl.com/teams/san-francisco-49ers/roster) and
+[club roster](https://www.49ers.com/team/players-roster/) place him on the
+practice squad. When that structured key is absent, corroborate position using
+the unique profile-header name and position, retaining the same team, DOB,
+weekly GSIS and optional ESPN checks. Explicit structured conflicts and missing,
+ambiguous or conflicting headers remain unresolved. This only verifies the
+inactive exclusion; it cannot admit an active player.
+The current SF/WAS source preflight then returned 35 eligible roster rows,
+zero unresolved identities and four verified `DEV` exclusions. The schema
+regression fails before the fix; the completed unit suite passes 6,503 tests
+(3 skipped), including absent, conflicting and ambiguous header boundaries.
