@@ -1,6 +1,8 @@
 """Live identities require corroboration and expose omissions to consumers."""
 
 import copy
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
@@ -81,6 +83,68 @@ def test_repeat_refresh_revalidates_recovered_eligibility(sources, status):
     assert second.empty
     assert second.attrs["recovered_ids"] == {}
     assert second.attrs["source_metadata"]["status"] == "partial"
+
+
+def test_current_official_inactive_identity_becomes_attributed_exclusion(sources):
+    _, reference = sources
+    reference.loc[0, "status"] = "DEV"
+    evidence = {
+        "player_id": "00-0040598",
+        "team": "GB",
+        "position": "TE",
+        "status": "DEV",
+        "roster_url": "https://www.nfl.com/teams/green-bay-packers/roster",
+    }
+    verify = Mock(return_value=evidence)
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=reference,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=verify),
+    )
+    assert frame.empty
+    assert frame.attrs["recovered_ids"] == {}
+    assert espn_live.espn_to_gsis_map() == {}
+    metadata = frame.attrs["source_metadata"]
+    assert metadata["unresolved_players"] == []
+    assert metadata["verified_exclusions"] == [evidence]
+    assert metadata["status"] == "available"
+    assert verify.call_args.args[:3] == ("GB", "TE", "Mark Redman")
+    assert verify.call_args.kwargs["espn_player"]["espn_id"] == "4431346"
+
+
+def test_unavailable_official_confirmation_preserves_unresolved_eligibility(sources):
+    _, reference = sources
+    reference.loc[0, "status"] = "DEV"
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=reference,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=Mock(return_value=None)),
+    )
+    assert frame.empty
+    assert frame.attrs["source_metadata"]["status"] == "partial"
+    assert frame.attrs["source_metadata"]["verified_exclusions"] == []
+    assert frame.attrs["source_metadata"]["unresolved_players"][0]["reason"] == (
+        "eligibility_unconfirmed:DEV"
+    )
+
+
+def test_official_eligibility_cannot_bypass_a_missing_identity_match(sources):
+    _, reference = sources
+    reference.loc[0, "birth_date"] = "2002-01-21"
+    verify = Mock(side_effect=AssertionError("Mismatched identity must stay unresolved"))
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=reference,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=verify),
+    )
+    assert frame.empty
+    verify.assert_not_called()
 
 
 def test_recovery_is_not_reused_when_the_next_weekly_reference_is_unavailable(sources):

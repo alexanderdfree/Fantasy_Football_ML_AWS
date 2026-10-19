@@ -41,8 +41,7 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
-from src.data import nfl_source
-from src.data import roster_identity
+from src.data import nfl_source, roster_identity
 
 _ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 # Depth charts live on the separate "core" host (the site API doesn't expose
@@ -558,6 +557,7 @@ def fetch_active_rosters(
     season: int | None = None,
     week: int | None = None,
     rosters_df: pd.DataFrame | None = None,
+    official_roster_verifier=None,
 ) -> pd.DataFrame:
     """Fetch active skill-position rosters for the given teams.
 
@@ -571,6 +571,7 @@ def fetch_active_rosters(
     reference = roster_identity.current_rosters(rosters_df, season, week)
     rows: list[dict] = []
     unresolved = []
+    verified_exclusions = []
     recovered = {}
     parsed = 0
     failed_teams = []
@@ -593,6 +594,19 @@ def fetch_active_rosters(
             if not gsis:
                 gsis, reason = roster_identity.resolve_player(p, reference)
                 if not gsis:
+                    if official_roster_verifier is not None and reason.startswith(
+                        "eligibility_unconfirmed:"
+                    ):
+                        exclusion = official_roster_verifier.verify_inactive_identity(
+                            team_code,
+                            p["position"],
+                            p["espn_name"],
+                            reference,
+                            espn_player=p,
+                        )
+                        if exclusion is not None:
+                            verified_exclusions.append(exclusion)
+                            continue
                     unresolved.append(
                         {k: p[k] for k in ("espn_id", "espn_name", "position", "recent_team")}
                         | {"reason": reason}
@@ -629,6 +643,7 @@ def fetch_active_rosters(
         "recovered_players": len(recovered),
         "identity_reference_rows": len(reference),
         "unresolved_players": unresolved,
+        "verified_exclusions": verified_exclusions,
         "failed_teams": sorted(failed_teams),
     }
     return result

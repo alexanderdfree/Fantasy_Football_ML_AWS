@@ -282,6 +282,8 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
     request = Mock(return_value=payload)
     monkeypatch.setattr(espn_live, "_get_json", request)
     monkeypatch.setattr(live.nfl_source, "rosters_weekly", lambda *args: pd.DataFrame())
+    active_roster = Mock(return_value=builder_boundary.roster)
+    monkeypatch.setattr(espn_live, "fetch_active_rosters", active_roster)
     monkeypatch.setattr(espn_live, "fetch_depth_chart_ranks", lambda *args, **kwargs: {})
     practice = Mock(return_value=SimpleNamespace(values={}, metadata={"unknown_players": 0}))
     monkeypatch.setattr(
@@ -352,6 +354,13 @@ def test_one_injury_snapshot_drives_out_exclusion_and_status_in_published_six_po
     result = live.refresh_upcoming_week_cache(force=True)
     assert "00-out" in set(practice.call_args.kwargs["identity_roster"]["player_id"])
     assert "00-out" not in set(practice.call_args.args[2]["player_id"])
+    assert (
+        practice.call_args.kwargs["official_roster_verifier"]
+        is (active_roster.call_args.kwargs["official_roster_verifier"])
+    )
+    pd.testing.assert_frame_equal(
+        practice.call_args.kwargs["schedule_rows"], builder_boundary.schedule
+    )
     assert "00-out" not in set(seen["roster"]["player_id"])
     assert "00-out" not in set(seen["inference_roster"]["player_id"])
     assert seen["injuries"].set_index("gsis_id").loc["00-out", "report_status"] == "Out"

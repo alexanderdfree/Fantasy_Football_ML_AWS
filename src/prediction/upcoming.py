@@ -58,6 +58,7 @@ from src.data.live_build import (
 )
 from src.data.loader import load_raw_data, load_team_week_stats
 from src.data.nflcom_loader import load_nflcom_with_gsis_id
+from src.data.official_rosters import OfficialRosterVerifier
 from src.data.preprocessing import preprocess
 from src.data.release import live_source_cache
 from src.data.source_result import SourceResult, content_identity
@@ -950,6 +951,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
             season, sched_rows
         )
     team_id_to_code = dict(zip(slate["team_id"], slate["recent_team"], strict=False))
+    official_roster_verifier = OfficialRosterVerifier(season, week)
     # One weekly reference supplies identity aliases and reserve/inactive
     # statuses to every live consumer. Failure remains explicit in coverage.
     try:
@@ -965,6 +967,7 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
             season=season,
             week=week,
             rosters_df=rosters_df,
+            official_roster_verifier=official_roster_verifier,
         )
         roster_source = dict(roster.attrs.get("source_metadata", {}))
         player_ids = {**espn_live.espn_to_gsis_map(), **roster.attrs.get("recovered_ids", {})}
@@ -1001,7 +1004,13 @@ def refresh_upcoming_week_cache(force: bool = False) -> dict | None:
     game_status_map = injury_report.statuses
     with live_source_cache(CACHE_DIR):
         practice_report = practice_reports.fetch_practice_report(
-            season, week, roster, rosters_df=rosters_df, identity_roster=practice_identity_roster
+            season,
+            week,
+            roster,
+            rosters_df=rosters_df,
+            identity_roster=practice_identity_roster,
+            official_roster_verifier=official_roster_verifier,
+            schedule_rows=sched_rows,
         )
     practice_status_map = practice_report.values
     with live_source_cache(CACHE_DIR):

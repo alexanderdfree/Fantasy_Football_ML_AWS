@@ -39,7 +39,42 @@ Supplementary history sources report observed/expected completed player-game cov
 
 Age/rookie metadata uses the fetched current-season weekly roster and actual game schedule. Season-matched ESPN roster DOB/debut/experience fields fill remaining display-only gaps; team-unit DST rows remain null. Historical metadata callers retain their cached source path. NFL.com community-archive projections are enabled by default only through the verified 2025 archive; operators may set `FF_UPCOMING_NFLCOM=1` after verifying current coverage. This is an availability policy, not a claim that the third-party archive is permanently discontinued. ESPN and RotoWire remain independently labeled live comparisons.
 
+## Verified live-source reconciliation
+
+The offline builder may resolve a missing roster identity's inactive eligibility
+from the official NFL season roster and player-profile JSON-LD. The roster year,
+team, name and position, profile date of birth, and unique requested-week GSIS
+reference must agree; available ESPN identity fields must agree too. Only the
+verified persistent `DEV` and `CUT` statuses currently establish an attributed
+exclusion. An unknown status, active listing, conflicting identity or failed
+source remains unresolved. Exclusion receipts never populate active recovered
+IDs or projection rows. The same corroborated inactive identity can resolve a
+practice-report entry after a release without adding that player to projections.
+
+An explicit club report of `(-) = Not listed` is distinct from an unavailable
+participation feed. A supported club adapter must verify the requested week and
+matchup, player/position/injury/game-status context, every required practice-day
+cell and legend, and an official dated article with matching season/week/game
+metadata and complete daily reports. Verified published absence uses the existing
+neutral `2.0` encoding, matching historical preprocessing. It is recorded as a
+derived value with no observed participation, while the independent reported game
+status remains unchanged. Blank or unrecognized evidence alone cannot establish
+published absence; those cases retain the existing unknown/imputation policy.
+
+Game-specific roof announcements from an official club or stadium override
+static venue metadata only after matchup, venue and UTC kickoff agree; provider
+season/week identifiers are checked where supplied. The current adapters discover
+Atlanta's stadium game page and Indianapolis's mutable gameday page rather than
+freezing a game URL or decision. Open roofs use the existing venue forecast;
+closed roofs use the existing indoor encoding. A missing, conditional, conflicting
+or mismatched announcement retains normal unknown-roof handling. Source URLs,
+retrieval times, effective identities and content hashes accompany accepted
+resolutions. A source captured after kickoff is retrospective evidence and cannot
+establish that its bytes were available to an earlier forecast.
+
 ## Changelog
+
+- **2026-10-18** — Add verified official roster exclusions, dated club published-absence practice evidence, and game-specific official roof announcements. Preserve independent game status, inactive projection exclusions, source-failure disclosure and retrospective/prospective evidence boundaries. (Follow-up to PR #1649.)
 
 - **2026-09-18** — The shared `src/dst/data.py::build_data` now drops REG fixtures with NaN `home_score`/`away_score` by default (`include_unplayed=False`), so training/backtest frames can no longer fabricate team-week rows from the published fixture list (points_allowed=21 / yards_allowed=350 / zero counts). The live `build_defense_frame` opts back in with `include_unplayed=True` because it NaNs the target week's scores by design and needs that fixture context. (#1520; audit-1499 Tier B, PR #1602.)
 - **2026-09-10** — Mitigate refresh downtime with hourly off-peak scheduling, eligibility-aware concurrency, bounded transfer retries, validated atomic downloads, previous-version cold-start recovery and one-minute conditional S3 / visible-browser polling. Preserve stale warnings and the off-container build/data compatibility boundary. (PR #1572.)
