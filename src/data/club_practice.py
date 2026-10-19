@@ -184,6 +184,7 @@ def verify_published_absence(season, week, team, game, team_names, report):
         raise ValueError("Club practice article must be on the official club site")
     article_page = _ArticleParser()
     article_html = _fetch_html(article_url)
+    retrieved_at = datetime.now(UTC)
     article_page.feed(article_html)
     game_keyword = f"{team_names[away]} at {team_names[home]} ({season}-REG-{week})"
     articles = [
@@ -199,6 +200,8 @@ def verify_published_absence(season, week, team, game, team_names, report):
     published = pd.Timestamp(article["datePublished"])
     if published.tzinfo is None:
         raise ValueError("Club practice article has no timezone")
+    if published > retrieved_at:
+        raise ValueError("Club practice article has a future publication timestamp")
     published_day = published.tz_convert(ZoneInfo("America/New_York")).date()
     practice_days = [day - timedelta(days=offset) for offset in (4, 3, 2)]
     if not practice_days[-1] <= published_day <= day or published > kickoff:
@@ -237,7 +240,7 @@ def verify_published_absence(season, week, team, game, team_names, report):
         "url": url,
         "dated_report_url": article_url,
         "published_at": published.isoformat(),
-        "retrieved_at": datetime.now(UTC).isoformat(),
+        "retrieved_at": retrieved_at.isoformat(),
         "source_sha256": hashlib.sha256(source_html.encode()).hexdigest(),
         "dated_report_sha256": hashlib.sha256(article_html.encode()).hexdigest(),
         "effective_period": {"season": season, "week": week},

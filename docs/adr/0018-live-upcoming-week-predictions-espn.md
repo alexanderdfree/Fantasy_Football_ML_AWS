@@ -55,7 +55,8 @@ An explicit club report of `(-) = Not listed` is distinct from an unavailable
 participation feed. A supported club adapter must verify the requested week and
 matchup, player/position/injury/game-status context, every required practice-day
 cell and legend, and an official dated article with matching season/week/game
-metadata and complete daily reports. Verified published absence uses the existing
+metadata, complete daily reports and publication no later than retrieval.
+Verified published absence uses the existing
 neutral `2.0` encoding, matching historical preprocessing. It is recorded as a
 derived value with no observed participation, while the independent reported game
 status remains unchanged. Blank or unrecognized evidence alone cannot establish
@@ -74,7 +75,7 @@ establish that its bytes were available to an earlier forecast.
 
 ## Changelog
 
-- **2026-10-18** — Add verified official roster exclusions, dated club published-absence practice evidence, and game-specific official roof announcements. Preserve independent game status, inactive projection exclusions, source-failure disclosure and retrospective/prospective evidence boundaries. (Follow-up to PR #1649.)
+- **2026-10-18** — Add verified official roster exclusions, dated club published-absence practice evidence, and game-specific official roof announcements. Preserve independent game status, inactive projection exclusions, source-failure disclosure and retrospective/prospective evidence boundaries. (PR #1653; follow-up to PR #1649.)
 
 - **2026-09-18** — The shared `src/dst/data.py::build_data` now drops REG fixtures with NaN `home_score`/`away_score` by default (`include_unplayed=False`), so training/backtest frames can no longer fabricate team-week rows from the published fixture list (points_allowed=21 / yards_allowed=350 / zero counts). The live `build_defense_frame` opts back in with `include_unplayed=True` because it NaNs the target week's scores by design and needs that fixture context. (#1520; audit-1499 Tier B, PR #1602.)
 - **2026-09-10** — Mitigate refresh downtime with hourly off-peak scheduling, eligibility-aware concurrency, bounded transfer retries, validated atomic downloads, previous-version cold-start recovery and one-minute conditional S3 / visible-browser polling. Preserve stale warnings and the off-container build/data compatibility boundary. (PR #1572.)

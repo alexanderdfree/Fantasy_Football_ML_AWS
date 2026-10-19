@@ -42,7 +42,7 @@ retractable-roof states must remain explicit; complete coverage requires evidenc
 
 **File(s):** `src/data/{official_rosters,club_practice,roof_reports}.py`, their
 existing roster/practice/schedule integrations, and focused regression tests
-(follow-up to PR #1649).
+(PR #1653; follow-up to PR #1649).
 
 **What:** The remaining Week 6 gaps required additional primary sources. Official
 NFL rosters and club records identify Miller Moss and Patrick Herbert as practice
@@ -71,7 +71,7 @@ and the official [Atlanta](https://www.mercedesbenzstadium.com/falcons-gameday/c
 and [Indianapolis](https://www.colts.com/game-day/regular-season-game-3) game pages.
 These captures were retrieved after kickoff on October 18 Eastern and establish
 retrospective source resolution, not pregame source availability or accuracy.
-The follow-up full unit suite passed 6,468 tests (3 skipped), including source
+The follow-up full unit suite passed 6,470 tests (3 skipped), including source
 identity, unavailable/malformed evidence, game-date and redirect boundaries.
 
 **Lesson:** Provider disagreement needs an identity-bound primary source. An

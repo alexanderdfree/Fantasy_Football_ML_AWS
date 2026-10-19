@@ -2,6 +2,7 @@
 
 import json
 from contextlib import nullcontext
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -14,8 +15,14 @@ PAGE_URL = "https://www.steelers.com/team/injury-report/"
 ARTICLE_URL = "https://www.steelers.com/news/week-6-injury-report-buccaneers"
 
 
+def _freeze_clock(monkeypatch, value):
+    now = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    monkeypatch.setattr(cp, "datetime", SimpleNamespace(now=lambda tz: now.astimezone(tz)))
+
+
 @pytest.fixture
 def evidence(monkeypatch):
+    _freeze_clock(monkeypatch, "2026-10-19T01:00Z")
     header = """<table><tr><th>Player</th><th>Position</th><th>Injury</th>
       <th>Wed</th><th>Thu</th><th>Fri</th><th>Game Status</th></tr>"""
     page = """<option selected value="/team/injury-report/week/REG-6">WEEK 6</option>
@@ -186,7 +193,8 @@ def test_wrong_game_week_and_undated_kickoff_are_rejected(evidence):
         verify(game={"kickoff": "2026-10-18T13:00"})
 
 
-def test_january_regular_season_uses_previous_calendar_year(evidence):
+def test_january_regular_season_uses_previous_calendar_year(evidence, monkeypatch):
+    _freeze_clock(monkeypatch, "2027-01-11T01:00Z")
     new_url = ARTICLE_URL.replace("week-6", "week-18")
     article = evidence.pop(ARTICLE_URL)
     evidence[new_url] = article
@@ -209,6 +217,18 @@ def test_january_regular_season_uses_previous_calendar_year(evidence):
     result = verify(week=18, game={"kickoff": "2027-01-10T17:00Z"})
     assert result["effective_period"] == {"season": 2026, "week": 18}
     assert result["practice_dates"] == ["2027-01-06", "2027-01-07", "2027-01-08"]
+
+
+def test_future_publication_cannot_establish_completed_practice(evidence, monkeypatch):
+    _freeze_clock(monkeypatch, "2026-10-17T17:59:59Z")
+    with pytest.raises(ValueError, match="future publication"):
+        verify()
+
+
+def test_publication_at_retrieval_time_is_valid_before_kickoff(evidence, monkeypatch):
+    _freeze_clock(monkeypatch, "2026-10-17T18:00Z")
+    result = verify()
+    assert result["retrieved_at"] == result["published_at"] == "2026-10-17T18:00:00+00:00"
 
 
 @pytest.mark.parametrize(
