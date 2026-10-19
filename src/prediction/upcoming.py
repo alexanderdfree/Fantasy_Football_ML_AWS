@@ -243,9 +243,11 @@ def _load_history(season: int, week: int, schedules: pd.DataFrame) -> pd.DataFra
             )
         current = current.merge(keys, on=["season", "week", "recent_team"], how="inner")
         if season not in SEASONS:
-            current, snap_counts_recovery = live_snap_counts.recover_snap_counts(
-                current, schedules, season
-            )
+            # Resolve the live identity bridge independently of pinned providers.
+            with live_source_cache(fresh_cache):
+                current, snap_counts_recovery = live_snap_counts.recover_snap_counts(
+                    current, schedules, season
+                )
             current, qbr_recovery = live_qbr.recover_qbr(current, schedules, season)
         opportunity_rows = 0
         opportunity = pd.DataFrame()

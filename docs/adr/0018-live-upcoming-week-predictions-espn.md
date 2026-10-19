@@ -82,6 +82,8 @@ observations from Sleeper's public weekly **actual statistics** endpoint. Existi
 nflverse values, including observed zero, remain authoritative. The fallback does
 not append player-games, change the coverage denominator, query sealed evaluation
 seasons, or alter the training feature definition.
+Its player-ID lookup runs inside the disposable live-source cache context, so a
+pinned historical release cannot substitute or block the live identity bridge.
 
 Admission requires a unique bidirectional Sleeper-to-GSIS identity, the existing
 modeled role, and matching regular-season week, historical team/opponent and date

@@ -18,6 +18,9 @@ provenance and recovery/error counts.
 Count coverage after recovery so every remaining missing observation still warns
 and follows the existing model encoding. Archived training/evaluation inputs and
 the serving container remain outside this retrieval path.
+Keep recovery inside the disposable live-source context: the snapshot-decorated
+player-ID loader must fetch the live bridge even when the builder pins a derived
+or captured historical release. Regression controls retain that real decorator.
 
 **Lesson:** Validate actual observations and their publication scope before
 claiming an alternate API fills a gap. An open endpoint, populated player record,

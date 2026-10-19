@@ -1,8 +1,12 @@
 """Live-season ingestion, career context, and unknown practice imputation."""
 
+import json
+
 import pandas as pd
+import polars as pl
 import pytest
 
+from src.data.providers import snapshot
 from src.serving import core
 from src.serving import upcoming_week as live
 
@@ -180,6 +184,57 @@ def test_actual_snap_fallback_preserves_native_zero_and_residual_gap_warning(
     assert history["snap_counts_recovery"]["recovered_rows"] == 1
     assert history["coverage"]["snap_counts"] == live.upcoming_status.coverage(3, 4)
     assert _snap_issues(history)
+
+
+@pytest.mark.parametrize("replay_mode", ["derived_only", "captured"])
+def test_live_snap_identity_bridge_fetches_outside_pinned_historical_sources(
+    monkeypatch, tmp_path, history_inputs, missing_live_snaps, replay_mode
+):
+    _, schedule = history_inputs()
+    monkeypatch.setattr(live.live_snap_counts, "recover_snap_counts", missing_live_snaps)
+    pinned = tmp_path / "pinned-history"
+    pinned.mkdir()
+    (pinned / ".release.json").write_text(
+        json.dumps({"release_id": "c" * 64, "provider_sources": replay_mode})
+    )
+    if replay_mode == "captured":
+        # The selected archive has no captured player_ids response. A live
+        # identity must come from the fresh bridge, not a historical snapshot.
+        (pinned / "provider_sources").mkdir()
+    pinned_files = {path.relative_to(pinned): path.read_bytes() for path in pinned.rglob("*.json")}
+    monkeypatch.setenv("FF_DATA_RELEASE", "c" * 64)
+    monkeypatch.setattr(snapshot, "_raw_root", lambda: pinned)
+    assert snapshot.provider_replay_mode() == replay_mode
+    fetched_ids = []
+
+    def fresh_player_ids():
+        fetched_ids.append("current identity bridge")
+        return pl.DataFrame({"sleeper_id": ["10"], "gsis_id": ["rb1"]})
+
+    # Retain nfl_source.player_ids and its snapshot_source decorator. Only its
+    # actual network loader is stubbed, preserving the production release gate.
+    monkeypatch.setattr(live.nfl_source._nflreadpy, "load_ff_playerids", fresh_player_ids)
+    monkeypatch.setattr(
+        live.live_snap_counts,
+        "_get_json",
+        lambda url: (
+            [_sleeper_snap_payload()],
+            {"url": url, "retrieved_at": "2026-10-19T06:00:00+00:00", "sha256": "a" * 64},
+        ),
+    )
+
+    result = live._load_history(2026, 6, schedule)
+
+    history = result.attrs["live_history_sources"]
+    assert history["snap_counts_recovery"]["recovered_rows"] == 1, history["snap_counts_recovery"][
+        "errors"
+    ]
+    assert result.set_index("player_id").loc["rb1", "snap_pct"] == 0.5
+    assert fetched_ids == ["current identity bridge"]
+    assert snapshot.provider_replay_mode() == replay_mode
+    assert {
+        path.relative_to(pinned): path.read_bytes() for path in pinned.rglob("*") if path.is_file()
+    } == pinned_files
 
 
 @pytest.mark.parametrize("provider_error", [False, True], ids=["empty_source", "source_outage"])
