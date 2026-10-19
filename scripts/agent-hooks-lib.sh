@@ -122,6 +122,17 @@ agent_hooks_is_env_assignment() {
   [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]
 }
 
+# Return 0 iff a `gh` argv tail ($@) asks for usage (`--help` / `-h`).
+agent_hooks_args_request_help() {
+  local word
+  for word in "$@"; do
+    case "$word" in
+      --help | -h) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # Given an expected `gh pr` subcommand ($1) and a command segment's argv words
 # ($2..), return 0 iff the segment invokes `gh pr <subcommand>` (after skipping
 # leading `VAR=val` assignments and an `env [opts]` wrapper).
@@ -176,7 +187,16 @@ agent_hooks_pr_subcommand_segment_matches() {
     *) return 1 ;;
   esac
 
-  [ "${words[$((idx + 1))]}" = "pr" ] && [ "${words[$((idx + 2))]}" = "$subcmd" ]
+  [ "${words[$((idx + 1))]}" = "pr" ] && [ "${words[$((idx + 2))]}" = "$subcmd" ] || return 1
+
+  # `gh pr merge --help` / `-h` prints usage and merges nothing, so the
+  # best-effort post-merge hooks skip it. The check is word-based: a flag value
+  # spelled `--help` (`--subject --help`) is skipped too, which costs only that
+  # upkeep here but would bypass a gate, so `create` stays strict.
+  if [ "$subcmd" = merge ] && agent_hooks_args_request_help "${words[@]:$((idx + 3))}"; then
+    return 1
+  fi
+  return 0
 }
 
 # Back-compat wrapper: `gh pr create` segment matcher (named in tests/comments).

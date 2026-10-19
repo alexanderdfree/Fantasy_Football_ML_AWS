@@ -163,6 +163,8 @@ def test_unbenchmarked_position_change_blocks_naming_position(gate_repo):
     assert res.returncode == 2
     assert "TE" in res.stderr
     assert "benchmark TE --no-sync" in res.stderr
+    # The block cancels the whole Bash call, so chained add/commit/push never ran (#1122).
+    assert "chained before gh pr create did not run" in res.stderr
 
 
 @requires_jq

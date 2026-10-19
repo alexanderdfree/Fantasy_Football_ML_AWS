@@ -386,6 +386,7 @@ fi
 
 if [ "$fail" -ne 0 ]; then
   echo "----- pre-pr hook: blocking gh pr create (see errors above) -----" >&2
+  echo "pre-pr hook: the whole Bash command was cancelled, so any add/commit/push chained before gh pr create did not run (#1122). Fix the errors, redo those steps, then run gh pr create in its own call." >&2
   exit 2
 fi
 

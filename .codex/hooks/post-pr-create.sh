@@ -23,7 +23,7 @@ root="$(codex_project_root "$input" "$jq_bin")"
 metadata="$(codex_current_pr "$root" "$jq_bin")" || exit 0
 printf '%s' "$metadata" | "$jq_bin" -e '.state == "OPEN"' >/dev/null || exit 0
 
-ctx='An open PR for this HEAD is verified. Continue with `/prompts:post-pr-followup` (template: `.codex/prompts/post-pr-followup.md`): rebase onto origin/main, run `scripts/codex-review-quiet.sh --base origin/main`, apply localized review fixes, wait for CI, then merge/delete the remote branch when allowed. The prompt preserves audit/tier explicit merge sign-off and the post-session-critique nudge; that nudge uses shared behavior from `agent-workflows/post-session-critique/instructions.md`.'
+ctx='An open PR for this HEAD is verified. Continue with `/prompts:post-pr-followup` (template: `.codex/prompts/post-pr-followup.md`): rebase onto origin/main, run `scripts/codex-review-quiet.sh --base origin/main`, apply localized review fixes, wait for CI, then merge only the checked head (`gh pr merge PR --squash --match-head-commit <headRefOid>`) and delete the remote branch when allowed. The prompt preserves audit/tier explicit merge sign-off and the post-session-critique nudge; that nudge uses shared behavior from `agent-workflows/post-session-critique/instructions.md`.'
 
 codex_json_context "PostToolUse" "$ctx" "$jq_bin"
 exit 0

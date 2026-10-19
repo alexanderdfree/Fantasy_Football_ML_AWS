@@ -171,21 +171,34 @@ def test_post_pr_create_preserves_merge_gates_and_verifies_before_deletion(
     assert output["hookEventName"] == "PostToolUse"
     context = output["additionalContext"]
 
+    # The only merge recipe pins the confirmed head (#689: a watch can return on
+    # the previous run's green).
+    pinned_merge = "gh pr merge <N> --squash --match-head-commit <headRefOid>"
     commands = re.findall(r"`([^`]+)`", context)
     merge_commands = [command for command in commands if command.startswith("gh pr merge")]
-    assert merge_commands == ["gh pr merge <N> --squash"]
+    assert merge_commands == [pinned_merge]
     assert "use `--admin`" in context  # It remains explicitly prohibited.
     assert "CLAUDE.md's CI section" not in context
     assert "CLAUDE.md's worktree section" not in context
     assert "agent-guides/delivery.md#pr-and-merge-gates" in context
 
     checks = context.index("`gh pr checks <N> --watch`")
-    merge = context.index("`gh pr merge <N> --squash`")
+    head = context.index("`gh pr view <N> --json headRefOid,mergeStateStatus`")
+    merge = context.index(f"`{pinned_merge}`")
     verify = context.index("`gh pr view <N> --json state,mergeCommit`")
     merged = context.index("must report `MERGED`")
     inspect = context.index("`git show <mergeCommit.oid> -- <changed-files>`")
     delete = context.index("`git push origin --delete <branch-name>`")
-    assert checks < merge < verify < merged < inspect < delete
+    assert checks < head < merge < verify < merged < inspect < delete
+    assert "(#689)" in context[checks:head]
+    assert "missing-checks triage in agent-guides/operations.md#ci-training" in context[checks:head]
+    assert "`headRefOid` equal to `git rev-parse HEAD`" in context[head:merge]
+    assert "`mergeStateStatus` `CLEAN`" in context[head:merge]
+    # Every state that never becomes CLEAN needs an exit, not another watch.
+    assert "if the state is `DIRTY`, rebase as in step 1" in context[head:merge]
+    assert (
+        "commits you did not push, or for any other state, stop and report" in (context[head:merge])
+    )
     assert "latest fixes" in context[inspect:delete]
     assert "If verification fails, stop and report; do not delete the branch" in context
     assert "Only after that verification, separately delete" in context
@@ -196,16 +209,21 @@ def test_post_pr_create_preserves_merge_gates_and_verifies_before_deletion(
         assert "6. Do NOT auto-merge" in context
         assert "6. Otherwise, auto-merge" not in context
         signoff = context.index("EXPLICIT merge sign-off")
-        assert checks < signoff < merge
+        assert checks < signoff < head < merge
         assert "regress-risk-high" in context[checks:signoff]
-        assert "Only after the user approves" in context[signoff:merge]
+        assert "`headRefOid` (the head under review)" in context[checks:signoff]
+        assert "Only after the user approves" in context[signoff:head]
+        # The merge is bound to the approved head, not just the local one.
+        assert "to the head the user approved" in context[head:merge]
+        assert "fresh sign-off" in context[head:merge]
     else:
         assert "6. Otherwise, auto-merge" in context
         confirmation = context.index("only with user confirmation")
         local_tests = context.index("`pytest`")
-        assert checks < confirmation < local_tests < merge
-        assert "require it to pass" in context[local_tests:merge]
-        assert "agent-guides/operations.md#ci-training" in context[checks:merge]
+        assert checks < confirmation < local_tests < head < merge
+        assert "require it to pass" in context[local_tests:head]
+        exception_link = "`Run Tests` silent-stop anomaly in agent-guides/operations.md#ci-training"
+        assert exception_link in context[checks:confirmation]
         assert "does not authorize bypassing branch protection" in context[checks:merge]
         assert "or a different failing/pending check" in context[checks:merge]
 
@@ -309,11 +327,14 @@ class TestClaudePostPrMerge:
         assert after != before
         assert after == _git(main, "rev-parse", "origin/main").stdout.strip()
 
-    def test_skips_non_merge_command(self, merge_scenario: tuple[Path, Path]):
+    @pytest.mark.parametrize("command", ["git status --short", "gh pr merge 1 --help"])
+    def test_skips_non_merge_command(self, merge_scenario: tuple[Path, Path], command: str):
+        # The stubbed PR is MERGED, so only the matcher stops a help call (which
+        # merges nothing) from fast-forwarding the parent.
         main, worktree = merge_scenario
         before = self._head(main)
         result = _run_merge_hook(
-            {"tool_input": {"command": "git status --short"}},
+            {"tool_input": {"command": command}},
             worktree,
             {"CLAUDE_PROJECT_DIR": str(worktree)},
         )

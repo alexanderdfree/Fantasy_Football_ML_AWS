@@ -3,8 +3,9 @@
 # (1) Post-PR-create review + auto-merge workflow — rebase onto latest
 #     origin/main, invoke /review on the PR, auto-apply every finding
 #     except architectural / design-level ones, push fixes, wait for green
-#     CI, squash-merge, and delete the remote branch. Surface to user only
-#     on architectural findings or CI failure.
+#     CI on the current head, squash-merge only that head, and delete the
+#     remote branch. Surface to user only on architectural findings or CI
+#     failure.
 # (2) post-session-critique nudge — captures *prompt* lessons (CLAUDE.md or
 #     memory edits) the way TODO.md's Fixed archive captures *code* lessons.
 # Both nudges are best-effort: the skills/workflow encode their own skip
@@ -58,24 +59,34 @@ ctx_head="PR opened. Run this post-create workflow now, in order:
 
 5. If any architectural findings were surfaced in step 3: stop here. Summarize each one in one line for the user and DO NOT merge. The user decides whether to address them."
 
+# Step-6 pieces shared by both merge paths; the rules they apply live in
+# agent-guides/delivery.md#pr-and-merge-gates.
+stale_watch="A watch that returns at once after a push or reopen may show the previous run (#689); if no checks run at all, follow the missing-checks triage in agent-guides/operations.md#ci-training."
+
+# Step 6c. $1 is the CI step to return to; $2 adds the audit path's requirement
+# that the head be the one the user approved.
+merge_step() {
+  printf '%s' "confirm that \`gh pr view <N> --json headRefOid,mergeStateStatus\` shows \`mergeStateStatus\` \`CLEAN\` and \`headRefOid\` equal to \`git rev-parse HEAD\`${2:-}. Otherwise, if you have unpushed commits, push them and return to step $1; if GitHub has not registered your push yet or checks are still running, wait and re-check; if the state is \`DIRTY\`, rebase as in step 1 and return to step $1; if the branch has commits you did not push, or for any other state, stop and report it to the user. Then merge only that head, passing the confirmed SHA: \`gh pr merge <N> --squash --match-head-commit <headRefOid>\`. If gh reports that the head moved, return to step $1. Do NOT use \`--delete-branch\`; steps d-e delete only after verification (see agent-guides/delivery.md#pr-and-merge-gates)."
+}
+
+verify_delete="
+   d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
+   e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
+
 if [[ "$branch" =~ ^audit-.*/tier- ]]; then
   step6="
 
 6. Do NOT auto-merge — this is a solve-issues autonomous-fix PR. After steps 1-5:
-   a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`.
-   b. Show the user the final diff (\`gh pr diff <N>\`) and any \`regress-risk-high\` benchmark deltas from the PR body, then ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
-   c. Only after the user approves: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see agent-guides/delivery.md#pr-and-merge-gates).
-   d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
-   e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
+   a. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry or use \`--admin\`. ${stale_watch}
+   b. Show the user the final diff (\`gh pr diff <N>\`), its \`headRefOid\` (the head under review) and any \`regress-risk-high\` benchmark deltas from the PR body, then ask for EXPLICIT merge sign-off (AskUserQuestion). Do NOT merge until the user approves.
+   c. Only after the user approves, $(merge_step a " and to the head the user approved (any other head needs green CI and fresh sign-off)")${verify_delete}"
 else
   step6="
 
 6. Otherwise, auto-merge:
    a. Resolve the PR number with \`gh pr view --json number\` and the branch name with \`git branch --show-current\`. Hold onto both before the merge step in case the worktree HEAD changes.
-   b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. Exception: only for the documented \`Run Tests\` silent-stop anomaly in agent-guides/operations.md#ci-training, and only with user confirmation, run local \`pytest\` and require it to pass before continuing to the normal merge step. This does not authorize bypassing branch protection or a different failing/pending check.
-   c. Merge: \`gh pr merge <N> --squash\`. Do NOT use \`--delete-branch\` — it fails in worktrees (see agent-guides/delivery.md#pr-and-merge-gates).
-   d. Verify the merge separately: \`gh pr view <N> --json state,mergeCommit\` must report \`MERGED\`. Fetch \`origin/main\` and inspect the returned squash commit with \`git show <mergeCommit.oid> -- <changed-files>\` to confirm it contains the latest fixes. If verification fails, stop and report; do not delete the branch.
-   e. Only after that verification, separately delete the remote branch: \`git push origin --delete <branch-name>\`."
+   b. Wait for green CI: \`gh pr checks <N> --watch\`. If any check fails, surface the failure to the user — do not retry the merge or use \`--admin\`. ${stale_watch} Exception: only for the documented \`Run Tests\` silent-stop anomaly in agent-guides/operations.md#ci-training, and only with user confirmation, run local \`pytest\` and require it to pass before continuing to the normal merge step. This does not authorize bypassing branch protection or a different failing/pending check.
+   c. Before merging, $(merge_step b)${verify_delete}"
 fi
 
 ctx_tail="
