@@ -1,6 +1,6 @@
 # ADR Changelog
 
-- 2026-10-19 · Add an actual-observation Sleeper snap fallback for live history; preserve native values, archived inputs and all remaining source warnings · (PR pending) · → ADR-0018
+- 2026-10-19 · Add an actual-observation Sleeper snap fallback for live history; preserve native values, archived inputs and all remaining source warnings · (PR #1655) · → ADR-0018
 
 - 2026-10-18 · Resolve remaining live practice, inactive-roster identity and roof gaps through attributed official sources, preserving derived-absence and event-time semantics · (PR #1653; follow-up to PR #1649) · → ADR-0018
 

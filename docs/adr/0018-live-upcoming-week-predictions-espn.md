@@ -108,7 +108,7 @@ undocumented and carries no assumed publication or availability guarantee. See
 
 ## Changelog
 
-- **2026-10-19** — Add verified Sleeper actual-snap recovery for missing live-season history cells, preserving native observations, cohorts, archived inputs and residual source warnings. (PR pending.)
+- **2026-10-19** — Add verified Sleeper actual-snap recovery for missing live-season history cells, preserving native observations, cohorts, archived inputs and residual source warnings. (PR #1655.)
 
 - **2026-10-18** — Add verified official roster exclusions, dated club published-absence practice evidence, and game-specific official roof announcements. Preserve independent game status, inactive projection exclusions, source-failure disclosure and retrospective/prospective evidence boundaries. (PR #1653; follow-up to PR #1649.)
 
