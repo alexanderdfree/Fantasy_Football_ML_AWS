@@ -64,10 +64,15 @@ MEMORY_SYNC_WRAPPERS = {
 }
 
 # Provider-specific authority pointers that must NOT appear in the shared,
-# provider-neutral instruction files (finding F3). The neutral home for the
-# tier-by-risk consolidation pattern and the pre-PR rule is AGENTS.md; the worker
-# mechanism is the injected WORKFLOW_SUBAGENTS value.
-NEUTRALITY_FORBIDDEN = ("Sub-agent contract", "](../../CLAUDE.md)")
+# provider-neutral instruction files (finding F3). The neutral homes for the
+# tier-by-risk consolidation pattern and the pre-PR rule are agent-guides/delivery.md
+# "When making changes" and "PR and merge gates"; the worker mechanism is the
+# injected WORKFLOW_SUBAGENTS value.
+NEUTRALITY_FORBIDDEN = ("Sub-agent contract", "](../../CLAUDE.md)", "providers/claude.md")
+
+# Provider-private memory citations such as "(memory `feedback_x`)". Codex and
+# Gemini cannot read Claude's memory, and retiring a memory breaks the pointer.
+MEMORY_CITATION_FORBIDDEN = ("memory `", "feedback_")
 
 
 def _names(shared_dir: str) -> list[str]:
@@ -244,15 +249,33 @@ def test_provider_lib_sources_shared_hook_lib(provider: str) -> None:
 def test_shared_workflow_instructions_are_provider_neutral(name: str) -> None:
     """Shared workflow instructions must not cite a provider-specific doc as the
     authority for the work. The tier-by-risk pattern and pre-PR rule live in the
-    neutral AGENTS.md; the worker mechanism is the injected WORKFLOW_SUBAGENTS.
-    (routines/* legitimately enumerate CLAUDE.md/.claude as audit targets, so
-    this neutrality guard is scoped to agent-workflows/* only.)
+    neutral agent-guides/delivery.md; the worker mechanism is the injected
+    WORKFLOW_SUBAGENTS. (routines/* legitimately enumerate CLAUDE.md/.claude as
+    audit targets, so this neutrality guard is scoped to agent-workflows/* only.)
     """
     text = _read(f"agent-workflows/{name}/instructions.md")
     hits = [needle for needle in NEUTRALITY_FORBIDDEN if needle in text]
     assert not hits, (
         f"agent-workflows/{name}/instructions.md leaks provider-specific authority pointers {hits}; "
-        "re-point to AGENTS.md / WORKFLOW_SUBAGENTS so the shared brain stays model-agnostic."
+        "re-point to the owning agent-guides section / WORKFLOW_SUBAGENTS so the shared "
+        "brain stays model-agnostic."
+    )
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [f"agent-workflows/{n}/instructions.md" for n in WORKFLOW_NAMES]
+    + [f"routines/{n}/instructions.md" for n in ROUTINE_NAMES],
+)
+def test_shared_instructions_cite_no_provider_memory(rel: str) -> None:
+    """Shared workflow and routine instructions must not cite provider-private
+    memory: other providers cannot read it, and a retired memory leaves the
+    pointer dangling. Cite the agent-guides section that owns the rule instead.
+    """
+    hits = [needle for needle in MEMORY_CITATION_FORBIDDEN if needle in _read(rel)]
+    assert not hits, (
+        f"{rel} cites provider-private memory {hits}; "
+        "cite the agent-guides section that owns the rule instead."
     )
 
 

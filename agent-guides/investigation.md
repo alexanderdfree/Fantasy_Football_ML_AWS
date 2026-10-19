@@ -5,7 +5,7 @@
 
 ## Verify behavior and effective state
 
-- **Audit by running the test, not grepping.** "Every position satisfies Y" needs an actual run — symbol grep misses `LOSS_WEIGHTS=` vs `loss_weights=` kwarg forms.
+- **Audit by running the test, not grepping.** "Every position satisfies Y" needs an actual run — symbol grep misses `LOSS_WEIGHTS=` vs `loss_weights=` kwarg forms. Check that a pass is not an all-skipped run: in the May 2026 audit behind this rule, a defensive `pytest.skip()` on the stale `LOSS_WEIGHTS` lookup skipped every position, so run such a test before and after turning the skip into an assert.
 - **Check ALL config layers for "is X implemented?"** In Batch/ECS a per-submission `submit_job(...)` override can invalidate the resource default.
 - **Changing an endpoint contract:** grep the route path AND the handler name (`def health`, `/health`), not just the data structures read.
 - **Enumerate before filtering in tree-wide sweeps.** One unfiltered `grep -rn <term> .`, categorize EVERY hit, THEN filter — a `grep -v` as the sweep tool gives phantom completeness (#637 missed user-facing wiki refs).
