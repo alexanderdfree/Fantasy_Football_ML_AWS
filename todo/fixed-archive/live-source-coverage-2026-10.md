@@ -71,8 +71,10 @@ and the official [Atlanta](https://www.mercedesbenzstadium.com/falcons-gameday/c
 and [Indianapolis](https://www.colts.com/game-day/regular-season-game-3) game pages.
 These captures were retrieved after kickoff on October 18 Eastern and establish
 retrospective source resolution, not pregame source availability or accuracy.
-The follow-up full unit suite passed 6,470 tests (3 skipped), including source
+The follow-up full unit suite passed 6,484 tests (3 skipped), including source
 identity, unavailable/malformed evidence, game-date and redirect boundaries.
+Crosswalk regressions verify that gaining a primary ID cannot re-admit an
+officially excluded player or retarget its identity.
 
 **Lesson:** Provider disagreement needs an identity-bound primary source. An
 explicit published absence can establish a derived encoding without establishing

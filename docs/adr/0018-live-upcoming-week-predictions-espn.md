@@ -41,12 +41,14 @@ Age/rookie metadata uses the fetched current-season weekly roster and actual gam
 
 ## Verified live-source reconciliation
 
-The offline builder may resolve a missing roster identity's inactive eligibility
+The offline builder may resolve a roster identity's inactive eligibility
 from the official NFL season roster and player-profile JSON-LD. The roster year,
 team, name and position, profile date of birth, and unique requested-week GSIS
 reference must agree; available ESPN identity fields must agree too. Only the
 verified persistent `DEV` and `CUT` statuses currently establish an attributed
-exclusion. An unknown status, active listing, conflicting identity or failed
+exclusion. A primary ID mapping cannot bypass a conflicting current-week `DEV`
+or `CUT` reference, and an exclusion cannot retarget that primary identity.
+An unknown status, active listing, conflicting identity or failed
 source remains unresolved. Exclusion receipts never populate active recovered
 IDs or projection rows. The same corroborated inactive identity can resolve a
 practice-report entry after a release without adding that player to projections.

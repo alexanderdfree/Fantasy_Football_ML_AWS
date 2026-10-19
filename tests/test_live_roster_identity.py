@@ -85,14 +85,20 @@ def test_repeat_refresh_revalidates_recovered_eligibility(sources, status):
     assert second.attrs["source_metadata"]["status"] == "partial"
 
 
-def test_current_official_inactive_identity_becomes_attributed_exclusion(sources):
+@pytest.mark.parametrize("primary_crosswalk", [False, True])
+@pytest.mark.parametrize("status", ["DEV", "CUT"])
+def test_current_official_inactive_identity_becomes_attributed_exclusion(
+    sources, monkeypatch, primary_crosswalk, status
+):
     _, reference = sources
-    reference.loc[0, "status"] = "DEV"
+    reference.loc[0, "status"] = status
+    crosswalk = {"4431346": "00-0040598"} if primary_crosswalk else {}
+    monkeypatch.setattr(espn_live, "_espn_to_gsis", crosswalk)
     evidence = {
         "player_id": "00-0040598",
         "team": "GB",
         "position": "TE",
-        "status": "DEV",
+        "status": status,
         "roster_url": "https://www.nfl.com/teams/green-bay-packers/roster",
     }
     verify = Mock(return_value=evidence)
@@ -105,7 +111,7 @@ def test_current_official_inactive_identity_becomes_attributed_exclusion(sources
     )
     assert frame.empty
     assert frame.attrs["recovered_ids"] == {}
-    assert espn_live.espn_to_gsis_map() == {}
+    assert espn_live.espn_to_gsis_map() == crosswalk
     metadata = frame.attrs["source_metadata"]
     assert metadata["unresolved_players"] == []
     assert metadata["verified_exclusions"] == [evidence]
@@ -114,9 +120,14 @@ def test_current_official_inactive_identity_becomes_attributed_exclusion(sources
     assert verify.call_args.kwargs["espn_player"]["espn_id"] == "4431346"
 
 
-def test_unavailable_official_confirmation_preserves_unresolved_eligibility(sources):
+@pytest.mark.parametrize("primary_crosswalk", [False, True])
+def test_unavailable_official_confirmation_preserves_unresolved_eligibility(
+    sources, monkeypatch, primary_crosswalk
+):
     _, reference = sources
     reference.loc[0, "status"] = "DEV"
+    if primary_crosswalk:
+        monkeypatch.setattr(espn_live, "_espn_to_gsis", {"4431346": "00-0040598"})
     frame = espn_live.fetch_active_rosters(
         {"9": "GB"},
         season=2026,
@@ -132,9 +143,15 @@ def test_unavailable_official_confirmation_preserves_unresolved_eligibility(sour
     )
 
 
-def test_official_eligibility_cannot_bypass_a_missing_identity_match(sources):
+@pytest.mark.parametrize("primary_crosswalk", [False, True])
+def test_official_eligibility_cannot_bypass_a_missing_identity_match(
+    sources, monkeypatch, primary_crosswalk
+):
     _, reference = sources
+    reference.loc[0, "status"] = "DEV"
     reference.loc[0, "birth_date"] = "2002-01-21"
+    if primary_crosswalk:
+        monkeypatch.setattr(espn_live, "_espn_to_gsis", {"4431346": "00-0040598"})
     verify = Mock(side_effect=AssertionError("Mismatched identity must stay unresolved"))
     frame = espn_live.fetch_active_rosters(
         {"9": "GB"},
@@ -145,6 +162,80 @@ def test_official_eligibility_cannot_bypass_a_missing_identity_match(sources):
     )
     assert frame.empty
     verify.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("status", "ACT"),
+        ("season", 2025),
+        ("week", 2),
+        ("team", "LA"),
+        ("position", "WR"),
+        ("player_id", "00-0099999"),
+    ],
+)
+def test_crosswalk_does_not_fetch_official_pages_without_an_exact_inactive_conflict(
+    sources, monkeypatch, column, value
+):
+    _, reference = sources
+    reference.loc[0, "status"] = "DEV"
+    reference.loc[0, column] = value
+    monkeypatch.setattr(espn_live, "_espn_to_gsis", {"4431346": "00-0040598"})
+    verify = Mock(side_effect=AssertionError("No exact current inactive conflict"))
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=reference,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=verify),
+    )
+    assert frame.player_id.tolist() == ["00-0040598"]
+    verify.assert_not_called()
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_crosswalk_with_conflicting_weekly_statuses_requires_official_confirmation(
+    sources, monkeypatch, confirmed
+):
+    _, reference = sources
+    reference = pd.concat([reference, reference.assign(status="DEV")])
+    monkeypatch.setattr(espn_live, "_espn_to_gsis", {"4431346": "00-0040598"})
+    evidence = {"player_id": "00-0040598", "team": "GB", "position": "TE", "status": "DEV"}
+    verify = Mock(return_value=evidence if confirmed else None)
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=reference,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=verify),
+    )
+    assert frame.empty
+    verify.assert_called_once()
+    metadata = frame.attrs["source_metadata"]
+    if confirmed:
+        assert metadata["status"] == "available"
+        assert metadata["verified_exclusions"] == [evidence]
+    else:
+        assert metadata["status"] == "partial"
+        assert metadata["unresolved_players"][0]["reason"] == "eligibility_unconfirmed:ACT,DEV"
+
+
+def test_official_exclusion_cannot_retarget_a_primary_crosswalk_identity(sources, monkeypatch):
+    _, reference = sources
+    reference.loc[0, "status"] = "DEV"
+    monkeypatch.setattr(espn_live, "_espn_to_gsis", {"4431346": "00-0040598"})
+    verify = Mock(return_value={"player_id": "00-0099999", "status": "DEV"})
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=reference,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=verify),
+    )
+    assert frame.empty
+    assert frame.attrs["source_metadata"]["status"] == "partial"
+    assert frame.attrs["source_metadata"]["verified_exclusions"] == []
 
 
 def test_recovery_is_not_reused_when_the_next_weekly_reference_is_unavailable(sources):
@@ -241,9 +332,17 @@ def test_missing_birthday_in_espn_is_not_a_name_only_match(sources):
 
 def test_authoritative_crosswalk_still_works_without_weekly_reference(sources, monkeypatch):
     monkeypatch.setattr(espn_live, "_espn_to_gsis", {"4431346": "00-0040598"})
-    frame = fetch(None)
+    verify = Mock(side_effect=AssertionError("A missing weekly reference is not a conflict"))
+    frame = espn_live.fetch_active_rosters(
+        {"9": "GB"},
+        season=2026,
+        week=1,
+        rosters_df=None,
+        official_roster_verifier=SimpleNamespace(verify_inactive_identity=verify),
+    )
     assert frame.player_id.tolist() == ["00-0040598"]
     assert frame.attrs["source_metadata"]["recovered_players"] == 0
+    verify.assert_not_called()
 
 
 def test_wrong_roster_season_fails_instead_of_publishing(sources):
