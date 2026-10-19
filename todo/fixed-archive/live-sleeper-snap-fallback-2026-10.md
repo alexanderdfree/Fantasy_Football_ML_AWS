@@ -2,7 +2,7 @@
 
 **File(s):** `src/data/live_snap_counts.py`, `src/prediction/upcoming.py`,
 `tests/test_app_live_snap_counts.py`, and `tests/test_app_live_history.py`.
-PR pending.
+Implementation commit `9136a865`; PR pending.
 
 **What:** The investigated 2026 Week 6 artifact reported snap coverage of
 2,054/2,266 completed skill-player games. Its primary nflverse/PFR feed lagged
