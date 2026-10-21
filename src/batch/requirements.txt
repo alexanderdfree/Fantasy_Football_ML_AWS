@@ -1,16 +1,16 @@
 # Generated from pyproject.toml; run python -m src.packaging.dependencies.
 --extra-index-url https://download.pytorch.org/whl/cu130
 torch==2.14.0+cu130
-numpy==2.5.3
+numpy==2.5.4
 pandas==3.0.6
-pyarrow==25.0.1
+pyarrow==26.0.0
 nflreadpy==0.1.5
-polars==1.44.2
+polars==2.0.0
 scikit-learn==1.9.1
 scipy==1.18.1
 matplotlib==3.11.2
 joblib==1.6.0
 lightgbm==4.7.0
 mord==0.7
-boto3==1.43.98
+boto3==1.43.114
 optuna==5.0.0
