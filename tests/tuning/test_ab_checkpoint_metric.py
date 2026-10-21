@@ -15,12 +15,14 @@ pytestmark = pytest.mark.unit
 def test_production_and_ab_selectors(position, monkeypatch):
     monkeypatch.delenv("FF_NN_FIXED_EPOCHS", raising=False)
     original = get_config(position)
-    # Production keeps the legacy loss-weighted MAE selector; the baseline arm
-    # is therefore a no-op and only the A/B arms opt into the RMSE selectors.
-    assert original["nn_selection_metric"] == "weighted_mae"
+    # Production selects on PPR fantasy-point RMSE, so only the ``fantasy_rmse``
+    # arm is a no-op; ``baseline`` reproduces the legacy loss-weighted MAE
+    # selector for comparison.
+    assert original["nn_selection_metric"] == "fantasy_rmse_ppr"
     # Shallow copy: the per-position ``functools.partial`` callables compare by
     # identity, so a deep copy could never equal the production recipe.
-    assert VARIANTS[0].cfg_mutator(dict(original)) == original
+    noop = [variant.cfg_mutator(dict(original)) == original for variant in VARIANTS]
+    assert noop == [False, False, True]
     for variant, metric in zip(
         VARIANTS, ("weighted_mae", "weighted_rmse", "fantasy_rmse_ppr"), strict=True
     ):

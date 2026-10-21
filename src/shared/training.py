@@ -1095,6 +1095,9 @@ class MultiHeadTrainer:
         log_every=10,
         epoch_callback=None,
         use_amp=False,
+        # Library default for direct callers with arbitrary target sets;
+        # ``fantasy_rmse_ppr`` needs a complete known position target set, so
+        # the pipeline passes ``PositionConfig.nn_selection_metric`` explicitly.
         selection_metric="weighted_mae",
     ):
         self.model = model
@@ -1531,11 +1534,12 @@ class MultiHeadTrainer:
             for fmt in ("ppr", "half_ppr", "standard"):
                 history[f"val_fantasy_rmse_{fmt}"] = []
                 history[f"val_fantasy_mae_{fmt}"] = []
-        # Loss-weighted MAE (the default selector) mirrors the training loss's
-        # per-target weighting so high-scale targets (yards) don't dominate the
-        # selection criterion. The weighted-RMSE and fantasy-point selectors
-        # are opt-in alternatives (``selection_metric``); every score is
-        # recorded so histories stay comparable across selectors.
+        # Loss-weighted MAE (the trainer's library default) mirrors the training
+        # loss's per-target weighting so high-scale targets (yards) don't
+        # dominate the selection criterion. Production passes
+        # ``PositionConfig.nn_selection_metric="fantasy_rmse_ppr"``; the
+        # weighted-RMSE selector is a comparison arm (``selection_metric``).
+        # Every score is recorded so histories stay comparable across selectors.
         loss_weights = getattr(self.criterion, "loss_weights", None) or {}
         weight_sum = sum(loss_weights.get(t, 1.0) for t in self.target_names) or 1.0
         _cuda = torch.cuda.is_available() and self.device.type == "cuda"
@@ -1835,7 +1839,7 @@ class MultiHeadTrainer:
                     self._graphed_opt.refresh_lr_from_scheduler()
 
             # --- Early stopping and checkpoint selection (``selection_metric``;
-            # default loss-weighted MAE, strict ``<`` improvement) ---
+            # production PPR fantasy-point RMSE, strict ``<`` improvement) ---
             if np.isfinite(selection_score) and selection_score < self.best_val_metric:
                 self.best_val_metric = selection_score
                 self.best_epoch = epoch + 1

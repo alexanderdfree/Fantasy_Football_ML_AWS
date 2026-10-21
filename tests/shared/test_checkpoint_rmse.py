@@ -1,4 +1,4 @@
-"""Behavioral checks for NN checkpoint selection (default weighted MAE; opt-in RMSE/PPR)."""
+"""Behavioral checks for NN checkpoint selection (production PPR RMSE; legacy MAE/RMSE arms)."""
 
 import numpy as np
 import pytest
@@ -75,7 +75,8 @@ def run_trajectory(
         patience=patience,
         log_every=1,
         epoch_callback=epoch_callback,
-        # ``None`` exercises the production default (loss-weighted MAE).
+        # ``None`` exercises the trainer's library default (loss-weighted MAE);
+        # production passes ``PositionConfig.nn_selection_metric``.
         **({} if selection_metric is None else {"selection_metric": selection_metric}),
     )
     # Exercise the production resident batcher's full batches plus ragged tail.
@@ -205,7 +206,10 @@ def test_legacy_mae_selector_is_available_for_comparison():
     assert history["checkpoint_selection"]["metric"] == "weighted_mae"
 
 
-def test_default_selector_is_loss_weighted_mae():
+def test_trainer_library_default_selector_is_loss_weighted_mae():
+    """Direct callers with arbitrary target sets keep the legacy MAE default;
+    production supplies ``fantasy_rmse_ppr`` through ``PositionConfig`` (see
+    ``tests/test_pipeline_e2e.py``), which needs a complete position target set."""
     trainer, history = run_trajectory({"yards": [[1.0] * 3]})
     assert trainer.selection_metric == "weighted_mae"
     assert history["checkpoint_selection"]["metric"] == "weighted_mae"
@@ -215,7 +219,7 @@ def test_default_selector_is_loss_weighted_mae():
 
 @pytest.mark.parametrize("patience", [1, 20], ids=["early-stop", "epoch-limit"])
 def test_weighted_mae_restores_legacy_winner_when_rmse_prefers_another(patience, monkeypatch):
-    """The default reproduces main's rule on a trajectory where MAE and RMSE disagree."""
+    """The legacy arm reproduces the pre-flip rule on a trajectory where MAE and RMSE disagree."""
     monkeypatch.delenv("FF_NN_FIXED_EPOCHS", raising=False)
     trainer, history = run_trajectory(
         {"yards": [[0.0, 0.0, 6.0], [2.5, 2.5, 2.5], [4.0, 4.0, 4.0]]},
