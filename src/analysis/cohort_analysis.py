@@ -1678,14 +1678,10 @@ def _run_position(
     test_df: pd.DataFrame | None = None,
     seed: int = 42,
 ) -> dict:
-    from src.shared.registry import get_runner
+    from src.analysis.reused_run import run_position
 
-    run = get_runner(pos)
-    if pos in {"K", "DST"}:
-        return run(seed=seed)
-    if train_df is not None and val_df is not None and test_df is not None:
-        return run(train_df, val_df, test_df, seed)
-    return run(seed=seed)
+    frames = None if train_df is None else (train_df, val_df, test_df)
+    return run_position(pos, seed=seed, frames=frames)
 
 
 def _applicable_positions(spec: CohortSpec, requested: list[str]) -> list[str]:
@@ -1811,6 +1807,7 @@ def _run_model_reports(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fresh", action="store_true", help="Bypass exact result/prediction reuse")
     parser.add_argument(
         "cohorts",
         nargs="*",
@@ -1849,6 +1846,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-plots", action="store_true", help="skip sparse-history PNG output")
     args = parser.parse_args(argv)
+    if args.fresh:
+        os.environ["FF_FRESH"] = "1"
 
     positions = _validate_positions(parser, args.positions)
     specs = _selected_cohorts(parser, args.cohorts)

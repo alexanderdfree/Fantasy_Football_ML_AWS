@@ -148,9 +148,10 @@ def build_test_df_from_artifacts(
     model_dir=None,
     kick_history=None,
     opponent_weekly=None,
+    fresh=False,
 ):
     """Use the same prediction adapter as serving, including nested K history."""
-    from src.prediction.frames import predict_position
+    from src.analysis.prediction_reuse import predict_reusing
 
     reg = dict(INFERENCE_REGISTRY[pos])
     reg["model_dir"] = resolve_model_dir(pos, reg, model_dir)
@@ -168,7 +169,7 @@ def build_test_df_from_artifacts(
         opponent_weekly = pd.read_parquet(f"{CACHE_DIR}/weekly_{SEASONS[0]}_{SEASONS[-1]}.parquet")
         if "season_type" in opponent_weekly:
             opponent_weekly = opponent_weekly[opponent_weekly["season_type"].eq("REG")]
-    prediction = predict_position(
+    prediction = predict_reusing(
         pos,
         train_df,
         val_df,
@@ -177,6 +178,7 @@ def build_test_df_from_artifacts(
         kicks=kick_history,
         opponent_weekly=opponent_weekly,
         device=device or _device(),
+        fresh=fresh,
     )
     result = prediction.frame.copy()
     for family, predictions in prediction.raw.items():
@@ -347,6 +349,7 @@ def warn_if_sync_noop() -> bool:
 
 def _main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fresh", action="store_true", help="Bypass exact result/prediction reuse")
     parser.add_argument("--positions", nargs="*", default=["QB", "RB", "WR", "TE", "K", "DST"])
     parser.add_argument(
         "--sync", action="store_true", help="Pull the latest artifacts from S3 before evaluating."
@@ -363,6 +366,8 @@ def _main(argv: list[str] | None = None) -> None:
         help="With --validate, raise (non-zero exit) if any position's artifact is stale.",
     )
     args = parser.parse_args(argv)
+    if args.fresh:
+        os.environ["FF_FRESH"] = "1"
 
     if args.sync:
         warn_if_sync_noop()

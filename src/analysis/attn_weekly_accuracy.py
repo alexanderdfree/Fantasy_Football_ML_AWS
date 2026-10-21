@@ -27,7 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -76,8 +76,9 @@ EARLY, MID, LATE = "early (W1-4)", "mid (W5-13)", "late (W14+)"
 # --------------------------------------------------------------------------- #
 def _run_position(pos: str, seed: int) -> pd.DataFrame:
     """Run one position's production pipeline and return its test_df slice."""
-    mod = importlib.import_module(f"src.{pos.lower()}.run_pipeline")
-    result = mod.run(seed=seed)
+    from src.analysis.reused_run import run_position
+
+    result = run_position(pos, seed=seed)
     df = result["test_df"].copy()
     df["position"] = pos
     df["seed"] = seed
@@ -88,24 +89,52 @@ def _run_position(pos: str, seed: int) -> pd.DataFrame:
     return df[[c for c in keep if c in df.columns]].reset_index(drop=True)
 
 
+def _collect_position(task):
+    return _run_position(*task)
+
+
+def _collect_error(task, exc):
+    return RuntimeError(f"{task[0]} seed={task[1]} failed: {exc}")
+
+
 def collect(positions, seeds, cache_dir: str | None) -> pd.DataFrame:
     """Gather per-row test predictions for every (position, seed), with cache."""
-    frames = []
-    for pos in positions:
-        for seed in seeds:
-            cpath = None
-            if cache_dir:
-                Path(cache_dir).mkdir(parents=True, exist_ok=True)
-                cpath = Path(cache_dir) / f"{pos.lower()}_seed{seed}.parquet"
-                if cpath.exists():
-                    print(f"  [cache] {pos} seed={seed}")
-                    frames.append(pd.read_parquet(cpath))
-                    continue
-            print(f"  [run]   {pos} seed={seed} ...", flush=True)
-            df = _run_position(pos, seed)
-            if cpath is not None:
-                df.to_parquet(cpath, index=False)
-            frames.append(df)
+    # Legacy position/seed filenames cannot establish data/code identity.
+    # --cache now selects the shared verified store; old parquets are ignored.
+    previous = os.environ.get("FF_RESULT_CACHE_DIR")
+    if cache_dir:
+        os.environ["FF_RESULT_CACHE_DIR"] = str(Path(cache_dir).resolve())
+    try:
+        from src.tuning._execution import run_tasks
+        from src.tuning.ab_harness import resolve_jobs
+        from src.tuning.ablation_runner import _cap_worker_threads
+
+        tasks = [(pos, seed) for pos in positions for seed in seeds]
+        frames = run_tasks(
+            tasks,
+            _collect_position,
+            max_workers=resolve_jobs(len(tasks)),
+            on_error=_collect_error,
+            initializer=_cap_worker_threads,
+            environment={
+                key: "1"
+                for key in (
+                    "OMP_NUM_THREADS",
+                    "MKL_NUM_THREADS",
+                    "OPENBLAS_NUM_THREADS",
+                    "LOKY_MAX_CPU_COUNT",
+                    "LGBM_N_JOBS",
+                )
+            },
+        )
+        failures = [frame for frame in frames if isinstance(frame, Exception)]
+        if failures:
+            raise RuntimeError("; ".join(str(exc) for exc in failures))
+    finally:
+        if previous is None:
+            os.environ.pop("FF_RESULT_CACHE_DIR", None)
+        else:
+            os.environ["FF_RESULT_CACHE_DIR"] = previous
     return pd.concat(frames, ignore_index=True)
 
 
@@ -433,6 +462,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--positions", nargs="+", default=POSITIONS)
     p.add_argument("--seeds", default="42,123", help="comma-separated seeds")
+    p.add_argument("--fresh", action="store_true", help="Bypass result reuse")
     p.add_argument("--cache", default=None, help="dir to cache/reuse per-run test_dfs")
     p.add_argument("--report", default=None, help="write markdown report here")
     p.add_argument("--figdir", default=None, help="dir for the weekly figure")
@@ -445,6 +475,8 @@ def main() -> None:
         "--scoring", default="ppr", help="scoring format for experts (ppr/half_ppr/standard)"
     )
     args = p.parse_args()
+    if args.fresh:
+        os.environ["FF_FRESH"] = "1"
 
     positions = [x.upper() for x in args.positions]
     seeds = [int(s) for s in str(args.seeds).split(",") if s.strip()]

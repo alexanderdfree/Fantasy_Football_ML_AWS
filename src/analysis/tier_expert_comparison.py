@@ -24,7 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import importlib
+import os
 
 import numpy as np
 import pandas as pd
@@ -124,6 +124,7 @@ def compare_position(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fresh", action="store_true", help="Bypass exact result/prediction reuse")
     parser.add_argument("--positions", nargs="*", default=DEFAULT_POSITIONS)
     parser.add_argument("--seasons", nargs="*", type=int, default=list(EVAL_SEASONS_DEFAULT))
     parser.add_argument("--tier-topn", type=int, default=24)
@@ -140,6 +141,8 @@ def main(argv: list[str] | None = None) -> None:
         help="With --from-artifacts: pull the latest artifacts from S3 before evaluating.",
     )
     args = parser.parse_args(argv)
+    if args.fresh:
+        os.environ["FF_FRESH"] = "1"
 
     positions = [p.upper() for p in args.positions]
     eval_set = {int(s) for s in args.seasons}
@@ -180,7 +183,9 @@ def main(argv: list[str] | None = None) -> None:
                 continue
         else:
             print(f"\nRunning {pos} pipeline ...", flush=True)
-            result = importlib.import_module(f"src.{pos.lower()}.run_pipeline").run()
+            from src.analysis.reused_run import run_position
+
+            result = run_position(pos)
             test_df = result["test_df"]
         test_df = test_df[test_df["season"].astype(int).isin(eval_set)]
         compare_position(pos, test_df, prior_fp, experts, expert_raws, tier_topn=args.tier_topn)
